@@ -946,6 +946,18 @@
    * through from the report) still has to bring the verse into view, and none
    * of those routes come through here.
    */
+  /** What the verse number's ✓ means, or what is still missing for it:
+   * every check run with nothing open (Greek Room, tN/tW and the alignment
+   * check, Language QA marks) and the word alignment complete. */
+  function verseClearTitle(check: string | undefined, open: number, alignment: string): string {
+    if (check === "failed" || check === "cancelled") return "The checks did not finish for this verse";
+    const missing = [];
+    if (check !== "succeeded") missing.push("not checked yet");
+    if (open) missing.push(`${open} open ${open === 1 ? "finding" : "findings"}`);
+    if (alignment !== "complete") missing.push(alignment === "untouched" ? "not aligned" : `alignment ${alignment}`);
+    return missing.length ? `Not clear: ${missing.join(", ")}` : "Checked: no open findings, alignment complete";
+  }
+
   function selectFromList(verse: string): void {
     activeLanguageQaFindingId.set(null);
     lastScrolledKey = verseKey($currentChapter, verse);
@@ -1041,6 +1053,8 @@
     {@const alignmentStatus = $alignmentStatusByVerse[key] ?? "untouched"}
     {@const langFindings = $languageQaFindingsByVerse[key] ?? []}
     {@const openCount = findings.filter((f) => f.status === "open").length + langFindings.length}
+    {@const clear = checkStatus === "succeeded" && openCount === 0 && alignmentStatus === "complete"}
+    {@const clearTitle = verseClearTitle(checkStatus, openCount, alignmentStatus)}
     {@const highlightFindings = findings.filter((f) => f.status !== "ignored" && f.status !== "accepted")}
     {@const display = shownDisplay(key, $rawView, $verseDisplay, $verseTexts)}
     {@const remapped = remapFindings(highlightFindings, display)}
@@ -1056,7 +1070,7 @@
       class:active={$selectedVerse === v}
       class:multi={$selectedVerseSet.includes(v)}
       data-multi-selected={$selectedVerseSet.includes(v) ? "true" : undefined}
-      class:approved={checkStatus === "succeeded" && openCount === 0}
+      class:approved={clear}
       class:check-failed={checkStatus === "failed" || checkStatus === "cancelled"}
       role="button"
       tabindex="0"
@@ -1067,8 +1081,8 @@
       on:keydown={(e) => onVerseKeydown(e, v, key, menuFindingIds, findings, langFindings)}
       on:contextmenu={(e) => openVerseMenu(e, v)}
     >
-      <div class="vnum">
-        {v}{#if checkStatus === "succeeded" && openCount === 0}&nbsp;✓{:else if checkStatus === "failed" || checkStatus === "cancelled"}&nbsp;⚠{/if}
+      <div class="vnum" title={clearTitle}>
+        {v}{#if clear}&nbsp;✓{:else if checkStatus === "failed" || checkStatus === "cancelled"}&nbsp;⚠{/if}
       </div>
       {#if isEditingThis}
         <div
@@ -1357,9 +1371,9 @@
   .edit-pencil:hover, .edit-pencil:focus-visible { background: var(--surface-2); border-color: var(--border-strong); outline: none; }
   .alignment-state:disabled, .edit-pencil:disabled { opacity: .55; cursor: not-allowed; }
   .edit-pencil:hover:not(:disabled), .edit-pencil:focus-visible { color: var(--accent); }
-  .alignment-state.complete { color: var(--success); }
-  .alignment-state.partial { color: var(--warning); }
-  .alignment-state.invalid { color: var(--danger); font-weight: 800; }
+  .alignment-state.complete { color: var(--success); background: var(--success-bg); }
+  .alignment-state.partial { color: var(--warning); background: var(--warning-bg, #fff4dc); }
+  .alignment-state.invalid { color: var(--danger); background: var(--danger-bg); font-weight: 800; }
   .verse.multi { box-shadow: inset 3px 0 0 var(--accent); background: var(--accent-bg); }
   .empty { color: var(--text-3); font-size: var(--fs-md); }
   .context-notice {

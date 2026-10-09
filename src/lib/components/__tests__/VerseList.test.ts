@@ -1167,3 +1167,44 @@ describe("VerseList right-click, ring and notices (#236)", () => {
     expect(notice()).toBeNull();
   });
 });
+
+describe("VerseList ✓ and alignment glyph (Benz, 2026-10-09)", () => {
+  function clearVerse(alignment: "complete" | "partial" | "untouched" | "invalid", findings: QaFinding[] = []): void {
+    seed("alpha beta", findings);
+    checkStatusByVerse.set({ [verseKey("1", "6")]: "succeeded" });
+    alignmentStatusByVerse.set({ [verseKey("1", "6")]: alignment });
+  }
+  const number = () => verseRow().querySelector(".vnum") as HTMLElement;
+
+  it("ticks a verse only when it is checked, has nothing open and its alignment is complete", async () => {
+    clearVerse("complete");
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    expect(number().textContent).toContain("✓");
+    expect(number().getAttribute("title")).toBe("Checked: no open findings, alignment complete");
+    expect(verseRow().classList.contains("approved")).toBe(true);
+  });
+
+  it.each([
+    ["partial", "Not clear: alignment partial"],
+    ["untouched", "Not clear: not aligned"],
+    ["invalid", "Not clear: alignment invalid"],
+  ] as const)("does not tick a verse whose alignment is %s, and says why", async (alignment, title) => {
+    clearVerse(alignment);
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    expect(number().textContent).not.toContain("✓");
+    expect(number().getAttribute("title")).toBe(title);
+  });
+
+  it("does not tick a verse with an open finding, even when aligned", async () => {
+    clearVerse("complete", [finding({ start_offset: 0, end_offset: 5, original_text: "alpha" })]);
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    expect(number().textContent).not.toContain("✓");
+    expect(number().getAttribute("title")).toBe("Not clear: 1 open finding");
+  });
+
+  it("colours the ⇄ by alignment state", async () => {
+    clearVerse("partial");
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    expect(screen.getByRole("button", { name: /Alignment partial for verse 6/ }).classList.contains("partial")).toBe(true);
+  });
+});
