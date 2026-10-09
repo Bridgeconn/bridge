@@ -1,0 +1,112 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/svelte";
+import { get } from "svelte/store";
+import { tick } from "svelte";
+
+import SidePanel from "../SidePanel.svelte";
+import SideRail from "../SideRail.svelte";
+import { SIDE_PANEL_LIMITS, setSidePanel, sidePanels } from "../../editorPrefs";
+import { languageQaChannel } from "../../languageQaInline";
+
+/** jsdom has no PointerEvent: a MouseEvent carries the pointer event's name and fields. */
+async function pointer(target: HTMLElement, type: string, clientX = 0): Promise<void> {
+  target.dispatchEvent(new MouseEvent(type, { bubbles: true, button: 0, clientX }));
+  await tick();
+}
+
+function reset(): void {
+  for (const id of ["reference", "languageQa", "review"] as const) {
+    setSidePanel(id, { open: id === "review", width: SIDE_PANEL_LIMITS[id].initial });
+  }
+}
+
+describe("SidePanel (Benz, 2026-10-09)", () => {
+  beforeEach(() => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1600 });
+    reset();
+  });
+  afterEach(reset);
+
+  it("resizes from its left edge by keyboard and by drag, within limits, and remembers the width", async () => {
+    setSidePanel("reference", { open: true });
+    render(SidePanel, { props: { id: "reference", label: "Reference" } });
+    const handle = screen.getByRole("separator", { name: /Resize the Reference panel/ });
+    const width = () => (document.getElementById("side-panel-reference") as HTMLElement).style.width;
+    expect(width()).toBe("300px");
+
+    await fireEvent.keyDown(handle, { key: "ArrowLeft" });
+    expect(width()).toBe("316px");
+    expect(JSON.parse(localStorage.getItem("bridge.editor.sidePanels.v1") ?? "{}").reference.width).toBe(316);
+    await fireEvent.keyDown(handle, { key: "End" });
+    expect(width()).toBe("640px");
+
+    // A drag shows as it goes and is saved when it ends.
+    await pointer(handle, "pointerdown", 500);
+    await pointer(handle, "pointermove", 700);
+    expect(width()).toBe("440px");
+    expect(get(sidePanels).reference.width).toBe(640);
+    await pointer(handle, "pointerup");
+    expect(get(sidePanels).reference.width).toBe(440);
+
+    await fireEvent.dblClick(handle);
+    expect(width()).toBe("300px");
+  });
+
+  it("closes when its edge is dragged far to the right, and reopens at its last width", async () => {
+    setSidePanel("reference", { open: true, width: 360 });
+    render(SidePanel, { props: { id: "reference", label: "Reference" } });
+    const handle = screen.getByRole("separator", { name: /Resize the Reference panel/ });
+    // 360 wide; 120px to the right is 240, still above the minimum (200): stays open.
+    await pointer(handle, "pointerdown", 500);
+    await pointer(handle, "pointermove", 620);
+    expect(screen.queryByText("Release to close")).toBeNull();
+    // Past min - 60 (140): the hint shows, and release closes it.
+    await pointer(handle, "pointermove", 800);
+    expect(screen.getByText("Release to close")).toBeInTheDocument();
+    await pointer(handle, "pointerup");
+    expect(get(sidePanels).reference).toEqual({ open: false, width: 360 });
+    expect(document.getElementById("side-panel-reference")).toBeNull();
+  });
+
+  it("caps the width at 45% of the window, and a kept-mounted panel is hidden, not removed, when closed", async () => {
+    window.innerWidth = 1000;
+    setSidePanel("review", { open: true, width: 700 });
+    render(SidePanel, { props: { id: "review", label: "Review", keepMounted: true } });
+    const column = document.getElementById("side-panel-review") as HTMLElement;
+    expect(column.style.width).toBe("450px");
+    setSidePanel("review", { open: false });
+    await tick();
+    expect(document.getElementById("side-panel-review")?.hidden).toBe(true);
+  });
+});
+
+describe("SideRail", () => {
+  beforeEach(reset);
+  afterEach(() => {
+    reset();
+    languageQaChannel.set({ projectPath: "", status: null, error: "" });
+  });
+
+  it("toggles each panel's column and opens Settings", async () => {
+    const onOpenSettings = vi.fn();
+    render(SideRail, { props: { onOpenSettings } });
+    const lqa = screen.getByRole("button", { name: /Language QA/ });
+    expect(lqa.getAttribute("aria-pressed")).toBe("false");
+    await fireEvent.click(lqa);
+    expect(get(sidePanels).languageQa.open).toBe(true);
+    expect(lqa.getAttribute("aria-pressed")).toBe("true");
+    await fireEvent.click(screen.getByRole("button", { name: /Review/ }));
+    expect(get(sidePanels).review.open).toBe(false);
+    await fireEvent.click(screen.getByRole("button", { name: /Settings/ }));
+    expect(onOpenSettings).toHaveBeenCalled();
+  });
+
+  it("badges Language QA with its total, or ! when the channel failed", async () => {
+    languageQaChannel.set({ projectPath: "/p", error: "", status: { totalFindings: 18 } as never });
+    render(SideRail);
+    expect(screen.getByRole("button", { name: /Language QA/ }).textContent).toContain("18");
+    languageQaChannel.set({ projectPath: "/p", error: "engine gone", status: null });
+    await tick();
+    expect(screen.getByRole("button", { name: /Language QA/ }).textContent).toContain("!");
+  });
+});

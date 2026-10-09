@@ -29,7 +29,7 @@
   } from "../verseEditor";
   import { alignmentOpen, alignmentKey, openAlignment } from "../alignmentUi";
   import { aiReviewRequest, aiJobActive } from "../aiReviewUi";
-  import { reviewPanelCollapsed } from "../editorPrefs";
+  import { setSidePanel } from "../editorPrefs";
   import type { AiExplainResult, AIReviewJobSnapshot, FindingStatus } from "../types/finding";
 
   $: openFindingCount = $selectedFindings.filter((f) => f.status === "open").length;
@@ -453,7 +453,7 @@
     aiReviewRequest.set(null);
     // The job's progress, errors and results live in the AI review tab: a
     // folded panel would run a paid call where nobody can see it.
-    reviewPanelCollapsed.set(false);
+    setSidePanel("review", { open: true });
     activeTab = "ai";
     void startAIReview(scope, chapter, verse);
   }
@@ -587,18 +587,9 @@
   }
 </script>
 
-<div class="panel" class:collapsed={$reviewPanelCollapsed}>
-  {#if $reviewPanelCollapsed}
-    <button type="button" class="expand-rail" on:click={() => reviewPanelCollapsed.set(false)}
-      aria-expanded="false" aria-label="Show the review panel" title="Show the review panel">
-      <span aria-hidden="true">◀</span>
-      <span class="rail-label">Review{#if $selectedVerse} {$currentChapter}:{$selectedVerse}{/if}</span>
-      {#if openFindingCount}<span class="rail-count">{openFindingCount}</span>{/if}
-    </button>
-  {/if}
-  <!-- Folded, not unmounted: a running check, an open tab or a draft in
-       here carries on while the panel is out of the way. -->
-  <div class="panel-body" class:folded={$reviewPanelCollapsed}>
+<!-- The review column (SidePanel "review"). Closed, it is hidden, not
+     unmounted: a running check, an open tab or a draft carries on. -->
+<div class="panel">
   {#if $selectedVerse}
     <!-- Two short rows, neither of which wraps: the reference with the fold
          button, then the open count with the two per-verse actions. At the
@@ -609,8 +600,8 @@
     <div class="panel-header">
       <div class="header-row">
         <div class="ref">Review {($project?.bookId ?? "").toUpperCase()} {$currentChapter}:{$selectedVerse}</div>
-        <button type="button" class="collapse-btn" on:click={() => reviewPanelCollapsed.set(true)}
-          aria-expanded="true" aria-label="Hide the review panel" title="Hide the review panel">▶</button>
+        <button type="button" class="collapse-btn" on:click={() => setSidePanel("review", { open: false })}
+          aria-label="Close the review panel" title="Close (the Review button on the right opens it again)">✕</button>
       </div>
       <div class="header-row">
         <div class="sub">{openFindingCount} open finding(s)</div>
@@ -1019,11 +1010,10 @@
   {:else}
     <div class="empty-panel">
       <span>Select a verse to review its findings.</span>
-      <button type="button" class="collapse-btn" on:click={() => reviewPanelCollapsed.set(true)}
-        aria-expanded="true" aria-label="Hide the review panel" title="Hide the review panel">▶</button>
+      <button type="button" class="collapse-btn" on:click={() => setSidePanel("review", { open: false })}
+        aria-label="Close the review panel" title="Close (the Review button on the right opens it again)">✕</button>
     </div>
   {/if}
-  </div>
 </div>
 
 {#if $alignmentOpen && $selectedVerse}
@@ -1045,17 +1035,8 @@
 {/if}
 
 <style>
-  .panel { width: 400px; flex-shrink: 0; background: var(--surface); display: flex; flex-direction: column; overflow: hidden; border-left: 1px solid var(--border); }
-  .panel.collapsed { width: 32px; }
-  .panel-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-  .panel-body.folded { display: none; }
-  .expand-rail {
-    flex: 1; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 12px 0;
-    border: 0; background: var(--surface-2); color: var(--text-2); cursor: pointer; font: inherit; font-size: var(--fs-2xs);
-  }
-  .expand-rail:hover { background: var(--accent-bg); color: var(--accent); }
-  .rail-label { writing-mode: vertical-rl; font-weight: 700; white-space: nowrap; }
-  .rail-count { font-size: var(--fs-3xs); font-weight: 700; padding: 1px 5px; border-radius: 999px; background: var(--accent); color: white; }
+  /* Its column (SidePanel) sets the width and the left border. */
+  .panel { flex: 1; min-height: 0; background: var(--surface); display: flex; flex-direction: column; overflow: hidden; }
   .collapse-btn {
     flex-shrink: 0; width: 22px; height: 22px; padding: 0; border-radius: 5px; border: 0;
     background: transparent; color: var(--text-3); cursor: pointer; font-size: var(--fs-3xs);

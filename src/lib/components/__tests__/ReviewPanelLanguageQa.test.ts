@@ -26,7 +26,7 @@ vi.mock("../../api/bridgeClient", () => ({
 import ReviewPanel from "../ReviewPanel.svelte";
 import { currentChapter, project, selectedVerse, verseTexts, verseKey } from "../../stores";
 import { languageQaChannel } from "../../languageQaInline";
-import { reviewPanelCollapsed } from "../../editorPrefs";
+import { setSidePanel, sidePanels } from "../../editorPrefs";
 import { get } from "svelte/store";
 import { lqaFinding } from "./languageQaFixture";
 import { scopeDialog } from "../../scopedApply";
@@ -151,7 +151,7 @@ describe("ReviewPanel folding (#236)", () => {
   });
 
   afterEach(() => {
-    reviewPanelCollapsed.set(false);
+    setSidePanel("review", { open: true });
     selectedVerse.set(null);
     languageQaChannel.set({ projectPath: "", status: null, error: "" });
   });
@@ -169,20 +169,10 @@ describe("ReviewPanel folding (#236)", () => {
     expect(rows[1].querySelector(".verse-actions")).not.toBeNull();
   });
 
-  it("folds to a strip that keeps its contents mounted, and remembers it", async () => {
+  it("closes its column from its header, and the choice is remembered", async () => {
     render(ReviewPanel);
-    await fireEvent.click(screen.getByRole("tab", { name: /Language QA/ }));
-    await screen.findByText("ta-irv/tamil.wordlist-variant");
-
-    await fireEvent.click(screen.getByRole("button", { name: "Hide the review panel" }));
-    expect(get(reviewPanelCollapsed)).toBe(true);
-    expect(localStorage.getItem("bridge.editor.reviewPanelCollapsed.v1")).toBe("true");
-    expect(document.querySelector(".panel-body")?.classList.contains("folded")).toBe(true);
-    // Folded, not unmounted: the finding and the open tab are still there.
-    expect(document.querySelector('[data-lqa-id="lqa-p"]')).not.toBeNull();
-
-    await fireEvent.click(screen.getByRole("button", { name: "Show the review panel" }));
-    expect(document.querySelector(".panel-body")?.classList.contains("folded")).toBe(false);
-    expect(screen.getByRole("tab", { name: /Language QA/ }).getAttribute("aria-selected")).toBe("true");
+    await fireEvent.click(screen.getByRole("button", { name: "Close the review panel" }));
+    expect(get(sidePanels).review.open).toBe(false);
+    expect(JSON.parse(localStorage.getItem("bridge.editor.sidePanels.v1") ?? "{}").review.open).toBe(false);
   });
 });

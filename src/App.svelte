@@ -12,7 +12,9 @@
   import { startFlagLoader } from "./lib/flags";
   import ReferencePanel from "./lib/components/ReferencePanel.svelte";
   import FindingContextMenu from "./lib/components/FindingContextMenu.svelte";
-  import { TEXT_SCALES, bumpTextScale, rawView, referencePanelOpen, textScale } from "./lib/editorPrefs";
+  import { TEXT_SCALES, bumpTextScale, rawView, sidePanels, textScale, toggleSidePanel } from "./lib/editorPrefs";
+  import SidePanel from "./lib/components/SidePanel.svelte";
+  import SideRail from "./lib/components/SideRail.svelte";
   import {
     bookmarks, buildPlacesMenu, collectionOf, recentChapters, recordRecentChapter, setPlaces, toggleBookmark,
   } from "./lib/bookmarks";
@@ -1183,9 +1185,9 @@
             onFinished={() => { void activateChapter($currentChapter); }}
           />
           <span class="toolbar-divider" aria-hidden="true" />
-          <button class="whole-book-btn" class:on={$referencePanelOpen} aria-pressed={$referencePanelOpen}
+          <button class="whole-book-btn" class:on={$sidePanels.reference.open} aria-pressed={$sidePanels.reference.open}
             title="Show a reference Bible (an Old Version) beside the text"
-            on:click={() => referencePanelOpen.update((open) => !open)}>Ref.</button>
+            on:click={() => toggleSidePanel("reference")}>Ref.</button>
           <button class="whole-book-btn" class:on={$rawView} aria-pressed={$rawView}
             title="Show each verse exactly as stored, USFM markers included"
             on:click={() => rawView.update((on) => !on)}>Raw</button>
@@ -1199,18 +1201,32 @@
               disabled={$textScale === TEXT_SCALES[TEXT_SCALES.length - 1]} on:click={() => bumpTextScale(1)}>A+</button>
           </span>
         </div>
+        <!-- The text, then the side-panel columns (Benz, 2026-10-09): each
+             opened from the rail at the far right, resized or closed by
+             dragging its left edge; several may be open at once. All start
+             under the toolbar, level with the text. -->
         <div class="work-row">
           <div class="editor-col">
             <VerseList onSelect={selectVerse} onNavigate={navigateToReportRow} />
           </div>
-          {#if $referencePanelOpen && $project}
-            {#key $project.path}
-              <ReferencePanel onOpenSettings={() => openSettings("languageQa")} onSelectVerse={selectVerse} />
-            {/key}
+          {#if $project}
+            <SidePanel id="reference" label="Reference">
+              {#key $project.path}
+                <ReferencePanel onOpenSettings={() => openSettings("languageQa")} onSelectVerse={selectVerse} />
+              {/key}
+            </SidePanel>
+            <SidePanel id="languageQa" label="Language QA" keepMounted>
+              {#key $project.path}
+                <LanguageQaPanel projectPath={$project.path} onNavigate={navigateToReportRow} docked />
+              {/key}
+            </SidePanel>
           {/if}
+          <SidePanel id="review" label="Review" keepMounted>
+            <ReviewPanel onNavigate={navigateToReportRow} />
+          </SidePanel>
+          <SideRail onOpenSettings={() => openSettings("ai")} />
         </div>
       </div>
-      <ReviewPanel onNavigate={navigateToReportRow} />
     </div>
 
     <div class="statusbar">
@@ -1241,10 +1257,13 @@
   {/if}
 
   {#if $project && opened}
-    {#key $project.path}
-      <LanguageQaPanel projectPath={$project.path} onNavigate={navigateToReportRow}
-        launcherHides={screen === "editor"} />
-    {/key}
+    {#if screen !== "editor"}
+      <!-- The editor docks Language QA in a side column; the other screens
+           keep the floating panel and its launcher. -->
+      {#key $project.path}
+        <LanguageQaPanel projectPath={$project.path} onNavigate={navigateToReportRow} />
+      {/key}
+    {/if}
     <ScopeNotice />
     {#if $scopeDialog}<ScopeConfirmDialog />{/if}
   {/if}

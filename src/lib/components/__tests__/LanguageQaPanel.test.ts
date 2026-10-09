@@ -36,6 +36,7 @@ vi.mock("../../api/bridgeClient", () => ({ bridge: {
 import LanguageQaPanel from "../LanguageQaPanel.svelte";
 import { languageQaChannel } from "../../languageQaInline";
 import { toggleLanguageQaPanel } from "../../languageQaPanelUi";
+import { setSidePanel, sidePanels } from "../../editorPrefs";
 import { tick } from "svelte";
 
 function snapshot(overrides: Partial<LanguageQaStatus> = {}): LanguageQaStatus {
@@ -536,5 +537,25 @@ describe("Language QA launcher on the editor screen (#236)", () => {
     vi.advanceTimersByTime(60_000);
     await tick();
     expect(screen.getByRole("button", { name: /Language QA · completed/ })).toBeTruthy();
+  });
+});
+
+describe("Language QA docked in its side column (Benz, 2026-10-09)", () => {
+  afterEach(() => setSidePanel("languageQa", { open: false }));
+
+  it("is open with no launcher, and Close closes the column", async () => {
+    setSidePanel("languageQa", { open: true });
+    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn(), docked: true });
+    expect(await screen.findByText("Check source encoding.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Language QA · completed/ })).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Close Language QA" }));
+    expect(get(sidePanels).languageQa.open).toBe(false);
+  });
+
+  it("the status bar's button toggles the column, not a floating box", async () => {
+    setSidePanel("languageQa", { open: false });
+    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn(), docked: true });
+    toggleLanguageQaPanel();
+    expect(get(sidePanels).languageQa.open).toBe(true);
   });
 });

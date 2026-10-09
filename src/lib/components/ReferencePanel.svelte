@@ -3,7 +3,6 @@
   import { bridge } from "../api/bridgeClient";
   import { currentChapter, project, selectedVerse } from "../stores";
   import type { ReferenceChapter } from "../types/languageQa";
-  import { REFERENCE_WIDTH, clampReferenceWidth, referencePanelWidth } from "../editorPrefs";
 
   // The reference Bible (an Old Version) beside the text, on the same chapter
   // (indic-qa's reference panel). Reading only: nothing here changes the text.
@@ -16,50 +15,6 @@
   let list: HTMLOListElement | null = null;
   let ticket = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
-  // The width while a drag is under way; saved once, when the drag ends.
-  let dragWidth: number | null = null;
-  const KEY_STEP = 16;
-
-  let innerWidth = typeof window === "undefined" ? 1366 : window.innerWidth;
-  $: maxWidth = Math.max(REFERENCE_WIDTH.min, Math.min(REFERENCE_WIDTH.max, Math.floor(innerWidth * 0.45)));
-  $: width = Math.min(dragWidth ?? $referencePanelWidth, maxWidth);
-  const clamp = (px: number): number => Math.min(clampReferenceWidth(px), maxWidth);
-
-  /** The handle is on the left edge, so moving it left widens the panel. */
-  function startResize(event: PointerEvent): void {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    const handle = event.currentTarget as HTMLElement;
-    const startX = event.clientX;
-    const startWidth = width;
-    handle.setPointerCapture?.(event.pointerId);
-    const move = (next: PointerEvent): void => {
-      dragWidth = clamp(startWidth + (startX - next.clientX));
-    };
-    const end = (): void => {
-      handle.removeEventListener("pointermove", move);
-      handle.removeEventListener("pointerup", end);
-      handle.removeEventListener("pointercancel", end);
-      if (dragWidth !== null) referencePanelWidth.set(dragWidth);
-      dragWidth = null;
-    };
-    handle.addEventListener("pointermove", move);
-    handle.addEventListener("pointerup", end);
-    handle.addEventListener("pointercancel", end);
-  }
-
-  function resizeByKey(event: KeyboardEvent): void {
-    const step = event.shiftKey ? KEY_STEP * 3 : KEY_STEP;
-    const next = event.key === "ArrowLeft" ? width + step
-      : event.key === "ArrowRight" ? width - step
-      : event.key === "Home" ? REFERENCE_WIDTH.min
-      : event.key === "End" ? maxWidth
-      : null;
-    if (next === null) return;
-    event.preventDefault();
-    referencePanelWidth.set(clamp(next));
-  }
-
   $: path = $project?.path ?? "";
   $: void load(path, $currentChapter);
   $: if (follow && $selectedVerse && reference?.ready) void scrollTo($selectedVerse);
@@ -94,16 +49,8 @@
   });
 </script>
 
-<svelte:window bind:innerWidth />
-
-<aside class="reference-panel" aria-label="Reference Bible" style:width="{width}px">
-  <!-- svelte-ignore a11y-no-noninteractive-tabindex a11y-no-noninteractive-element-interactions -->
-  <div class="resize-handle" class:dragging={dragWidth !== null}
-    role="separator" aria-orientation="vertical" aria-label="Resize the reference panel"
-    aria-valuemin={REFERENCE_WIDTH.min} aria-valuemax={maxWidth} aria-valuenow={width}
-    tabindex="0" title="Drag to resize. Double-click to reset."
-    on:pointerdown={startResize} on:keydown={resizeByKey}
-    on:dblclick={() => referencePanelWidth.set(REFERENCE_WIDTH.initial)} />
+<!-- Its column (SidePanel "reference") sets the width and the resize handle. -->
+<aside class="reference-panel" aria-label="Reference Bible">
   <div class="head">
     <span class="label">{reference?.source?.label ?? "Reference"}</span>
     <label class="follow"><input type="checkbox" bind:checked={follow} /> follow</label>
@@ -136,14 +83,7 @@
 </aside>
 
 <style>
-  /* The width is set inline from the saved preference; the cap keeps the
-     text column usable on a small window whatever was saved. */
-  .reference-panel { position: relative; flex-shrink: 0; display: flex; flex-direction: column; min-height: 0;
-    border-left: 1px solid var(--border); background: var(--surface-2); }
-  .resize-handle { position: absolute; top: 0; bottom: 0; left: -3px; width: 6px; z-index: 2; cursor: col-resize;
-    touch-action: none; }
-  .resize-handle:hover, .resize-handle:focus-visible, .resize-handle.dragging {
-    background: color-mix(in srgb, var(--accent) 45%, transparent); outline: none; }
+  .reference-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--surface-2); }
   .head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border);
     font-size: var(--fs-2xs); color: var(--text-2); }
   .label { flex: 1; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -159,6 +99,4 @@
   li.current button { background: var(--accent-bg); box-shadow: inset 3px 0 0 var(--accent); }
   .num { font-size: var(--fs-2xs); font-weight: 700; color: var(--text-3); min-width: 20px; padding-top: 2px; }
   .text { font-family: var(--font-target); font-size: calc(var(--fs-md) * var(--verse-scale, 1)); line-height: 1.7; }
-  /* At a narrow window the text column needs the room more. */
-  @media (max-width: 1199px) { .reference-panel { display: none; } }
 </style>

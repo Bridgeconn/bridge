@@ -3,6 +3,7 @@
   import { bridge } from "../api/bridgeClient";
   import { languageQaChannel, nudgeLanguageQa } from "../languageQaInline";
   import { languageQaPanelToggle } from "../languageQaPanelUi";
+  import { setSidePanel, toggleSidePanel } from "../editorPrefs";
   import type { BookWordRow, LanguageQaFlag, LanguageQaStatus, LanguageQaView, LearnedFix } from "../types/languageQa";
   import type { HouseStyleEntry } from "../types/houseStyle";
   import { addProjectWords } from "../projectWords";
@@ -24,6 +25,11 @@
    * a pass completes, or at once from its close button, and comes back when
    * the next pass starts. Elsewhere it is the only way in and always shows. */
   export let launcherHides = false;
+  /** In the editor's side-panel column (SidePanel "languageQa", Benz
+   * 2026-10-09): always open, no launcher, no floating box; Close closes
+   * the column. Elsewhere (dashboard, report) it floats as before. */
+  export let docked = false;
+  $: if (docked) expanded = true;
 
   let expanded = false;
   const LAUNCHER_HIDE_MS = 6000;
@@ -61,7 +67,10 @@
   // The status bar's button: every press after mount toggles the panel.
   let seenToggle: number | null = null;
   const stopToggle = languageQaPanelToggle.subscribe((count) => {
-    if (seenToggle !== null && count !== seenToggle) toggle();
+    if (seenToggle !== null && count !== seenToggle) {
+      if (docked) toggleSidePanel("languageQa");
+      else toggle();
+    }
     seenToggle = count;
   });
   // Which list is paged: every open finding; those shown again because the
@@ -203,6 +212,10 @@
   }
 
   function toggle(): void {
+    if (docked) {
+      setSidePanel("languageQa", { open: false });
+      return;
+    }
     expanded = !expanded;
     offset = 0;
   }
@@ -491,7 +504,7 @@
 
 <svelte:window on:keydown={onWindowKeydown} on:pointerdown={onWindowPointerdown} />
 
-<aside class="language-qa" aria-label="Language QA">
+<aside class="language-qa" class:docked aria-label="Language QA">
   <p class="walk-status" role="status" aria-live="polite">{walkStatus}</p>
   {#if expanded}
     <section id="language-qa-results" aria-label="Language QA results" style:--head-h="{headHeight}px">
@@ -832,7 +845,7 @@
       {/if}
     </section>
   {/if}
-  {#if expanded || !launcherHidden}
+  {#if !docked && (expanded || !launcherHidden)}
     <div class="launcher-row">
       <button class="launcher" on:click={toggle} aria-expanded={expanded} aria-controls="language-qa-results">
         Language QA · {error ? "unavailable" : live?.state ?? "starting"}
@@ -848,6 +861,10 @@
 
 <style>
   .language-qa { position: fixed; bottom: 40px; right: 16px; z-index: 45; font-size: 12px; }
+  /* Docked: the column is the box; the section fills it and scrolls. */
+  .language-qa.docked { position: static; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .language-qa.docked section { width: auto; max-height: none; flex: 1; min-height: 0; margin: 0; border: 0;
+    border-radius: 0; box-shadow: none; }
   /* The section scrolls; its header and tab bar stay (sticky). Padding lives on
      the parts, not the section, so both sticky rows span the full width. */
   section { width: min(560px, calc(100vw - 32px)); max-height: min(580px, calc(100vh - 150px)); overflow: auto; padding: 0; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 24px #0003; margin-bottom: 8px; }
