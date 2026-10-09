@@ -17877,3 +17877,41 @@ npm run check 0/0, npm run test 655 passed, npm run build ok.
 **Not done.** The desktop app was not run. The Hindi file's hunspell source
 is GPL-3, the same licence as Bridge, but a maintainer should confirm it with
 the OV licence question in NOTICE.md before an installer ships.
+
+## 2026-10-09 — The panel rail, drag-to-close columns, the stricter verse ✓, the ⇄ colours (#236)
+
+Benz asked for four things and answered four questions first (AskUserQuestion):
+several panels open side by side rather than one shared sidebar; close by
+dragging a column's left edge to the right; Settings keeps its dialog; the
+verse ✓ needs complete alignment.
+
+**Rail and columns (bb5b0a6).** A 34px strip at the far right (Review,
+Language QA, Reference, Settings). The three panels are columns, left to right
+Reference, Language QA, Review, each with its own persisted width
+(`bridge.editor.sidePanels.v1`, carrying over the old fold, toggle and width),
+resized from its left edge and closed by dragging that edge past its minimum
+minus 60px ("Release to close"). The toolbar now spans every column, so the
+panels start level with the text (the earlier height fix still holds). Review
+and Language QA are hidden, not unmounted, when closed: the review panel runs
+the selected verse's live checks and Language QA owns F8, and an unmounted
+review panel would silently stop checking. On the editor screen Language QA
+is docked in its column; the other screens keep the floating panel.
+
+**The ✓ (894b4a8).** Checked, nothing open (Greek Room, tN/tW and the
+alignment check, drawn Language QA marks), and word alignment complete; the
+verse number's title says what is missing. Export and the status bar's
+"Approved" keep their own rule (checked and no open findings), so the two
+counts differ by design and alignment does not gate export.
+
+**The ⇄ colours (894b4a8).** Already coded; grey because nearly nothing is
+aligned. Read with the real engine on copies: GEN complete 0 / partial 3 /
+invalid 5 / untouched 1,525; PSA 2 / 4 / 1 / 2,454; 1CO 0 / 2 / 0 / 435. The
+states now also get a background tint.
+
+**Verified.** npm run check 0/0; npm run test 667 passed (52 files) with new
+tests for SidePanel (keys, drag, 45% cap, drag-to-close and reopen width,
+hidden-not-removed), SideRail (toggles, Settings, badges), docked Language QA
+(no launcher, Close and the status-bar button toggle the column), the ✓ rule
+and its titles, the glyph class; npm run build ok. Not run: the desktop app.
+The layout change is the largest of the session, and nothing in jsdom shows
+how the columns sit at 1366×768.
