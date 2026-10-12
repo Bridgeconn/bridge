@@ -250,6 +250,102 @@ class AppSettings:
         self.data['triage_hide_threshold'] = 0 if number <= 0 else max(50, min(100, number))
         self.save_sanitized()
 
+    @property
+    def language_qa_inline_precision(self) -> int:
+        """Settings > Language QA: draw an indic-qa finding in the verse text only
+        when its rule's measured reviewer precision is at least this (0-100).
+        A rule nobody has labelled always passes. 0, the default, draws every
+        one. A reviewer's tolerance, like triage_hide_threshold, so app-level
+        rather than per project (language_qa_drawn)."""
+        try:
+            value = int(self.data.get('language_qa_inline_precision', 0))
+        except (TypeError, ValueError):
+            return 0
+        return max(0, min(100, value))
+
+    @language_qa_inline_precision.setter
+    def language_qa_inline_precision(self, value: Any) -> None:
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            number = 0
+        self.data['language_qa_inline_precision'] = max(0, min(100, number))
+        self.save_sanitized()
+
+    @property
+    def language_qa_inline_confidence(self) -> str:
+        """The lowest rule confidence drawn in the text: "low" (the default:
+        every one), "medium" or "high"."""
+        value = str(self.data.get('language_qa_inline_confidence') or 'low').lower()
+        return value if value in ('low', 'medium', 'high') else 'low'
+
+    @language_qa_inline_confidence.setter
+    def language_qa_inline_confidence(self, value: Any) -> None:
+        text = str(value or 'low').lower()
+        self.data['language_qa_inline_confidence'] = text if text in ('low', 'medium', 'high') else 'low'
+        self.save_sanitized()
+
+    @property
+    def language_qa_learned_fixes(self) -> bool:
+        """Settings > Language QA: learn a word the reviewer replaced and offer
+        the same change where it recurs. On by default."""
+        return bool(self.data.get('language_qa_learned_fixes', True))
+
+    @language_qa_learned_fixes.setter
+    def language_qa_learned_fixes(self, value: Any) -> None:
+        self.data['language_qa_learned_fixes'] = bool(value)
+        self.save_sanitized()
+
+    @property
+    def language_qa_reference_dirs(self) -> dict[str, str]:
+        """Settings > Language QA: the reference Bible (an Old Version) per
+        Language QA pack, e.g. {"hi-irv": "D:/OV Hindi"}. A folder of USFM books
+        or an indic-qa dictionary folder with verses.tsv. Nothing OV-derived is
+        bundled for these languages, so the reviewer chooses it."""
+        value = self.data.get('language_qa_reference_dirs') or {}
+        if not isinstance(value, dict):
+            return {}
+        return {str(k): str(v) for k, v in value.items() if isinstance(k, str) and isinstance(v, str) and v}
+
+    @language_qa_reference_dirs.setter
+    def language_qa_reference_dirs(self, value: dict[str, str]) -> None:
+        self.data['language_qa_reference_dirs'] = {str(k): str(v) for k, v in (value or {}).items() if v}
+        self.save_sanitized()
+
+    @property
+    def language_qa_related_words(self) -> bool:
+        """Offer related words (OV/IRV equivalents and same-stem forms). On by default."""
+        return bool(self.data.get('language_qa_related_words', True))
+
+    @language_qa_related_words.setter
+    def language_qa_related_words(self, value: Any) -> None:
+        self.data['language_qa_related_words'] = bool(value)
+        self.save_sanitized()
+
+    # Places the reviewer keeps (indic-qa's bookmarks and recent chapters):
+    # app-level, so they follow the reviewer across projects. Each is
+    # {collection, book, chapter, verse, label, ts}; the dispatcher validates.
+
+    @property
+    def bookmarks(self) -> list[dict[str, Any]]:
+        value = self.data.get('bookmarks') or []
+        return [dict(p) for p in value if isinstance(p, dict)] if isinstance(value, list) else []
+
+    @bookmarks.setter
+    def bookmarks(self, value: list[dict[str, Any]]) -> None:
+        self.data['bookmarks'] = list(value)
+        self.save_sanitized()
+
+    @property
+    def recent_chapters(self) -> list[dict[str, Any]]:
+        value = self.data.get('recent_chapters') or []
+        return [dict(p) for p in value if isinstance(p, dict)] if isinstance(value, list) else []
+
+    @recent_chapters.setter
+    def recent_chapters(self, value: list[dict[str, Any]]) -> None:
+        self.data['recent_chapters'] = list(value)
+        self.save_sanitized()
+
     @staticmethod
     def _seed_reviewer_name() -> str:
         """A brand-new profile has never had a reviewer name typed in.

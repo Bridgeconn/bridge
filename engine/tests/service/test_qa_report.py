@@ -21,7 +21,7 @@ from tc_ai_bridge.qa_report import (
     stable_finding_id, summarize_rows, write_report_rows,
 )
 
-from .test_bridge_service import _write_minimal_book, call, fixture_project, two_book_collection, wait_for_job  # noqa: F401
+from tests.support.projects import _write_minimal_book, call, fixture_project, two_book_collection, wait_for_job  # noqa: F401
 from tests.support.waits import job_timeout
 
 
@@ -85,7 +85,7 @@ def test_check_job_leaves_a_finding_snapshot_the_report_reads(fixture_project, m
     engine = BridgeEngine()
     call(engine, "project.open", {"path": str(fixture_project)})
 
-    def fake_checks(project, chapter, verse, checks):
+    def fake_checks(project, chapter, verse, checks, **_kwargs):
         return [QaFinding(
             id=_stable_finding_id(chapter=chapter, verse=verse, engine="wildebeest",
                                   check_type="wildebeest.script.mixed", disambiguator="0:3:ஆதி"),

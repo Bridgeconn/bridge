@@ -45,7 +45,16 @@ from typing import Any, Callable
 SCOPES = ("word-in-book", "word-in-project", "rule-in-book", "rule-in-project")
 PROVENANCES = ("curated", "explicit", "learned")
 STATES = ("active", "removed", "undone")
-LISTS = ("properNouns",)
+# properNouns feeds the rule pack's abstains inside the (cached) verse scan.
+# projectWords (indic-qa's "Add to dictionary", 2026-10-07) is a word the
+# project says is spelt right: applied after the scan, like a word entry, so it
+# never touches the cache key, and never written to a dictionary file.
+LISTS = ("properNouns", "projectWords")
+# The finding categories a project word silences: the ones about how a word is
+# spelt. Grammar and sandhi leads are about a pair of words, so they stay.
+PROJECT_WORD_CATEGORIES = frozenset({"typo", "name", "consistency", "learned"})
+# The lists that feed the rule pack inside the verse scan (list_fingerprint).
+SCAN_LISTS = frozenset({"housestyle.properNouns"})
 
 # The learner's thresholds, in one place (docs/LANGUAGE_QA_HOUSESTYLE.md).
 LEARN_IGNORES = 3              # ignores of one (rule, word) in a book, none Used since -> learned word-in-book
@@ -91,12 +100,8 @@ def validate_entry(entry: dict[str, Any]) -> dict[str, Any]:
             "key": entry_key(scope, rule_id, word, list_name)}
 
 
-PACKS_DIR = Path(__file__).resolve().parent / "language_packs"
-
-
-@functools.lru_cache(maxsize=4)
-def _seed(pack: str) -> tuple[dict[str, Any], ...]:
-    path = PACKS_DIR / pack / "housestyle-seed.json"
+@functools.lru_cache(maxsize=8)
+def _seed_from(path: Path) -> tuple[dict[str, Any], ...]:
     if not path.is_file():
         return ()
     data = json.loads(path.read_text(encoding="utf-8-sig"))
@@ -104,9 +109,10 @@ def _seed(pack: str) -> tuple[dict[str, Any], ...]:
                  for entry in data.get("entries") or [] if isinstance(entry, dict))
 
 
-def bundled_seed(pack: str = "ta-irv") -> list[dict[str, Any]]:
+def bundled_seed(pack: str) -> list[dict[str, Any]]:
     """The pack's bundled house-style seed, as validated entries marked `seed`."""
-    return [dict(entry) for entry in _seed(pack)]
+    from .language_packs.registry import packs_dir
+    return [dict(entry) for entry in _seed_from(packs_dir() / pack / "housestyle-seed.json")]
 
 
 def with_seed(entries: list[dict[str, Any]], seed: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -127,14 +133,18 @@ class HouseStyle:
     def list_fingerprint(self) -> str:
         """The lists feed the rule pack inside the (cached) verse scan, so they
         join its cache key. Word and rule entries are applied after the scan."""
-        return hashlib.sha1(json.dumps({k: sorted(v) for k, v in sorted(self.lists.items())},
+        return hashlib.sha1(json.dumps({k: sorted(v) for k, v in sorted(self.lists.items()) if k in SCAN_LISTS},
                                        ensure_ascii=False).encode("utf-8")).hexdigest()
 
     def suppresses(self, finding: dict[str, Any]) -> bool:
         rule_id = str(finding.get("ruleId") or "")
         if rule_id in self.disabled_rules:
             return True
-        return nfc(str(finding.get("originalText") or "")) in self.hidden_words.get(rule_id, ())
+        word = nfc(str(finding.get("originalText") or ""))
+        if word in self.hidden_words.get(rule_id, ()):
+            return True
+        return (str(finding.get("category") or "") in PROJECT_WORD_CATEGORIES
+                and word in self.lists.get("housestyle.projectWords", ()))
 
     def rank(self, finding: dict[str, Any]) -> dict[str, Any]:
         """A learned preference ranks an existing suggestion first. It never
@@ -273,7 +283,7 @@ class HouseStyleLearner:
             return out
 
 
-NAME_MAX_DISTANCE = 1.0   # tamil_distance from an approved name
+NAME_MAX_DISTANCE = 1.0   # confusion-set distance from an approved name
 # A short name (at most this many grapheme clusters) sits one cluster from many
 # ordinary words -- சேத்து from காத்து, பூத்து, தைத்து -- so only a single typist
 # confusion (the lexicon's MAX_DISTANCE) counts as a variant of it (2026-09-28).
@@ -284,18 +294,20 @@ NAME_RARE_BOOK_MAX = 2    # a spelling this rare in the book, near an approved n
 
 def name_findings(book: str, counts: dict[str, int], first_seen: dict[str, tuple], names: frozenset,
                   *, rule_fields: Any, suggestion: Any, rule_version: str,
-                  corpus_count: Callable[[str], int] | None = None) -> list[dict[str, Any]]:
+                  corpus_count: Callable[[str], int] | None = None,
+                  distance: Callable[[str, str], float]) -> list[dict[str, Any]]:
     """`name.minority-spelling` (layered-rules 6.2): a word rare in the book
     that is within NAME_MAX_DISTANCE of a proper noun the project approved
     (house-style list properNouns), suggested as that name. The approved list
     is the curated source; the names check only proposes candidates for it.
+    `distance` is the pack's confusion-set distance (indic/confusion.py).
 
     A word the corpus uses commonly (`corpus_count` >= COMMON_MIN) is never a
     misspelt name: a short name sits one letter from ordinary words (சேத்து
     against காத்து, செத்து, சேர்த்து, பத்து, சொத்து), and those are words, not
     variants. The same rule the lexicon keeps: a common word is never marked wrong."""
     from .language_packs.lexicon import COMMON_MIN, deletion_keys
-    from .language_packs.tamil_distance import clusters, tamil_distance
+    from .language_packs.indic.confusion import clusters
     if not names:
         return []
     buckets: dict[str, set[str]] = {}
@@ -309,7 +321,7 @@ def name_findings(book: str, counts: dict[str, int], first_seen: dict[str, tuple
         if corpus_count is not None and corpus_count(word) >= COMMON_MIN:
             continue
         near = set().union(*(buckets.get(k, set()) for k in {word, *deletion_keys(word)}))
-        ranked = sorted((tamil_distance(word, name), -counts.get(name, 0), name) for name in near)
+        ranked = sorted((distance(word, name), -counts.get(name, 0), name) for name in near)
         ranked = [r for r in ranked if r[0] <= (NAME_SHORT_MAX_DISTANCE if len(clusters(r[2])) <= NAME_SHORT_CLUSTERS
                                                 else NAME_MAX_DISTANCE)]
         if not ranked:

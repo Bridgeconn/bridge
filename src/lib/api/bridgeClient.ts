@@ -1,5 +1,9 @@
 import type {
   LanguageQaDecisionIssue, LanguageQaHistory, LanguageQaInline, LanguageQaStatus, LanguageQaVerse, LanguageQaView,
+  LearnedFix, LearnedFixesResponse, VerseEditLearned,
+  BatchUndoResult, LanguageQaScope, ScopeAcceptResult, ScopeFindResult, ScopeIgnoreResult,
+  FlagInput, FlagStatus, FlagType, LanguageQaFlag, BookWordsResult, OccurrencesResult,
+  ReferenceChapter, RelatedWordsResult, CheckerSettings, CheckerSettingsPatch, CheckerSettingsUnavailable,
 } from "../types/languageQa";
 import type { CollectionQaSnapshot } from "../types/collectionQa";
 import type {
@@ -33,6 +37,13 @@ import type {
   AlignmentStatusResponse,
   CrossVerseLinkResult,
   CrossVerseAiProposalResult,
+  NullDecisionResult,
+  NullReason,
+  NullSide,
+  AutoAlignWindowResult,
+  AutoAlignVerdict,
+  AutoAlignJobStatus,
+  AutoAlignEstimate,
   CrossVerseProposalResult,
   BookProgressEntry,
   CheckJobSnapshot,
@@ -196,6 +207,26 @@ export type EngineMethod =
   | "languageQa.inline"
   | "languageQa.history"
   | "languageQa.verse"
+  | "languageQa.setPack"
+  | "languageQa.checkerSettings.get"
+  | "languageQa.checkerSettings.set"
+  | "languageQa.learned.list"
+  | "languageQa.learned.forget"
+  | "languageQa.learned.restore"
+  | "languageQa.scopeFind"
+  | "languageQa.scopeApply"
+  | "languageQa.batchUndo"
+  | "languageQa.batches"
+  | "languageQa.flags.list"
+  | "languageQa.flags.add"
+  | "languageQa.flags.update"
+  | "languageQa.flags.delete"
+  | "languageQa.words.add"
+  | "languageQa.words.list"
+  | "languageQa.bookWords"
+  | "languageQa.occurrences"
+  | "languageQa.reference"
+  | "languageQa.related"
   | "housestyle.list"
   | "housestyle.nameSuggestions"
   | "housestyle.record"
@@ -217,6 +248,16 @@ export type EngineMethod =
   | "alignment.crossVerse.link"
   | "alignment.crossVerse.propose"
   | "alignment.crossVerse.unlink"
+  | "alignment.null.set"
+  | "alignment.null.clear"
+  | "alignment.window.autoAlign"
+  | "alignment.autoAlign.revert"
+  | "alignment.autoAlign.verdict"
+  | "alignment.autoAlign.start"
+  | "alignment.autoAlign.status"
+  | "alignment.autoAlign.cancel"
+  | "alignment.autoAlign.retry"
+  | "alignment.autoAlign.estimate"
   | "alignment.gapScan"
   | "alignment.get"
   | "alignment.getRange"
@@ -298,6 +339,7 @@ export type EngineMethod =
   | "triage.status"
   | "verse.decide"
   | "verse.edit"
+  | "verse.history"
   | "verse.get"
   | "verse.runChecks";
 
@@ -318,8 +360,13 @@ export const bridge = {
    * re-checking, or those marked as false positives. */
   languageQaStatus(
     projectPath: string, offset = 0, limit = 0, view: LanguageQaView = "findings",
+    filters: { chapter?: string; categories?: string[] } = {},
   ): Promise<LanguageQaStatus> {
-    return call("languageQa.status", { projectPath, offset, limit, view });
+    // Filters are sent only when set: the panel's scope switch and kind legend.
+    const params: Record<string, unknown> = { projectPath, offset, limit, view };
+    if (filters.chapter !== undefined) params.chapter = filters.chapter;
+    if (filters.categories !== undefined) params.categories = filters.categories;
+    return call("languageQa.status", params);
   },
 
   /** Every decision recorded on this verse's Language QA findings (or one of
@@ -332,6 +379,131 @@ export const bridge = {
 
   languageQaPause(projectPath: string, paused: boolean): Promise<LanguageQaStatus> {
     return call("languageQa.pause", { projectPath, paused });
+  },
+
+  /** The project's Language QA setting (manifest language_qa.pack): "auto",
+   * "off" or a registered pack name. The engine rebinds and starts a pass. */
+  languageQaSetPack(projectPath: string, pack: string): Promise<LanguageQaStatus> {
+    return call("languageQa.setPack", { projectPath, pack });
+  },
+
+  /** The collection's learned fixes (a word the reviewer replaced, offered
+   * again where it recurs in any book), enabled or not, most used first. */
+  languageQaLearnedList(projectPath: string): Promise<LearnedFixesResponse> {
+    return call("languageQa.learned.list", { projectPath });
+  },
+
+  /** Stop offering a learned fix. The fix is kept and can be restored. */
+  languageQaLearnedForget(projectPath: string, old: string, newWord: string): Promise<{ fix: LearnedFix }> {
+    return call("languageQa.learned.forget", { projectPath, old, new: newWord });
+  },
+
+  languageQaLearnedRestore(projectPath: string, old: string, newWord: string): Promise<{ fix: LearnedFix }> {
+    return call("languageQa.learned.restore", { projectPath, old, new: newWord });
+  },
+
+  /** Where the same finding is in the verse, chapter or book: read-only, for
+   * the confirmation shown before a scoped correction. */
+  languageQaScopeFind(
+    projectPath: string, chapter: string, verse: string, findingId: string, scope: LanguageQaScope,
+    suggestion?: string,
+  ): Promise<ScopeFindResult> {
+    const params: Record<string, unknown> = { projectPath, chapter, verse, findingId, scope };
+    if (suggestion !== undefined) params.suggestion = suggestion;
+    return call("languageQa.scopeFind", params);
+  },
+
+  /** Accept the suggestion everywhere in the scope: one journalled edit per
+   * verse, grouped in one batch for Undo. Verses changed since the check are
+   * skipped and reported. */
+  languageQaScopeAccept(
+    projectPath: string, chapter: string, verse: string, findingId: string, scope: LanguageQaScope,
+    suggestion?: string,
+  ): Promise<ScopeAcceptResult> {
+    const params: Record<string, unknown> = { projectPath, action: "accept", chapter, verse, findingId, scope };
+    if (suggestion !== undefined) params.suggestion = suggestion;
+    return call("languageQa.scopeApply", params);
+  },
+
+  /** Ignore the same finding everywhere in the scope (a book-wide word is
+   * also recorded as house style). Never writes Scripture. */
+  languageQaScopeIgnore(
+    projectPath: string, chapter: string, verse: string, findingId: string, scope: LanguageQaScope,
+  ): Promise<ScopeIgnoreResult> {
+    return call("languageQa.scopeApply", { projectPath, action: "ignore", chapter, verse, findingId, scope });
+  },
+
+  /** Add words to the project word list (house style, list "projectWords"):
+   * they stop being reported as spelling problems. Never a dictionary write. */
+  languageQaWordsAdd(projectPath: string, words: string[], scope: "book" | "project" = "book"):
+    Promise<{ entries: HouseStyleEntry[]; count: number }> {
+    return call("languageQa.words.add", { projectPath, words, scope });
+  },
+
+  languageQaWordsList(projectPath: string): Promise<{ added: HouseStyleEntry[] }> {
+    return call("languageQa.words.list", { projectPath });
+  },
+
+  /** The book's words outside the dictionary, most frequent first (last pass). */
+  languageQaBookWords(projectPath: string, minCount = 1): Promise<BookWordsResult> {
+    return call("languageQa.bookWords", { projectPath, minCount });
+  },
+
+  /** Where a word occurs: "irv" in this book's verse text, "ov" in the reference text. */
+  /** `match: "text"` is "Search in this book": any run of the text, not only
+   * a whole word (the IRV only). */
+  languageQaOccurrences(projectPath: string, word: string, source: "irv" | "ov" = "irv", limit = 200,
+    match: "word" | "text" = "word"): Promise<OccurrencesResult> {
+    return call("languageQa.occurrences", match === "text"
+      ? { projectPath, word, source, limit, match } : { projectPath, word, source, limit });
+  },
+
+  /** The indic-qa checker's settings for this collection (the web app's Settings dialog). */
+  languageQaCheckerSettingsGet(projectPath: string): Promise<CheckerSettings | CheckerSettingsUnavailable> {
+    return call("languageQa.checkerSettings.get", { projectPath });
+  },
+
+  /** Save the changed sections to every book of the collection; a pass follows. */
+  languageQaCheckerSettingsSet(projectPath: string, patch: CheckerSettingsPatch): Promise<CheckerSettings> {
+    return call("languageQa.checkerSettings.set", { projectPath, ...patch });
+  },
+
+  /** One chapter of the reference Bible; `ready` is false while it loads. */
+  languageQaReference(projectPath: string, chapter: string): Promise<ReferenceChapter> {
+    return call("languageQa.reference", { projectPath, chapter });
+  },
+
+  /** OV/IRV equivalents and same-stem forms; `ready` is false while the index builds. */
+  languageQaRelated(projectPath: string, word: string): Promise<RelatedWordsResult> {
+    return call("languageQa.related", { projectPath, word });
+  },
+
+  /** This book's flags (one chapter's when given), in reading order. */
+  languageQaFlagsList(projectPath: string, chapter?: string): Promise<{ flags: LanguageQaFlag[] }> {
+    const params: Record<string, unknown> = { projectPath };
+    if (chapter !== undefined) params.chapter = chapter;
+    return call("languageQa.flags.list", params);
+  },
+
+  languageQaFlagAdd(projectPath: string, flag: FlagInput): Promise<{ flag: LanguageQaFlag; learned?: { old: string; new: string } }> {
+    return call("languageQa.flags.add", { projectPath, flag });
+  },
+
+  languageQaFlagUpdate(
+    projectPath: string, flagId: string,
+    patch: { status?: FlagStatus; note?: string; type?: FlagType; suggested?: string | null },
+  ): Promise<{ flag: LanguageQaFlag }> {
+    return call("languageQa.flags.update", { projectPath, flagId, patch });
+  },
+
+  /** Delete is a status: the flag's history is kept. */
+  languageQaFlagDelete(projectPath: string, flagId: string): Promise<{ flag: LanguageQaFlag }> {
+    return call("languageQa.flags.delete", { projectPath, flagId });
+  },
+
+  /** Undo a scoped correction: verses changed since are left and reported. */
+  languageQaBatchUndo(projectPath: string, batchId: string): Promise<BatchUndoResult> {
+    return call("languageQa.batchUndo", { projectPath, batchId });
   },
 
   /** Every inline-rule finding for `chapter` (the whole book when omitted),
@@ -380,6 +552,11 @@ export const bridge = {
   },
 
   async pickProjectFolder(): Promise<string | null> {
+    return invoke<string | null>("pick_project_folder");
+  },
+
+  /** Any folder (the same native dialog): a reference Bible's folder. */
+  async pickFolder(): Promise<string | null> {
     return invoke<string | null>("pick_project_folder");
   },
 
@@ -487,8 +664,16 @@ export const bridge = {
     chapter: string;
     verses: Record<string, VerseData>;
     headings: Record<string, VerseHeading[]>;
+    /** verse -> recorded edits (verse.history); absent from an older engine. */
+    editCounts?: Record<string, number>;
   }> {
     return call("chapter.verseData", { chapter });
+  },
+
+  /** Recorded edits, newest first: of one verse, a chapter, or the open book. */
+  verseHistory(params: { chapter?: string; verse?: string; limit?: number } = {}): Promise<
+    import("../types/finding").VerseHistory> {
+    return call("verse.history", params);
   },
 
   getVerse(chapter: string, verse: string): Promise<VerseData> {
@@ -507,8 +692,10 @@ export const bridge = {
     return call("checks.start", { scope, chapters, checks });
   },
 
-  checkStatus(jobId: string): Promise<CheckJobSnapshot> {
-    return call("checks.status", { jobId });
+  /** `since`: the previous snapshot's resultsCursor, to receive only the
+   *  verses finished after it (#229). Omitted: every verse. */
+  checkStatus(jobId: string, since?: number): Promise<CheckJobSnapshot> {
+    return call("checks.status", since === undefined ? { jobId } : { jobId, since });
   },
 
   cancelChecks(jobId: string): Promise<CheckJobSnapshot> {
@@ -531,6 +718,11 @@ export const bridge = {
     issueResolutionsNeedingRecheck: number;
     /** What the reader shows for the saved text (#91); absent from an older engine. */
     display?: import("../types/finding").VerseDisplay;
+    /** Marker problems in the saved text; never blocking (the save happened). */
+    warnings?: string[];
+    /** Set when the edit replaced exactly one word (a learned fix), or typed a
+     * learned replacement back (`action: "retracted"`). */
+    learned?: VerseEditLearned;
   }> {
     return call("verse.edit", { chapter, verse, newText });
   },
@@ -640,8 +832,80 @@ export const bridge = {
     return call("alignment.crossVerse.link", { source, target, origin });
   },
 
+  /** #217: one composite group -- 1:N, N:1 or N:M -- between one source verse
+   *  and one other verse, written as a unit. */
+  crossVerseLinkGroup(
+    sources: { chapter: string; verse: string; topId: string }[],
+    targets: { chapter: string; verse: string; bottomId: string }[],
+    origin = "",
+  ): Promise<CrossVerseLinkResult> {
+    return call("alignment.crossVerse.link", { sources, targets, origin });
+  },
+
+  /** Removes the link's whole group (#217): a composite group is one decision. */
   crossVerseUnlink(linkId: string): Promise<CrossVerseLinkResult> {
     return call("alignment.crossVerse.unlink", { linkId });
+  },
+
+  crossVerseUnlinkGroup(groupId: string): Promise<CrossVerseLinkResult> {
+    return call("alignment.crossVerse.unlink", { groupId });
+  },
+
+  /** #216: record that a word has no counterpart, for a reason. Refused when
+   *  the word is already aligned or linked: one token, one home. */
+  nullSet(
+    chapter: string, verse: string, side: NullSide, id: string, reason: NullReason, note = "",
+  ): Promise<NullDecisionResult> {
+    return call("alignment.null.set", { chapter, verse, side, id, reason, note });
+  },
+
+  nullClear(decisionId: string): Promise<NullDecisionResult> {
+    return call("alignment.null.clear", { decisionId });
+  },
+
+  /** #219: ask the window twice and write what both passes agree on. Sends the
+   *  window's words to the configured provider; returns `unavailable` without
+   *  a key. Never called on open, import or check. */
+  autoAlignWindow(chapter: string, verses: string[], apply = true): Promise<AutoAlignWindowResult> {
+    return call("alignment.window.autoAlign", { chapter, verses, apply });
+  },
+
+  /** Undo what the last automatic pass wrote in one verse, where it is still
+   *  exactly as written; anything a reviewer changed since is `skipped`. */
+  autoAlignRevert(chapter: string, verse: string): Promise<{
+    chapter: string; verse: string; skipped: string[]; context: AlignmentContext;
+  }> {
+    return call("alignment.autoAlign.revert", { chapter, verse });
+  },
+
+  autoAlignVerdict(chapter: string, verse: string): Promise<{ chapter: string; verse: string; verdict: AutoAlignVerdict | null }> {
+    return call("alignment.autoAlign.verdict", { chapter, verse });
+  },
+
+  /** #221: what aligning a chapter (or the book) would cost, worked out
+   *  offline. Shown before the job is started. */
+  autoAlignEstimate(scope: "chapter" | "book", chapters: string[] = []): Promise<AutoAlignEstimate> {
+    return call("alignment.autoAlign.estimate", { scope, chapters });
+  },
+
+  /** Start the background job; returns its first snapshot, or `unavailable`
+   *  without a key. */
+  autoAlignStart(scope: "chapter" | "book", chapters: string[] = [], apply = true): Promise<AutoAlignJobStatus & {
+    unavailable?: { reason: string; message: string } | null;
+  }> {
+    return call("alignment.autoAlign.start", { scope, chapters, apply });
+  },
+
+  autoAlignStatus(jobId = ""): Promise<AutoAlignJobStatus> {
+    return call("alignment.autoAlign.status", { jobId });
+  },
+
+  autoAlignCancel(jobId = ""): Promise<AutoAlignJobStatus> {
+    return call("alignment.autoAlign.cancel", { jobId });
+  },
+
+  autoAlignRetry(jobId: string): Promise<AutoAlignJobStatus> {
+    return call("alignment.autoAlign.retry", { jobId });
   },
 
   getLexiconEntry(strong: string, morph: string): Promise<LexiconEntryResponse> {

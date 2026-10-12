@@ -1,6 +1,6 @@
 [project]
 name = "bridge-engine"
-version = "0.13.0"
+version = "0.14.0"
 description = "Bridge sidecar: tc_ai_bridge business logic + Greek Room QA, one protocol"
 requires-python = ">=3.11"
 dependencies = [
@@ -42,6 +42,9 @@ dev = [
     # workers -- separate interpreters -- do not share. See #74.
     "pytest-xdist>=3.5",
     "pyinstaller>=6.0",
+    # Reads indic-qa's reviewer workbooks (scripts/import_indic_qa_labels.py).
+    # Tooling only: the engine never imports it, so the frozen build lacks it.
+    "openpyxl>=3.1",
 ]
 # Optional, not a hard dependency: the real PyPI package name is
 # "wildebeest-nlp" (NOT "wildebeest" — that name belongs to an unrelated
@@ -80,6 +83,7 @@ markers = [
     "resources: reads the bundled engine/resources trees (original-language packs, translationHelps)",
     "stage3db: needs the gitignored Stage 3 semantic-source SQLite (a release asset, see ci.yml)",
     "external: imports scripts/*.py or reads schemas/** from outside engine/",
+    "packs: validates a shipped Language QA pack (tests/language_packs/test_packs.py); `-m 'not packs'` skips them",
 ]
 
 [build-system]

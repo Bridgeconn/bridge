@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 
+from . import check_timing
 from .models import QAIssue, VerseAlignment
 from .tc_project import TranslationCoreProject
 from .plugins import PluginRegistry, ProjectLanguageContext
@@ -43,25 +44,28 @@ def alignment_integrity_checks(verse: VerseAlignment, target_text: str = '', tar
 
 
 def target_editorial_checks(text: str, language: ProjectLanguageContext | None = None) -> list[QAIssue]:
+    # Repeated spaces and zero-width/BOM characters were checked here too
+    # ({TA|LANG}_DOUBLE_SPACE, {TA|LANG}_HIDDEN_CHAR) until #234. Language QA
+    # owns them now (spacing.extra, unicode.invisible): it runs for every pack,
+    # is cached per verse, draws inline and offers the fix, and one character
+    # no longer makes three findings with three decisions. The codes stay known
+    # to _categorize_qaissue for findings recorded before.
     issues: list[QAIssue] = []
-    lang = language.target_name if language else 'Tamil'
     prefix = 'TA' if (language is None or language.target_id == 'ta') else 'LANG'
-    plain = strip_usfm(text)
-    if '  ' in plain:
-        issues.append(QAIssue(f'{prefix}_DOUBLE_SPACE', 'editorial', 'Repeated spaces', f'The {lang} verse contains repeated spaces.'))
     tokens = whitespace_tokens(text)
     for a, b in zip(tokens, tokens[1:]):
         if a == b:
             issues.append(QAIssue(f'{prefix}_REPEAT_WORD', 'medium', 'Consecutive repeated word', f'“{a}” occurs twice consecutively. Verify that the repetition is intentional.'))
             break
-    if '\u200b' in text or '\ufeff' in text:
-        issues.append(QAIssue(f'{prefix}_HIDDEN_CHAR', 'editorial', 'Hidden Unicode character', 'The verse contains a zero-width/BOM character that can cause publishing or tokenization problems.'))
     return issues
 
 
 def translationcore_check_issues(project: TranslationCoreProject, chapter: str, verse: str) -> list[QAIssue]:
     issues: list[QAIssue] = []
     checks = project.checks_for_verse(chapter, verse)
+    # The verse's selections, invalidations, comments and verse edits, read
+    # once: every check's staleness is answered from them (#240).
+    states = project.check_state_for_verse(chapter, verse)
     for entry in checks:
         ctx = entry.get('contextId', {})
         tool = str(ctx.get('tool', 'translationCore'))
@@ -70,7 +74,7 @@ def translationcore_check_issues(project: TranslationCoreProject, chapter: str, 
         selection = entry.get('selections', False)
         nothing = bool(entry.get('nothingToSelect', False))
         invalid = bool(entry.get('invalidated', False))
-        stale = project.check_staleness(chapter, verse, check_id, tool, group) == 'stale'
+        stale = project.check_staleness(chapter, verse, check_id, tool, group, state=states) == 'stale'
         if invalid or stale:
             reason = 'invalidated' if invalid else 'stale after a later Scripture edit'
             issues.append(QAIssue('TC_INVALIDATED' if invalid else 'TC_STALE_AFTER_EDIT', 'high', f'{tool}: recheck required', f'{group} / {check_id} is {reason}.', 'translationCore', check_id, group))
@@ -81,7 +85,6 @@ def translationcore_check_issues(project: TranslationCoreProject, chapter: str, 
     wa_state = project.word_alignment_state(chapter, verse)
     if wa_state == 'invalid':
         issues.append(QAIssue('WA_INVALID', 'high', 'Word Alignment recheck required', 'translationCore marks Word Alignment invalid after a target-text edit.', 'translationCore'))
-    states = project.check_state_for_verse(chapter, verse)
     if states.get('comments'):
         issues.append(QAIssue('TC_COMMENTS', 'info', 'Reviewer comments present', f'{len(states["comments"])} translationCore comment(s) exist for this verse.', 'translationCore'))
     if states.get('verseEdits'):
@@ -112,12 +115,19 @@ def usfm_checks(project: TranslationCoreProject, chapter: str, verse: str) -> li
 
 
 def run_local_qa(project: TranslationCoreProject, chapter: str, verse: str, alignment: VerseAlignment) -> list[QAIssue]:
-    text = project.target_verse_text(chapter, verse)
-    language = PluginRegistry().detect_project(project, alignment, text)
+    timings = check_timing.current()
+    with timings.step("local.read_text"):
+        text = project.target_verse_text(chapter, verse)
+    with timings.step("local.detect_language"):
+        language = PluginRegistry().detect_project(project, alignment, text)
     issues = []
-    issues += alignment_integrity_checks(alignment, text, language.target_name, language.source_name)
-    issues += translationcore_check_issues(project, chapter, verse)
-    issues += target_editorial_checks(text, language)
-    issues += usfm_checks(project, chapter, verse)
+    with timings.step("local.alignment_integrity"):
+        issues += alignment_integrity_checks(alignment, text, language.target_name, language.source_name)
+    with timings.step("local.tc_checks"):
+        issues += translationcore_check_issues(project, chapter, verse)
+    with timings.step("local.editorial"):
+        issues += target_editorial_checks(text, language)
+    with timings.step("local.usfm"):
+        issues += usfm_checks(project, chapter, verse)
     order = {'critical': 0, 'high': 1, 'medium': 2, 'editorial': 3, 'info': 4}
     return sorted(issues, key=lambda x: (order.get(x.severity, 9), x.title))

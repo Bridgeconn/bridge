@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from . import ai_http
 from .alignment_engine import apply_proposal, make_inventory, validate_proposal, validate_preparation_proposal
 from .alignment_reliability import compile_link_proposal
 from .models import AICheckReview, QAIssue, VerseAlignment
@@ -84,7 +85,7 @@ Transport = Callable[[str, dict[str, str], bytes, float], tuple[int, bytes]]
 def default_transport(url: str, headers: dict[str, str], body: bytes, timeout: float) -> tuple[int, bytes]:
     req = urllib.request.Request(url, data=body, headers=headers, method='POST')
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as response:
+        with ai_http.urlopen(req, timeout) as response:
             return response.status, response.read()
     except urllib.error.HTTPError as e:
         return e.code, e.read()
@@ -321,6 +322,17 @@ class OpenAIResponsesClient:
         """
         return self._post_structured(instructions, input_text, 'cross_verse_links', schema)
 
+    def propose_window_alignment(
+        self, instructions: str, input_text: str, schema: dict[str, Any], direction: str,
+    ) -> dict[str, Any]:
+        """One pass of the automatic window alignment (#219). Thin on purpose,
+        like `propose_cross_verse_links`: the prompt, the schema and the
+        agreement rules belong to `alignment_window` / `alignment_agreement`.
+        Structured, so a provider that ignores the schema fails loudly rather
+        than being parsed into a guess."""
+        name = 'window_alignment_' + ''.join(ch if ch.isalnum() else '_' for ch in direction)
+        return self._post_structured(instructions, input_text, name, schema)
+
     def test_connection(self) -> dict[str, Any]:
         """Authenticate the API key and confirm the configured model is accessible without generating tokens."""
         url = f'{self.models_endpoint}/{urllib.parse.quote(self.model, safe="")}'
@@ -329,7 +341,7 @@ class OpenAIResponsesClient:
             'User-Agent': 'translationCore-AI-Bridge/0.9.6',
         }, method='GET')
         try:
-            with urllib.request.urlopen(req, timeout=min(self.timeout, 30.0)) as response:
+            with ai_http.urlopen(req, min(self.timeout, 30.0)) as response:
                 raw = response.read()
                 status = response.status
         except urllib.error.HTTPError as e:

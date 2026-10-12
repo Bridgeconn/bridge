@@ -151,10 +151,26 @@ fn request_timeout_seconds(method: &str) -> u64 {
         | "alignment.crossVerse.aiPropose"
         | "correction.createProposal"
         | "correction.regenerateProposal" => 260,
+        // The automatic window alignment (#219) makes TWO such calls in a row
+        // (source-first, then target-first), then the offline corpus pass and
+        // the writes: twice the single-call class plus headroom.
+        "alignment.window.autoAlign" => 540,
+        // The chapter job's estimate builds every window's real payload
+        // offline -- a whole book is hundreds of windows. The job itself
+        // (alignment.autoAlign.start) only starts a thread and stays
+        // interactive, like status/cancel.
+        "alignment.autoAlign.estimate" => 180,
         // A whole-Bible report payload (tens of thousands of rows) takes a
         // while to serialize and ship over stdio; the export writes it
         // back out. report.status/report.cancel stay interactive.
         "report.get" | "report.export" => 180,
+        // A scoped Language QA correction (indic-qa editor features): one
+        // journalled apply_scripture_edit per verse, each with its backup and
+        // alignment reconcile. A book-wide accept or its undo can touch
+        // hundreds of verses of Genesis; a client-side timeout would leave the
+        // UI unsure what was written while the engine finishes. scopeFind
+        // only reads the last pass, so it stays at the default.
+        "languageQa.scopeApply" | "languageQa.batchUndo" => 600,
         // The book QA report. Measured on Genesis of a real Hindi IRV import
         // (50 chapters, 1533 verses): build_book_report() takes ~113 s, almost
         // all of it project_scan and exception_first_queue doing per-verse
@@ -305,9 +321,16 @@ impl EngineSidecar {
         // preserves that source folder name under the resolved resource
         // root — i.e. the bundled tree lands at resource_dir()/resources,
         // not resource_dir() itself.
-        if let Ok(resources_dir) = app.path().resource_dir() {
-            let resources_dir = resources_dir.join("resources");
-            sidecar_command = sidecar_command.args(["--resources-dir", &resources_dir.to_string_lossy()]);
+        // The Language QA packs (engine/language_packs, declared as
+        // "language_packs/") ship the same way: outside the onefile archive,
+        // loaded lazily by the engine only for the open project's language.
+        if let Ok(resource_root) = app.path().resource_dir() {
+            let resources_dir = resource_root.join("resources");
+            let packs_dir = resource_root.join("language_packs");
+            sidecar_command = sidecar_command.args([
+                "--resources-dir", &resources_dir.to_string_lossy(),
+                "--language-packs-dir", &packs_dir.to_string_lossy(),
+            ]);
         }
 
         let (mut rx, child) = sidecar_command
@@ -541,6 +564,9 @@ mod tests {
         // getting them the wrong way round is silent -- the AI one would die at
         // 30s mid-request, the offline one would hang the UI for four minutes.
         assert_eq!(request_timeout_seconds("alignment.crossVerse.aiPropose"), 260);
+        assert_eq!(request_timeout_seconds("alignment.window.autoAlign"), 540);
+        assert_eq!(request_timeout_seconds("alignment.autoAlign.estimate"), 180);
+        assert_eq!(request_timeout_seconds("alignment.autoAlign.start"), 30);
         assert_eq!(request_timeout_seconds("alignment.crossVerse.propose"), 30);
         assert_eq!(request_timeout_seconds("alignment.crossVerse.link"), 30);
     }
@@ -575,6 +601,16 @@ mod tests {
         assert_eq!(request_timeout_seconds("triage.cancel"), 30);
         assert_eq!(request_timeout_seconds("triage.override"), 30);
         assert_eq!(request_timeout_seconds("triage.results"), 180);
+    }
+
+    #[test]
+    fn a_scoped_language_qa_correction_may_write_a_whole_book_but_finding_it_stays_interactive() {
+        // One journalled edit per verse: a book-wide accept or its undo must
+        // not time out client-side while the engine is still writing.
+        assert_eq!(request_timeout_seconds("languageQa.scopeApply"), 600);
+        assert_eq!(request_timeout_seconds("languageQa.batchUndo"), 600);
+        assert_eq!(request_timeout_seconds("languageQa.scopeFind"), 30);
+        assert_eq!(request_timeout_seconds("languageQa.batches"), 30);
     }
 
     #[test]

@@ -20,7 +20,10 @@ class _Dispatcher(Protocol):
     def handle_request(self, request: EngineRequest) -> EngineResponse: ...
 
 
-def run_stdio_loop(engine: Any | None = None) -> None:
+def run_stdio_loop(engine: Any | None = None, on_ready: Any | None = None) -> None:
+    """`on_ready` runs once, right after the ready line, for warmup work that
+    must not delay it (main.py preloads uroman, #242). A failure there is
+    logged and never stops the loop."""
     if engine is None:
         from ..engine import GreekRoomEngine
         engine = GreekRoomEngine()
@@ -33,12 +36,35 @@ def run_stdio_loop(engine: Any | None = None) -> None:
     # the Rust side with no indication the sidecar process actually died.
     # Force UTF-8 explicitly rather than relying on the platform default.
     sys.stdin.reconfigure(encoding="utf-8")
-    sys.stdout.reconfigure(encoding="utf-8")
-    sys.stderr.reconfigure(encoding="utf-8")
+    sys.__stdout__.reconfigure(encoding="utf-8")
+    sys.__stderr__.reconfigure(encoding="utf-8")
+
+    # Responses are written only through `protocol`, the interpreter's own
+    # stdout, never through `sys.stdout`. That name is process-global: a
+    # background job running `contextlib.redirect_stdout` swaps it for every
+    # thread, so a response printed in that window went into the job's StringIO
+    # and Rust timed out waiting for it, with no slow request in the engine log
+    # (ai.review.status, 2026-10-09). `sys.__stdout__` cannot be swapped that
+    # way, even by a thread that is mid-redirect right now. Any `print` from
+    # here on -- a library's, a stray debug line -- lands on stderr, which Rust
+    # relays to the log, instead of corrupting the stream.
+    protocol = sys.__stdout__
+    sys.stdout = sys.__stderr__
+
+    def send(response: EngineResponse) -> None:
+        protocol.write(response.to_json() + "\n")
+        protocol.flush()
 
     # Signal readiness once on startup so the Rust side knows the sidecar
     # finished loading (import cost for NLP resources can be nontrivial).
-    print(EngineResponse.ok("__ready__", result={"status": "ready"}).to_json(), flush=True)
+    send(EngineResponse.ok("__ready__", result={"status": "ready"}))
+    if on_ready is not None:
+        try:
+            on_ready()
+        except Exception:  # noqa: BLE001
+            print("[unhandled] on_ready", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
+            sys.stderr.flush()
 
     for line in sys.stdin:
         line = line.strip()
@@ -47,7 +73,7 @@ def run_stdio_loop(engine: Any | None = None) -> None:
         try:
             request = EngineRequest.from_json(line)
         except Exception as exc:  # noqa: BLE001
-            print(EngineResponse.fail("__unknown__", "bad_request", str(exc)).to_json(), flush=True)
+            send(EngineResponse.fail("__unknown__", "bad_request", str(exc)))
             continue
 
         # Defense in depth: a crash anywhere in handling OR printing a
@@ -56,9 +82,9 @@ def run_stdio_loop(engine: Any | None = None) -> None:
         # Rust side (both just time out), which is much harder to debug.
         try:
             response = engine.handle_request(request)
-            print(response.to_json(), flush=True)
+            send(response)
         except Exception as exc:  # noqa: BLE001
-            print(EngineResponse.fail(request.id, "internal_error", str(exc)).to_json(), flush=True)
+            send(EngineResponse.fail(request.id, "internal_error", str(exc)))
             # str(exc) alone loses the traceback, which is the one thing
             # that actually tells you where an "internal_error" came from.
             # Rust relays stderr into its own log (see sidecar.rs), so this

@@ -5,15 +5,19 @@ import shutil
 
 import pytest
 
-from tc_ai_bridge.language_packs import PackError, default_pack, load_pack
-from tc_ai_bridge.language_packs.loader import PACKS_DIR, apply_overrides
+from tc_ai_bridge.language_packs import PackError, load_pack
+from tc_ai_bridge.language_packs import default_pack as bundled_pack
+from tc_ai_bridge.language_packs.loader import apply_overrides
+from tc_ai_bridge.language_packs.registry import packs_dir
 from tc_ai_bridge.language_qa import scan_text, stable_finding_id
 from tc_ai_bridge.language_qa_jobs import LanguageQaManager
-from tests.service.test_language_qa import project_at, wait
+from tests.support.language_qa import project_at, wait
+from tests.support.packs import ta_pack as default_pack
 
 
 def scan(text, **kwargs):
-    return scan_text(text, book="php", chapter="1", verse="1", tamil=True, **kwargs)["findings"]
+    kwargs.setdefault("pack", default_pack())
+    return scan_text(text, book="php", chapter="1", verse="1", **kwargs)["findings"]
 
 
 def by_rule(text, rule_id, **kwargs):
@@ -30,18 +34,19 @@ def test_a_status_request_never_loads_the_pack_and_concurrent_first_loads_share_
 
     monkeypatch.setattr(loader, "_LOADED", {})
     status = LanguageQaManager(debounce=0, yield_seconds=0).status()
-    assert loaded_pack() is None
-    assert status["inlineRules"] == ["lexicon.known-misspelling", "lexicon.known-split", "spacing.extra",
-                                     "terminology.deprecated-form"]
+    assert loaded_pack("ta-irv") is None
+    # Before any pass no pack finding exists: the in-code inline rules are the answer
+    # (learned.replacement is the reviewer's own learned fixes, language_qa_learned.py).
+    assert status["inlineRules"] == ["learned.replacement", "spacing.extra", "terminology.deprecated-form"]
     calls = []
     real = loader.load_pack
     monkeypatch.setattr(loader, "load_pack", lambda name: calls.append(name) or real(name))
-    threads = [threading.Thread(target=default_pack) for _ in range(4)]
+    threads = [threading.Thread(target=loader.default_pack, args=("ta-irv",)) for _ in range(4)]
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join()
-    assert calls == ["ta-irv"] and loaded_pack() is default_pack()
+    assert calls == ["ta-irv"] and loaded_pack("ta-irv") is loader.default_pack("ta-irv")
 
 
 def test_the_bundled_pack_loads_and_every_example_passes():
@@ -54,6 +59,16 @@ def test_every_enabled_rule_has_ten_real_examples_each_way_with_their_origin():
     for rule in default_pack().rules:
         if not rule.enabled:
             assert "DISABLED" in rule.source["provenance"], rule.id
+            continue
+        if rule.match_type == "indic-qa":
+            # The indic-qa layer's catalogue rules (indic_qa_tamil.py) run the
+            # vendored checker, not a JSON match, so carry no embedded examples;
+            # tests/language_packs/test_indic_qa_tamil_layer.py covers them.
+            continue
+        if rule.legacy_version:
+            # Moved from the engine's code (2026-09-30) with its matching
+            # unchanged; its tests stayed where they were (test_language_qa.py,
+            # test_lexicon.py). The ten-example rule was never applied to it.
             continue
         incorrect, correct = rule.examples["incorrect"], rule.examples["correct"]
         assert len(incorrect) >= 10 and len(correct) >= 10, rule.id
@@ -77,9 +92,12 @@ def test_inline_rules_are_exactly_the_human_justified_ones():
     inline = {r.id for r in default_pack().rules if r.inline}
     # (a) >= 20 labelled at >= 0.90 over both review rounds; (b) the whole
     # collection's findings labelled, none wrong (wrong-consonant 1/1, dropped-tha 2/2).
+    # lexicon.known-misspelling 43/43 (2026-09-28) and lexicon.known-split 11/11
+    # (2026-09-29) were inline in the engine's code; they are pack rules since 2026-09-30.
     assert inline == {"sandhi.vallinam.dative", "sandhi.vallinam.accusative", "sandhi.vallinam.demonstrative",
                       "sandhi.vallinam.manner-adverb", "sandhi.compound.direction",
-                      "sandhi.vallinam.wrong-consonant", "typo.suffix.dropped-tha"}
+                      "sandhi.vallinam.wrong-consonant", "typo.suffix.dropped-tha",
+                      "lexicon.known-misspelling", "lexicon.known-split"}
     assert not any("inlineSignOff" in r.source for r in default_pack().rules)
 
 
@@ -152,6 +170,46 @@ def test_known_irv_defect_shapes(text, rule_id, span, fix):
     assert finding["category"] == "typo"
 
 
+# The real-word slip of #237 (GEN 1:13): a word list cannot see it, the
+# sentence's end can (#238, stage 1).
+def test_a_participle_ending_the_sentence_is_flagged_with_its_finite_form():
+    text = "சாயங்காலமும் விடியற்காலமுமாகி மூன்றாம் நாள் முடிந்து."
+    [finding] = by_rule(text, "typo.participle.sentence-final")
+    assert finding["originalText"] == "முடிந்து" and finding["suggestedReplacement"] == "முடிந்தது"
+    assert (finding["severity"], finding["confidence"], finding["inline"]) == ("low", "medium", False)
+    # Mid-sentence, the participle is what it should be.
+    assert not by_rule("நாள் முடிந்து, அவன் போனான்.", "typo.participle.sentence-final")
+    # A closing quote before the full stop, a stem ending in ை, and a -ந்திருந்து
+    # form are still slips (#246 review: the first exclusions missed them).
+    for text, span in (("நாள் முடிந்து”.", "முடிந்து"), ("தண்ணீர் குறைந்து.", "குறைந்து"),
+                       ("கொடுமையினால் நிறைந்திருந்து.", "நிறைந்திருந்து")):
+        assert [f["originalText"] for f in by_rule(text, "typo.participle.sentence-final")] == [span]
+
+
+@pytest.mark.parametrize("text", [
+    "மூன்றாம் நாள் முடிந்தது.",             # the finite form
+    "அதற்கு இடம் உண்டு.",                    # a legitimate sentence-final form
+    "அவன் வயது ஐந்து.",                      # a numeral
+    "அவர்கள் பதினைந்து.",                    # a numeral ending -ைந்து
+    "அவன் ஆயத்தம் செய்தது ஒரு விருந்து.",    # a noun
+    "அது அதற்குப் பொருந்து.",                 # an excluded stem
+    # Nouns in -ந்து in any compound, and imperatives as whole words (#246 review).
+    "இது நல்ல மருந்து.",
+    "உண்மையுள்ள தூதுவர்களோ நல்மருந்து.",       # PRO 13:17
+    "நீ இந்த பானத்தை அருந்து.",
+    "நீ மனம் திருந்து!",
+    "நீ வருந்து.",
+    "நீ முந்து.",
+    "வயது இருபத்தைந்து.",                     # a numeral
+    # PSA 8:6 ends a verse in -ந்து in both the OV and the IRV, the one such
+    # sentence end in 5,122 on four books (#238). Its stem is one letter, and
+    # the rule asks for two, so it is not reported: zero false alarms measured.
+    "உன் கரங்களின் செயல்களின்மேல் ஆளுகையைத் தந்து.",
+])
+def test_legitimate_sentence_final_forms_are_not_flagged(text):
+    assert by_rule(text, "typo.participle.sentence-final") == []
+
+
 def test_space_before_a_note_end_is_found_on_the_raw_text_at_raw_offsets():
     text = "அவன் சொன்னான்\\f + \\ft குறிப்பு. \\f* பின்பு."
     [finding] = by_rule(text, "integrity.space-before-note-end")
@@ -208,7 +266,7 @@ def test_tevai_need_is_still_checked():
 
 def pack_copy(tmp_path, edit):
     target = tmp_path / "ta-irv"
-    shutil.copytree(PACKS_DIR / "ta-irv", target)
+    shutil.copytree(packs_dir() / "ta-irv", target)
     path = target / "rules" / "sandhi.vallinam.demonstrative.json"
     rule = json.loads(path.read_text(encoding="utf-8"))
     edit(rule)
@@ -218,7 +276,8 @@ def pack_copy(tmp_path, edit):
 
 @pytest.mark.parametrize("edit,message", [
     (lambda r: r.update(colour="red"), "unknown rule keys ['colour']"),
-    (lambda r: r.update(category="grammar"), "unknown category 'grammar'"),
+    # "grammar" became a category with the indic-qa profile packs (2026-10-07).
+    (lambda r: r.update(category="semantics"), "unknown category 'semantics'"),
     (lambda r: r.update(severity="urgent"), "severity and confidence must be"),
     (lambda r: r.pop("message"), "missing 'message'"),
     (lambda r: r["match"].update(link="sometimes"), "match.link must be one of"),
@@ -253,6 +312,25 @@ def test_a_wrong_fix_in_an_example_stops_the_pack_loading(tmp_path):
 
 
 # ---- project overrides may only narrow -----------------------------------------
+
+def test_overrides_may_enable_an_indic_qa_rule_but_never_inline_or_a_json_rule():
+    """The Checker settings dialog switches the indic-qa checker's own rules
+    (DECISIONS 2026-10-08): one off by default may be switched on. Drawing
+    stays the runtime threshold and inline the reviewed flag; a pack's own JSON
+    rules still only narrow."""
+    hindi = bundled_pack("hi-irv")
+    assert not hindi.by_id("hi.lex.archaic-form").enabled
+    switched = apply_overrides(hindi, {"rules": {"hi.lex.archaic-form": {"enabled": True},
+                                                 "hi.lex.unknown": {"inline": True}}})
+    assert switched.by_id("hi.lex.archaic-form").enabled
+    assert not switched.by_id("hi.lex.unknown").inline
+    assert any("hi.lex.unknown.inline refused" in p for p in switched.problems)
+    tamil = default_pack()
+    json_rule = next(r for r in tamil.rules if r.match_type != "indic-qa" and not r.enabled)
+    refused = apply_overrides(tamil, {"rules": {json_rule.id: {"enabled": True}}})
+    assert not refused.by_id(json_rule.id).enabled
+    assert any(f"{json_rule.id}.enabled refused" in p for p in refused.problems)
+
 
 def test_overrides_narrow_and_refuse_to_widen():
     base = default_pack()

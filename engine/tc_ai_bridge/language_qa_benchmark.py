@@ -30,6 +30,11 @@ from typing import Any, Iterable
 
 from .language_qa import PACK_VERSION
 from .language_qa_jobs import LanguageQaManager
+
+# The pack every committed human label round is about (benchmark/human/): the
+# labels are Tamil IRV findings. The scans below declare Tamil, so the app's
+# own registry resolves them to this pack.
+HUMAN_PACK = "ta-irv"
 from .project_import import BOOK_NAMES, imported_verse_text, parse_scripture_file
 
 # Issue Type -> the offline engine's bucket. Everything else is reported as
@@ -232,10 +237,13 @@ def book_verses(sfm: Path) -> tuple[str, dict[str, dict[str, str]]]:
 
 def scan_book(book: str, chapters: dict[str, dict[str, str]], *,
               terminology: list[dict[str, Any]] | None = None,
-              housestyle: list[dict[str, Any]] | None = None, timeout: float = 600.0) -> dict[str, Any]:
+              housestyle: list[dict[str, Any]] | None = None, timeout: float = 600.0,
+              language: str = "tam") -> dict[str, Any]:
     """Scan with the app's own LanguageQaManager over temporary chapter JSON.
     `housestyle` (a project's entries, --housestyle) is applied as in the app;
-    what it hides is reported per rule, never counted as a false positive."""
+    what it hides is reported per rule, never counted as a false positive.
+    `language`: the project's declared language, which picks the pack (an
+    indic-qa profile pack for hin/mal/ory/pan)."""
     with tempfile.TemporaryDirectory(prefix="lqa-bench-") as tmp:
         root = Path(tmp)
         folder = root / book
@@ -243,7 +251,7 @@ def scan_book(book: str, chapters: dict[str, dict[str, str]], *,
         for chapter, verses in chapters.items():
             (folder / f"{chapter}.json").write_text(json.dumps(verses, ensure_ascii=False), encoding="utf-8")
         project = SimpleNamespace(path=root, book_id=book, book_dir=folder,
-                                  manifest={"target_language": {"id": "tam"}},
+                                  manifest={"target_language": {"id": language}},
                                   terminology_rules=lambda: list(terminology or []),
                                   housestyle_entries=lambda: list(housestyle or []))
         manager = LanguageQaManager(debounce=0, yield_seconds=0)
@@ -482,10 +490,10 @@ def labelled_examples(rows: list[ReviewRow], verses: dict[str, dict[str, dict[st
     return out
 
 
-def pack_version_label() -> str:
-    """Both versions a result depends on: the in-code rules and the ta-irv pack."""
+def pack_version_label(pack_name: str = HUMAN_PACK) -> str:
+    """Both versions a result depends on: the in-code rules and the pack."""
     from .language_packs import default_pack
-    return f"{PACK_VERSION}+{default_pack().pack_version}"
+    return f"{PACK_VERSION}+{default_pack(pack_name).pack_version}"
 
 
 # ---- human-labelled precision (2026-09-28 review) -------------------------
@@ -603,7 +611,7 @@ def _anchor(label: dict[str, Any], text: str) -> tuple[int, int] | None:
 
 
 def human_score(labels: list[dict[str, Any]], scans: dict[str, dict[str, Any]],
-                verses: dict[str, dict[str, dict[str, str]]]) -> dict[str, Any]:
+                verses: dict[str, dict[str, dict[str, str]]], *, pack: str = HUMAN_PACK) -> dict[str, Any]:
     """Score the current findings against the reviewer's verdicts.
 
     - Flagged rows (the findings the reviewer judged): a current finding at
@@ -685,7 +693,7 @@ def human_score(labels: list[dict[str, Any]], scans: dict[str, dict[str, Any]],
     def ratio(numerator: int, denominator: int) -> float | None:
         return round(numerator / denominator, 4) if denominator else None
 
-    inline = human_inline_rules()
+    inline = human_inline_rules(pack)
     for rule_id in inline:
         rules.setdefault(rule_id, Counter())
     rules_out = {}
@@ -704,7 +712,7 @@ def human_score(labels: list[dict[str, Any]], scans: dict[str, dict[str, Any]],
                                        s["missed"] + s["correct_skip"] + s["house"]),
         }
     rounds = sorted({label.get("round", "") for label in labels} - {""})
-    return {"packVersion": pack_version_label(), "labels": len(labels), "rounds": rounds,
+    return {"packVersion": pack_version_label(pack), "labels": len(labels), "rounds": rounds,
             "books": sorted(scans), "rules": rules_out, "recallProxies": proxies_out,
             "mismatches": mismatches}
 
@@ -729,18 +737,22 @@ def rule_definition_hash(rule_id: str) -> str | None:
     import hashlib
     from .language_packs import default_pack
     from .language_qa import RULES, RULE_VERSION
-    pack = default_pack()
+    pack = default_pack(HUMAN_PACK)
     pack_name, _, name = rule_id.partition("/")
-    if pack_name == pack.name and pack.by_id(name) is not None:
+    rule = pack.by_id(name) if pack_name == pack.name else None
+    if rule is not None and rule.legacy_version:
+        # A rule moved out of the engine's code keeps the identity it had
+        # there (loader: legacyVersion), so its population stays current.
+        extra = ""
+        if rule.params.get("check") == "known-split":  # the rule is its curated map
+            extra = json.dumps(getattr(pack.lexicon(), "splits", {}), ensure_ascii=False, sort_keys=True)
+        return hashlib.sha1(f"{rule.legacy_version}#{rule.version}#{rule.name}#{extra}".encode("utf-8")).hexdigest()
+    if rule is not None:
         source = {k: v for k, v in pack.by_id(name).source.items()
                   if k not in {"inline", "examples", "provenance", "title", "message", "rationale"}}
         return hashlib.sha1(json.dumps(source, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
     if name in RULES:
-        extra = ""
-        if name == "lexicon.known-split":  # the rule is its curated map
-            from .language_packs.lexicon import default_lexicon
-            extra = json.dumps(getattr(default_lexicon(), "splits", {}), ensure_ascii=False, sort_keys=True)
-        return hashlib.sha1(f"{RULE_VERSION}#{RULES[name].revision}#{name}#{extra}".encode("utf-8")).hexdigest()
+        return hashlib.sha1(f"{RULE_VERSION}#{RULES[name].revision}#{name}#".encode("utf-8")).hexdigest()
     return None
 
 
@@ -780,15 +792,18 @@ def population_coverage(population: dict[str, Any] | None, labels: list[dict[str
     return out
 
 
-def human_inline_rules() -> set[str]:
+def human_inline_rules(pack_name: str = HUMAN_PACK) -> set[str]:
     """ruleIds drawn inline, from the pack and the in-code rules. The
     project's own data (house style, termbase: pack "project") is not a rule
-    the benchmark can label, and is not gated."""
+    the benchmark can label, and is not gated. Another language's rounds
+    (benchmark/human/<code>/) gate only that pack's own rules: the common
+    rules are gated by the Tamil rounds, which label them."""
     from .language_packs import default_pack
     from .language_qa import INLINE_RULES, RULES
-    pack = default_pack()
+    pack = default_pack(pack_name)
     inline = {f"{pack.name}/{r.id}" for r in pack.rules if r.enabled and r.inline}
-    inline |= {f"{RULES[name].pack}/{name}" for name in INLINE_RULES if RULES[name].pack != "project"}
+    if pack_name == HUMAN_PACK:
+        inline |= {f"{RULES[name].pack}/{name}" for name in INLINE_RULES if RULES[name].pack != "project"}
     return inline
 
 
@@ -853,6 +868,20 @@ def human_baseline_of(result: dict[str, Any]) -> dict[str, Any]:
                       for rule, s in result["rules"].items()},
             "recallProxies": {cls: {k: s.get(k) for k in ("missed", "missed_now_flagged", "still_missed_rate")}
                               for cls, s in result["recallProxies"].items()}}
+
+
+def human_precision_table(result: dict[str, Any], pack_name: str) -> dict[str, Any]:
+    """The pack's `rule_precision.json`: each of its rules that reviewers
+    labelled, with the human precision and the label count. It ships with the
+    pack, so the engine can apply a user's inline threshold. Aggregates only,
+    no Scripture or review text. A rule with no label is left out, and the
+    engine treats a missing rule as unmeasured."""
+    prefix = f"{pack_name}/"
+    rules = {rule_id: {"precision": s["precision"], "labelled": s.get("labelled", 0)}
+             for rule_id, s in sorted(result["rules"].items())
+             if rule_id.startswith(prefix) and s.get("labelled") and s.get("precision") is not None}
+    return {"packVersion": result["packVersion"], "labelsFile": result.get("labelsFile", ""),
+            "generatedAt": result.get("generatedAt", ""), "rules": rules}
 
 
 def human_markdown(result: dict[str, Any]) -> str:

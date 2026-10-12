@@ -48,7 +48,11 @@ from tc_ai_bridge.language_qa import WORD, lift_inline_usfm, scan_text  # noqa: 
 from tc_ai_bridge.usfm_verse import lift_verse  # noqa: E402
 from tc_ai_bridge.project_import import imported_verse_text, parse_scripture_file  # noqa: E402
 
-PACK_DIR = REPO / "engine" / "tc_ai_bridge" / "language_packs" / "ta-irv"
+PACK_DIR = REPO / "engine" / "language_packs" / "ta-irv"
+# The kinds this builder generates. Every other rule in the pack (the
+# data-driven kinds: lexicon-lookup, sign-sequence, ...) is not built here and
+# is kept as it is, after the built ones, in its existing order.
+BUILT_KINDS = {"token-context", "regex"}
 PACK_VERSION = "1.1.0"
 HUMAN_LABELS = REPO / "benchmark" / "human"  # every review round under it
 HARD = ["க", "ச", "த", "ப"]
@@ -150,7 +154,7 @@ def raw_note_examples(pack, rule_id: str) -> dict[str, list]:
             raw_note = text[note.raw_start:note.raw_end].strip()
             before = regex.search(r"\S+\s*$", text[:note.raw_start].rstrip() + " ")
             snippet = (before.group() if before else "") + raw_note
-            findings = [f for f in scan_text(snippet, book="x", chapter="1", verse="1", tamil=True, pack=pack)["findings"]
+            findings = [f for f in scan_text(snippet, book="x", chapter="1", verse="1", pack=pack)["findings"]
                         if f["ruleId"] == f"ta-irv/{rule_id}"]
             item = {"text": snippet, "origin": f"{book.upper()} {chapter}:{verse}"}
             if findings and len(incorrect) < 40:
@@ -337,6 +341,26 @@ def definitions(acc_roots, dat_roots, reviewed: dict[str, set[str]]) -> list[dic
                           "each with its -வதற்கு form attested; -வதற்கு 328.",
         },
         {
+            "id": "typo.participle.sentence-final", "version": 1,
+            "category": "typo", "severity": "low", "confidence": "medium", "inline": False,
+            "title": {"ta": "-ந்து வாக்கிய இறுதியில்", "en": "Adverbial participle ends the sentence"},
+            "message": {"en": '"{span}" ends the sentence as an adverbial participle; the finite "{fix}" is '
+                              'expected. Verify before editing.'},
+            "rationale": "A sentence ends in a finite verb; a -ந்து participle needs a verb after it",
+            # A stem of two or more letters, -ந்து, then the sentence's end. Not the
+            # numerals (ஐந்து, -ைந்து) nor விருந்து / the பொருந்து forms, which end a
+            # sentence legitimately. Measured 2026-10-09 (#238): sentence-final
+            # -ந்து is 10 of 29,540 OV sentence ends and 1 of 5,122 in IRV
+            # GEN/LEV/PSA/1CO (PSA 8:6 தந்து, as in the OV). A slip that lands on
+            # a real word (முடிந்து for முடிந்தது) is invisible to any word list;
+            # this is the one shape a surface rule can see.
+            "match": {"type": "regex", "on": "visible",
+                      "pattern": r"(?<![\p{L}\p{M}])(?!(?:அரு|திரு|வரு|மு|பொரு)ந்து(?![\p{L}\p{M}]))(?P<span>(?P<stem>[\p{L}\p{M}]{2,}?)(?<!த்தை|ற்றை|பதினை|விரு|மரு|பரு)ந்து)(?=[\s”’\"']*[.!?])"},
+            "fix": {"type": "expand", "template": r"\g<stem>ந்தது"},
+            "provenance": "Real-word slip reproduced 2026-10-08 (#237, GEN 1:13 முடிந்து for முடிந்தது). "
+                          "OV: 10 sentence-final -ந்து in 29,540 sentence ends; IRV GEN/LEV/PSA/1CO: 1 in 5,122.",
+        },
+        {
             "id": "integrity.digits-in-text", "version": 1, "enabled": False,
             "category": "typo", "layer": "integrity", "severity": "low", "confidence": "low", "inline": False,
             "title": {"ta": "எண்கள் வசனத்தில்", "en": "Digits in verse text"},
@@ -399,7 +423,7 @@ REQUIRED_PLACES = {"sandhi.compound.direction": {("psa", "48", "7"), ("psa", "78
 def choose_examples(pack, verses, reviewed) -> dict[str, dict[str, list]]:
     flagged = collections.defaultdict(list)
     for book, chapter, verse, text in verses:
-        for f in scan_text(text, book=book, chapter=chapter, verse=verse, tamil=True, pack=pack)["findings"]:
+        for f in scan_text(text, book=book, chapter=chapter, verse=verse, pack=pack)["findings"]:
             if f["ruleId"].startswith("ta-irv/"):
                 flagged[f["ruleId"].split("/", 1)[1]].append((book, chapter, verse, text, f))
     out = {}
@@ -462,6 +486,7 @@ def correct_examples(rule, verses, flagged) -> list[dict]:
         corrected = {"typo.divine-name.vowel-drop": r"யெகோவாவ[\p{L}\p{M}]*",
                      "typo.divine-name.dative-stem": r"யெகோவாவுக்கு",
                      "typo.suffix.dropped-tha": r"\p{L}[\p{L}\p{M}]*வதற்கு",
+                     "typo.participle.sentence-final": r"\p{L}[\p{L}\p{M}]*ந்தது(?=\s*[.!?])",
                      "integrity.space-before-note-end": None}[rule.id]
         if corrected:
             for book, chapter, verse, text in verses:
@@ -500,6 +525,8 @@ def top_up(examples: dict[str, list], rule_id: str, verses) -> None:
         return
     edits = {
         "typo.suffix.dropped-tha": (r"(\p{L}[\p{L}\p{M}]{2,}?)வதற்கு(?![\p{L}\p{M}])", r"\1வற்கு", "த removed from -வதற்கு"),
+        "typo.participle.sentence-final": (r"(\p{L}[\p{L}\p{M}]{2,}?)ந்தது(?=\s*[.!?])", r"\1ந்து",
+                                           "the finite -ந்தது became the participle -ந்து"),
         "sandhi.vallinam.wrong-consonant": None,
         "sandhi.clitic.fused": ("(?<![\\p{L}\\p{M}])(" + "|".join(MANNER + CLITIC_ACCUSATIVES)
                                 + "|\\p{L}[\\p{L}\\p{M}]*(?:க்கு|ற்கு))த்தான்(?![\\p{L}\\p{M}])",
@@ -551,7 +578,7 @@ def fill_spans(pack, rule_id, examples) -> None:
     through the loader's example check like every other example."""
     for example in examples["incorrect"]:
         if example.get("span") is None:
-            findings = [f for f in scan_text(example["text"], book="x", chapter="1", verse="1", tamil=True, pack=pack)["findings"]
+            findings = [f for f in scan_text(example["text"], book="x", chapter="1", verse="1", pack=pack)["findings"]
                         if f["ruleId"] == f"ta-irv/{rule_id}"]
             if not findings:
                 raise SystemExit(f"{rule_id}: derived example not flagged: {example}")
@@ -584,7 +611,7 @@ def human_examples(pack, fixture_dirs: list[Path]) -> tuple[dict[str, dict[str, 
         example = json.loads(line)
         # Each example names the review round it came from (the folder's date).
         origin = regex.sub(r"\(human review (?:round \d+|2026)", f"(human review {round_name}", example["origin"], count=1)
-        findings = scan_text(example["text"], book="x", chapter="1", verse="1", tamil=True, pack=pack)["findings"]
+        findings = scan_text(example["text"], book="x", chapter="1", verse="1", pack=pack)["findings"]
         for expected in example["expect"]:
             span = _squeezed(expected["span"])
             hits = [f for f in findings if f["ruleId"].startswith("ta-irv/sandhi.")
@@ -632,10 +659,16 @@ def main() -> int:
     rules = definitions(*root_nouns(verses), reviewed_words)
     for rule in rules:
         rule["inline"] = rule["id"] in INLINE
+    previous = json.loads((PACK_DIR / "pack.json").read_text(encoding="utf-8"))
+    kept = [entry for entry in previous["rules"]
+            if json.loads((PACK_DIR / entry).read_text(encoding="utf-8"))["match"]["type"] not in BUILT_KINDS]
     meta = {"pack": "ta-irv", "version": PACK_VERSION, "language": "ta", "script": "Taml",
             "description": "Tamil IRV rule pack: sandhi (வல்லினம்) shape rules and known IRV defect shapes. "
                            "Built by scripts/build_ta_irv_pack.py from the IRV corpus and the 2026-09-28 "
                            "human review; see docs/LANGUAGE_QA_RULE_PACK.md.",
+            # indicQa: the OV dictionary layer (indic_qa_tamil.py), whose files
+            # come from scripts/sync_indic_qa.py and build_indic_qa_packs.py.
+            **{k: previous[k] for k in ("lexicon", "confusion", "indicQa", "generalCorpus") if k in previous},
             "rules": [f"rules/{rule['id']}.json" for rule in rules]}
     pack = loader._build(meta, rules)  # no examples yet: they are chosen with this pack
     examples = choose_examples(pack, verses, reviewed_places(args.reviews))
@@ -663,10 +696,12 @@ def main() -> int:
               file=sys.stderr)
     (PACK_DIR / "rules").mkdir(parents=True, exist_ok=True)
     for old in (PACK_DIR / "rules").glob("*.json"):
-        old.unlink()
+        if f"rules/{old.name}" not in kept:
+            old.unlink()
     for rule in rules:
         (PACK_DIR / "rules" / f"{rule['id']}.json").write_text(
             json.dumps(rule, ensure_ascii=False, indent=1) + "\n", encoding="utf-8", newline="\n")
+    meta["rules"] += kept
     (PACK_DIR / "pack.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1) + "\n",
                                         encoding="utf-8", newline="\n")
     loader.default_pack.cache_clear()

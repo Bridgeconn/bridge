@@ -6,13 +6,18 @@ Unicode Tamil §12.6 permits decomposed two-part vowels and Grantha conjuncts.
 from __future__ import annotations
 
 import hashlib
+import json
 import unicodedata
 from collections import Counter
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import regex
 
+from . import check_timing
+from .language_packs.registry import language_code, language_name, packs_dir, select_pack
+from .language_packs.tokens import GRAPHEME, WORD
 from .usfm_verse import lift_verse
 
 RULE_VERSION = "language-qa-7"
@@ -30,11 +35,14 @@ WORDLIST_RARE_MAX = 2
 WORDLIST_COMMON_MIN = 6
 WORDLIST_RATIO_MIN = 5
 MAX_WORDLIST_FINDINGS = 200
-CONSONANTS = frozenset("கஙசஜஞடணதநனபமயரறலளழவஶஷஸஹ")
-SIGNS = frozenset("ாிீுூெேைொோௌ்ௗ")
-# The வல்லினம் rules (B1–B4 and those added since) are data, not code: the
-# bundled `ta-irv` rule pack (language_packs/ta-irv/), whose matchers are
-# compiled and whose examples run as tests at load (layered-rules Phase 3).
+# Every language-specific rule is data, not code: the project's rule pack
+# (engine/language_packs/<pack>/, chosen through language_packs/index.json),
+# whose matchers are compiled and whose examples run as tests at load
+# (layered-rules Phase 3; docs/LANGUAGE_QA_PACKS.md). The Tamil code rules
+# that lived here (tamil.dependent-sign, tamil.mixed-word,
+# tamil.repeated-word, tamil.wordlist-variant, lexicon.*) are ta-irv rules on
+# the generic kinds since 2026-09-30, with their names and version stamps
+# kept (legacyVersion), so their findings and decisions are unchanged.
 # The B1–B4 trigger lists this file used to hold, and the scope reasoning
 # behind each, are in docs/BUILD_LOG.md's dated entries and in each rule's
 # `provenance`.
@@ -44,11 +52,12 @@ SIGNS = frozenset("ாிீுூெேைொோௌ்ௗ")
 # languageQa.inline filters on it, and languageQa.status lists the drawn rule
 # names. The frontend only styles a finding by its category.
 # Inline on human-labelled precision only (DECISIONS.md 2026-09-28):
-# lexicon.known-misspelling was 43/43 in the 2026-09-28 review; spacing.extra
-# 23/23 over both rounds (2026-09-29).
-# lexicon.known-split: inline on its whole population (11 of 11 labelled, DECISIONS.md 2026-09-29).
-INLINE_RULES = frozenset({"terminology.deprecated-form", "lexicon.known-misspelling", "spacing.extra",
-                          "lexicon.known-split"})
+# spacing.extra 23/23 over both rounds (2026-09-29). (lexicon.known-misspelling
+# and lexicon.known-split are ta-irv pack rules now, inline in the pack.)
+# learned.replacement repeats the reviewer's own earlier decision (a word they
+# replaced), so it is drawn like the termbase: it is project data, not a guess,
+# and pack "project" is outside the human gate.
+INLINE_RULES = frozenset({"terminology.deprecated-form", "spacing.extra", "learned.replacement"})
 # Every Language QA finding carries this, and the frontend sends it back in the
 # `issue` of a verse.decide call. decide_verse keys on it to keep Language QA
 # decisions out of the review-progress rollup. Origin is never inferred from
@@ -64,8 +73,8 @@ UNSPECIFIED_DECISION_SOURCE = "unspecified"
 class RuleMeta:
     """What a finding says about the rule that produced it (layered-rules
     brief, Phase 1.1). `pack` qualifies `ruleId`: "common" for the
-    language-independent integrity checks, "ta-irv" for the Tamil rules,
-    "project" for the project's own house-style data. `revision` is the
+    language-independent integrity checks, "project" for the project's own
+    house-style data. (A pack rule's fields come from its pack.) `revision` is the
     rule's own version, bumped only when that rule's matching changes;
     together with PACK_VERSION it decides when an old "ignored" decision
     stops applying (Phase 1.5). `confidence` is a categorical label, not a
@@ -85,7 +94,15 @@ LAYERS = ("pattern", "lexicon", "housestyle", "integrity")
 # highlight.ts's LANGUAGE_QA_CATEGORY_MARKS must have exactly these keys
 # (test_category_marks_match_the_engine).
 # "usfm": markup hygiene that does not change the text (2026-09-28 review).
-CATEGORIES = ("typo", "sandhi", "word-joining", "punctuation", "unicode", "spacing", "termbase", "name", "usfm")
+# "consistency" and "grammar": the indic-qa profile packs (pa, ml, hi, or),
+# corpus-attested spelling consistency and agreement leads, panel-only
+# (DECISIONS 2026-10-07).
+# "learned": a word the reviewer replaced before, recurring (language_qa_learned).
+CATEGORIES = ("typo", "sandhi", "word-joining", "punctuation", "unicode", "spacing", "termbase", "name", "usfm",
+              "consistency", "grammar", "learned")
+# What a Tamil (ta-irv) or common-checks project lists as in scope: unchanged
+# since Phase 7. A profile pack lists the categories its enabled rules use.
+DEFAULT_COVERAGE = CATEGORIES[:9]
 CONFIDENCES = ("high", "medium", "low")
 
 # What Language QA checks and what it never checks (layered-rules Phase 7).
@@ -104,7 +121,16 @@ _IN_SCOPE_LABELS = {
     "termbase": ("Approved key terms", "அங்கீகரிக்கப்பட்ட முக்கியச் சொற்கள்"),
     "name": ("Proper-name spelling", "பெயர்ச்சொல் எழுத்துக்கூட்டல்"),
     "usfm": ("USFM markup formatting (not a text change)", "USFM குறியீட்டு வடிவமைப்பு (உரை மாற்றம் அல்ல)"),
+    # Profile packs only; no Tamil label is shown for them.
+    "consistency": ("Spelling consistency with the rest of the translation", ""),
+    "grammar": ("Agreement and case leads attested in the corpus (listed, not drawn)", ""),
+    "learned": ("Words you replaced before, where they recur", "முன்பு நீங்கள் மாற்றிய சொற்கள் மீண்டும் வரும் இடங்கள்"),
 }
+# A profile pack flags corpus-attested agreement pairs, so it cannot say
+# agreement is never checked; it says what it does not check instead.
+_PROFILE_AGREEMENT = (
+    "clause-agreement", "Agreement across a whole clause",
+    "", "Only word pairs the corpus attests are flagged (grammar leads); the clause needs a reviewer.", "")
 _OUT_OF_SCOPE = (
     ("agreement", "Agreement: திணை, பால், எண் (subject–verb, person, gender, number)",
      "திணை, பால், எண் இயைபு (எழுவாய்–பயனிலை)",
@@ -129,13 +155,18 @@ _OUT_OF_SCOPE = (
 )
 
 
-def coverage() -> dict[str, Any]:
-    """The structured coverage statement every Language QA status carries."""
+def coverage(categories: Any = None) -> dict[str, Any]:
+    """The structured coverage statement every Language QA status carries.
+    `categories`: what the project's pack can report (profile packs); None
+    keeps the Tamil/common statement (DEFAULT_COVERAGE)."""
+    profile = categories is not None
+    shown = [c for c in CATEGORIES if c in set(categories)] if profile else list(DEFAULT_COVERAGE)
+    out_of_scope = [_PROFILE_AGREEMENT if row[0] == "agreement" and profile else row for row in _OUT_OF_SCOPE]
     return {
         "inScope": [{"category": c, "label": _IN_SCOPE_LABELS[c][0], "labelTa": _IN_SCOPE_LABELS[c][1]}
-                    for c in CATEGORIES],
+                    for c in shown],
         "outOfScope": [{"category": c, "label": label, "labelTa": label_ta, "reason": reason, "reasonTa": reason_ta}
-                       for c, label, label_ta, reason, reason_ta in _OUT_OF_SCOPE],
+                       for c, label, label_ta, reason, reason_ta in out_of_scope],
         "handOff": COVERAGE_HANDOFF,
         "summary": "Enabled technical checks only; no grammar or publication certification.",
     }
@@ -149,38 +180,33 @@ RULES: dict[str, RuleMeta] = {
     "spacing.extra": RuleMeta("common", "integrity", "spacing", "medium"),
     "punctuation.repeated": RuleMeta("common", "integrity", "punctuation", "medium"),
     "punctuation.space-before": RuleMeta("common", "integrity", "punctuation", "medium"),
-    # Disabled (2026-09-28 review: 0 of 20): every repeat was deliberate
-    # reduplication, அடுக்குத்தொடர் (தங்கள் தங்கள், கொஞ்சம் கொஞ்சம், ஆ ஆ), which a
-    # bare repeat check cannot tell from an error.
-    "tamil.repeated-word": RuleMeta("ta-irv", "pattern", "typo", "low", enabled=False),
-    "tamil.dependent-sign": RuleMeta("ta-irv", "integrity", "unicode", "high"),
-    "tamil.mixed-word": RuleMeta("ta-irv", "integrity", "typo", "medium"),
-    # The within-book wordlist audit: the fallback when a pack has no lexicon.
-    "tamil.wordlist-variant": RuleMeta("ta-irv", "lexicon", "typo", "low"),
-    # The corpus lexicon (layered-rules Phase 5; language_packs/lexicon.py).
-    # Disabled (2026-09-28 review: 0 of 21, every suggestion a different real
-    # word); its reviewed false alarms are the lexicon's `protected` words.
-    "lexicon.rare-near-common": RuleMeta("ta-irv", "lexicon", "typo", "medium", enabled=False),
-    "lexicon.known-misspelling": RuleMeta("ta-irv", "lexicon", "typo", "high"),
-    # A word written apart that a reviewer confirmed is one word (the lexicon's
-    # `splits`: சு வரை -> சுவரை, நே போ -> நேபோ). Curated pairs fed by review
-    # rounds, not a heuristic (2026-09-29).
-    "lexicon.known-split": RuleMeta("ta-irv", "lexicon", "word-joining", "high"),
     # The project's approved proper nouns (house style, Phase 6.2).
     "name.minority-spelling": RuleMeta("project", "housestyle", "name", "medium"),
     "terminology.deprecated-form": RuleMeta("project", "housestyle", "termbase", "high"),
+    # The reviewer's learned fixes (language_qa_learned, workbench v6).
+    "learned.replacement": RuleMeta("project", "housestyle", "learned", "medium"),
 }
 # The version of the rules above, which live in code. A pack rule's findings
 # carry the pack's own version instead ("ta-irv@1.0.0") and the rule's own
-# version as ruleRevision.
+# version as ruleRevision (or, for a rule moved out of this file, the version
+# it carried here: its legacyVersion).
 PACK_VERSION = RULE_VERSION
-MAX_SUGGESTIONS = 5
+# The indic-qa editor offers nine numbered suggestions; so does Bridge's menu.
+MAX_SUGGESTIONS = 9
 
 
-def suggestion(text: str, source: str, rationale: str, rank: int = 1) -> dict[str, Any]:
+def suggestion(text: str, source: str, rationale: str, rank: int = 1, *,
+               kind: str = "", freq: int | None = None) -> dict[str, Any]:
     """One ranked fix. `source` is "rule" | "lexicon" | "termbase" |
-    "majority-form" | "housestyle"; `rationale` is shown as the menu item's tooltip."""
-    return {"text": text, "rank": rank, "source": source, "rationale": rationale}
+    "majority-form" | "housestyle"; `rationale` is shown as the menu item's
+    tooltip. `kind` (the checker's edit class: "vowel length", "split", ...) and
+    `freq` are shown beside the suggestion, as the indic-qa editor shows them."""
+    out: dict[str, Any] = {"text": text, "rank": rank, "source": source, "rationale": rationale}
+    if kind:
+        out["kind"] = kind
+    if freq is not None:
+        out["freq"] = int(freq)
+    return out
 
 
 def rule_fields(rule: str, suggestions: list[dict[str, Any]] | None = None, *,
@@ -194,7 +220,7 @@ def rule_fields(rule: str, suggestions: list[dict[str, Any]] | None = None, *,
     if pack_rule is not None:
         fields = {
             "layer": pack_rule.layer, "category": pack_rule.category, "confidence": pack_rule.confidence,
-            "ruleId": f"{pack.name}/{pack_rule.id}", "packVersion": pack.pack_version,
+            "ruleId": f"{pack.name}/{pack_rule.id}", "packVersion": pack.stamp(pack_rule)[0],
             "ruleRevision": pack_rule.version, "inline": pack_rule.inline,
         }
     else:
@@ -210,15 +236,11 @@ def rule_fields(rule: str, suggestions: list[dict[str, Any]] | None = None, *,
 
 def inline_rule_names(pack: Any = None) -> list[str]:
     """The `rule` names drawn inline: the non-pack INLINE_RULES plus every
-    enabled inline rule of the pack (default: the bundled ta-irv pack)."""
-    if pack is None:
-        from .language_packs import default_pack
-        pack = default_pack()
-    return sorted(INLINE_RULES | {r.name for r in pack.rules if r.enabled and r.inline})
+    enabled inline rule of the pack (none: common checks only)."""
+    rules = pack.rules if pack is not None else ()
+    return sorted(INLINE_RULES | {r.name for r in rules if r.enabled and r.inline})
 
 
-WORD = regex.compile(r"\p{L}[\p{L}\p{M}]*")
-GRAPHEME = regex.compile(r"\X")
 SCRIPT_NAMES = ("TAMIL", "DEVANAGARI", "BENGALI", "TELUGU", "KANNADA",
                 "MALAYALAM", "GUJARATI", "GURMUKHI", "ORIYA", "SINHALA",
                 "ARABIC", "HEBREW", "LATIN", "CYRILLIC", "GREEK")
@@ -249,8 +271,46 @@ def stable_finding_id(book: str, chapter: str, verse: str, rule: str,
     return hashlib.sha1(identity.encode("utf-8", errors="surrogatepass")).hexdigest()[:20]
 
 
+def _pack_meta(path: str) -> dict[str, Any]:
+    """A pack's pack.json, read (never loaded as a pack), once per path."""
+    if path not in _PACK_META:
+        try:
+            _PACK_META[path] = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            _PACK_META[path] = {}
+    return _PACK_META[path]
+
+
+_PACK_META: dict[str, dict[str, Any]] = {}
+
+
+def pack_message(language: str, pack: str) -> str:
+    """What the selected pack brings, said from its pack.json without loading
+    it: a status request must never load a pack. Every pack has its character
+    rules; an indic-qa pack or layer adds the OV dictionary; a general corpus
+    that is switched on adds the general word list (#246). Grammar and meaning
+    are never checked (DECISIONS 2026-09-24)."""
+    meta = _pack_meta(str(packs_dir() / pack / "pack.json"))
+    has_dictionary = meta.get("engine") == "indic-qa" or bool(meta.get("indicQa"))
+    corpus = meta.get("generalCorpus") or {}
+    has_corpus = (bool(corpus) and bool(corpus.get("enabled", True))
+                  and (packs_dir() / pack / str(corpus.get("file") or "general_corpus.tsv.gz")).is_file())
+    what = ("rules with the OV dictionary and the general word list" if has_dictionary and has_corpus
+            else "rules with the OV dictionary" if has_dictionary else "character rules")
+    return f"{language_name(language)} {what}; grammar and meaning are not checked."
+
+
 def detect_language(sample: str, declared: str = "") -> dict[str, Any]:
-    """Script evidence is not a general language classifier. Never guess Hindi.
+    """Which pack a project's text gets. Script evidence is not a general
+    language classifier. Never guess Hindi.
+
+    Declared metadata decides first: the declared language's registered pack
+    (language_packs/index.json) runs when the text is in that language's
+    script. With nothing declared, the dominant script suggests a pack only
+    when exactly one language in LANGUAGE_SCRIPTS is written in it (Tamil,
+    Malayalam; never Devanagari or Bengali). A declared language the text's
+    script contradicts, or text in mixed scripts, gets the common checks only,
+    and the message names both, so a person decides.
 
     The 80% dominance / 20 letter minimum are routing heuristics, not calibrated
     probabilities; expose the counts and the basis instead of a confidence score.
@@ -274,18 +334,35 @@ def detect_language(sample: str, declared: str = "") -> dict[str, Any]:
         expected = explicit.get(part, expected)
     conflict = bool(expected and dominant and script != expected)
     mixed = total >= 20 and not dominant
-    tamil = not conflict and not mixed and (
-        (code in {"ta", "tam"} and expected == "TAMIL")
-        or (not code and dominant and script == "TAMIL")
-    )
+    if code:
+        language = language_code(code)
+        # The pack is for the language in its own script: ta-Latn is not ta-irv.
+        pack = select_pack(language) if expected and expected == LANGUAGE_SCRIPTS.get(language) else None
+    else:
+        writers = {language_code(c) for c, s in LANGUAGE_SCRIPTS.items() if s == script}
+        language = next(iter(writers)) if dominant and len(writers) == 1 else ""
+        pack = select_pack(language) if language else None
+    if conflict or mixed:
+        pack = None
+    if conflict:
+        message = (f"The project declares {declared} ({expected.title()} script), but the text is mostly "
+                   f"{script.title()} script; common checks only. Choose the language under Settings > "
+                   f"Language QA.")
+    elif pack:
+        message = pack_message(language, pack)
+    else:
+        message = "Common technical checks only; language-specific checks unavailable."
+    resolved = language if pack else code or "und"
     return {
-        "declared": declared, "language": "tam" if tamil else code or "und",
+        "declared": declared, "language": resolved,
+        # Display name from the registry ("Tamil"), or the code itself when the
+        # registry does not know it; "" when nothing is known.
+        "name": "" if resolved == "und" else language_name(resolved),
         "script": script, "scriptCounts": dict(counts), "sampleLetters": total,
         "basis": "metadata-conflict" if conflict else "mixed-script" if mixed else
-                 "metadata" if code else "script-suggestion" if tamil else "undetermined",
-        "pack": "tamil" if tamil else "common",
-        "message": "Tamil character rules available; grammar and spelling dictionaries are not included."
-                   if tamil else "Common technical checks only; language-specific checks unavailable."
+                 "metadata" if code else "script-suggestion" if pack else "undetermined",
+        "pack": pack or "common",
+        "message": message,
     }
 
 
@@ -341,16 +418,17 @@ def lift_inline_usfm(raw: str) -> tuple[LiftedVerse | None, str]:
 
 
 def scan_text(text: str, *, book: str, chapter: str, verse: str,
-              tamil: bool, pack: Any = None, lists: dict[str, frozenset] | None = None) -> dict[str, Any]:
+              pack: Any = None, lists: dict[str, frozenset] | None = None) -> dict[str, Any]:
     """Every rule runs on the verse's visible text (lift_inline_usfm); every
     finding's start/end/originalText is exact raw code points, so
     originalText == text[start:end]. A candidate that would cross lifted
     markup is dropped and counted as a limitation. `checked` is False only
     when the verse was not scanned at all.
 
-    For Tamil, the rule pack (`pack`, default: the bundled ta-irv pack,
-    loaded on first use) contributes its token-context and regex rules;
-    `lists` resolves its `listRef`s (house-style lists, empty until Phase 6)."""
+    The common rules always run. The project's rule pack (`pack`, a
+    loader.RulePack; None: common checks only) contributes its pair-stage
+    and verse-stage rules; `lists` resolves its `listRef`s (house-style
+    lists)."""
     digest = text_hash(text)
     result: dict[str, Any] = {"textHash": digest, "findings": [], "limitations": [], "checked": False}
     if len(text) > MAX_VERSE_CHARS:
@@ -393,7 +471,7 @@ def scan_text(text: str, *, book: str, chapter: str, verse: str,
             "book": book, "chapter": chapter, "verse": verse, "rule": rule,
             "severity": severity, "start": raw_start, "end": raw_end,
             "originalText": original, "message": message, "textHash": digest,
-            "ruleVersion": f"{pack.pack_version}#{pack_rule.version}" if pack_rule is not None else RULE_VERSION,
+            "ruleVersion": pack.stamp(pack_rule)[1] if pack_rule is not None else RULE_VERSION,
             "status": "review-needed",
             **rule_fields(rule, suggestions, pack=pack, pack_rule=pack_rule),
         })
@@ -407,7 +485,7 @@ def scan_text(text: str, *, book: str, chapter: str, verse: str,
             # pair is not one piece of raw text. The first word is: flag it,
             # with the fix confined to it (the linking consonant it needs).
             end, replacement = candidate.first_word_end, candidate.first_word_fix
-        ranked = [suggestion(replacement, "rule", candidate.rationale)] if replacement else []
+        ranked = [suggestion(replacement, candidate.source, candidate.rationale)] if replacement else []
         if end == candidate.end:  # alternatives are whole-pair fixes; not for a first-word finding
             ranked += [suggestion(text, "rule", why) for text, why in candidate.alternatives]
         before = len(findings)
@@ -416,20 +494,17 @@ def scan_text(text: str, *, book: str, chapter: str, verse: str,
         if candidate.confidence and len(findings) > before:
             findings[-1]["confidence"] = candidate.confidence
 
-    if tamil and pack is None:
-        from .language_packs import default_pack  # loaded once, on first Tamil scan
-        pack = default_pack()
     lists = lists or {}
-    splits: dict[str, str] = {}
-    if tamil and getattr(pack, "name", "") == "ta-irv":
-        from .language_packs.lexicon import default_lexicon  # loaded once, on first need
-        splits = getattr(default_lexicon(), "splits", None) or {}
+    timings = check_timing.current()
 
-    if not unicodedata.is_normalized("NFC", text):
-        # Report a small exact span rather than copying an entire verse into a finding.
-        for cluster in GRAPHEME.finditer(text):
-            if not unicodedata.is_normalized("NFC", cluster.group()):
-                add("unicode.nfc", *cluster.span(), "Canonically equivalent non-NFC text; review project normalization policy.")
+    with timings.step("rule.unicode.nfc"):
+        if not unicodedata.is_normalized("NFC", text):
+            # Report a small exact span rather than copying an entire verse into a finding.
+            for cluster in GRAPHEME.finditer(text):
+                if not unicodedata.is_normalized("NFC", cluster.group()):
+                    add("unicode.nfc", *cluster.span(), "Canonically equivalent non-NFC text; review project normalization policy.")
+    char_scan = timings.step("rule.unicode.charscan")  # corruption, private-use, invisible, spacing.unusual
+    char_scan.__enter__()
     for index, char in enumerate(text):
         if char in USFM_LINE_BREAKS:
             continue  # USFM line structure, i.e. whitespace -- not a control character in the text
@@ -442,43 +517,36 @@ def scan_text(text: str, *, book: str, chapter: str, verse: str,
             add("unicode.invisible", index, index + 1, f"Review {unicodedata.name(char, 'control character')} (U+{ord(char):04X}); it may be intentional.")
         elif char.isspace() and char != " ":
             add("spacing.unusual", index, index + 1, f"Review unusual space U+{ord(char):04X}; it may be intentional.")
-    for match in regex.finditer(r" {2,}|^ +| +$", text):
-        add("spacing.extra", *match.span(), "Repeated or edge spaces; check the intended spacing.")
+    char_scan.__exit__(None, None, None)
+    with timings.step("rule.spacing.extra"):
+        for match in regex.finditer(r" {2,}|^ +| +$", text):
+            add("spacing.extra", *match.span(), "Repeated or edge spaces; check the intended spacing.")
     # Ellipsis and ?! are legitimate style choices, so do not flag them here.
-    for match in regex.finditer(r"([,;:!?])\1+", text):
-        add("punctuation.repeated", *match.span(), "Repeated punctuation; check project style.")
-    for match in regex.finditer(r" +(?:[,;:!?]|\.(?!\.))", text):
-        add("punctuation.space-before", *match.span(), "Space before punctuation; check project style.")
-    if tamil:
+    with timings.step("rule.punctuation.repeated"):
+        for match in regex.finditer(r"([,;:!?])\1+", text):
+            add("punctuation.repeated", *match.span(), "Repeated punctuation; check project style.")
+    with timings.step("rule.punctuation.space-before"):
+        for match in regex.finditer(r" +(?:[,;:!?]|\.(?!\.))", text):
+            add("punctuation.space-before", *match.span(), "Space before punctuation; check project style.")
+    if pack is not None:
+        pack_pairs = timings.step("rule.pack.pairs")  # the pack's pair-stage rules (sandhi, splits, ...)
+        pack_pairs.__enter__()
         previous = None
         for word in WORD.finditer(text):
             if previous and text[previous.end():word.start()].isspace():
-                prev_norm = unicodedata.normalize("NFC", previous.group())
-                word_norm = unicodedata.normalize("NFC", word.group())
-                joined = splits.get(f"{prev_norm} {word_norm}")
-                if joined:
-                    add("lexicon.known-split", previous.start(), word.end(),
-                        f'"{prev_norm} {word_norm}" is one word written apart; "{joined}" is expected. '
-                        f'Verify before editing.', "medium",
-                        [suggestion(joined, "lexicon", "A split a reviewer confirmed")])
-                if prev_norm == word_norm and RULES["tamil.repeated-word"].enabled:
-                    add("tamil.repeated-word", *word.span(), "Adjacent repeated word; Tamil reduplication may be intentional.")
-                # The pack's word-pair rules (வல்லினம் and the rest). A fix is
-                # the whole flagged span with only the linking consonant
+                # The pair kinds (a lexicon's known splits, reduplication), then
+                # the token-context rules (வல்லினம் and the rest). A token-context
+                # fix is the whole flagged span with only the linking consonant
                 # changed; the raw words and whitespace are kept as written.
+                for candidate in pack.pair_kind_candidates(previous, word):
+                    add_candidate(candidate)
                 for candidate in pack.pair_candidates(text, previous, word, lists):
                     add_candidate(candidate)
             previous = word
-        for candidate in pack.regex_candidates(text, raw):
-            add_candidate(candidate)
-        for cluster in GRAPHEME.finditer(text):
-            normalized = unicodedata.normalize("NFC", cluster.group())
-            if any(c in SIGNS and (i == 0 or normalized[i - 1] not in CONSONANTS)
-                   for i, c in enumerate(normalized)):
-                add("tamil.dependent-sign", *cluster.span(), "Tamil vowel sign or pulli has no valid consonant base, or has conflicting signs.", "high")
-        for word in WORD.finditer(text):
-            if regex.search(r"\p{Script=Tamil}", word.group()) and regex.search(r"\p{Script=Latin}", word.group()):
-                add("tamil.mixed-word", *word.span(), "Tamil and Latin letters occur inside one word; verify intentional mixed text.", "medium")
+        pack_pairs.__exit__(None, None, None)
+        with timings.step("rule.pack.verse"):
+            for candidate in pack.verse_candidates(text, raw):
+                add_candidate(candidate)
     if crossing:
         result["limitations"].append(f"{crossing} {CROSSING_LIMITATION}")
     return result
@@ -496,16 +564,19 @@ def _deletion_neighbors(word: str) -> list[str]:
 
 def wordlist_findings(book: str, counts: dict[str, int],
                        first_seen: dict[str, tuple[str, str, int, int, str, str]],
-                       ) -> list[dict[str, Any]]:
-    """Pure function, no I/O. `first_seen` maps a normalized word to
+                       *, pack: Any, rule: Any) -> list[dict[str, Any]]:
+    """The `wordlist-variant` kind: the within-book fallback for a pack with
+    no lexicon. Pure function, no I/O. `first_seen` maps a normalized word to
     (chapter, verse, start, end, originalText, textHash) for its first
     occurrence in book-walk order. Flags a rare word only when it is also an
-    edit-distance-1 near-duplicate (including a single pulli insertion/
+    edit-distance-1 near-duplicate (including a single virama insertion/
     deletion, which is just an ordinary edit-distance-1 case here) of a much
     more common word in the same book -- rarity alone and spelling similarity
-    alone are never findings on their own.
+    alone are never findings on their own. Thresholds are the rule's
+    (`rule.params`, defaults as WORDLIST_* above).
     """
-    words = [w for w in counts if len(w) >= WORDLIST_MIN_LENGTH]
+    params = rule.params
+    words = [w for w in counts if len(w) >= params["minLength"]]
     word_set = set(words)
     candidates: dict[str, set[str]] = {}
 
@@ -535,27 +606,26 @@ def wordlist_findings(book: str, counts: dict[str, int],
     findings: list[dict[str, Any]] = []
     for rare in sorted(candidates):
         rare_count = counts[rare]
-        if rare_count > WORDLIST_RARE_MAX:
+        if rare_count > params["rareMax"]:
             continue
         common_options = [w for w in candidates[rare]
-                          if counts[w] >= WORDLIST_COMMON_MIN
-                          and counts[w] >= rare_count * WORDLIST_RATIO_MIN]
+                          if counts[w] >= params["commonMin"]
+                          and counts[w] >= rare_count * params["ratioMin"]]
         if not common_options:
             continue
         # Deterministic tie-break: most frequent common match, then lexical order.
         common = sorted(common_options, key=lambda w: (-counts[w], w))[0]
         chapter, verse, start, end, original, text_hash = first_seen[rare]
-        identity = f"{book}:tamil.wordlist-variant:{rare}:{common}"
+        identity = f"{book}:{rule.name}:{rare}:{common}"
         findings.append({
             "id": hashlib.sha1(identity.encode("utf-8", errors="surrogatepass")).hexdigest()[:20],
-            "book": book, "chapter": chapter, "verse": verse, "rule": "tamil.wordlist-variant",
-            "severity": "low", "start": start, "end": end, "originalText": original,
-            "message": (f'"{rare}" occurs {rare_count} time(s) in this book; "{common}" '
-                        f'(a similar spelling) occurs {counts[common]} times here -- verify '
-                        f'whether this is a spelling variant or a distinct word/name.'),
-            "textHash": text_hash, "ruleVersion": RULE_VERSION, "status": "review-needed",
-            **rule_fields("tamil.wordlist-variant"),
+            "book": book, "chapter": chapter, "verse": verse, "rule": rule.name,
+            "severity": rule.severity, "start": start, "end": end, "originalText": original,
+            "message": rule.message.format(word=rare, count=rare_count, common=common,
+                                           commonCount=counts[common]),
+            "textHash": text_hash, "ruleVersion": pack.stamp(rule)[1], "status": "review-needed",
+            **rule_fields(rule.name, pack=pack, pack_rule=rule),
         })
-        if len(findings) >= MAX_WORDLIST_FINDINGS:
+        if len(findings) >= params["maxFindings"]:
             break
     return findings

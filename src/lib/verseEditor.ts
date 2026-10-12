@@ -13,7 +13,7 @@ import type { QaFinding, VerseDisplay } from "./types/finding";
 import type { LanguageQaFinding, LanguageQaSuggestion } from "./types/languageQa";
 import type { CorrectionApplicationIntent } from "./types/correctionReview";
 import {
-  alignmentStatusByVerse, checkStatusByVerse, checkingProgress, findingsByVerse,
+  alignmentStatusByVerse, checkStatusByVerse, checkingProgress, findingsByVerse, historyCountByVerse,
   nativeChecksByVerse, aiCheckReviewsByVerse, languageQaFindingsByVerse, verseDisplay, verseKey, verseTexts,
 } from "./stores";
 
@@ -50,7 +50,32 @@ export function refreshVerseTextFromApplication(
   // the reader falls back to the raw string until the chapter reloads.
   setDisplay(key, isVerseDisplay(edit.display) ? edit.display : undefined);
   alignmentStatusByVerse.update((values) => ({ ...values, [key]: "invalid" }));
+  bumpHistoryCount(key);
   return key;
+}
+
+/** One more recorded edit of a verse on screen (its ↺ count). */
+export function bumpHistoryCount(key: string): void {
+  historyCountByVerse.update((counts) => ({ ...counts, [key]: (counts[key] ?? 0) + 1 }));
+}
+
+/**
+ * Text the engine wrote on the reviewer's behalf (a scoped Language QA
+ * correction, or its undo): each loaded verse shows its new text through the
+ * same path a saved edit uses (its Language QA, AI and native marks dropped,
+ * alignment marked invalid). A verse of a chapter not loaded yet simply loads
+ * fresh later. One nudge, so Language QA runs once for all of them.
+ */
+export function applyEngineChanges(changed: { chapter: string; verse: string; newText: string; display?: VerseDisplay }[]): void {
+  const loaded = get(verseTexts);
+  for (const change of changed) {
+    const key = verseKey(change.chapter, change.verse);
+    if (key in loaded) {
+      showVerseText(key, change.newText, change.display);
+      bumpHistoryCount(key);
+    }
+  }
+  if (changed.length) nudgeLanguageQa();
 }
 
 export const editingChapter = writable("");
@@ -59,6 +84,9 @@ export const editText = writable("");
 export const editSaving = writable(false);
 export const editError = writable("");
 export const editErrorKey = writable("");
+/** Marker problems the engine saw in the last saved text, for that verse:
+ * never blocking, the save happened. Cleared by the next edit. */
+export const editWarnings = writable<{ key: string; warnings: string[] } | null>(null);
 export const recheckingKey = writable("");
 export const recheckedKey = writable("");
 
@@ -95,8 +123,18 @@ export function startVerseEdit(chapter: string, verse: string): boolean {
   editText.set(get(verseTexts)[verseKey(chapter, verse)] ?? "");
   editError.set("");
   editErrorKey.set("");
+  editWarnings.set(null);
   pendingAcceptFindingId = "";
   return true;
+}
+
+/** Put a verse back to an earlier wording (change history): an ordinary
+ * edit through the one writer, so it is journalled like any other. False
+ * when an edit, a save or a check is running. */
+export async function revertVerseTo(chapter: string, verse: string, text: string): Promise<boolean> {
+  if (get(editingChapter) || !startVerseEdit(chapter, verse)) return false;
+  editText.set(text);
+  return saveVerseEdit();
 }
 
 export function cancelVerseEdit(): void {
@@ -190,6 +228,8 @@ export async function saveVerseEdit({ optimistic = false }: { optimistic?: boole
     const editResult = await bridge.editVerse(chapter, verse, text);
     undo = null;
     nudgeLanguageQa();  // the edit started a new Language QA pass
+    bumpHistoryCount(key);
+    editWarnings.set(editResult.warnings?.length ? { key, warnings: editResult.warnings } : null);
     if (!optimistic) {
       showVerseText(key, text, editResult.display);
       cancelVerseEdit();

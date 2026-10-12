@@ -54,7 +54,7 @@ the next paragraph. The full suite on every push to `main` is the gate; there is
 no nightly or weekly run.
 
 **Two rules when adding an engine test.** Both exist because
-`bridge_service.py` is 5,300 lines and 42 test files import it, so "which tests
+`bridge_service.py` is 7,100 lines and 59 test files import it (2026-10-08), so "which tests
 could this change affect?" has no useful answer (#74 phase 4, stopped
 deliberately — see `docs/BUILD_LOG.md` 2026-09-30 for why finishing it does not
 pay off):
@@ -67,7 +67,9 @@ pay off):
 2. **Never import from another test module.** `from tests.service.test_bridge_service
    import fixture_project` was in seven files and is now gone: a borrowed helper
    drags the whole importing module's dependencies with it. Shared builders go in
-   `tests/support/`.
+   `tests/support/`. `tests/support/test_no_cross_test_imports.py` enforces this
+   (both `from tests.x.test_y` and `from .test_y`); 25 had crept back by
+   2026-10-07 before it existed.
 
 **If you extract a helper**, take its decorators and its imports with it.
 `ast.get_source_segment()` starts at the `def`, so a copy loses `@pytest.fixture`
@@ -121,7 +123,7 @@ the USFM checker script. Verify the frozen pair directly (not just source)
 with `python scripts/smoke_sidecars.py engine/dist/bridge-engine.exe`.
 
 `src-tauri/` has both: `cargo check`/`cargo build` for compile success, and a
-handful of real `#[test]` unit tests (`sidecar::tests` — 9 as of 2026-09-16;
+handful of real `#[test]` unit tests (`sidecar::tests` — 11 as of 2026-10-08;
 `passage_semantic_wire.rs` and its tests were removed in #103) run with
 `cargo test`. Run both, not just the compile check.
 
@@ -163,6 +165,16 @@ same uncontested pair, and only on an explicit "Suggest with AI" click. Two
 methods agreeing is the gate; a confidence threshold on one number is still not,
 anywhere. Nothing about Scripture, tC alignment data or findings changed.
 
+The second (#219, maintainer sign-off 2026-10-08, DECISIONS.md) is the
+**automatic window alignment**: on an explicit "Align automatically" click, the
+same verse window is asked twice (source-first and target-first), and what both
+passes agree on is written. That covers tC same-verse groups, cross-verse link
+groups and reasoned null decisions, each with `origin: "ai-auto"`. A
+single-pass claim is a suggestion. A word neither pass placed is a *possible*
+omission or addition and is never forced. A reviewer's existing alignment is
+never written over. Scripture text and findings are still untouched by any
+automatic path, and widening to them is still a fresh question.
+
 ### Two different vendoring shapes for the same upstream repo
 
 Both the USFM structural checker (`engine/vendor/greekroom-usfm/`) and
@@ -186,12 +198,35 @@ concurrency). Read the relevant `NOTICE.md` before touching either vendor
 tree or adding a third — don't edit vendored files in place; adaptations
 belong in Bridge's own adapter/wrapper code.
 
+A second upstream repo is vendored the in-process way: **indic-qa's checker
+core** (`engine/vendor/indic-qa/`, from `selvabenz/indic-qa`, maintainer's
+decision 2026-10-07). It runs Language QA for Punjabi, Malayalam, Hindi and
+Odia. Tamil stays on Bridge's own `ta-irv` pack, which also runs indic-qa's
+Tamil profile as a second, book-stage layer (`pack.json` `indicQa`,
+`indic_qa_tamil.py`; DECISIONS, the later 2026-10-07 entry). That layer drops
+any finding the pack already raised, and offers no fix inside a heading. Its
+dictionaries are pack data in `engine/language_packs/<code>-irv/dictionary/`,
+outside the onefile exe.
+Rules for this tree:
+
+- Files enter only through `scripts/sync_indic_qa.py`, which reads committed
+  blobs and records sha256 in `VENDORED.json`. `.gitattributes` keeps both
+  trees byte-exact.
+- `qa_app.usfm_doc` imports `scripts/build_dictionary.py` from the vendor
+  tree through `sys.path`. Bridge's own `scripts/` is on the pytest path, so
+  never add a Bridge `scripts/build_dictionary.py`.
+- Bridge builds the checker's `Line`/`Book` objects from chapter JSON. It never
+  calls indic-qa's USFM parser (gotcha 14).
+- The dictionaries are never written.
+
 ### On-disk project shape
 
 A raw Scripture import becomes a translationCore-compatible book project:
 
 ```
-<project>/manifest.json
+<project>/manifest.json                         `language_qa.pack` ("auto" | "off" | a pack name) is
+                                                Bridge's only key here: Settings > Language QA, written
+                                                through the journal (languageQa.setPack, 2026-10-07)
 <project>/<book>.usfm                          original source, preserved verbatim
 <project>/<book>/<chapter>.json                 verse-keyed target Scripture
 <project>/<book>/<chapter>.headings.json        section headings (\s, \ms, \r ...), keyed by the
@@ -206,20 +241,38 @@ A raw Scripture import becomes a translationCore-compatible book project:
 <project>/.apps/translationCore/alignmentData/<book>/<chapter>.json
 <project>/.apps/translationCore/index/{translationNotes,translationWords}/<book>/
 <project>/.bridge/import.json                   SHA-256 provenance + per-tool capability status
+<project>/.apps/translationCoreAI/language-packs/<pack>/overrides.json
+                                                a project's narrowing of one Language QA pack (`rules`:
+                                                enabled=false, inline=false, abstains) and its indic-qa
+                                                checker settings (`checker`, sparse), written to every
+                                                materialized book of a collection by the Checker settings
+                                                dialog (2026-10-08). An indic-qa rule may be switched back
+                                                on there; inline never.
 <project>/.apps/translationCoreAI/bridge-workbench.sqlite3
-                                                schema v5. Every Bridge-private store lives here:
+                                                schema v7. Every Bridge-private store lives here:
                                                 the human-owned ones (#76), the derived ones
                                                 (#77) -- progress rollup, check-finding snapshots,
                                                 check cache, triage verdicts, metrics, backups index --
                                                 the cross-verse alignment links (#117), which
                                                 tC alignmentData cannot hold because its groups are
-                                                verse-local, and the persisted Language QA scan
-                                                (`language_qa_cache`, #169).
+                                                verse-local, the persisted Language QA scan
+                                                (`language_qa_cache`, #169), the reviewer's
+                                                Language QA correction batches, learned fixes
+                                                and flags (v6; a batch only groups ordinary
+                                                journalled verse edits, it never writes Scripture),
+                                                null alignment decisions (`alignment_null_decisions`: a word with
+                                                no counterpart for a named reason, #216 -- no row
+                                                means unaligned) and the per-verse automatic
+                                                alignment verdicts (`alignment_verdicts`, #216).
 <project>/.apps/translationCoreAI/backups/      the backup files themselves, indexed by the DB
 %LOCALAPPDATA%\Bridge\data\workspace.sqlite3    app-level, schema v2 (#77): users, devices, the
-                                                project registry, non-secret settings, and one cached
+                                                project registry, non-secret settings (bookmarks and
+                                                recent chapters among them), and one cached
                                                 progress rollup per project for the dashboard
 %LOCALAPPDATA%\Bridge\data\settings.json       DPAPI-wrapped secrets only
+%LOCALAPPDATA%\Bridge\data\reference-cache\    plain text of each reference Bible folder chosen in
+                                                Settings > Language QA, `<fingerprint>.json.gz`;
+                                                derived, rebuilt when the folder changes, never shipped
 ```
 
 **The file stores have moved (#76 and #77, 2026-09-15).** `decisions/`,
@@ -349,9 +402,12 @@ translation team that database *is* months of work, and no reset is available.
 
 This same discipline now has two more, independent ladders. `bridge-workbench.sqlite3`
 (`WorkbenchRepository`, `engine/tc_ai_bridge/workbench_repository.py`,
-`WORKBENCH_SCHEMA_VERSION`, currently v5 — v2 added `change_log.columns_json` for
+`WORKBENCH_SCHEMA_VERSION`, currently v7 — v2 added `change_log.columns_json` for
 sync and rebuilt the immutability trigger; v3 added `alignment_cross_verse_links`,
-#117; v4 added `language_qa_cache`, #169; v5 rebuilt `human_decisions` to admit the `housestyle` kind, #169) and `workspace.sqlite3`
+#117; v4 added `language_qa_cache`, #169; v5 rebuilt `human_decisions` to admit the `housestyle` kind, #169;
+v6 added `language_qa_batches`, `language_qa_learned_fixes` and `language_qa_flags`, indic-qa editor
+features;
+v7 added `alignment_null_decisions` and `alignment_verdicts`, #216) and `workspace.sqlite3`
 (`WorkspaceRepository`, `engine/tc_ai_bridge/workspace_repository.py`,
 `WORKSPACE_SCHEMA_VERSION`, currently v2 — v1 is exactly the unversioned
 devices/users the first cut created, kept as `IF NOT EXISTS` so an existing
@@ -622,13 +678,18 @@ raise it as a question in the issue rather than deciding it in a commit:
   runtime path a translator hits
 - Re-baselining either golden
 - Changing the confidence thresholds or the auto-apply behaviour. Still on this
-  list after #146: that decision was taken once, for cross-verse links only, on
-  an agreement-between-two-methods gate. Widening it — to Scripture, to tC
-  alignment data, to findings, or to any single-score threshold — is a fresh
-  question, not a precedent already set
+  list after #146 and #219: those decisions were taken for cross-verse links
+  (#146) and for the two-pass window alignment of tC groups, links and null
+  decisions (#219), each on an agreement-between-two-methods gate. Widening it —
+  to Scripture, to findings, to a single pass, or to any single-score threshold —
+  is a fresh question, not a precedent already set
 - A second Scripture writer, or an alternative path for applying corrections to
   the text — Stage 9B.3b's authorized write behind an explicit human confirmation
-  is deliberately the only one
+  is deliberately the only one. (A scoped Language QA correction, 2026-10-07,
+  adds no writer: it calls the same `apply_scripture_edit` as `verse.edit` and the
+  single-verse Use, once per verse, within one book, after the reviewer confirms
+  the listed verses. Whether a bulk Use is an "alternative path" in this sense is
+  raised for the maintainer in BUILD_LOG's handoff; do not widen it further.)
 - Bundling or switching the multilingual embedding model
   (`SemanticEmbeddingProvider.available` is `False` in the shipped app today, so
   production location runs use lexical/structural evidence only — that is a known

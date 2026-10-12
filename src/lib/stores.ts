@@ -1,6 +1,6 @@
 import { writable, derived, get } from "svelte/store";
 import type { AiCheckReview, AlignmentWorkStatus, NativeCheckReview, NavigationSyncState, ProjectInfo, QaFinding, VerseDisplay, VerseHeading } from "./types/finding";
-import type { LanguageQaFinding } from "./types/languageQa";
+import type { LanguageQaFinding, LanguageQaFlag } from "./types/languageQa";
 import type { EngineLogEntry } from "./api/bridgeClient";
 
 export function verseKey(chapter: string, verse: string): string {
@@ -37,6 +37,14 @@ export const aiCheckReviewsByVerse = writable<Record<string, AiCheckReview[]>>({
 // (INLINE_RULES in language_qa.py); VerseList reads this for inline marks.
 // Offsets are raw verse code-point offsets, like QaFinding's.
 export const languageQaFindingsByVerse = writable<Record<string, LanguageQaFinding[]>>({});
+// Reviewer flags (workbench v6) of the chapters loaded, keyed by the verseKey
+// of each flag's first verse; deleted ones are not held.
+export const flagsByVerse = writable<Record<string, LanguageQaFlag[]>>({});
+// Recorded edits per verse (chapter.verseData's editCounts), for the ↺ mark;
+// bumped by every save the editor makes.
+export const historyCountByVerse = writable<Record<string, number>>({});
+// The Language QA mark F8 / Shift+F8 moved to (the panel), ringed in the text.
+export const activeLanguageQaFindingId = writable<string | null>(null);
 export type ReviewerMode = "basic" | "advanced";
 export const reviewerMode = writable<ReviewerMode>("basic");
 
@@ -83,6 +91,9 @@ export function resetBookState(): void {
   nativeChecksByVerse.set({});
   aiCheckReviewsByVerse.set({});
   languageQaFindingsByVerse.set({});
+  flagsByVerse.set({});
+  historyCountByVerse.set({});
+  activeLanguageQaFindingId.set(null);
   loadedChapters.set({});
   selectedVerse.set(null);
   selectedVerseSet.set([]);
@@ -94,7 +105,7 @@ export interface CheckingProgress {
   percent: number;
   label: string;
   jobId: string;
-  state: "idle" | "queued" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled";
+  state: "idle" | "queued" | "running" | "cancelling" | "finalizing" | "succeeded" | "failed" | "cancelled";
   error: string;
   scope: "chapter" | "book";
 }

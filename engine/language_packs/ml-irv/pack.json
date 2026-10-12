@@ -1,0 +1,16 @@
+{
+ "pack": "ml-irv",
+ "version": "1.0.0",
+ "language": "ml",
+ "script": "Mlym",
+ "engine": "indic-qa",
+ "profile": "ml",
+ "dictionary": "dictionary",
+ "rules": [],
+ "description": "Malayalam IRV checks from indic-qa's ml profile (qa_app/langs/ml.py, vendored at ab53636) over its OV-built dictionary. See docs/LANGUAGE_QA_PACKS.md, \"Profile packs\".",
+ "generalCorpus": {
+  "file": "general_corpus.tsv.gz",
+  "manifest": "general_corpus.json",
+  "enabled": true
+ }
+}

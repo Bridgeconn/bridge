@@ -1,8 +1,14 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { get } from "svelte/store";
+import { tick } from "svelte";
 
-const { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRecord, housestyleSetState } = vi.hoisted(() => ({
+const { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRecord, housestyleSetState, languageQaLearnedForget, languageQaScopeFind, verseHistory, languageQaWordsAdd, languageQaOccurrences } = vi.hoisted(() => ({
+  languageQaWordsAdd: vi.fn(),
+  languageQaOccurrences: vi.fn(),
+  verseHistory: vi.fn(),
+  languageQaLearnedForget: vi.fn(),
+  languageQaScopeFind: vi.fn(),
   housestyleRecord: vi.fn(),
   housestyleSetState: vi.fn(),
   decideVerse: vi.fn(),
@@ -12,9 +18,10 @@ const { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRec
 }));
 
 vi.mock("../../api/bridgeClient", () => ({
-  bridge: { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRecord, housestyleSetState },
+  bridge: { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRecord, housestyleSetState, languageQaLearnedForget, languageQaScopeFind, verseHistory, languageQaWordsAdd, languageQaOccurrences },
 }));
 import { lqaFinding } from "./languageQaFixture";
+import { scopeDialog } from "../../scopedApply";
 import { displayFor } from "./verseDisplayFixtures";
 import type { LanguageQaSuggestion } from "../../types/languageQa";
 
@@ -35,7 +42,10 @@ import {
   verseKey,
   languageQaFindingsByVerse,
   project,
+  historyCountByVerse,
+  activeLanguageQaFindingId,
 } from "../../stores";
+import { rawView } from "../../editorPrefs";
 import { alignmentOpen, alignmentKey } from "../../alignmentUi";
 import { cancelVerseEdit, editingChapter, editingVerse, editSaving, recheckingKey } from "../../verseEditor";
 import { aiReviewRequest, aiJobActive } from "../../aiReviewUi";
@@ -148,7 +158,7 @@ describe("VerseList footnote handling", () => {
 
   it("places the marker where the footnote was, not at the end of the verse", () => {
     render(VerseList, { props: { onSelect: vi.fn() } });
-    const vtext = document.querySelector(".vtext") as HTMLElement;
+    const vtext = document.querySelector(".vtext .vbody") as HTMLElement;
     const nodes = Array.from(vtext.childNodes);
     const markerIndex = nodes.findIndex(
       (node) => node instanceof HTMLElement && node.classList.contains("note-btn"),
@@ -282,22 +292,70 @@ describe("VerseList footnote handling", () => {
 
     afterEach(() => languageQaFindingsByVerse.set({}));
 
-    it("offers no Use item when the finding has no suggestion", async () => {
-      expect((await openMenu({ suggestions: [] })).map(([label]) => label))
-        .toEqual(["Edit…", "Ignore this occurrence", "Ignore more widely▸", "Mark as false positive"]);
+    it("offers Forget on a learned fix's mark, which drops it at once without recording a decision", async () => {
+      seed("அவர் தேவன் என்றார்.");
+      languageQaLearnedForget.mockReset().mockResolvedValue({ fix: {} });
+      project.set({ path: "/p", bookId: "php" } as never);
+      languageQaFindingsByVerse.set({ "1:6": [lqaFinding({
+        id: "l1", rule: "learned.replacement", category: "learned", layer: "housestyle", inline: true,
+        start: 4, end: 9, originalText: "தேவன்",
+        suggestions: [{ text: "கர்த்தர்", rank: 1, source: "learned", rationale: "Replaced with this 1× before." }],
+      })] });
+      render(VerseList, { props: { onSelect: vi.fn() } });
+      await fireEvent.contextMenu(document.querySelector("mark.m-lqa-learned") as HTMLElement);
+      await fireEvent.click(screen.getByRole("menuitem", { name: "Forget this learned fix" }));
+      expect(document.querySelector("mark.m-lqa-learned")).toBeNull();
+      await waitFor(() => expect(languageQaLearnedForget).toHaveBeenCalledWith("/p", "தேவன்", "கர்த்தர்"));
+      expect(decideVerse).not.toHaveBeenCalled();
     });
 
-    it("offers one Use item, with the rationale as its tooltip", async () => {
+    it("offers no Use item when the finding has no suggestion", async () => {
+      expect((await openMenu({ suggestions: [] })).map(([label]) => label)).toEqual(["Ignore this occurrence", "Book", "Project", "Ignore this rule▸", "Mark as false positive",
+          "Flag for review…", "Copy word", "Search in this book", "Show IRV occurrences…", "Show OV occurrences…", "Edit…"]);
+    });
+
+    it("offers one Use item, with Chapter and Book on its row and the rationale as its tooltip", async () => {
       const items = await openMenu();
       expect(items[0]).toEqual(['Use "அந்தக் காகம்"', "test rationale"]);
-      expect(items.map(([label]) => label)).toEqual(
-        ['Use "அந்தக் காகம்"', "Edit…", "Ignore this occurrence", "Ignore more widely▸", "Mark as false positive"]);
+      expect(items.map(([label]) => label)).toEqual(['Use "அந்தக் காகம்"', "Chapter", "Book", "Ignore this occurrence", "Book", "Project", "Ignore this rule▸", "Mark as false positive",
+          "Flag for review…", "Copy word", "Search in this book", "Show IRV occurrences…", "Show OV occurrences…", "Edit…"]);
+      // The word and what was found head the menu, as in the indic-qa editor: text, not an item.
+      expect(screen.getByRole("menu").textContent).toContain("“அந்த காகம்”");
     });
 
-    it("offers up to five ranked Use items, and Use applies the one chosen and records its rank", async () => {
-      const items = await openMenu({ suggestions: [...five, { text: "sixth", rank: 6, source: "rule", rationale: "r" }] });
-      expect(items.slice(0, 5)).toEqual(five.map((s) => [`Use "${s.text}"`, s.rationale]));
-      expect(items.map(([label]) => label)).not.toContain('Use "sixth"');
+    it("shows a suggestion's kind and frequency, learned fixes first, and nine at most", async () => {
+      const suggestions: LanguageQaSuggestion[] = [
+        ...Array.from({ length: 9 }, (_, i) => ({ text: `form${i + 1}`, rank: i + 1, source: "lexicon" as const,
+          rationale: "r", kind: "vowel_length", freq: 100 + i })),
+        { text: "earlier", rank: 10, source: "learned", rationale: "Replaced with this 3× before." },
+      ];
+      await openMenu({ suggestions });
+      const uses = screen.getAllByRole("menuitem").filter((item) => /^(Use|Change to) /.test(item.textContent ?? ""));
+      expect(uses).toHaveLength(9);
+      expect(uses[0].getAttribute("aria-label")).toBe('Change to "earlier", learned fix');
+      expect(uses[1].getAttribute("aria-label")).toBe('Use "form1", vowel length · 100');
+      expect(uses[1].querySelector(".tag")?.textContent).toBe("vowel length · 100");
+    });
+
+    it("offers the same change in the chapter or the book, and asks first", async () => {
+      languageQaScopeFind.mockReset().mockResolvedValue({
+        chapter: "1", verse: "6", findingId: "lqa-1", scope: "book", count: 1, verses: 1,
+        key: { ruleId: "ta-irv/tamil.vallinam-missing", detailRule: "", originalText: "அந்த காகம்", kind: "word" },
+        occurrences: [{ chapter: "1", verse: "6", findingId: "lqa-1", start: 0, end: 10, old: "அந்த காகம்", new: "அந்தக் காகம்" }],
+      });
+      project.set({ path: "/p", bookId: "php" } as never);
+      await openMenu();
+      expect(screen.getByRole("menuitem", { name: 'Use "அந்தக் காகம்": Chapter' })).toBeInTheDocument();
+      await fireEvent.click(screen.getByRole("menuitem", { name: 'Use "அந்தக் காகம்": Book' }));
+      await waitFor(() => expect(languageQaScopeFind).toHaveBeenCalledWith("/p", "1", "6", "lqa-1", "book", "அந்தக் காகம்"));
+      expect(get(scopeDialog)?.scope).toBe("book");
+      expect(editVerse).not.toHaveBeenCalled();
+      scopeDialog.set(null);
+    });
+
+    it("offers the ranked Use items in order, and Use applies the one chosen and records its rank", async () => {
+      const items = await openMenu({ suggestions: five });
+      expect(items.filter(([label]) => label?.startsWith("Use "))).toEqual(five.map((s) => [`Use "${s.text}"`, s.rationale]));
       await fireEvent.click(screen.getByRole("menuitem", { name: 'Use "அந்தக்காகம்"' }));
       expect(editVerse).toHaveBeenCalledWith("1", "6", "அந்தக்காகம் பறந்தது.");
       await waitFor(() => expect(decideVerse).toHaveBeenCalledWith("1", "6", "lqa-1", "accepted", undefined,
@@ -365,16 +423,27 @@ describe("VerseList footnote handling", () => {
         ['Use "அந்தக் காகம்"', () => Boolean(document.querySelector('[data-verse-key="1:6"] .vtext')
           ?.textContent?.includes("அந்தக் காகம்"))],
       ] as const) {
-        document.body.innerHTML = "";
-        await openMenu();
-        decideVerse.mockImplementation(never);
-        editVerse.mockImplementation(never);
-        const started = performance.now();
-        await fireEvent.click(screen.getByRole("menuitem", { name: label }));
-        expect(changed(), label).toBe(true);
-        expect(performance.now() - started, label).toBeLessThan(100);
-        cancelVerseEdit();
-        editSaving.set(false);
+        // The fastest of three clicks: one wall-clock sample under a parallel
+        // run measures the machine (a GC pause, another worker), while an
+        // action that waited on the engine would be slow -- in fact never
+        // change the screen -- every time. Every click must change the screen.
+        let fastest = Infinity;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          // Destroy the previous round's component, not just its DOM: a live
+          // one stays subscribed to the stores, so each click would re-render
+          // every earlier copy too, and the budget would measure leftovers.
+          cleanup();
+          await openMenu();
+          decideVerse.mockImplementation(never);
+          editVerse.mockImplementation(never);
+          const started = performance.now();
+          await fireEvent.click(screen.getByRole("menuitem", { name: label }));
+          expect(changed(), label).toBe(true);
+          fastest = Math.min(fastest, performance.now() - started);
+          cancelVerseEdit();
+          editSaving.set(false);
+        }
+        expect(fastest, label).toBeLessThan(100);
       }
     });
 
@@ -392,7 +461,7 @@ describe("VerseList footnote handling", () => {
     });
   });
 
-  it("offers exactly the two actions the review panel offers", async () => {
+  it("offers the review panel's two actions, then the word actions", async () => {
     seed("alpha beta", [finding({
       start_offset: 0, end_offset: 5, original_text: "alpha", suggested_replacement: null,
     })]);
@@ -403,10 +472,10 @@ describe("VerseList footnote handling", () => {
     expect(screen.getByRole("menu", { name: /Actions for Possible spelling issue/i }))
       .toBeInTheDocument();
     expect(screen.getAllByRole("menuitem").map((item) => item.textContent))
-      .toEqual(["Accept finding", "Ignore"]);
+      .toEqual(["Accept finding", "Ignore", "Flag for review…", "Copy word", "Search in this book"]);
     // Both stay usable whether or not the check proposed a correction — the
     // menu never changes height between findings.
-    for (const item of screen.getAllByRole("menuitem")) expect(item).toBeEnabled();
+    for (const name of ["Accept finding", "Ignore"]) expect(screen.getByRole("menuitem", { name })).toBeEnabled();
   });
 
   it("accepts without touching the verse when the check proposed no correction", async () => {
@@ -805,12 +874,26 @@ describe("VerseList one review surface (layered-rules 4.3)", () => {
     languageQaFindingsByVerse.set({ "1:6": [lqaFinding({ id: "lqa-9" })] });
     render(VerseList, { props: { onSelect: vi.fn() } });
     await fireEvent.contextMenu(document.querySelector('[data-finding-ids~="lqa-9"]') as HTMLElement);
-    expect(screen.getByRole("menu", { name: "Findings on this text" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: /^wildebeest: Mixed script/ })).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("menuitem", { name: /^Language QA: அந்த காகம்/ }));
+    const menu = screen.getByRole("menu", { name: "Findings on this text" });
+    // One flat menu: a header line per finding, then its own actions.
+    expect(menu.textContent).toContain("wildebeest: Mixed script");
+    expect(menu.textContent).toContain("Language QA: Possible missing வல்லினம்.");
+    expect(screen.getByRole("menuitem", { name: "Accept finding" })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("menuitem", { name: "Ignore this occurrence" }));
     expect(decideVerse).toHaveBeenCalledWith("1", "6", "lqa-9", "ignored", undefined,
       expect.objectContaining({ source: "languageQa" }));
+  });
+
+  it("reaches a Language QA scope from the mixed menu, which a flyout used to hide", async () => {
+    seed(text, [finding({ id: "gr-2", start_offset: 0, end_offset: flaggedEnd, engine: "wildebeest",
+      explanation: "Mixed script" })]);
+    housestyleRecord.mockResolvedValue({ entries: [], proposals: [], thresholds: {}, entry: {} });
+    languageQaFindingsByVerse.set({ "1:6": [lqaFinding({ id: "lqa-m" })] });
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    await fireEvent.contextMenu(document.querySelector('[data-finding-ids~="lqa-m"]') as HTMLElement);
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Ignore this occurrence: Book" }));
+    await waitFor(() => expect(housestyleRecord).toHaveBeenCalledWith(expect.objectContaining({
+      scope: "word-in-book", word: "அந்த காகம்" })));
   });
 
   it("walks Language QA marks with the keyboard and opens their menu", async () => {
@@ -841,8 +924,7 @@ describe("VerseList house style (layered-rules 6.3/6.4)", () => {
     languageQaFindingsByVerse.set({ "1:6": [lqaFinding({ id: "lqa-s" })] });
     render(VerseList, { props: { onSelect: vi.fn() } });
     await fireEvent.contextMenu(document.querySelector("mark.m-lqa-sandhi") as HTMLElement);
-    await fireEvent.click(screen.getByRole("menuitem", { name: "Ignore more widely" }));
-    await fireEvent.click(screen.getByRole("menuitem", { name: "This word in this book" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Ignore this occurrence: Book" }));
     await waitFor(() => expect(housestyleRecord).toHaveBeenCalledWith({
       scope: "word-in-book", ruleId: "ta-irv/tamil.vallinam-missing", word: "அந்த காகம்", provenance: "explicit",
       evidence: [{ chapter: "1", verse: "6", decisionId: "lqa-s" }] }));
@@ -863,5 +945,225 @@ describe("VerseList house style (layered-rules 6.3/6.4)", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Undo" }));
     expect(housestyleSetState).toHaveBeenCalledWith("k-learned", "undone");
     expect(screen.queryByText(/Learned:/)).toBeNull();
+  });
+});
+
+describe("VerseList change history and Raw view", () => {
+  beforeEach(() => {
+    seed(PHP_1_6);
+    historyCountByVerse.set({});
+  });
+  afterEach(() => {
+    rawView.set(false);
+    project.set(null);
+  });
+
+  it("shows ↺ with the edit count only on an edited verse, and opens its history", async () => {
+    verseHistory.mockResolvedValue({ total: 0, truncated: false, entries: [] });
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    expect(screen.queryByRole("button", { name: /Change history of verse/ })).toBeNull();
+    historyCountByVerse.set({ [verseKey("1", "6")]: 2 });
+    const button = await screen.findByRole("button", { name: "Change history of verse 6: 2 edits" });
+    expect(button).toHaveTextContent("↺2");
+    await fireEvent.click(button);
+    expect(await screen.findByRole("dialog", { name: /Change history of/ })).toBeTruthy();
+    expect(verseHistory).toHaveBeenCalledWith({ chapter: "1", verse: "6" });
+  });
+
+  it("offers Change history in the verse menu", async () => {
+    verseHistory.mockResolvedValue({ total: 0, truncated: false, entries: [] });
+    project.set({ path: "/p", bookId: "php" } as never);
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    await fireEvent.contextMenu(document.querySelector('[data-verse-key="1:6"]') as HTMLElement);
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Change history…" }));
+    expect(await screen.findByRole("dialog", { name: /Change history of/ })).toBeTruthy();
+  });
+
+  it("Raw view shows the stored string, markers and footnote included, and keeps marks on the same words", async () => {
+    const raw = Array.from(PHP_1_6);
+    const start = raw.join("").indexOf("कि जिसने");
+    const at = Array.from(PHP_1_6.slice(0, start)).length;
+    seed(PHP_1_6, [finding({ start_offset: at, end_offset: at + 2, original_text: "कि" })]);
+    rawView.set(true);
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    const text = document.querySelector(".vtext") as HTMLElement;
+    expect(text.classList.contains("raw")).toBe(true);
+    expect(text.textContent).toContain("\\f + \\fr 1.6");
+    expect(screen.queryByLabelText(FOOTNOTE_MARKER)).toBeNull();
+    expect(text.querySelector("mark")?.textContent).toBe("कि");
+  });
+});
+
+describe("VerseList ring from the panel's F8", () => {
+  beforeEach(() => seed("मसीह यीशु के दास पौलुस"));
+  afterEach(() => {
+    activeLanguageQaFindingId.set(null);
+    languageQaFindingsByVerse.set({});
+  });
+
+  it("rings the mark F8 moved to, and a row click clears it", async () => {
+    languageQaFindingsByVerse.set({ [verseKey("1", "6")]: [
+      lqaFinding({ id: "q1", chapter: "1", verse: "6", start: 0, end: 4, originalText: "मसीह" }),
+      lqaFinding({ id: "q2", chapter: "1", verse: "6", start: 5, end: 9, originalText: "यीशु" })] });
+    activeLanguageQaFindingId.set("q2");
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    const ringed = await waitFor(() => {
+      const mark = document.querySelector("mark.active-finding");
+      expect(mark).not.toBeNull();
+      return mark as HTMLElement;
+    });
+    expect(ringed.textContent).toBe("यीशु");
+    expect(ringed.classList.contains("panel-ring")).toBe(true);
+    await fireEvent.click(document.querySelector('[data-verse-key="1:6"]') as HTMLElement);
+    expect(get(activeLanguageQaFindingId)).toBeNull();
+  });
+});
+
+
+describe("VerseList word actions, as the indic-qa editor offers them", () => {
+  const text = "मसीह यीशु के दास पौलुस";
+
+  /** The browser's answer to "which character is under the pointer". */
+  function pointAt(word: string, within = 1): void {
+    const root = document.querySelector('[data-verse-key="1:6"] .vtext') as HTMLElement;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const at = (node.nodeValue ?? "").indexOf(word);
+      if (at >= 0) {
+        (document as unknown as { caretRangeFromPoint: () => Partial<Range> }).caretRangeFromPoint =
+          () => ({ startContainer: node as Node, startOffset: at + within });
+        return;
+      }
+    }
+    throw new Error(`${word} is not in the verse`);
+  }
+
+  beforeEach(() => {
+    seed(text);
+    project.set({ path: "/p", bookId: "php" } as never);
+    languageQaWordsAdd.mockReset().mockResolvedValue({ entries: [], count: 1 });
+    languageQaOccurrences.mockReset().mockResolvedValue({ word: "यीशु", source: "irv", match: "text", ready: true,
+      total: 0, truncated: false, hits: [] });
+  });
+  afterEach(() => {
+    delete (document as unknown as { caretRangeFromPoint?: unknown }).caretRangeFromPoint;
+    languageQaFindingsByVerse.set({});
+    project.set(null);
+  });
+
+  it("offers Add, Copy and Search on an unmarked word under the pointer", async () => {
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    pointAt("यीशु");
+    await fireEvent.contextMenu(verseRow(), { clientX: 5, clientY: 5 });
+    const menu = screen.getByRole("menu");
+    expect(menu.textContent).toContain("“यीशु”");
+    expect(screen.getByRole("menuitem", { name: "Copy word" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Flag “यीशु” for review…" })).toBeEnabled();
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Add “यीशु” to the project word list" }));
+    await waitFor(() => expect(languageQaWordsAdd).toHaveBeenCalledWith("/p", ["यीशु"], "book"));
+  });
+
+  it("Search in this book looks for any run of the text", async () => {
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    pointAt("यीशु");
+    await fireEvent.contextMenu(verseRow(), { clientX: 5, clientY: 5 });
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Search in this book" }));
+    await waitFor(() => expect(languageQaOccurrences).toHaveBeenCalledWith("/p", "यीशु", "irv", 200, "text"));
+  });
+
+  it("offers Add on a misspelling's mark and drops the mark at once; not where Add cannot silence it", async () => {
+    const typo = lqaFinding({ id: "u1", rule: "hi.lex.unknown", ruleId: "hi-irv/hi.lex.unknown", category: "typo",
+      layer: "lexicon", start: 5, end: 9, originalText: "यीशु", suggestions: [] });
+    languageQaFindingsByVerse.set({ "1:6": [typo] });
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    await fireEvent.contextMenu(document.querySelector('[data-finding-ids~="u1"]') as HTMLElement);
+    const started = performance.now();
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Add “यीशु” to the project word list" }));
+    expect(document.querySelector('[data-finding-ids~="u1"]')).toBeNull();
+    expect(performance.now() - started).toBeLessThan(250);
+    await waitFor(() => expect(languageQaWordsAdd).toHaveBeenCalledWith("/p", ["यीशु"], "book"));
+
+    cleanup();
+    languageQaFindingsByVerse.set({ "1:6": [{ ...typo, id: "m1", category: "unicode", ruleId: "ta-irv/indicqa.shape.malformed" }] });
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    await fireEvent.contextMenu(document.querySelector('[data-finding-ids~="m1"]') as HTMLElement);
+    expect(screen.queryByRole("menuitem", { name: /to the project word list/ })).toBeNull();
+  });
+});
+
+describe("VerseList right-click, ring and notices (#236)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    activeLanguageQaFindingId.set(null);
+  });
+
+  /** seed() plus a second verse, 7, carrying one underlined finding. */
+  function seedTwoVerses(): void {
+    seed("alpha beta");
+    chapterVerseNums.set({ "1": ["6", "7"] });
+    verseTexts.update((texts) => ({ ...texts, [verseKey("1", "7")]: "gamma delta" }));
+    verseDisplay.update((display) => ({ ...display, [verseKey("1", "7")]: displayFor("gamma delta") }));
+    findingsByVerse.update((map) => ({ ...map, [verseKey("1", "7")]: [
+      finding({ id: "f7", verse: 7, start_offset: 0, end_offset: 5, original_text: "gamma" })] }));
+  }
+
+  it("does not scroll a verse to the top when one of its underlined words is right-clicked", async () => {
+    seedTwoVerses();
+    const scrollTo = vi.spyOn(Element.prototype, "scrollTo");
+    try {
+      render(VerseList, { props: { onSelect: (verse: string) => selectedVerse.set(verse) } });
+      // Navigation that is not a click (Go to, a report row) still scrolls.
+      selectedVerse.set("6");
+      await waitFor(() => expect(scrollTo).toHaveBeenCalled());
+      scrollTo.mockClear();
+
+      await fireEvent.contextMenu(document.querySelector('[data-finding-ids~="f7"]') as HTMLElement);
+      expect(get(selectedVerse)).toBe("7");
+      expect(screen.getByRole("menu")).toBeInTheDocument();
+      await tick();
+      await tick();
+      expect(scrollTo).not.toHaveBeenCalled();
+    } finally {
+      scrollTo.mockRestore();
+    }
+  });
+
+  it("a right-click on an underlined word clears the panel's F8 ring, as a left click does", async () => {
+    seed("alpha beta", [
+      finding({ id: "f1", start_offset: 0, end_offset: 5, original_text: "alpha" }),
+      finding({ id: "f2", start_offset: 6, end_offset: 10, original_text: "beta" }),
+    ]);
+    activeLanguageQaFindingId.set("f1");
+    render(VerseList, { props: { onSelect: (verse: string) => selectedVerse.set(verse) } });
+    expect(document.querySelector("mark.panel-ring")?.textContent).toBe("alpha");
+    await fireEvent.contextMenu(document.querySelector('[data-finding-ids~="f2"]') as HTMLElement);
+    expect(get(activeLanguageQaFindingId)).toBeNull();
+    expect(document.querySelector("mark.panel-ring")).toBeNull();
+  });
+
+  it("clears an error notice by itself, and sooner from its close button", async () => {
+    vi.useFakeTimers();
+    seed("alpha beta", [finding({
+      start_offset: 0, end_offset: 5, original_text: "moved", suggested_replacement: "omega",
+    })]);
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    await fireEvent.contextMenu(document.querySelector("mark") as HTMLElement);
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Accept finding" }));
+    const notice = () => document.querySelector(".context-notice");
+    expect(notice()?.textContent).toMatch(/stale/i);
+
+    // An error stays long enough to read, then goes.
+    vi.advanceTimersByTime(9_000);
+    await tick();
+    expect(notice()).not.toBeNull();
+    vi.advanceTimersByTime(1_500);
+    await tick();
+    expect(notice()).toBeNull();
+
+    // Shown again, the close button clears it at once.
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Accept finding" }));
+    expect(notice()).not.toBeNull();
+    await fireEvent.click(within(notice() as HTMLElement).getByRole("button", { name: "Dismiss" }));
+    expect(notice()).toBeNull();
   });
 });

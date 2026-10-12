@@ -113,7 +113,7 @@ flowchart TB
       CD["checkData/ and tools/wordAlignment/completed, invalid"]
     end
     subgraph AIdir[".apps/translationCoreAI/ (Bridge-private)"]
-      WB["bridge-workbench.sqlite3, schema v5, 22 tables<br/>human_decisions, issue_resolutions, ai_review_results, alignment_history,<br/>alignment_cross_verse_links (#117), alignment_diagnostics, check_findings, check_cache, triage_verdicts,<br/>language_qa_cache (#169),<br/>progress_chapters, progress_findings, progress_totals, metrics_events, metrics_counters,<br/>semantic_mappings, semantic_validation_runs, project_state, team_members,<br/>team_assignments, file_backups, change_log (append-only, trigger-guarded)"]
+      WB["bridge-workbench.sqlite3, schema v7, 27 tables<br/>human_decisions, issue_resolutions, ai_review_results, alignment_history,<br/>alignment_cross_verse_links (#117), alignment_null_decisions, alignment_verdicts (#216), alignment_diagnostics, check_findings, check_cache, triage_verdicts,<br/>language_qa_cache (#169), language_qa_batches, language_qa_learned_fixes, language_qa_flags,<br/>progress_chapters, progress_findings, progress_totals, metrics_events, metrics_counters,<br/>semantic_mappings, semantic_validation_runs, project_state, team_members,<br/>team_assignments, file_backups, change_log (append-only, trigger-guarded)"]
       SEM["passageSemantic/bridge-semantic.sqlite3, schema v16, 49 tables<br/>Stage 4 foundation: token_lineages, token_instances, passage_records,<br/>record_dependencies, pending_invalidations, source_resource_locks<br/>Stage 5 to 8 run tables, 9A review_records and analysis_jobs,<br/>9B correction_proposals, _events, _intents, _verifications"]
       TX["transactions/ (pre-write journal), backups/, paratextNotes/"]
     end
@@ -130,7 +130,7 @@ flowchart TB
 
 Three independent schema ladders, each with its own version constant and migration blocks
 in one module: `passage_semantic_repository.py` (`DATABASE_SCHEMA_VERSION = 16`),
-`workbench_repository.py` (`WORKBENCH_SCHEMA_VERSION = 5`), `workspace_repository.py`
+`workbench_repository.py` (`WORKBENCH_SCHEMA_VERSION = 7`), `workspace_repository.py`
 (`WORKSPACE_SCHEMA_VERSION = 2`). A bump on one is never a bump on another. The
 pre-cutover JSON store directories are listed in `tc_project.py`'s `_PRE_CUTOVER_STORE_DIRS`;
 a project carrying any of them refuses to open and is re-imported (no migration, by the
@@ -165,6 +165,7 @@ name for it either):
 | `engine/vendor/greekroom-usfm/` | `greekroom/greekroom/usfm/` | Not published on PyPI at all — only `owl` and `gr_utilities` are part of the `greekroom` package; `usfm` exists only in the source tree. Monolithic CLI script — invoked via subprocess/temp-dir, not a direct Python import (path-sensitive internal import: `from ualign_utilities import ...`). |
 | `engine/vendor/greekroom-versification/` | `greekroom/greekroom/versification/` | Same repo/commit as USFM. Unlike the USFM checker, this one **is** a genuine importable library, so it's wired in as a direct import. Its `data/standard_mappings/*.json` files carry **CC BY-SA 4.0**, a different license than the BSD-3-Clause code around them — real distinction to track, not a rubber-stamp of the USFM checker's licensing precedent. |
 | `engine/vendor/greekroom-smart-edit-distance/` | `smart_edit_distance/` | Not published on PyPI under any name (checked `smart-edit-distance` and `smart_edit_distance`, neither exists), and not part of the `greekroom` PyPI package either. |
+| `engine/vendor/indic-qa/` | `selvabenz/indic-qa`: `qa_app/` checker core, profiles, `scripts/build_dictionary.py` | A FastAPI editor, not a package. Only its pure-stdlib checker is used, imported in-process for the pa/ml/hi/or Language QA profile packs (2026-10-07). It is copied byte-exact by `scripts/sync_indic_qa.py`, with sha256 in `VENDORED.json`. Its OV-built dictionaries and Bridge's IRV snapshots are pack data in `engine/language_packs/<code>-irv/`, outside the exe. The code is MIT; the dictionaries' terms are an open question (its `NOTICE.md`). |
 
 Each vendored directory has its own `NOTICE.md` with full provenance
 (source URL, path, pinned commit, fetch date) — check those before updating
@@ -214,10 +215,16 @@ flowchart LR
     S3m -. "prompt context and policy gate" .-> AIR
     S3m -. "cross-verse guard" .-> AAP["alignment.aiPropose<br/>no UI caller"]
   end
+  subgraph LQ["Language QA (offline, background worker; per verse, then one book stage)"]
+    LQr["rule pack: ta-irv, or an indic-qa profile pack (pa, ml, hi, or)<br/>common rules, termbase, house style, learned fixes"] --> LQf
+    LQi["vendored indic-qa checker<br/>profile packs, and ta-irv's OV dictionary layer"] --> LQf
+    LQf["Language QA findings<br/>LanguageQaPanel; drawn inline behind the reviewer's threshold"]
+  end
   subgraph Overlay["AI overlays (online, optional, human-invoked)"]
     TR["triage: false-positive score per Greek Room finding<br/>report screen only"]
     AIR["ai.review: tN/tW AI review<br/>ReviewPanel third tab"]
     CP["9B correction wording"]
+    AA["alignment.window.autoAlign, alignment.autoAlign.start<br/>writes only what two passes agree on (origin ai-auto)"]
   end
 ```
 
@@ -227,6 +234,17 @@ cross-verse links from `bridge-workbench.sqlite3`, both projected into the same 
 shape and scored as one `WORD_ALIGNMENT` component at the `HUMAN_PRECEDENT` weight. A change
 to either stales downstream Stage 6B/7/8 records through the book-level `WORD_ALIGNMENT`
 dependency anchor, because both are folded into `alignment_state_digest`.
+
+Since #217 and #218 a cross-verse link is an N:M **group**, and each token belongs to one group
+only, so a group is a single precedent. A **null alignment decision**
+(`alignment_null_decisions`, #216) records that a word has no counterpart, for a named reason.
+Stage 6B/8 read it as evidence: a grammatical or implicit source word is
+`COVERED_BY_RESTRUCTURING`, not `NOT_LOCATED`. **Automatic alignment** (#219–#222) asks a
+verse window twice, source-first and target-first. It writes only what both passes give:
+tC groups, link groups and nulls, each journalled with `origin: "ai-auto"`. Anything else is
+a suggestion, and a word neither pass placed becomes a possible omission/addition finding
+(`alignment_gap_checks.py`). It never overwrites a reviewer's alignment; DECISIONS
+2026-10-08 records the gate and its limits.
 
 Two review vocabularies coexist on purpose because they sit on two data sources. The
 ReviewPanel writes engine `FindingStatus` values against Greek Room findings; the QA mode of
@@ -250,6 +268,9 @@ flowchart TB
   Editor --> AM["AlignmentModal (Align words)<br/>translationCore-compatible word alignment"]
   AR --> AM
   Editor --> RPt["ReviewPanel tabs: Greek Room / tN-tW-Alignment (TranslationHelpsReview) / AI review"]
+  Editor --> LQP["LanguageQaPanel<br/>tabs Findings, Book words, Flags, Edits, Dictionary;<br/>ScopeConfirmDialog for a chapter or book Use, with batch undo"]
+  Editor --> RefP["ReferencePanel<br/>a reference Bible folder beside the text"]
+  Editor --> CVM["CrossVerseAlignmentModal (Cross-verse alignment)<br/>Align automatically; AutoAlignChapterButton runs the chapter job"]
   AR --> QA["AlignmentQaMode (Stage 9A)<br/>QaFindingList, QaFindingDetail, EvidenceInspector, CorrectionReviewPanel (9B)"]
   Top["TopBar: Projects, book and chapter navigation, Sync, Generate report, Export, Settings"]
 ```
@@ -271,6 +292,8 @@ running, and cancel-wait every 400 ms.
 | Project I/O and import | `tc_project.py` 2980, `project_import.py` 992, `project_registry.py` 531, `usfm_parser.py` (reads a book: usfmtc behind Bridge's own walker; verse boundaries, headings, structure, headers, #91), `usfm_verse.py` (reads a verse string: plain text, notes, styles, offset map — the one fragment reader), `usfm.py` (aliases over it), `usfm_passages.py` (passage windows from the parser's structure) |
 | translationCore compatibility and resources | `resource_materializer.py` 364, `original_language_resources.py` 288, `lexicon_resources.py` 196, `knowledge_base.py` 450, `local_checks.py`, `plugins.py` 251 |
 | Word alignment | `alignment_engine.py` 204, `aligned_usfm.py` 166, `word_alignment_evidence.py` 284, `alignment_statistics.py` 372 (backs the consistency finding), `alignment_reliability.py` 428 and `semantic_alignment_guard.py` 124 (AI proposals; removal decided) |
+| Cross-verse and automatic alignment | `cross_verse_links.py` 450 (N:M link groups, #117/#217), `alignment_null_decisions.py` 312 (#216), `alignment_window.py` 269 and `alignment_agreement.py` 245 (two-pass automatic alignment, #219), `alignment_gap_checks.py` 182 and `alignment_gaps.py` 113 (possible omission/addition, #220), `cross_verse_proposals.py` 273, `cross_verse_ai_proposals.py` 351 |
+| Language QA | `language_qa.py` 578, `language_qa_jobs.py` 1243 (the background pass), `language_qa_drawn.py` 91 (the reviewer's threshold), `language_qa_learned.py` 142, `language_qa_scope.py` 125, `language_qa_benchmark.py` 923; `language_packs/` (`loader.py` 749, `registry.py`, `lexicon.py`, `indic_qa_adapter.py` 784, `indic_qa_tamil.py` 262, `reference_text.py`, `related_words.py`) |
 | Stages 4 to 8 | `passage_semantic_repository.py` 5070, `passage_semantic_runtime.py` 1364, `passage_semantic_models.py` 1171, `source_semantic_inventory.py` 779, `target_semantic_inventory.py` 392, `semantic_location.py` 853, `meaning_analysis.py` 560, `qa_audit.py` 822, `analysis_jobs.py` 724 |
 | Stage 9A review | `qa_review.py` 412, `review_policy.py`, `qa_target_hash.py` |
 | Stage 9B correction | `correction_eligibility.py` 570, `correction_wording.py` 694, `correction_application.py` 306, `correction_application_recovery.py` 232, `correction_affected_analysis.py` 269, `correction_verification.py` 1036 |
@@ -281,9 +304,10 @@ running, and cancel-wait every 400 ms.
 | Reporting | `qa_report.py` 828, `reporting.py` 203, `analytics.py`, `metrics.py` |
 | Versification | `versification.py` 333 (imports the vendored Greek Room library directly) |
 
-Greek Room adapters live in `engine/greek_room_engine/adapters/`; the two vendored upstream
-trees are `engine/vendor/greekroom-usfm/` (run as a separate executable) and
-`engine/vendor/greekroom-versification/` (imported as a library). Each has a `NOTICE.md`.
+Greek Room adapters live in `engine/greek_room_engine/adapters/`. There are three vendored
+upstream trees: `engine/vendor/greekroom-usfm/` (run as a separate executable),
+`engine/vendor/greekroom-versification/` (imported as a library) and `engine/vendor/indic-qa/`
+(indic-qa's checker core, imported in-process; see §3.1). Each has a `NOTICE.md`.
 
 ## 7. Adapter boundary and the QaFinding model
 
@@ -319,9 +343,10 @@ This is the repository's one doc map; `CLAUDE.md`, `DEVELOPER_GUIDE.md` and
 | `passage-aware-semantic-alignment.md` | The requirements spec those invariants come from: passage awareness, the semantic/lexical split, coverage accounting, meaning states. |
 | `IMPORTS.md` | Import pipeline: supported inputs, normalized project schema, duplicate safety, provenance, and the tN/tW materialization boundary. |
 | `ALIGNMENT.md` | Manual word alignment and the Bridge-private cross-verse link store: protocol, persistence, completion states. |
+| `Greek_Room_Findings.md` | Upstream Greek Room module map: what the `greekroom` PyPI package ships as of 0.1.5, what must still be vendored, the Windows and import bugs reproduced in each module, and drift from Bridge's pinned vendor trees. Point-in-time (verified 2026-09-15). |
 | `TEAM_ARCHITECTURE.md` | Direction for #44 to #47. Its §3 and §4 describe shipped code; §5 to §8 are still design. |
 | `QA_TEST_MATRIX.md` | The release gate: what is tested, how, and the current pass state per row. |
-| `LANGUAGE_QA_PLAN.md` | Offline Language QA (#169): scope, coverage, the layered-rules phase table. `LANGUAGE_QA_BENCHMARK.md` holds the per-rule precision and recall against the IRV review reports and how to run them; `LANGUAGE_QA_HOUSESTYLE.md` is house style as project data (entries, scopes, the learner's thresholds, export ledger); `LANGUAGE_QA_RULE_PACK.md` is the rule-pack schema (the bundled `ta-irv` pack, examples-as-tests, narrowing-only project overrides, inline sign-off); `LANGUAGE_QA_TAMIL_SPECIFICATION.md` maps the 56-item Tamil proofreading framework to pack ids, status and owner; `LANGUAGE_QA_REVIEW_FIXES_ACCEPTANCE.md` holds the desktop cases for A52–A55. |
+| `LANGUAGE_QA_PLAN.md` | Offline Language QA (#169): scope, coverage, the layered-rules phase table. `LANGUAGE_QA_BENCHMARK.md` holds the per-rule precision and recall against the IRV review reports and how to run them; `LANGUAGE_QA_HOUSESTYLE.md` is house style as project data (entries, scopes, the learner's thresholds, export ledger); `LANGUAGE_QA_PACKS.md` is the three tiers (core, `indic` rule kinds, data-only packs), the `index.json` registry, where packs live at runtime, and how to add a language with no code; `LANGUAGE_QA_RULE_PACK.md` is the rule-pack schema (the bundled `ta-irv` pack, examples-as-tests, narrowing-only project overrides, inline sign-off); `LANGUAGE_QA_TAMIL_SPECIFICATION.md` maps the 56-item Tamil proofreading framework to pack ids, status and owner; `LANGUAGE_QA_REVIEW_FIXES_ACCEPTANCE.md` holds the desktop cases for A52–A55. |
 | `SIMPLIFICATION_AUDIT_2026-09.md` | What is slowing the codebase down, ranked, with the decisions taken. Point-in-time (2026-09-16). |
 | `USER_MANUAL.md` | What the app does, screen by screen, for translators and checkers. |
 | `RELEASE_*.md` | Release notes, one per version. |

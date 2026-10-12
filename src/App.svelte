@@ -6,8 +6,19 @@
   import VerseList from "./lib/components/VerseList.svelte";
   import ReviewPanel from "./lib/components/ReviewPanel.svelte";
   import LanguageQaPanel from "./lib/components/LanguageQaPanel.svelte";
+  import ScopeConfirmDialog from "./lib/components/ScopeConfirmDialog.svelte";
+  import ScopeNotice from "./lib/components/ScopeNotice.svelte";
+  import { resetScopedApply, scopeDialog } from "./lib/scopedApply";
+  import { startFlagLoader } from "./lib/flags";
+  import ReferencePanel from "./lib/components/ReferencePanel.svelte";
+  import FindingContextMenu from "./lib/components/FindingContextMenu.svelte";
+  import { TEXT_SCALES, bumpTextScale, rawView, referencePanelOpen, textScale } from "./lib/editorPrefs";
+  import {
+    bookmarks, buildPlacesMenu, collectionOf, recentChapters, recordRecentChapter, setPlaces, toggleBookmark,
+  } from "./lib/bookmarks";
   import AlignmentReview from "./lib/components/AlignmentReview.svelte";
   import CrossVerseAlignmentModal from "./lib/components/CrossVerseAlignmentModal.svelte";
+  import AutoAlignChapterButton from "./lib/components/AutoAlignChapterButton.svelte";
   import {
     closeCrossVerse, crossVerseAnchor, crossVerseInitialVerses, crossVerseOpen, crossVerseRequest, openCrossVerse,
   } from "./lib/alignmentUi";
@@ -24,13 +35,14 @@
   import { isTriageUnavailable } from "./lib/types/report";
   import type { TriageOverrideVerdict } from "./lib/types/finding";
   import {
-    project, currentChapter, chapterVerseNums, verseTexts, verseDisplay, headingsByVerse, findingsByVerse,
+    project, currentChapter, chapterVerseNums, verseTexts, verseDisplay, headingsByVerse, findingsByVerse, historyCountByVerse,
     checkStatusByVerse, alignmentStatusByVerse, loadedChapters, selectedVerse, selectedVerseSet, checkingProgress, approvedCount, verseNums,
     verseKey, settingsOpen, exportOpen, bookApprovedSummary, resetBookState, reviewerMode,
     aiCheckReviewsByVerse, diagnosticsOpen, engineLog, appendEngineLog, navigationStatus,
   } from "./lib/stores";
   import { editingChapter, editingVerse, editSaving } from "./lib/verseEditor";
-  import { nudgeLanguageQa, startLanguageQaInline } from "./lib/languageQaInline";
+  import { languageQaChannel, nudgeLanguageQa, startLanguageQaInline } from "./lib/languageQaInline";
+  import { toggleLanguageQaPanel } from "./lib/languageQaPanelUi";
   import { collectionQaRunning, stopCollectionQa } from "./lib/collectionQa";
   import CollectionQaPanel from "./lib/components/CollectionQaPanel.svelte";
 
@@ -78,7 +90,7 @@
   let triagePollGeneration = 0;
   let engineNotice = "";
   let engineNoticeTimer: ReturnType<typeof setTimeout> | undefined;
-  let settingsInitialPane: "ai" | "quality" | "connections" | "resources" | "security" = "ai";
+  let settingsInitialPane: "ai" | "quality" | "connections" | "resources" | "terminology" | "languageQa" | "security" = "ai";
   let navigationPollInFlight = false;
   let handlingNavigationRequest = "";
   let lastNavigationReference = "";
@@ -87,7 +99,7 @@
   let navigationRetryReference = "";
   let navigationRetries = 0;
 
-  function openSettings(pane: "ai" | "quality" | "connections" | "resources" | "security" = "ai"): void {
+  function openSettings(pane: "ai" | "quality" | "connections" | "resources" | "terminology" | "languageQa" | "security" = "ai"): void {
     settingsInitialPane = pane;
     settingsOpen.set(true);
   }
@@ -105,6 +117,31 @@
       $editSaving ? "saving" : "idle",
       screen,
     ].join("|");
+  }
+
+  // The ★ Bookmarks menu, anchored under its button.
+  let placesMenu: { x: number; y: number } | null = null;
+  $: currentPlace = $project && $selectedVerse
+    ? { collection: collectionOf($project), book: $project.bookId.toLowerCase(), chapter: $currentChapter, verse: $selectedVerse }
+    : null;
+  $: placesActions = placesMenu ? buildPlacesMenu($bookmarks, $recentChapters, collectionOf($project), currentPlace) : [];
+
+  function openPlacesMenu(event: MouseEvent): void {
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    placesMenu = { x: rect.left, y: rect.bottom + 4 };
+  }
+
+  async function onPlacesAction(event: CustomEvent<{ id: string }>): Promise<void> {
+    placesMenu = null;
+    const [kind, index] = event.detail.id.split(":");
+    if (kind === "toggle") {
+      if (!currentPlace) return;
+      const error = await toggleBookmark(currentPlace);
+      if (error) showNavigationNotice(error);
+      return;
+    }
+    const place = kind === "bm" ? $bookmarks[Number(index)] : kind === "recent" ? $recentChapters[Number(index)] : undefined;
+    if (place) await navigateToReportRow(place.book, place.chapter, place.verse ?? "");
   }
 
   function showNavigationNotice(message: string): void {
@@ -260,17 +297,27 @@
   // LanguageQaPanel below -- running while a book is open, restarted when the
   // book changes -- but independent of the panel, which only pages its list.
   let stopLanguageQaInline: (() => void) | null = null;
+  let stopFlagLoader: (() => void) | null = null;
   let languageQaInlinePath = "";
   $: {
     const path = $project && opened ? $project.path : "";
     if (path !== languageQaInlinePath) {
       stopLanguageQaInline?.();
       stopLanguageQaInline = null;
+      stopFlagLoader?.();
+      stopFlagLoader = null;
       languageQaInlinePath = path;
+      // A scoped correction's batch belongs to the book it was made in.
+      resetScopedApply();
       if (path) stopLanguageQaInline = startLanguageQaInline(path);
+      // Reviewer flags (⚑) of each chapter as it is shown.
+      if (path) stopFlagLoader = startFlagLoader(path);
     }
   }
-  onDestroy(() => stopLanguageQaInline?.());
+  onDestroy(() => {
+    stopLanguageQaInline?.();
+    stopFlagLoader?.();
+  });
 
   // Collection QA (layered-rules 4.4): while a run checks every book, the app
   // is read-only. checkingProgress.running is what already holds editing,
@@ -322,6 +369,7 @@
         try {
           const settings = await bridge.getSettings();
           reviewerMode.set(settings.reviewerMode);
+          setPlaces(settings);
           triageThreshold = settings.triageHideThreshold > 0 ? settings.triageHideThreshold : null;
         } catch (error) {
           console.error("Could not load reviewer mode", error);
@@ -685,7 +733,7 @@
       knownVerses.length > 0 &&
       knownVerses.every((verse) => Object.prototype.hasOwnProperty.call($verseTexts, verseKey(chapter, verse)))
     ) return;
-    const { verses, headings } = await bridge.chapterVerseData(chapter);
+    const { verses, headings, editCounts } = await bridge.chapterVerseData(chapter);
     const verseIds = Object.keys(verses);
     chapterVerseNums.update((m) => ({ ...m, [chapter]: verseIds }));
 
@@ -708,6 +756,9 @@
     verseDisplay.update((d) => ({ ...d, ...displays }));
     headingsByVerse.update((h) => ({ ...h, ...headingRows }));
     alignmentStatusByVerse.update((existing) => ({ ...existing, ...alignmentStatuses }));
+    const counts: Record<string, number> = {};
+    for (const [v, n] of Object.entries(editCounts ?? {})) counts[verseKey(chapter, v)] = n;
+    historyCountByVerse.update((existing) => ({ ...existing, ...counts }));
   }
 
   async function hydrateChapterAIReviews(
@@ -729,7 +780,13 @@
     }
   }
 
-  function applyJobSnapshot(snapshot: CheckJobSnapshot): void {
+  /** `seen`: every verse status this job has reported so far. monitorJob polls
+   *  checks.status with a cursor, so each snapshot carries only the verses
+   *  finished since the previous poll (#229) and the end-of-job bookkeeping
+   *  below reads the tally instead. A caller holding a full snapshot omits it. */
+  function applyJobSnapshot(
+    snapshot: CheckJobSnapshot, seen: Record<string, "succeeded" | "failed"> = {},
+  ): void {
     chapterVerseNums.update((existing) => ({ ...existing, ...snapshot.chapterVerses }));
 
     const findingUpdates: Record<string, QaFinding[]> = {};
@@ -737,6 +794,7 @@
     for (const [key, result] of Object.entries(snapshot.results)) {
       findingUpdates[key] = result.findings;
       statusUpdates[key] = result.status;
+      seen[key] = result.status;
     }
     if (Object.keys(findingUpdates).length > 0) {
       findingsByVerse.update((existing) => ({ ...existing, ...findingUpdates }));
@@ -753,7 +811,7 @@
         for (const [chapter, verses] of Object.entries(snapshot.chapterVerses)) {
           for (const verse of verses) {
             const key = verseKey(chapter, verse);
-            if (!snapshot.results[key]) next[key] = snapshot.state === "cancelled" ? "cancelled" : "failed";
+            if (!seen[key]) next[key] = snapshot.state === "cancelled" ? "cancelled" : "failed";
           }
         }
         return next;
@@ -762,7 +820,7 @@
         const next = { ...existing };
         for (const [chapter, verses] of Object.entries(snapshot.chapterVerses)) {
           next[chapter] = verses.length > 0 && verses.every(
-            (verse) => snapshot.results[verseKey(chapter, verse)]?.status === "succeeded",
+            (verse) => seen[verseKey(chapter, verse)] === "succeeded",
           );
         }
         return next;
@@ -785,13 +843,17 @@
 
   async function monitorJob(initial: CheckJobSnapshot, generation: number): Promise<void> {
     let snapshot = initial;
+    const seen: Record<string, "succeeded" | "failed"> = {};
+    for (const [key, result] of Object.entries(initial.results)) seen[key] = result.status;
+    let cursor = initial.resultsCursor ?? 0;
     try {
       while (!["succeeded", "failed", "cancelled"].includes(snapshot.state)) {
         await new Promise((resolve) => setTimeout(resolve, 750));
         if (generation !== monitorGeneration) return;
-        snapshot = await bridge.checkStatus(snapshot.jobId);
+        snapshot = await bridge.checkStatus(snapshot.jobId, cursor);
         if (generation !== monitorGeneration) return;
-        applyJobSnapshot(snapshot);
+        cursor = snapshot.resultsCursor ?? cursor;
+        applyJobSnapshot(snapshot, seen);
       }
     } catch (error) {
       if (generation !== monitorGeneration) return;
@@ -842,6 +904,7 @@
       targetVerse && verses.includes(targetVerse) ? targetVerse : (verses.length > 0 ? verses[0] : null),
     );
     void hydrateChapterAIReviews(chapter, $project?.path ?? "", sequence);
+    if ($project) recordRecentChapter({ collection: collectionOf($project), book: $project.bookId.toLowerCase(), chapter });
     if (!$loadedChapters[chapter] && !activeJobId) {
       await beginChecks("chapter", [chapter]);
     }
@@ -867,11 +930,13 @@
     const jobId = activeJobId;
     if (!jobId) return;
     await bridge.cancelChecks(jobId);
-    let snapshot = await bridge.checkStatus(jobId);
+    // Wait without copying any results (#229), then read them all once.
+    let snapshot = await bridge.checkStatus(jobId, Number.MAX_SAFE_INTEGER);
     while (!["succeeded", "failed", "cancelled"].includes(snapshot.state)) {
       await new Promise((resolve) => setTimeout(resolve, 400));
-      snapshot = await bridge.checkStatus(jobId);
+      snapshot = await bridge.checkStatus(jobId, Number.MAX_SAFE_INTEGER);
     }
+    snapshot = await bridge.checkStatus(jobId);
     monitorGeneration++;
     activeJobId = "";
     applyJobSnapshot(snapshot);
@@ -1023,7 +1088,7 @@
         {$checkingProgress.label} — {$checkingProgress.percent}%
       </span>
       <div class="track"><div class="fill" style="width:{$checkingProgress.percent}%" /></div>
-      <button class="progress-action cancel-action" on:click={cancelChecks} disabled={$checkingProgress.state === "cancelling"}>
+      <button class="progress-action cancel-action" on:click={cancelChecks} disabled={$checkingProgress.state === "cancelling" || $checkingProgress.state === "finalizing"}>
         {$checkingProgress.state === "cancelling" ? "Cancelling…" : "Cancel"}
       </button>
     </div>
@@ -1090,7 +1155,9 @@
     {/key}
   {:else}
     <div class="body">
-      <div class="editor-col">
+      <!-- The toolbar spans the text and the reference panel, so the two start
+           at the same height under it. The review panel keeps the full height. -->
+      <div class="work-col" style:--verse-scale={$textScale}>
         <div class="editor-toolbar">
           <span>Chapter {$currentChapter} of {$project?.chapters.length ?? "?"}</span>
           <button class="whole-book-btn" on:click={runWholeBook} disabled={Boolean(activeJobId)}>
@@ -1109,16 +1176,41 @@
           >
             Cross-verse alignment{#if $selectedVerseSet.length > 1}&nbsp;({$selectedVerseSet.length}){/if}
           </button>
-          <span class="grow" />
-          <span title="Word-alignment status for this chapter">
-            Alignment: {alignmentChapterSummary.complete} complete · {alignmentChapterSummary.partial} partial
-            {#if alignmentChapterSummary.invalid} · {alignmentChapterSummary.invalid} invalid{/if}
+          <AutoAlignChapterButton
+            chapter={$currentChapter}
+            disabled={Boolean(activeJobId)}
+            onOpenReview={(verse, verses) => openCrossVerse(verse, verses)}
+            onFinished={() => { void activateChapter($currentChapter); }}
+          />
+          <span class="toolbar-divider" aria-hidden="true" />
+          <button class="whole-book-btn" class:on={$referencePanelOpen} aria-pressed={$referencePanelOpen}
+            title="Show a reference Bible (an Old Version) beside the text"
+            on:click={() => referencePanelOpen.update((open) => !open)}>Ref.</button>
+          <button class="whole-book-btn" class:on={$rawView} aria-pressed={$rawView}
+            title="Show each verse exactly as stored, USFM markers included"
+            on:click={() => rawView.update((on) => !on)}>Raw</button>
+          <button class="whole-book-btn" aria-haspopup="menu" disabled={!$project}
+            title="Bookmark this verse, or go to a bookmark or a recent chapter"
+            on:click={openPlacesMenu}>★ Bookmarks</button>
+          <span class="text-size" role="group" aria-label="Text size">
+            <button class="whole-book-btn" title="Smaller text" aria-label="Smaller text"
+              disabled={$textScale === TEXT_SCALES[0]} on:click={() => bumpTextScale(-1)}>A−</button>
+            <button class="whole-book-btn" title="Larger text" aria-label="Larger text"
+              disabled={$textScale === TEXT_SCALES[TEXT_SCALES.length - 1]} on:click={() => bumpTextScale(1)}>A+</button>
           </span>
-          <span>{bookSummary.approvedChapters}/{bookSummary.totalChapters} chapters approved</span>
         </div>
-        <VerseList onSelect={selectVerse} />
+        <div class="work-row">
+          <div class="editor-col">
+            <VerseList onSelect={selectVerse} onNavigate={navigateToReportRow} />
+          </div>
+          {#if $referencePanelOpen && $project}
+            {#key $project.path}
+              <ReferencePanel onOpenSettings={() => openSettings("languageQa")} onSelectVerse={selectVerse} />
+            {/key}
+          {/if}
+        </div>
       </div>
-      <ReviewPanel />
+      <ReviewPanel onNavigate={navigateToReportRow} />
     </div>
 
     <div class="statusbar">
@@ -1126,8 +1218,19 @@
         <span>Project: <b>{$project.bookName}</b></span>
         <span>Chapter: <b>{$currentChapter}</b></span>
         <span style="color:var(--success);">✓ Approved: {$approvedCount}/{$verseNums.length}</span>
+        <span title="Word-alignment status for this chapter">
+          Alignment: {alignmentChapterSummary.complete} complete · {alignmentChapterSummary.partial} partial
+          {#if alignmentChapterSummary.invalid} · {alignmentChapterSummary.invalid} invalid{/if}
+        </span>
+        <span>{bookSummary.approvedChapters}/{bookSummary.totalChapters} chapters approved</span>
       {/if}
       <span class="grow" />
+      {#if $project && opened}
+        <button class="diagnostics-btn" on:click={toggleLanguageQaPanel}
+          title="Open or close the Language QA panel">
+          Language QA{#if $languageQaChannel.error}: unavailable{:else if $languageQaChannel.status}: {$languageQaChannel.status.state}{#if $languageQaChannel.status.totalFindings} · {$languageQaChannel.status.totalFindings}{/if}{/if}
+        </button>
+      {/if}
       {#if engineNotice}<span class="engine-notice">{engineNotice}</span>{/if}
       <span>Engine: {engineStatus}</span>
       <button class="diagnostics-btn" on:click={() => diagnosticsOpen.set(true)}>
@@ -1139,8 +1242,11 @@
 
   {#if $project && opened}
     {#key $project.path}
-      <LanguageQaPanel projectPath={$project.path} onNavigate={navigateToReportRow} />
+      <LanguageQaPanel projectPath={$project.path} onNavigate={navigateToReportRow}
+        launcherHides={screen === "editor"} />
     {/key}
+    <ScopeNotice />
+    {#if $scopeDialog}<ScopeConfirmDialog />{/if}
   {/if}
 
   {#if $project && $crossVerseOpen && $crossVerseAnchor}
@@ -1152,6 +1258,11 @@
         onClose={closeCrossVerse}
       />
     {/key}
+  {/if}
+
+  {#if placesMenu}
+    <FindingContextMenu x={placesMenu.x} y={placesMenu.y} findingLabel="Bookmarks and recent chapters"
+      actions={placesActions} on:action={onPlacesAction} on:close={() => (placesMenu = null)} />
   {/if}
 
   {#if $settingsOpen}
@@ -1193,7 +1304,10 @@
   .body { flex: 1; display: flex; overflow: hidden; }
   /* A 66-book table must not push the dashboard off screen: it scrolls. */
   .collection-qa-host { flex-shrink: 0; max-height: 40vh; overflow: auto; padding: 12px 16px 0; background: var(--bg); }
-  .editor-col { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .work-col { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .work-row { flex: 1; min-height: 0; display: flex; overflow: hidden; }
+  .editor-col { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .text-size { display: inline-flex; gap: 2px; }
   /* min-height + wrap, not a fixed height: on a narrow window the items used to
      shrink, break their labels onto two lines and get clipped by the 34px box.
      Now each item keeps its label on one line and the row wraps instead. */
@@ -1201,6 +1315,8 @@
   .editor-toolbar > * { white-space: nowrap; flex-shrink: 0; }
   .whole-book-btn { font-size: var(--fs-xs); font-weight: 600; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); cursor: pointer; }
   .whole-book-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+  .whole-book-btn.on { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
+  .toolbar-divider { width: 1px; height: 20px; background: var(--border-strong); }
   .grow { flex: 1; }
   .statusbar { height: 28px; background: var(--surface); border-top: 1px solid var(--border); display: flex; align-items: center; padding: 0 16px; gap: 16px; font-size: var(--fs-xs); color: var(--text-2); flex-shrink: 0; }
   .engine-notice { color: var(--warning); font-weight: 600; }

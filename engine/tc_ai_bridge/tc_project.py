@@ -6,13 +6,17 @@ import json
 import os
 import shutil
 import tempfile
+import threading
 import time
+import unicodedata
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 from collections import Counter
 
+from . import check_timing
 from .usfm import strip_usfm, whitespace_tokens
 
 from .models import VerseAlignment
@@ -27,6 +31,19 @@ from .alignment_reliability import structural_issues, alignment_fingerprint
 
 class ProjectError(RuntimeError):
     pass
+
+
+# A cached chapter file or listing whose timestamp is this recent is read
+# again rather than trusted (git's "racy clean" rule). NTFS timestamps tick
+# about every 15 ms, so two changes inside one tick leave the same mtime: a
+# chapter added and another removed straight after kept the directory's mtime
+# 20-30% of the time under load (2026-10-09). Older than this, a later change
+# always moves the timestamp.
+_RACY_NS = 2_000_000_000
+
+
+def _racy(mtime_ns: int) -> bool:
+    return time.time_ns() - mtime_ns < _RACY_NS
 
 
 def _read_json(path: Path) -> Any:
@@ -160,10 +177,25 @@ class TranslationCoreProject:
             raise ProjectError(f'Missing alignmentData for {self.book_id}')
         self._index_cache: dict[str, list[dict[str, Any]]] = {}
         self._checks_by_verse_cache: dict[tuple[str, str], list[dict[str, Any]]] | None = None
+        # Parsed chapter files for the read-only accessors (load_verse_alignment,
+        # verses, chapters, target_verse_text), keyed (kind, chapter) and checked
+        # against the file's (id, st_mtime_ns, st_size) on every read, so a write by
+        # anyone -- this process, an import, translationCore -- is read next time.
+        # A check job used to parse the target chapter three times and the
+        # alignment chapter twice per verse (#239). Bridge's own writers also
+        # clear it (_forget_chapter_files), which covers a filesystem with coarse
+        # timestamps. The loaders writers use (load_alignment_chapter,
+        # target_chapter) stay uncached: writers mutate what those return.
+        self._chapter_file_cache: dict[tuple[str, str], tuple[tuple[int, int, int], Any]] = {}
+        self._chapter_list_cache: tuple[int, list[str]] | None = None
+        self._chapter_file_lock = threading.Lock()
         self.journal = TransactionJournal(self.path, self.companion_dir())
+        # The siblings' learned fixes, read once (collection_learned_fixes).
+        self._collection_learned: list[tuple[str, list[dict[str, Any]]]] | None = None
         self._refuse_pre_cutover_project()
         self.workbench = WorkbenchRepository(self.companion_dir() / 'bridge-workbench.sqlite3')
         self._cross_verse_links = None  # CrossVerseLinkStore, built on first use (#117)
+        self._null_decisions = None  # NullDecisionStore, built on first use (#216)
         # Identity for every workbench write. Injectable so a test can stamp a
         # known actor without touching app-level state; resolved lazily
         # otherwise, because working it out opens the workspace database and
@@ -284,13 +316,69 @@ class TranslationCoreProject:
         )
 
     def chapters(self) -> list[str]:
-        chapters = [x.stem for x in self.alignment_dir.glob('*.json') if x.stem.isdigit()]
-        return sorted(chapters, key=int)
+        # A file added or removed (or a writer's temp file) changes the
+        # directory's mtime; only then is it listed again (#239). A listing
+        # from within the last two seconds is never trusted (_racy).
+        try:
+            stamp = self.alignment_dir.stat().st_mtime_ns
+        except FileNotFoundError:
+            stamp = -1
+        with self._chapter_file_lock:
+            cached = self._chapter_list_cache
+            if cached is not None and cached[0] == stamp and not _racy(stamp):
+                return list(cached[1])
+        chapters = sorted((x.stem for x in self.alignment_dir.glob('*.json') if x.stem.isdigit()), key=int)
+        with self._chapter_file_lock:
+            self._chapter_list_cache = (stamp, chapters)
+        return list(chapters)
 
     def chapter_path(self, chapter: str | int) -> Path:
         return self.alignment_dir / f'{chapter}.json'
 
+    @staticmethod
+    def _file_signature(path: Path) -> tuple[int, int, int] | None:
+        """(file id, mtime, size). The file id is in it because NTFS timestamps
+        tick about every 15 ms: two same-size writes inside one tick would share
+        (mtime, size), but an atomic write replaces the file, so the id differs."""
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            return None
+        return (stat.st_ino, stat.st_mtime_ns, stat.st_size)
+
+    def _cached_file_json(self, kind: str, chapter: str | int, path: Path) -> Any:
+        """The parsed JSON of a chapter file for a read-only accessor, or None
+        when the file does not exist. Callers must not mutate the result. A
+        miss reads between two stats and keeps the parse only when they agree:
+        a write landing mid-read is never cached under a signature it does not
+        have (#239)."""
+        key = (kind, str(chapter))
+        signature = self._file_signature(path)
+        if signature is None:
+            with self._chapter_file_lock:
+                self._chapter_file_cache.pop(key, None)
+            return None
+        with self._chapter_file_lock:
+            cached = self._chapter_file_cache.get(key)
+            if cached is not None and cached[0] == signature and not _racy(signature[1]):
+                return cached[1]
+        with check_timing.current().step("project.chapter_parse"):
+            data = _read_json(path)
+        if self._file_signature(path) == signature:
+            with self._chapter_file_lock:
+                self._chapter_file_cache[key] = (signature, data)
+        return data
+
+    def _forget_chapter_files(self) -> None:
+        """Drop every cached chapter parse; Bridge's own writers call this
+        after writing or rolling back a chapter file (#239)."""
+        with self._chapter_file_lock:
+            self._chapter_file_cache.clear()
+            self._chapter_list_cache = None
+
     def load_alignment_chapter(self, chapter: str | int) -> dict[str, Any]:
+        """A fresh, mutable parse: writers change it and write it back, so it
+        is never served from the chapter cache."""
         p = self.chapter_path(chapter)
         if not p.exists():
             raise ProjectError(f'Missing alignment chapter: {p}')
@@ -299,8 +387,19 @@ class TranslationCoreProject:
             raise ProjectError(f'Invalid alignment chapter JSON: {p}')
         return data
 
+    def _cached_alignment_chapter(self, chapter: str | int) -> dict[str, Any]:
+        """load_alignment_chapter for the read-only accessors: the same errors,
+        served from the chapter cache. Not to be mutated."""
+        p = self.chapter_path(chapter)
+        data = self._cached_file_json('alignment', chapter, p)
+        if data is None:
+            raise ProjectError(f'Missing alignment chapter: {p}')
+        if not isinstance(data, dict):
+            raise ProjectError(f'Invalid alignment chapter JSON: {p}')
+        return data
+
     def verses(self, chapter: str | int) -> list[str]:
-        data = self.load_alignment_chapter(chapter)
+        data = self._cached_alignment_chapter(chapter)
         def key(v: str):
             if str(v).isdigit(): return (0, int(v))
             if str(v) == 'front': return (-1, 0)
@@ -308,13 +407,16 @@ class TranslationCoreProject:
         return sorted((str(x) for x in data.keys()), key=key)
 
     def load_verse_alignment(self, chapter: str | int, verse: str | int) -> VerseAlignment:
-        chapter_data = self.load_alignment_chapter(chapter)
+        # from_dict builds new objects, so the cached chapter is never exposed.
+        chapter_data = self._cached_alignment_chapter(chapter)
         raw = chapter_data.get(str(verse))
         if raw is None:
             raise ProjectError(f'No alignment data for {self.book_id} {chapter}:{verse}')
         return VerseAlignment.from_dict(raw)
 
     def target_chapter(self, chapter: str | int) -> dict[str, Any]:
+        """A fresh, mutable parse (apply_scripture_edit writes it back); never
+        served from the chapter cache."""
         p = self.book_dir / f'{chapter}.json'
         if not p.exists():
             return {}
@@ -322,7 +424,8 @@ class TranslationCoreProject:
         return data if isinstance(data, dict) else {}
 
     def target_verse_text(self, chapter: str | int, verse: str | int) -> str:
-        return str(self.target_chapter(chapter).get(str(verse), ''))
+        data = self._cached_file_json('target', chapter, self.book_dir / f'{chapter}.json')
+        return str(data.get(str(verse), '')) if isinstance(data, dict) else ''
 
     def chapter_headings(self, chapter: str | int) -> dict[str, list[dict[str, str]]]:
         """Section headings of `chapter`, keyed by the verse each introduces.
@@ -396,13 +499,15 @@ class TranslationCoreProject:
         """
         if self._checks_by_verse_cache is not None:
             return self._checks_by_verse_cache
-        by: dict[tuple[str, str], list[dict[str, Any]]] = {}
-        for tool in ('translationNotes', 'translationWords'):
-            for entry in self._load_index_tool(tool):
-                ref = entry.get('contextId', {}).get('reference', {}) if isinstance(entry, dict) else {}
-                key = (str(ref.get('chapter')), str(ref.get('verse')))
-                by.setdefault(key, []).append(entry)
-        self._checks_by_verse_cache = by
+        # Timed: `calls` on a check job is how often the index was rebuilt.
+        with check_timing.current().step("tc.index_build"):
+            by: dict[tuple[str, str], list[dict[str, Any]]] = {}
+            for tool in ('translationNotes', 'translationWords'):
+                for entry in self._load_index_tool(tool):
+                    ref = entry.get('contextId', {}).get('reference', {}) if isinstance(entry, dict) else {}
+                    key = (str(ref.get('chapter')), str(ref.get('verse')))
+                    by.setdefault(key, []).append(entry)
+            self._checks_by_verse_cache = by
         return by
 
     def checks_for_verse(self, chapter: str | int, verse: str | int) -> list[dict[str, Any]]:
@@ -774,6 +879,7 @@ class TranslationCoreProject:
         out = self.journal.recover_all()
         if out:
             self._index_cache.clear(); self._checks_by_verse_cache = None
+            self._forget_chapter_files()
         return out
 
     def pending_transactions(self) -> list[dict[str, Any]]:
@@ -1312,6 +1418,7 @@ class TranslationCoreProject:
         try:
             chapter_data[str(verse)] = raw
             _write_json_atomic(chapter_path, chapter_data)
+            self._forget_chapter_files()
             # Re-read and validate after write.
             written = self.load_alignment_chapter(chapter).get(str(verse))
             self._validate_verse_raw(written)
@@ -1322,8 +1429,31 @@ class TranslationCoreProject:
             )
             self.journal.commit(tx, {'operation':'saveApprovedAlignment','chapter':str(chapter),'verse':str(verse)})
         except Exception as e:
-            self.journal.rollback(tx, str(e)); raise
+            try:
+                self.journal.rollback(tx, str(e))
+            finally:
+                self._forget_chapter_files()
+            raise
         return backup
+
+    def set_language_qa_pack(self, pack: str) -> str:
+        """Write the project's Language QA setting, manifest `language_qa.pack`:
+        "auto", "off" or a registered pack name (the caller validates it). The
+        manifest is re-read inside the transaction so no other key is touched;
+        translationCore ignores keys it does not know."""
+        manifest_path = self.path / 'manifest.json'
+        tx = self.journal.begin('languageQaSetPack', [manifest_path])
+        self.journal.mark_writing(tx)
+        try:
+            manifest = _read_json(manifest_path)
+            block = manifest.get('language_qa') if isinstance(manifest.get('language_qa'), dict) else {}
+            manifest['language_qa'] = {**block, 'pack': pack}
+            _write_json_atomic(manifest_path, manifest)
+            self.manifest = manifest
+            self.journal.commit(tx, {'operation': 'languageQaSetPack', 'pack': pack})
+        except Exception as e:
+            self.journal.rollback(tx, str(e)); raise
+        return pack
 
     @property
     def cross_verse_links(self):
@@ -1333,6 +1463,15 @@ class TranslationCoreProject:
             from .cross_verse_links import CrossVerseLinkStore
             self._cross_verse_links = CrossVerseLinkStore(self)
         return self._cross_verse_links
+
+    @property
+    def null_decisions(self):
+        """The Bridge-private null alignment decisions (#216): a token with no
+        counterpart for a named reason. Lazy, like `cross_verse_links`."""
+        if self._null_decisions is None:
+            from .alignment_null_decisions import NullDecisionStore
+            self._null_decisions = NullDecisionStore(self)
+        return self._null_decisions
 
     @staticmethod
     def _bottom_signatures(raw: dict[str, Any]) -> set[str]:
@@ -1516,6 +1655,7 @@ class TranslationCoreProject:
         # Preserve the current chapter before rolling back so restore itself is reversible.
         safety_backup = self.backup_chapter(chapter)
         _write_json_atomic(self.chapter_path(chapter), data)
+        self._forget_chapter_files()
         reread = self.load_alignment_chapter(chapter)
         if reread != data:
             raise ProjectError('Post-restore verification failed.')
@@ -1854,6 +1994,7 @@ class TranslationCoreProject:
                     path.unlink()
             except Exception as e:
                 errors.append(f'{path}: {e}')
+        self._forget_chapter_files()
         if errors:
             raise ProjectError('Rollback was incomplete; restore from backup '+str(backup_root)+'\n'+'\n'.join(errors))
 
@@ -2084,13 +2225,23 @@ class TranslationCoreProject:
         self, state_type: str, chapter: str | int, verse: str | int, check_id: str,
         tool: str = '', group_id: str = '',
     ) -> dict[str, Any] | None:
-        latest = None
-        latest_ts = ''
+        records = []
         for path in self._state_files_for_verse(state_type, chapter, verse):
             try:
-                d = _read_json(path)
+                records.append((path.name, _read_json(path)))
             except Exception:
                 continue
+        return self._latest_matching(records, check_id, tool, group_id)
+
+    @staticmethod
+    def _latest_matching(
+        records: Iterable[tuple[str, Any]], check_id: str, tool: str = '', group_id: str = '',
+    ) -> dict[str, Any] | None:
+        """The latest of (file name, parsed record) pairs, in file-name order,
+        for one check: the newest timestamp, and of equal ones the later file."""
+        latest = None
+        latest_ts = ''
+        for name, d in records:
             ctx = d.get('contextId', {}) if isinstance(d, dict) else {}
             if str(ctx.get('checkId', '')) != str(check_id):
                 continue
@@ -2098,7 +2249,7 @@ class TranslationCoreProject:
                 continue
             if group_id and str(ctx.get('groupId', '')) != str(group_id):
                 continue
-            ts = str(d.get('modifiedTimestamp') or d.get('timestamp') or path.name)
+            ts = str(d.get('modifiedTimestamp') or d.get('timestamp') or name)
             if ts >= latest_ts:
                 latest, latest_ts = d, ts
         return latest
@@ -2106,13 +2257,26 @@ class TranslationCoreProject:
     def check_staleness(
         self, chapter: str | int, verse: str | int, check_id: str,
         tool: str = '', group_id: str = '',
+        *, state: dict[str, list[dict[str, Any]]] | None = None,
     ) -> str:
-        """current | stale | pending using actual tC selection vs verse-edit timestamps."""
-        sel = self._latest_state_for_check('selections', chapter, verse, check_id, tool, group_id)
+        """current | stale | pending using actual tC selection vs verse-edit timestamps.
+
+        `state` is the verse's check_state_for_verse(), read once by a caller
+        asking about many checks: the answer is the same, without globbing and
+        parsing the selections and verse edits again for every check (#240)."""
+        if state is None:
+            sel = self._latest_state_for_check('selections', chapter, verse, check_id, tool, group_id)
+        else:
+            sel = self._latest_matching(
+                ((Path(str(d.get('_file', ''))).name, d) for d in state.get('selections', [])),
+                check_id, tool, group_id)
         if not sel:
             return 'pending'
         sel_ts = str(sel.get('modifiedTimestamp', ''))
-        edit_ts = self._latest_verse_edit_timestamp(chapter, verse)
+        if state is None:
+            edit_ts = self._latest_verse_edit_timestamp(chapter, verse)
+        else:
+            edit_ts = max((str(d.get('modifiedTimestamp', '')) for d in state.get('verseEdits', [])), default='')
         return 'stale' if edit_ts and sel_ts <= edit_ts else 'current'
 
     def _latest_verse_edit_timestamp(self, chapter: str | int, verse: str | int) -> str:
@@ -2572,6 +2736,7 @@ class TranslationCoreProject:
             - self._bottom_signatures(new_alignment)
         )
         invalidated_links: list[dict[str, Any]] = []
+        invalidated_nulls: list[dict[str, Any]] = []
         if context_id is None:
             context_id = {'reference': {'bookId': self.book_id, 'chapter': int(chapter) if str(chapter).isdigit() else str(chapter), 'verse': int(verse) if str(verse).isdigit() else str(verse)}, 'tool': 'translationCoreAI', 'groupId': 'human-scripture-edit'}
         edit_record = {
@@ -2606,6 +2771,11 @@ class TranslationCoreProject:
                 invalidated_links = self.cross_verse_links.invalidate_missing_targets(
                     chapter, verse, removed_signatures,
                 )
+                # #216: a "grammar"/"explicitation" decision on a word the edit
+                # removed no longer applies either; same transaction.
+                invalidated_nulls = self.null_decisions.invalidate_missing(
+                    chapter, verse, "target", removed_signatures,
+                )
         except Exception as e:
             if semantic_intent and self.passage_semantic_runtime is not None:
                 try:
@@ -2616,7 +2786,8 @@ class TranslationCoreProject:
             finally:
                 try: self.journal.rollback(journal_tx,str(e))
                 except Exception: pass
-            self._index_cache.clear(); self._checks_by_verse_cache = None; raise
+            self._index_cache.clear(); self._checks_by_verse_cache = None
+            self._forget_chapter_files(); raise
         commit_metadata = {'operation':'scriptureEdit','chapter':str(chapter),'verse':str(verse)}
         commit_metadata.update(journal_metadata or {})
         self.journal.commit(journal_tx, commit_metadata)
@@ -2647,6 +2818,7 @@ class TranslationCoreProject:
                 # Leave PREPARED intent on disk for startup replay when possible.
                 semantic_invalidation = {"state": "PENDING_REPLAY", "error": str(exc)}
         self._index_cache.clear(); self._checks_by_verse_cache = None
+        self._forget_chapter_files()
         # Companion state is advisory/audit; project transaction is already durable here.
         try:
             review = self.load_review_state(chapter, verse)
@@ -2658,7 +2830,7 @@ class TranslationCoreProject:
             )
         except Exception:
             pass
-        return {'oldText': old_text, 'newText': new_text, 'backup': str(backup), 'verseEdit': str(edit_path), 'alignmentInvalid': str(invalid), 'indexesTouched': touched, 'semanticInvalidation': semantic_invalidation, 'journalTransactionId': journal_tx.transaction_id, 'crossVerseLinksInvalidated': [link['id'] for link in invalidated_links]}
+        return {'oldText': old_text, 'newText': new_text, 'backup': str(backup), 'verseEdit': str(edit_path), 'alignmentInvalid': str(invalid), 'indexesTouched': touched, 'semanticInvalidation': semantic_invalidation, 'journalTransactionId': journal_tx.transaction_id, 'crossVerseLinksInvalidated': [link['id'] for link in invalidated_links], 'nullDecisionsInvalidated': [item['id'] for item in invalidated_nulls]}
 
     def record_qa_decision(self, chapter: str | int, verse: str | int, issue_key: str, decision: str, note: str = '', issue: dict[str, Any] | None = None) -> str:
         iso, _ = self._timestamp()
@@ -2844,6 +3016,258 @@ class TranslationCoreProject:
                     actor_id=identity.actor_id, device_id=identity.device_id,
                     extra_columns={'chapter': chapter_key},
                 )
+
+    # -- indic-qa editor stores (workbench v6) --------------------------------
+    #
+    # Three Bridge-private stores for the reviewer features brought over from
+    # indic-qa's editor. None of them writes Scripture: a scoped correction is
+    # N ordinary apply_scripture_edit calls, and its batch row only groups
+    # them. Every row is rewritten (revision++), never deleted, so change_log
+    # keeps every image.
+
+    def _v6_write(self, table: str, row_id: str, payload: dict[str, Any], extra_columns: dict[str, Any]) -> None:
+        identity = self.workbench_identity
+        self.workbench._write(
+            table, row_id, project_id=identity.project_id, book_id=self.book_id, payload=payload,
+            actor_id=identity.actor_id, device_id=identity.device_id, expected_revision=None,
+            extra_columns=extra_columns,
+        )
+
+    def _v6_payload(self, table: str, row_id: str) -> dict[str, Any] | None:
+        row = self.workbench.get(table, row_id)
+        if row is None:
+            return None
+        try:
+            payload = json.loads(row['payload_json'])
+        except (TypeError, ValueError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    # Batches: one per scoped correction and one per undo of it.
+
+    def _language_qa_batch_row_id(self, batch_id: str) -> str:
+        return natural_row_id(self.workbench_identity.project_id, self.book_id, 'language_qa_batch', batch_id)
+
+    def language_qa_batches(self) -> list[dict[str, Any]]:
+        """This book's correction batches, newest first."""
+        rows = self.workbench.payloads('language_qa_batches', project_id=self.workbench_identity.project_id,
+                                       book_id=self.book_id)
+        return sorted(rows, key=lambda b: str(b.get('createdAt') or ''), reverse=True)
+
+    def language_qa_batch(self, batch_id: str) -> dict[str, Any] | None:
+        return self._v6_payload('language_qa_batches', self._language_qa_batch_row_id(batch_id))
+
+    def record_language_qa_batch(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Write a new batch. `payload` carries `batchId`, `kind` ("accept" |
+        "undo"), `state` and `chapter` (where the action was taken)."""
+        batch_id = str(payload['batchId'])
+        record = {'schemaVersion': 1, **payload}
+        self._v6_write('language_qa_batches', self._language_qa_batch_row_id(batch_id), record, {
+            'chapter': str(record.get('chapter') or ''), 'kind': str(record.get('kind') or ''),
+            'state': str(record.get('state') or ''),
+        })
+        return record
+
+    def set_language_qa_batch_state(self, batch_id: str, state: str, **fields: Any) -> dict[str, Any]:
+        """Move a batch to `state` ("applied" | "undone"), keeping every other
+        field. The earlier image stays in change_log."""
+        current = self.language_qa_batch(batch_id)
+        if current is None:
+            raise KeyError(f"no Language QA batch {batch_id}")
+        updated = {**current, **fields, 'state': state, 'updatedAt': self._timestamp()[0]}
+        self._v6_write('language_qa_batches', self._language_qa_batch_row_id(batch_id), updated, {
+            'chapter': str(updated.get('chapter') or ''), 'kind': str(updated.get('kind') or ''), 'state': state,
+        })
+        return updated
+
+    # Learned fixes: a reviewer's single-word replacement, offered again.
+
+    @staticmethod
+    def _nfc(word: str) -> str:
+        return unicodedata.normalize('NFC', str(word))
+
+    def _learned_fix_row_id(self, old: str, new: str) -> str:
+        return natural_row_id(self.workbench_identity.project_id, self.book_id, 'learned_fix',
+                              self._nfc(old), self._nfc(new))
+
+    def learned_fix(self, old: str, new: str) -> dict[str, Any] | None:
+        return self._v6_payload('language_qa_learned_fixes', self._learned_fix_row_id(old, new))
+
+    def learned_fixes(self) -> list[dict[str, Any]]:
+        """Every learned fix of this book, enabled or not: most used first."""
+        rows = self.workbench.payloads('language_qa_learned_fixes', project_id=self.workbench_identity.project_id,
+                                       book_id=self.book_id)
+        return sorted(rows, key=lambda f: (-int(f.get('count') or 0), str(f.get('old') or ''),
+                                           str(f.get('new') or '')))
+
+    def _write_learned_fix(self, fix: dict[str, Any]) -> dict[str, Any]:
+        self._v6_write('language_qa_learned_fixes', self._learned_fix_row_id(fix['old'], fix['new']), fix, {
+            'old_word': fix['old'], 'new_word': fix['new'], 'enabled': 1 if fix.get('enabled') else 0,
+        })
+        return fix
+
+    def record_learned_fix(self, old: str, new: str, *, ref: str, reviewer: str, source: str,
+                           n: int = 1) -> dict[str, Any]:
+        """The reviewer replaced `old` with `new` `n` times (an edit, a scoped
+        correction, a flag's suggested form). Adds to the count; a forgotten
+        fix stays forgotten until it is restored."""
+        old, new = self._nfc(old), self._nfc(new)
+        now = self._timestamp()[0]
+        current = self.learned_fix(old, new)
+        if current is None:
+            fix = {'schemaVersion': 1, 'old': old, 'new': new, 'count': max(1, int(n)), 'firstRef': ref,
+                   'lastRef': ref, 'reviewer': reviewer, 'source': source, 'enabled': True,
+                   'createdAt': now, 'updatedAt': now}
+        else:
+            fix = {**current, 'count': int(current.get('count') or 0) + max(1, int(n)), 'lastRef': ref,
+                   'reviewer': reviewer, 'source': source, 'updatedAt': now}
+        return self._write_learned_fix(fix)
+
+    def retract_learned_fix(self, old: str, new: str, *, n: int = 1, reviewer: str = '',
+                            ref: str = '', floor: int = 0) -> dict[str, Any]:
+        """Take back `n` uses (the reviewer typed the word back, or undid the
+        change) in this book. The row is kept. A fix is shared across the
+        collection, so its uses may have been learned in another book: `floor`
+        (minus the siblings' uses) lets this book's row go below zero by at most
+        that much, so the collection's net count (merge_learned_fixes) reaches
+        zero and stops the offer but never goes below it. Alone, 0."""
+        old, new = self._nfc(old), self._nfc(new)
+        now = self._timestamp()[0]
+        current = self.learned_fix(old, new) or {
+            'schemaVersion': 1, 'old': old, 'new': new, 'count': 0, 'firstRef': ref, 'lastRef': ref,
+            'reviewer': reviewer, 'source': 'retraction', 'enabled': True, 'createdAt': now}
+        count = max(min(0, int(floor)), int(current.get('count') or 0) - max(1, int(n)))
+        self._collection_learned = None
+        return self._write_learned_fix({**current, 'count': count, 'updatedAt': now})
+
+    def set_learned_fix_enabled(self, old: str, new: str, enabled: bool, *, create: bool = False) -> dict[str, Any]:
+        """Forget (False) or restore (True) a learned fix. `create` writes a row
+        with no uses when this book has none (a fix learned in a sibling)."""
+        current = self.learned_fix(old, new)
+        if current is None:
+            if not create:
+                raise KeyError(f"no learned fix {old} -> {new}")
+            now = self._timestamp()[0]
+            current = {'schemaVersion': 1, 'old': self._nfc(old), 'new': self._nfc(new), 'count': 0,
+                       'firstRef': '', 'lastRef': '', 'reviewer': '', 'source': 'collection', 'createdAt': now}
+        self._collection_learned = None
+        return self._write_learned_fix({**current, 'enabled': bool(enabled), 'updatedAt': self._timestamp()[0]})
+
+    def collection_learned_fixes(self) -> list[dict[str, Any]]:
+        """This book's learned fixes merged with every materialized sibling's
+        (DECISIONS 2026-10-07: shared across the collection). What a Language
+        QA pass reads. A sibling's rows are read once per open project,
+        read-only (`peek_learned_fixes`; a lazy book has none yet), and read
+        again after this project writes a fix; this book's own rows are read
+        every time."""
+        from .language_qa_learned import merge_learned_fixes  # noqa: PLC0415 (one-way imports)
+        siblings = getattr(self, '_collection_learned', None)
+        if siblings is None:
+            siblings = self._collection_learned = [
+                (book, peek_learned_fixes(path)) for book, path in self.collection_sibling_paths()]
+        return merge_learned_fixes(self.book_id, self.learned_fixes(), siblings)
+
+    def collection_sibling_paths(self) -> list[tuple[str, Path]]:
+        """(book id, folder) of every materialized sibling in this project's
+        collection, never this book. A lazy sibling has no workbench yet."""
+        from .project_import import collection_projects  # noqa: PLC0415 (project_import imports this module)
+        own = Path(self.path).resolve()
+        out: list[tuple[str, Path]] = []
+        for entry in collection_projects(own):
+            path = Path(str(entry.get('path') or ''))
+            if entry.get('lazy') or not path.is_dir() or path.resolve() == own:
+                continue
+            out.append((str(entry.get('bookId') or path.name).lower(), path))
+        return out
+
+    def learned_map(self) -> dict[str, list[str]]:
+        """old -> [new, ...] for every fix that is enabled and still counted,
+        the most used replacement first. What a Language QA pass offers."""
+        out: dict[str, list[str]] = {}
+        for fix in self.learned_fixes():
+            if fix.get('enabled') and int(fix.get('count') or 0) > 0:
+                out.setdefault(str(fix['old']), []).append(str(fix['new']))
+        return out
+
+    # Flags: a reviewer's question on a passage. Deleting is a status.
+
+    def _language_qa_flag_row_id(self, flag_id: str) -> str:
+        return natural_row_id(self.workbench_identity.project_id, self.book_id, 'language_qa_flag', flag_id)
+
+    def language_qa_flag(self, flag_id: str) -> dict[str, Any] | None:
+        return self._v6_payload('language_qa_flags', self._language_qa_flag_row_id(flag_id))
+
+    def language_qa_flags(self, *, chapter: str | None = None, status: str | None = None,
+                          include_deleted: bool = False) -> list[dict[str, Any]]:
+        """This book's flags in reading order (chapter, verse, start)."""
+        equals = {'chapter': str(chapter)} if chapter is not None else None
+        rows = self.workbench.payloads('language_qa_flags', project_id=self.workbench_identity.project_id,
+                                       book_id=self.book_id, equals=equals)
+        if status is not None:
+            rows = [f for f in rows if f.get('status') == status]
+        elif not include_deleted:
+            rows = [f for f in rows if f.get('status') != 'deleted']
+
+        def order(f: dict[str, Any]) -> tuple:
+            def num(value: Any) -> tuple[int, str]:
+                text = str(value or '')
+                digits = ''.join(ch for ch in text.split('-')[0] if ch.isdigit())
+                return (int(digits) if digits else 0, text)
+            return (num(f.get('chapter')), num(f.get('verse')), int(f.get('start') or 0), str(f.get('createdAt')))
+        return sorted(rows, key=order)
+
+    def _write_language_qa_flag(self, flag: dict[str, Any]) -> dict[str, Any]:
+        self._v6_write('language_qa_flags', self._language_qa_flag_row_id(flag['flagId']), flag, {
+            'chapter': str(flag.get('chapter') or ''), 'verse': str(flag.get('verse') or ''),
+            'status': str(flag.get('status') or ''),
+        })
+        return flag
+
+    def record_language_qa_flag(self, flag: dict[str, Any], *, reviewer: str) -> dict[str, Any]:
+        """A new flag, status "open". The caller has validated the fields."""
+        now = self._timestamp()[0]
+        record = {'schemaVersion': 1, **flag, 'flagId': uuid.uuid4().hex[:16], 'reviewer': reviewer,
+                  'status': 'open', 'createdAt': now, 'updatedAt': now}
+        return self._write_language_qa_flag(record)
+
+    def update_language_qa_flag(self, flag_id: str, patch: dict[str, Any]) -> dict[str, Any]:
+        """Change a flag's fields (status "deleted" is a delete)."""
+        current = self.language_qa_flag(flag_id)
+        if current is None:
+            raise KeyError(f"no Language QA flag {flag_id}")
+        protected = {'flagId', 'createdAt', 'schemaVersion'}
+        updated = {**current, **{k: v for k, v in patch.items() if k not in protected},
+                   'updatedAt': self._timestamp()[0]}
+        return self._write_language_qa_flag(updated)
+
+    # Verse change history: the native checkData/verseEdits records every
+    # Scripture edit already writes (apply_scripture_edit).
+
+    def verse_edit_history(self, chapter: str | int, verse: str | int) -> list[dict[str, Any]]:
+        """Every recorded edit of one verse, newest first."""
+        entries: list[dict[str, Any]] = []
+        for path in self._state_files_for_verse('verseEdits', chapter, verse):
+            try:
+                record = _read_json(path)
+            except Exception:
+                continue
+            if isinstance(record, dict):
+                entries.append(record)
+        return sorted(entries, key=lambda e: str(e.get('modifiedTimestamp') or ''), reverse=True)
+
+    def verse_edit_counts(self, chapter: str | int) -> dict[str, int]:
+        """verse -> number of recorded edits, for one chapter, without reading
+        any record: one directory listing per edited verse."""
+        folder = self.check_dir / 'verseEdits' / self.book_id / str(chapter)
+        counts: dict[str, int] = {}
+        if not folder.is_dir():
+            return counts
+        for verse_dir in folder.iterdir():
+            if verse_dir.is_dir():
+                n = sum(1 for p in verse_dir.glob('*.json'))
+                if n:
+                    counts[verse_dir.name] = n
+        return counts
 
     def progress_finding_status(self, chapter: str | int, verse: str | int, finding_id: str) -> str | None:
         """The rollup's status for one finding, or None when the rollup has no
@@ -3239,6 +3663,30 @@ def _peek_workbench(project_root: str | Path) -> sqlite3.Connection | None:
         return None
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def peek_learned_fixes(project_root: str | Path) -> list[dict[str, Any]]:
+    """A sibling book's learned fixes straight from its workbench database,
+    read-only (`_peek_workbench`): no project is constructed, nothing is
+    created or migrated. [] for a book with no workbench or no v6 table."""
+    conn = _peek_workbench(project_root)
+    if conn is None:
+        return []
+    try:
+        rows = conn.execute('SELECT payload_json FROM language_qa_learned_fixes').fetchall()
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            payload = json.loads(row['payload_json'])
+        except (TypeError, ValueError):
+            continue
+        if isinstance(payload, dict):
+            out.append(payload)
+    return out
 
 
 def peek_progress_totals(project_root: str | Path) -> dict[str, Any] | None:

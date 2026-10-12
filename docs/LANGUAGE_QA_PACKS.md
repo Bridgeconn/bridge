@@ -1,0 +1,504 @@
+# Language QA packs
+
+How Language QA is split between engine code and per-language data, and how a
+language is added without writing code. The rule-file schema itself is in
+`LANGUAGE_QA_RULE_PACK.md`; the Tamil rules are described in
+`LANGUAGE_QA_TAMIL_SPECIFICATION.md`.
+
+## Three tiers
+
+| Tier | What it is | Where |
+|---|---|---|
+| core | Language-neutral engine: tokenizer, USFM lifting, raw offsets, findings, decisions, the common rules, the book pass, the benchmark runner and gate | `tc_ai_bridge/language_qa.py`, `language_qa_jobs.py`, `language_qa_benchmark.py`, `language_packs/loader.py`, `language_packs/tokens.py` |
+| indic | **Rule kinds**, each written once and driven by a pack's data, each tested on synthetic input in two scripts | `tc_ai_bridge/language_packs/indic/` (`kinds.py`, `confusion.py`); tests in `engine/tests/language_packs/test_kinds.py` |
+| packs | **Data only**: `pack.json`, `rules/*.json` with embedded examples, tables, a gzip lexicon, a house-style seed | `engine/language_packs/<pack>/` |
+
+A pack never ships Python. A rule names its kind in `match.type`. If a
+language needs something no kind covers, the answer is a new generic kind in
+`indic/` with its own two-script tests, usable by every language. It is never
+code inside a pack.
+
+## Rule kinds
+
+| `match.type` | Stage | Data it takes |
+|---|---|---|
+| `token-context` | word pair | `prev` / `next` conditions, `link` (see `LANGUAGE_QA_RULE_PACK.md`) |
+| `regex` | verse | `pattern`, `on` (visible or raw) |
+| `sign-sequence` | verse | `bases`, `signs`: a dependent sign must follow a base letter |
+| `mixed-script` | verse | `scripts`: two or more Unicode script names inside one word |
+| `reduplication-allowlist` | word pair | `allow`: repeats that are grammatical |
+| `lexicon-lookup` | pair (`check: known-split`) or book (`known-misspelling`, `rare-near-common`) | the pack's lexicon; `rare-near-common` also uses the pack's confusion set and thresholds |
+| `wordlist-variant` | book | thresholds; runs only when the pack has no lexicon |
+
+Order inside a scan: the common rules first. Then, for each whitespace-separated
+word pair, the pair kinds followed by the token-context rules. Then the verse
+kinds in pack order, and after every verse the book kinds.
+
+A **confusion set** (`confusion.json`) is the weighted edit distance that
+`rare-near-common` and the house-style name check rank by. Its entry types are
+`base`, `independent`, `sign`, `toggle`, `split` and `equivalent`, with a cost
+on each (`indic/confusion.py`). An `equivalent` pair costs 0. It is folded
+before a lookup and never proposed as a correction.
+
+## Which pack a project gets
+
+`engine/language_packs/index.json` is the registry:
+
+```json
+{"languages": {"ta": {"pack": "ta-irv", "name": "Tamil"}},
+ "aliases": {"tam": "ta", "mal": "ml", "hin": "hi"}}
+```
+
+`detect_language` in `language_qa.py` decides the pack for a project:
+
+1. **Declared metadata first.** The declared language (`manifest.target_language.id`)
+   is folded through `aliases` and looked up. Its pack runs when the text is in
+   that language's script, so `ta-Latn` never gets `ta-irv`.
+2. **Script as fallback.** With nothing declared, the dominant script (at least
+   20 letters, at least 80 %) suggests a pack only when exactly one language is
+   written in that script (Tamil, Malayalam). Devanagari and Bengali are never
+   guessed.
+3. **Conflict.** When the declared language and the script disagree, or the
+   script is mixed, only the common checks run, and the panel message names both.
+
+On top of that, the project setting `language_qa.pack` is `auto` (the steps
+above), `off` (common checks only) or a pack name (that pack, because a person
+chose it). `language_qa_jobs.resolve_language` applies it. The resolved pack
+name is part of every chapter's cache key.
+
+There is one pack per project. A multi-book collection is one project per
+book, so each book resolves its own pack.
+
+## Where packs live at runtime
+
+Packs are **outside** the frozen engine: a onefile archive re-extracts every
+data file on every launch. `scripts/build-sidecars.ps1` copies
+`engine/language_packs` to `src-tauri/language_packs`, `tauri.conf.json`
+ships it through `bundle.resources`, and `sidecar.rs` passes
+`--language-packs-dir`, which `main.py` puts in `BRIDGE_LANGUAGE_PACKS_DIR`. A
+source checkout reads `engine/language_packs` (`registry.packs_dir()`).
+
+A pack is loaded lazily, on the first Language QA pass that needs it, and its
+examples run at load. Its lexicon (`lexicon.json.gz`) is loaded on that same
+first pass, never at startup.
+
+## Rules moved out of the engine's code
+
+Some rules were moved from code into a pack. A moved rule keeps its identity:
+`legacyId` keeps the finding-id name, and `legacyVersion` keeps the version
+stamp (`packVersion`, `ruleVersion`) its findings carried in code. That way a
+decision made before the move still applies, and the human benchmark's
+population stays current. When such a rule's matching first changes, drop
+`legacyVersion` and bump `version`.
+
+The rules moved on 2026-09-30 are all in ta-irv: `tamil.dependent-sign`,
+`tamil.mixed-word`, `tamil.repeated-word`, `tamil.wordlist-variant`,
+`lexicon.known-split`, `lexicon.known-misspelling` and
+`lexicon.rare-near-common`.
+
+## Adding a language
+
+1. Make a folder `engine/language_packs/<lang>-irv/` containing `pack.json`
+   and `rules/*.json`. Add the optional tables (`confusion.json`, a lexicon,
+   `housestyle-seed.json`) if the rules need them.
+2. Add one line under `languages` in `index.json`.
+3. Run `pytest tests/language_packs -m packs`. `test_pack[<pack>]` loads the
+   pack, runs every embedded example, and checks that the registry and the
+   shipped folders agree.
+
+No engine code changes. New rules ship `inline: false`. A rule is drawn inline
+only after the human-label gate (`LANGUAGE_QA_BENCHMARK.md`).
+
+## Tests
+
+- **Kinds:** generic tests in `tests/language_packs/test_kinds.py`, on
+  synthetic Malayalam and Devanagari packs.
+- **Packs:** one parametrized `test_pack[<pack>]`, with the `packs` marker. The
+  inner loop is `pytest -m "not packs"`.
+- **Registry:** `test_registry.py`.
+
+Tamil behaviour is still pinned by the existing `tests/service` files and by
+the human benchmark.
+
+## Profile packs: indic-qa's checker (`"engine": "indic-qa"`)
+
+Punjabi, Malayalam, Hindi and Odia do not use JSON rules. Their packs run
+indic-qa's own checker (`selvabenz/indic-qa`). It is vendored in-process under
+`engine/vendor/indic-qa/`; see its `NOTICE.md` and DECISIONS 2026-10-07. This
+is the one exception to "a pack never ships Python". The code is upstream's,
+byte-exact and pinned, and the pack folder still holds only data.
+
+| File in `engine/language_packs/<code>-irv/` | What it is | Written by |
+|---|---|---|
+| `pack.json` | `"engine": "indic-qa"`, `"profile": "<code>"`, `"rules": []` | `scripts/build_indic_qa_packs.py --rule-versions`, once |
+| `rule_versions.json` | One entry per rule of the profile's `RULES`: category, layer, severity, confidence, `enabled`, `inline`, `revision` | the same script adds new rules; reviewed values are edited by hand |
+| `dictionary/` | The OV-built dictionary the profile reads, and `MANIFEST.json` with its hashes | `scripts/sync_indic_qa.py` |
+| `irv_state.json.gz` | The checker's index of the whole IRV | `scripts/build_indic_qa_packs.py --irv-state <code> <IRV folder>` |
+| `general_corpus.tsv.gz`, `general_corpus.json` | Word counts from general written use of the language, outside the Bible, with a manifest naming every source, byte range, hash and licence (see "General corpus" below) | `scripts/build_corpus_lexicon.py <code>` |
+
+### How it fits the engine
+
+- **It is an ordinary `RulePack`.** Overrides, version stamps, ignore expiry
+  and the inline list all work unchanged. Every rule has
+  `match_type="indic-qa"` and `stage="book"`, so no per-verse kind runs it.
+- **Findings come from one book step.** It runs after the chapter loop, next
+  to the lexicon audit (`indic_qa_adapter.profile_findings`). Findings are
+  recomputed each pass and never written to `language_qa_cache`, because
+  they depend on the whole book.
+- **Bridge's chapter JSON becomes indic-qa's `Line`/`Book` objects.**
+  - There is one line per physical line of a verse's visible text, so
+    adjacency never crosses a poetry line.
+  - There is one run per stretch the lifted markup left contiguous, matching
+    indic-qa's runs. Malayalam's grouped encoding fix works per run.
+  - indic-qa's own USFM parser is never called.
+- **The IRV snapshot.** indic-qa indexes all 66 books at start-up; Bridge has
+  one book open. The snapshot restores that index, keyed by Bridge's
+  lower-case book id. Each pass re-indexes the open book from its live text,
+  which replaces that book's share. The clusters are rebuilt only when the
+  book's word counts changed.
+- **One checker is resident at a time.** Opening another language releases
+  it.
+- **The first pass in a session pays a one-time load.** Measured for
+  ta-irv's layer on 2026-10-08: the OV lexicon takes 0.8 s and the IRV
+  snapshot 0.9 s. Both stay cached for the process (`_LEXICON_CACHE`,
+  `_STATE_CACHE`), so a later book switch rebuilds the checker in about
+  0.17 s. The load runs on the background worker and requests never wait for
+  it. A test with a deadline must warm the caches first, or it times the load
+  (BUILD_LOG 2026-10-08).
+
+### Mapping
+
+| indic-qa item | Bridge `rule` | Suggestions |
+|---|---|---|
+| A token with a status of `malformed`, `suspect`, `archaic`, `rare_near_common` or `unknown` | `SHAPE_RULE_SWITCH` maps a sub-rule to its catalogue rule. The sub-rule is kept as `detailRule`. | Its ranked `sugg` |
+| A lead (consistency, agreement, grammar) | The lead's `rule` | `proposed` |
+| A warning | Its `rule`, or `GENERIC_WARNING_RULE[kind]` | `fix` |
+
+`ok`, `irv_ok`, `inflected_ok`, `compound` and `learned` tokens are not
+findings. Two categories exist for these packs only: `consistency` and
+`grammar`.
+
+### Inline policy (DECISIONS 2026-10-07, "drawn in the text by default")
+
+- Every rule's reviewed flag is `inline: false`, because the human gate needs
+  labels. That is unchanged, and CI reads only this flag.
+- What the verse text *draws* is separate. Every enabled indic-qa rule is
+  drawn unless the reviewer's Settings > Language QA threshold hides it: a
+  minimum measured precision and a lowest confidence, both of which must
+  pass. `language_qa_drawn.py` decides it per request. It never runs during
+  a pass, so moving the slider rescans nothing. Served findings carry
+  `drawn`; `languageQa.inline` returns only drawn ones, and
+  `languageQa.status` reports `drawnRules` and `inlinePolicy`.
+- Measured precision is `rule_precision.json` in the pack folder:
+  aggregates only, for the rules reviewers labelled. Regenerate it after a
+  new label round:
+  `language_qa_benchmark.py --human-labels benchmark/human/<code> --language <declared> --write-precision`
+  (Tamil: `--human-labels benchmark/human`). A rule missing from it is
+  unmeasured and passes any slider value.
+
+### Learned fixes (every pack, DECISIONS 2026-10-07)
+
+Not a pack rule: `learned.replacement` (pack `project`, category `learned`)
+runs for every project, Tamil included.
+
+- **Recording.** `verse.edit` calls `language_qa_learned.learned_pair`. When
+  the edit replaced exactly one word and nothing else visible changed, it
+  writes or counts (old, new) in `language_qa_learned_fixes`, and the result
+  says what it learned. Typing a learned replacement back retracts it.
+- **Shared across the collection** (DECISIONS 2026-10-07, the later
+  entry). Each book stores its own rows. A pass reads them merged with
+  every materialized sibling's: `TranslationCoreProject.
+  collection_learned_fixes` reads siblings read-only and once per open,
+  then `language_qa_learned.merge_learned_fixes` merges them.
+  - `count` is the net uses in every book. A retraction may take a use
+    learned elsewhere, so a book's own row can go negative, but the
+    collection's total never goes below zero.
+  - Forgotten in any book means forgotten everywhere.
+  - A lazy book is read once it has been opened.
+- **Offering.** Each pass reads the collection's enabled fixes and reports
+  every recurrence of an old word. The step runs after the chapter loop, outside
+  the per-verse cache, so a new fix needs no rescan. Decisions, house style
+  and the finding cap apply as usual.
+- **Managing.** `languageQa.learned.list`, `.forget` and `.restore`, shown in
+  the panel's Dictionary tab with the books that used each fix. Forget and
+  Restore write this book and every materialized sibling that holds the fix,
+  and report any that could not be written (`failedBooks`). Forget is not a
+  decision: the fix simply stops being offered.
+
+### Scoped corrections (every pack, DECISIONS 2026-10-07)
+
+`languageQa.scopeFind` lists every place of the same finding in the verse,
+chapter or book (`language_qa_scope.match_key`). It is read-only and comes
+from the last pass. `languageQa.scopeApply` with `action: "accept"` writes
+one `apply_scripture_edit` per verse, splicing right to left. It skips a
+verse whose text hash moved since the pass, decides each finding `accepted`,
+learns a one-word replacement, and writes a `language_qa_batches` row.
+`action: "ignore"` decides each finding `ignored`; at book scope a word is
+also recorded as house style. `languageQa.batchUndo` restores every verse
+not edited since and keeps both batches. The sidecar allows these calls
+600 s.
+
+### Reviewer flags (every pack)
+
+A flag is a reviewer's question on a passage, not a finding, and it never
+writes the verse. It lives in `language_qa_flags` (workbench v6). The RPCs
+are `languageQa.flags.list`, `.add`, `.update` and `.delete`; delete is a
+status, so every image is kept. A new flag must name exactly the text at its
+span (raw code points), so it always points at real text. Its type is one of
+spelling, grammar, meaning, style, encoding, font or other. A one-word
+suggested form on a one-word flag is also recorded as a learned fix. The text
+shows ⚑ after the flagged span. The panel's Flags tab lists the book's flags;
+flags are created from a Language QA mark, the Review panel, a text selection
+or the whole verse.
+
+### Project words, Book words, occurrences (every pack)
+
+- `languageQa.words.add {words, scope: book|project}` records house-style
+  entries with `list: "projectWords"` (LANGUAGE_QA_HOUSESTYLE.md). They
+  silence spelling-type findings on those words. `.list` shows them; removing
+  one is `housestyle.setState`.
+- `languageQa.bookWords` lists the book's words outside the dictionary, most
+  frequent first, from the last pass: the pass's word counts plus the
+  resident checker's view (`indic_qa_adapter.word_statuses`: unknown,
+  irv_ok, inflected_ok, compound, rare_near_common) with IRV and OV counts.
+  A pack with only a lexicon reports words its lexicon does not count. A word
+  on the project list reports `added`.
+- `languageQa.occurrences {word, source: "irv"}` lists every place the word
+  occurs in the open book's verse text. It uses Language QA's own tokenizer,
+  returns raw offsets and a visible-text snippet, and caps at 5,000 verses.
+  `source: "ov"` searches the reference Bible (next section).
+
+### Reference Bible and related words (every pack, DECISIONS 2026-10-07)
+
+- Settings › Language QA sets a folder per pack
+  (`languageQaReferenceDirs`, `{pack: folder}`). A folder holding neither
+  `verses.tsv` nor USFM/SFM books is refused when saved. ta-irv falls back
+  to its own `dictionary/verses.tsv` (the 1957 OV) with no folder set.
+- `reference_text.ReferenceHolder` reads the folder on a background thread.
+  It caches the plain text as `<fingerprint>.json.gz` in
+  `%LOCALAPPDATA%\Bridge\data\reference-cache\` and answers
+  `ready: false` until then; the UI polls once a second.
+- `languageQa.reference {chapter}` gives the open book's chapter. The
+  Ref. toolbar toggle shows it in a 300 px panel that follows the selected
+  verse. The panel is hidden under 1,200 px.
+- `languageQa.related {word}`: `related_words.RelatedWords`, ported from
+  upstream `related.py` (`MIN_PAIR = 2`, `MAX_SPAN = 3`). It returns
+  equivalents (what the other text used in the same slot, with a count and
+  an example reference), same-stem forms, and the word's own IRV/OV counts.
+  It is built in memory from the reference and the materialized books of the
+  collection, once per session and pack. It can be turned off with
+  `languageQaRelatedWords`.
+
+### Checker settings (every indic-qa pack, DECISIONS 2026-10-08)
+
+The web app's Settings dialog, per collection. The RPCs are
+`languageQa.checkerSettings.get` and `.set`
+(`engine/tc_ai_bridge/language_qa_checker_settings.py`); validation is
+`language_packs/indic_qa_settings.py`.
+
+- **Stored** in each book's `overrides.json` beside the narrowing `rules`:
+  - a sparse `checker` object (version 1), holding only values that differ
+    from the language profile's `default_settings`;
+  - `rules.<id>.enabled` for a switched rule.
+
+  A save writes every materialized book and keeps each file's other keys.
+- **Offered:**
+  - `checked_contexts`: `verse` for a profile pack; `verse`, `heading` and
+    `footnote_text` for the Tamil layer;
+  - `warnings` (the Tamil layer's forced three excepted);
+  - `suggest.max` (1 to 9) and `compound.enabled`;
+  - for hi, ml, or and pa: the rule switches, the style selects (the
+    checker's own spelling clusters, read from the resident checker, so
+    `ready: false` until a pass has loaded the pack), `lex.irv_accept_min`
+    and `consistency.minority_max`;
+  - for ta: the 11 sandhi-lead settings.
+- **Reaches the checker** through `indic_qa_adapter._settings`. In order, it
+  layers the project's sections, then the pack's rule switches, then the
+  layer's forced switches. The resident checker's key includes them, so a
+  change rebuilds it on the next pass.
+- **Refused values** become coverage notes when read from a file, and a
+  `ProjectError` naming the key on `.set`, before anything is written.
+
+`languageQa.occurrences` also takes `match: "text"` (the word menu's
+"Search in this book"): any run of the visible text, not only a whole word.
+
+### Phase 1 data rules (DECISIONS 2026-10-07)
+
+- No rule has high severity together with high confidence, so none blocks
+  export. The loader refuses such an entry.
+- `<code>.lex.unknown` is on at low severity and low confidence, and never
+  inline (DECISIONS 2026-10-08). It is drawn under the Settings slider; a
+  confidence floor of "medium" hides it from the text.
+- The coverage statement lists the pack's own categories. "Agreement" is
+  replaced by "agreement across a whole clause", because corpus-attested pairs
+  are flagged.
+
+### General corpus (every indic-qa pack)
+
+Every spelling dictionary above is the Old Version Bible's own word list, so a
+modern IRV word the OV never used is "unknown" unless the IRV itself repeats
+it. The general corpus (fork issue #246, DECISIONS 2026-10-09) is a second,
+Bridge-owned word list per pack: how often each form occurs in general
+written use of the language, outside the Bible. It is pack data beside the
+IRV snapshot, outside `dictionary/`, so nothing vendored and no sha256 pin
+changes.
+
+- **Files.** `general_corpus.tsv.gz` (`key`, `count`, source letters: `c`
+  IndicCorp, `k` Kaniyam, `h` hunspell; format 2 adds `form`, the commonest
+  surface spelling where the key is not one, so Malayalam suggestions are
+  ഒരു, not the folded key ഒര്) and `general_corpus.json`: every
+  source with its URL pinned to a commit or LFS sha256, the byte ranges
+  sampled and their hashes, licence, token counts, the floors and thresholds,
+  the tokeniser (the vendored profile's `token_re` and `canon`, so a
+  re-vendor that changes either fails the pack's data test until the corpus
+  is rebuilt), and the output's sha256. `pack.json` names them under
+  `generalCorpus` (`enabled: false` switches the layer off for a pack).
+- **Sources** (Bridge is GPL-3; every source is compatible): AI4Bharat
+  IndicCorp v2 (CC0; raw text on Hugging Face, 2-80 GB per language, of
+  which eight evenly spaced byte windows totalling 1.5 GB are read by HTTP
+  Range request); for Tamil the KaniyamFoundation `all_tamil_words` counts
+  (public domain); for Hindi the `hindi-hunspell` list (GPL-3, membership
+  only). AI4Bharat IndicNLP v1's ready-made frequency files are CC BY-NC-SA
+  and are not used.
+- **Build.** `python scripts/build_corpus_lexicon.py <code>` at development
+  time only; `--verify` checks a shipped file against its manifest. The app
+  never fetches anything. Keys are NFC, then the profile's `canon` for hi, ml
+  and or. A form's count is its IndicCorp sample count when that reached the
+  floor (10); a form only a list vouches for gets exactly `acceptMin`, so it
+  is known but never suggested (suggestions need `suggestMin`, 200).
+- **What it does at runtime** (`general_corpus.py`, consulted after the
+  checker in `indic_qa_adapter._items` and `indic_qa_tamil._token_item`):
+  an `unknown` word the corpus knows is accepted, and counted in the pass's
+  coverage note, only when **no close neighbour is commoner** (manifest
+  `ratio` 1). A close neighbour is one code point away in the whole corpus
+  (a sign swapped, dropped or added: कवियत्री 36× beside कवयित्री 137×,
+  सन्यासी beside संन्यासी) or one grapheme cluster added or dropped; one
+  cluster replaced by another only ever suggests. Otherwise the finding
+  stays and those neighbours follow the checker's own suggestions
+  (reviewed, learned, OV first), closest edit first. A web corpus carries
+  popular misspellings; the first rule (no neighbour 50 times commoner)
+  accepted them, and the #246 review caught it. A word the IRV uses
+  `irv_accept_min` times that neither the OV nor the corpus knows, one edit
+  from a corpus word, is `<code>.lex.irv-consistent-slip`
+  (`indicqa.lex.irv-consistent-slip` for the Tamil layer): low severity,
+  medium confidence, never inline, once per book at its first place. It
+  ships **off**: on GEN its hits were mostly Bible names (hi 1 of 1, pa 9 of
+  13), with one reviewer-confirmed misspelling among Malayalam's 8, so it
+  waits for the owner's spot check (BUILD_LOG 2026-10-09); the Checker
+  settings dialog switches it on per project. The checker's own near-miss
+  and compound branches are untouched.
+- **What it cannot do.** A slip that lands on another real word is invisible
+  to any word list; that is a context rule (#238).
+- **Measuring.** `scripts/measure_indic_qa.py <code> <IRV folder> <BOOK>`
+  reports `generalCorpus` (words accepted, consistent slips) beside the
+  parity figures, which exclude Bridge's own rule; `--without-corpus` runs
+  the checker alone. The human-label gate must report no `lost_tp` after a
+  corpus lands; raise the floor until it does.
+
+### Measured against indic-qa itself
+
+`scripts/measure_indic_qa.py <code> <IRV folder> <BOOK>` runs indic-qa the
+way its editor does, then a real `LanguageQaManager` pass. It compares the
+verse-text findings as a multiset of (chapter, verse, rule, text). The
+reference counts verse text only, like Bridge. Results for 2026-10-07 are in
+BUILD_LOG.
+
+### Labels and the inline gate
+
+`scripts/import_indic_qa_labels.py` reads indic-qa reviewer workbooks into
+`benchmark/human/<code>/<round>/`. These folders sit one level below the
+Tamil rounds, because a book id alone cannot tell Hindi Genesis from Tamil
+Genesis. The importer works in this order:
+
+1. Each row is anchored in the verse as Bridge stores it.
+2. It is moved onto the finding Bridge reports there for that rule.
+3. A row inside a note, under a rule that is off in Bridge, or with no Bridge
+   finding at that place is reported, never written.
+
+```
+python scripts/language_qa_benchmark.py --human-labels benchmark/human/hi --language hin --gate
+```
+
+This scores a language's rounds with its own pack. It gates only that pack's
+rules, because the Tamil rounds gate the common rules, and CI runs it for
+`hi` and `ml`. A rule becomes inline only through a reviewed `inline: true`
+in `rule_versions.json` with a DECISIONS line, once it has ≥ 20 labels at
+≥ 0.90.
+
+### Updating
+
+1. `sync_indic_qa.py --source <clone> --commit <sha>` to re-vendor.
+2. Bump the `revision` of any rule whose matching changed. The script names
+   the profiles that changed.
+3. `build_indic_qa_packs.py --rule-versions` to add new rules.
+4. Rebuild each `irv_state.json.gz`, Tamil's too: upstream's `dictionary/` is
+   on the allow-list. `test_each_snapshot_is_for_the_vendored_dictionary`
+   fails until you do. Build from the folder named in the snapshot's
+   `provenance.irvFolder`, and check its files still match
+   `provenance.inputs`. Never build from indic-qa's `corpora/irv/`: the
+   editor saves reviewers' corrections there.
+5. Run `measure_indic_qa.py`. To decide step 2, compare every pack finding
+   (chapter, verse, rule, text) of a real pass before and after the sync. Bump
+   only the rules whose findings moved.
+
+## Pack layers: indic-qa's Tamil checker inside ta-irv (`indicQa`)
+
+ta-irv keeps its JSON rules. Since DECISIONS 2026-10-07 ("indic-qa's Tamil
+checker runs as a layer of ta-irv"), its `pack.json` also carries:
+
+```json
+"indicQa": {"profile": "ta", "dictionary": "dictionary", "rules": "indic_qa_rules.json"}
+```
+
+`load_pack` then appends the layer's 18 `indicqa.*` rules to the pack
+(`indic_qa_adapter.layer_rules`). They are `match_type="indic-qa"` and
+`stage="book"`, the same as a profile pack's. The catalogue is
+`tc_ai_bridge/language_packs/indic_qa_tamil.py`, because indic-qa's Tamil
+profile has no `RULES`. Bridge's view of each rule is
+`ta-irv/indic_qa_rules.json`, which has the same shape as `rule_versions.json`.
+If the dictionary or the vendored checker is missing, the pack loads without
+the layer and says so in its problems.
+
+| File in `engine/language_packs/ta-irv/` | What it is | Written by |
+|---|---|---|
+| `dictionary/` | The BSI 1957 OV dictionary: wordlists, `words.tsv`, `sandhi_pairs.tsv`, `final_consonant_words.tsv`, the reviewer's `corrections.tsv` and `sandhi_rules.tsv`, `verses.tsv`, and `MANIFEST.json` | `scripts/sync_indic_qa.py` |
+| `indic_qa_rules.json` | One entry per layer rule | `scripts/build_indic_qa_packs.py --ta-layer` adds new rules; reviewed values are edited by hand |
+| `irv_state.json.gz` | The whole-IRV index, including each book's ஒற்று pair and form counts and its headings and footnotes | `scripts/build_indic_qa_packs.py --irv-state ta <IRV folder>` |
+| `general_corpus.tsv.gz`, `general_corpus.json` | General-use word counts, consulted by the layer on its two unexplained exits (see "General corpus" below) | `scripts/build_corpus_lexicon.py ta` |
+
+What the layer does differently from a profile pack:
+
+- **It also reads headings and footnote prose.**
+  - **Headings.** `<chapter>.headings.json` headings become lines before the
+    verse they introduce. `\r`, `\mr` and `\sr` are references and are not
+    checked.
+  - **Footnotes.** Each footnote part (`\ft`, `\fq`, `\fqa`, `\fk`, ...)
+    becomes its own stream on its verse's first line. Its raw offset is found
+    inside the note's range from `usfm_verse.lift_verse`.
+  - **What a finding carries.** A heading finding carries
+    `context: "heading"` and `contextText`, offers no suggestion, and its
+    offsets index the heading. A footnote finding carries
+    `context: "footnote"` and raw verse offsets.
+- **It never repeats Bridge.** The pass drops a layer finding when a raw
+  finding of the pack or the common rules on the same verse has the same
+  category and an overlapping span (`language_qa_jobs._already_flagged`). The
+  checks Bridge runs over verse text are reported by the layer only in
+  headings and footnotes.
+- **It shows the OV.** Each finding carries `reference`, the OV verse with
+  the same number (`ov_reference.py`, reading `dictionary/verses.tsv`). Its
+  message gives the OV and IRV counts behind it.
+- **Unknown words go through a rarity gate.** The rule depends on how often
+  the IRV uses the word:
+  - A rare word (the IRV uses it at most twice) whose best OV suggestion is
+    a typing slip (ல/ள/ழ, ன/ண/ந, ர/ற, vowel length, புள்ளி, transposition)
+    or a reviewed correction is `indicqa.lex.near-miss`.
+  - A rare word that splits into two known words is `indicqa.lex.compound`.
+    A compound used more often is accepted.
+  - Any other unknown word the IRV uses fewer than `IRV_ACCEPT_MIN` (5) times
+    is `indicqa.lex.unknown`, at low confidence, drawn under the slider
+    (DECISIONS 2026-10-08). One used that often is house practice.
+
+Re-vendoring: steps 1–4 of "Updating" above, plus
+`build_indic_qa_packs.py --ta-layer` and `--irv-state ta`. If a change to
+`langs/ta.py`, `tamil_grammar.py` or `checker.py` alters matching, bump the
+affected `revision`s in `indic_qa_rules.json`.

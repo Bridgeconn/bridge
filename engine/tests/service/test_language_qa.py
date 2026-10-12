@@ -4,21 +4,22 @@ import re
 import threading
 import time
 import unicodedata
-from types import SimpleNamespace
 
 import pytest
 
 from tc_ai_bridge.language_packs import default_pack
 from tc_ai_bridge.language_qa import (
-    CATEGORIES, CONFIDENCES, INLINE_RULES, LAYERS, RULE_VERSION, RULES, WORDLIST_COMMON_MIN, inline_rule_names, WORDLIST_MIN_LENGTH, WORDLIST_RARE_MAX, WORDLIST_RATIO_MIN,
+    CATEGORIES, CONFIDENCES, DEFAULT_COVERAGE, INLINE_RULES, LAYERS, RULE_VERSION, RULES, WORDLIST_COMMON_MIN, inline_rule_names, WORDLIST_MIN_LENGTH, WORDLIST_RARE_MAX, WORDLIST_RATIO_MIN,
     detect_language, lift_inline_usfm, scan_text, stable_finding_id, text_hash, wordlist_findings,
 )
 from tc_ai_bridge.language_qa_jobs import (
     LanguageQaManager, MAX_CHAPTER_BYTES, MAX_BOOK_FINDINGS, apply_decisions, decision_effect,
 )
 from tests.support.projects import fixture_project, call
+from tests.support.packs import switch_off_ta_lexicon, switch_off_ta_unknown_words, ta_pack
 from tests.support.paths import REPO_ROOT
 from bridge_service import BridgeEngine
+from tests.support.language_qa import issue_for, project_at, wait
 
 
 @pytest.fixture(autouse=True)
@@ -26,13 +27,21 @@ def within_book_wordlist(monkeypatch):
     """These tests pin the within-book wordlist audit on synthetic words that
     the IRV corpus does not contain, so they run with the pack's corpus
     lexicon switched off -- the fallback path that audit now is. The lexicon
-    rules are tested on the real lexicon in test_lexicon.py."""
-    from tc_ai_bridge.language_packs import lexicon
-    monkeypatch.setitem(lexicon._LOADED, "ta-irv", None)
+    rules are tested on the real lexicon in test_lexicon.py. The same words
+    are not in the OV either, so the indic-qa layer's unknown words are off
+    too; that rule is tested in tests/language_packs."""
+    switch_off_ta_lexicon(monkeypatch)
+    switch_off_ta_unknown_words(monkeypatch)
 
 
 def scan(text, tamil=True):
-    return scan_text(text, book="php", chapter="2", verse="3-4", tamil=tamil)
+    return scan_text(text, book="php", chapter="2", verse="3-4", pack=ta_pack() if tamil else None)
+
+
+def wordlist(book, counts, first_seen):
+    """The ta-irv pack's within-book wordlist audit (its fallback without a lexicon)."""
+    pack = ta_pack()
+    return wordlist_findings(book, counts, first_seen, pack=pack, rule=pack.by_id("tamil.wordlist-variant"))
 
 
 @pytest.mark.parametrize("text", [
@@ -534,12 +543,6 @@ def test_verse_decide_ignored_actually_suppresses_a_vallinam_finding_through_the
         engine._language_qa.unbind()
 
 
-def issue_for(finding):
-    """What the frontend sends with a Language QA verse.decide."""
-    return {key: finding[key] for key in ("source", "rule", "ruleVersion", "originalText",
-                                          "suggestedReplacement", "message", "start", "end")}
-
-
 def test_every_language_qa_finding_carries_its_source(tmp_path):
     assert all(f["source"] == "languageQa" for f in scan("அந்த காகம்  ,,")["findings"])
     terms = [{"conceptId": "god", "status": "approved", "approvedRenderings": ["இறைவன்"],
@@ -659,15 +662,23 @@ def test_a_language_qa_decision_never_marks_a_verse_reviewed_while_other_finding
     assert engine.project.load_progress_rollup()["totals"]["reviewedVerseCount"] >= 1
 
 
-def test_job_path_and_live_path_produce_identical_findings(staged_engine):
+def test_job_path_and_live_path_produce_identical_findings(staged_engine, monkeypatch):
     engine, run_job = staged_engine
     live = {(f["chapter"], f["verse"], f["id"]) for f in wait(engine._language_qa)["findings"]}
+    from tc_ai_bridge import language_qa_jobs
+
+    scanned: list[str] = []
+    original = language_qa_jobs.scan_verse
+    monkeypatch.setattr(language_qa_jobs, "scan_verse",
+                        lambda *a, **k: scanned.append(a[2]) or original(*a, **k))
     snapshot = run_job(["languageQa"], scope="chapter")
     job = {(r["chapter"], r["verse"], f["id"]) for r in snapshot["results"].values()
            for f in r["languageQa"]["findings"]}
     assert job == {item for item in live if item[0] == "1"}
-    # The job pass reused the cache the live pass wrote: nothing was rescanned.
-    assert engine._language_qa.status()["scannedVerses"] == 0
+    # The job reused what the live pass wrote: nothing was rescanned. Counted
+    # during the job itself: since #232 the job may reuse the live pass outright,
+    # and status() then reports what that pass scanned, not the job.
+    assert scanned == []
 
 
 def test_language_qa_verse_lists_one_verses_findings_open_and_decided(staged_engine):
@@ -886,7 +897,8 @@ def test_status_states_what_language_qa_does_and_does_not_check(vallinam_engine)
     response = call(engine, "languageQa.status", {"projectPath": str(project)})
     assert response["success"]
     cover = response["result"]["coverage"]
-    assert [row["category"] for row in cover["inScope"]] == list(CATEGORIES)
+    # A Tamil project's statement; a profile pack lists its own categories.
+    assert [row["category"] for row in cover["inScope"]] == list(DEFAULT_COVERAGE)
     assert {row["category"] for row in cover["outOfScope"]} >= {
         "agreement", "meaning-shift", "omission-addition", "textual-basis"}
     for row in cover["inScope"] + cover["outOfScope"]:
@@ -971,8 +983,10 @@ def test_verse_decide_rejects_a_non_object_issue(fixture_project):
 
 def test_detection_metadata_conflicts_shared_scripts_and_mixed_input():
     tamil = "தமிழ் மொழியில் எழுதப்பட்ட உரை. " * 10
-    assert detect_language(tamil)["pack"] == "tamil"
-    assert detect_language(tamil, "ta-IN")["language"] == "tam"
+    assert detect_language(tamil)["pack"] == "ta-irv"
+    assert detect_language(tamil)["basis"] == "script-suggestion"
+    assert detect_language(tamil, "ta-IN")["language"] == "ta"
+    assert detect_language(tamil, "tam")["pack"] == "ta-irv"
     assert detect_language(tamil, "hin")["basis"] == "metadata-conflict"
     assert detect_language(tamil, "hin")["pack"] == "common"
     assert detect_language("देवनागरी " * 20)["language"] == "und"
@@ -980,6 +994,45 @@ def test_detection_metadata_conflicts_shared_scripts_and_mixed_input():
     assert detect_language("hello world " * 20, "ta-Latn")["pack"] == "common"
     assert detect_language("தமிழ் abcde " * 20)["basis"] == "mixed-script"
     assert detect_language("123")["language"] == "und"
+
+
+def test_the_language_message_says_what_the_pack_brings(tmp_path, monkeypatch):
+    # Every pack ships the OV dictionary and the general word list since #246;
+    # the old "spelling dictionaries are not included" was false.
+    detection = detect_language("தமிழ் மொழியில் எழுதப்பட்ட உரை. " * 10, "ta")
+    assert detection["pack"] == "ta-irv"
+    assert detection["message"] == ("Tamil rules with the OV dictionary and the general word list; "
+                                    "grammar and meaning are not checked.")
+    # Read from pack.json, so a pack with its corpus switched off says so.
+    import shutil
+    from tc_ai_bridge.language_packs import registry
+    copy = tmp_path / "packs"
+    shutil.copytree(registry.packs_dir(), copy, ignore=shutil.ignore_patterns("*.gz", "dictionary", "rules"))
+    meta = json.loads((copy / "ta-irv" / "pack.json").read_text(encoding="utf-8"))
+    meta["generalCorpus"]["enabled"] = False
+    (copy / "ta-irv" / "pack.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setenv(registry.ENV, str(copy))
+    registry.index.cache_clear()
+    try:
+        message = detect_language("தமிழ் மொழியில் எழுதப்பட்ட உரை. " * 10, "ta")["message"]
+        assert message == "Tamil rules with the OV dictionary; grammar and meaning are not checked."
+    finally:
+        monkeypatch.delenv(registry.ENV)
+        registry.index.cache_clear()
+
+
+def test_a_conflict_runs_common_checks_and_names_both_languages():
+    detection = detect_language("தமிழ் மொழியில் எழுதப்பட்ட உரை. " * 10, "hin")
+    assert detection["pack"] == "common" and detection["basis"] == "metadata-conflict"
+    assert "hin" in detection["message"] and "Devanagari" in detection["message"] and "Tamil" in detection["message"]
+
+
+def test_a_shared_script_never_suggests_a_pack_without_metadata():
+    # Devanagari is written by Hindi, Marathi, Nepali and Sanskrit: never guessed.
+    assert detect_language("देवनागरी लिपि में लिखा पाठ " * 10)["pack"] == "common"
+    # A language with no registered pack gets the common checks, however clear its script.
+    # (Malayalam got the ml-irv pack on 2026-10-07; Bengali has none.)
+    assert detect_language("বাংলা লিপিতে লেখা পাঠ্য " * 10, "bn")["pack"] == "common"
 
 
 def test_wordlist_findings_flags_a_rare_pulli_variant_of_a_common_word():
@@ -990,7 +1043,7 @@ def test_wordlist_findings_flags_a_rare_pulli_variant_of_a_common_word():
         common: ("1", "1", 0, len(common), common, "hash-common"),
         rare: ("1", "2", 3, 3 + len(rare), rare, "hash-rare"),
     }
-    findings = wordlist_findings("php", counts, first_seen)
+    findings = wordlist("php", counts, first_seen)
     assert len(findings) == 1
     finding = findings[0]
     assert finding["rule"] == "tamil.wordlist-variant"
@@ -1006,7 +1059,7 @@ def test_wordlist_findings_never_flags_rarity_alone():
     rare = "தமிழக"  # length >= WORDLIST_MIN_LENGTH, no similar word present at all
     counts = {rare: 1}
     first_seen = {rare: ("1", "1", 0, len(rare), rare, "hash")}
-    assert wordlist_findings("php", counts, first_seen) == []
+    assert wordlist("php", counts, first_seen) == []
 
 
 def test_wordlist_findings_never_flags_similarity_alone():
@@ -1016,7 +1069,7 @@ def test_wordlist_findings_never_flags_similarity_alone():
         a: ("1", "1", 0, len(a), a, "hash-a"),
         b: ("1", "2", 0, len(b), b, "hash-b"),
     }
-    assert wordlist_findings("php", counts, first_seen) == []
+    assert wordlist("php", counts, first_seen) == []
 
 
 def test_wordlist_findings_ignores_words_shorter_than_the_minimum():
@@ -1027,7 +1080,7 @@ def test_wordlist_findings_ignores_words_shorter_than_the_minimum():
         common: ("1", "1", 0, len(common), common, "hash-common"),
         rare: ("1", "2", 0, len(rare), rare, "hash-rare"),
     }
-    assert wordlist_findings("php", counts, first_seen) == []
+    assert wordlist("php", counts, first_seen) == []
 
 
 def test_wordlist_findings_tie_break_is_deterministic():
@@ -1039,38 +1092,14 @@ def test_wordlist_findings_tie_break_is_deterministic():
         higher_count: ("1", "2", 0, len(higher_count), higher_count, "hash-a"),
         lower_count: ("1", "3", 0, len(lower_count), lower_count, "hash-b"),
     }
-    findings = wordlist_findings("php", counts, first_seen)
+    findings = wordlist("php", counts, first_seen)
     assert len(findings) == 1
     assert higher_count in findings[0]["message"]  # higher count wins over lexical order
     # Equal counts: lexicographically smaller string wins instead.
     counts[higher_count] = counts[lower_count]
-    findings = wordlist_findings("php", counts, first_seen)
+    findings = wordlist("php", counts, first_seen)
     assert lower_count in findings[0]["message"]
     assert lower_count < higher_count
-
-
-def project_at(root, text="தமிழ் தமிழ்  ", book="php", verses=None, terminology=None, decisions=None):
-    folder = root / book
-    folder.mkdir(parents=True)
-    (folder / "1.json").write_text(json.dumps(verses or {"3a": text}, ensure_ascii=False), encoding="utf-8")
-    namespace = SimpleNamespace(path=root, book_id=book, book_dir=folder,
-                                manifest={"target_language": {"id": "tam"}})
-    if terminology is not None:
-        namespace.terminology_rules = terminology if callable(terminology) else (lambda: terminology)
-    if decisions is not None:
-        namespace.project_qa_decisions = decisions if callable(decisions) else (lambda: decisions)
-    return namespace
-
-
-def wait(manager, state="completed"):
-    deadline = time.monotonic() + 8
-    while time.monotonic() < deadline:
-        status = manager.status(limit=100)
-        if status["state"] == state:
-            return status
-        assert status["state"] != "failed", status
-        time.sleep(.005)
-    pytest.fail(f"Language QA did not reach {state}: {manager.status()}")
 
 
 def test_wordlist_audit_end_to_end_via_manager(tmp_path):
@@ -1317,15 +1346,20 @@ def test_inline_without_a_chapter_returns_the_whole_book_and_only_inline_rules(t
     inline = manager.inline()
     assert len(inline["findings"]) == 180
     assert all(f["inline"] for f in inline["findings"])
-    assert {f["rule"] for f in inline["findings"]} <= set(inline_rule_names())
+    drawn = inline_rule_names(ta_pack())
+    assert {f["rule"] for f in inline["findings"]} <= set(drawn)
     assert inline["chapter"] is None
     # The drawn rules: the in-code INLINE_RULES plus the pack's inline rules
     # (inline on human-labelled precision, DECISIONS.md 2026-09-28).
-    assert inline["inlineRules"] == inline_rule_names()
-    assert manager.status()["inlineRules"] == inline_rule_names()
-    # The migrated வல்லினம் rules keep their legacy name.
-    assert set(inline_rule_names()) == INLINE_RULES | {"tamil.vallinam-missing", "sandhi.vallinam.wrong-consonant",
-                                                       "sandhi.compound.direction", "typo.suffix.dropped-tha"}
+    assert inline["inlineRules"] == drawn
+    assert manager.status()["inlineRules"] == drawn
+    # The migrated வல்லினம் rules keep their legacy name; the lexicon rules
+    # moved into the pack (2026-09-30) keep theirs.
+    assert set(drawn) == INLINE_RULES | {"tamil.vallinam-missing", "sandhi.vallinam.wrong-consonant",
+                                         "sandhi.compound.direction", "typo.suffix.dropped-tha",
+                                         "lexicon.known-misspelling", "lexicon.known-split"}
+    # Common checks only: the in-code inline rules alone.
+    assert inline_rule_names(None) == sorted(INLINE_RULES)
 
 
 def test_category_marks_match_the_engine():
@@ -1355,9 +1389,9 @@ def test_frontend_types_list_the_engine_vocabulary():
 def test_every_rule_has_valid_metadata_and_inline_flags_follow_the_engine_list():
     for rule, meta in RULES.items():
         assert meta.layer in LAYERS and meta.category in CATEGORIES and meta.confidence in CONFIDENCES, rule
-        assert meta.pack in {"common", "ta-irv", "project"} and meta.revision >= 1, rule
+        assert meta.pack in {"common", "project"} and meta.revision >= 1, rule
     assert INLINE_RULES <= set(RULES)
-    for pack_rule in default_pack().rules:
+    for pack_rule in ta_pack().rules:
         assert pack_rule.layer in LAYERS and pack_rule.category in CATEGORIES, pack_rule.id
         assert pack_rule.confidence in CONFIDENCES, pack_rule.id
         # Inline is decided by the human-label gate (language_qa_benchmark.human_gate), never a sign-off.
@@ -1371,16 +1405,22 @@ FINDING_FIELDS = {"id", "book", "chapter", "verse", "rule", "severity", "start",
 
 
 def assert_finding_shape(finding):
-    assert set(finding) == FINDING_FIELDS, set(finding) ^ FINDING_FIELDS
-    pack = default_pack()
+    # A served finding (status, inline, verse) adds exactly one field: `drawn`,
+    # the user's inline threshold applied to it (language_qa_drawn). A producer's
+    # finding (scan_text) has the shape below and nothing more.
+    assert set(finding) - {"drawn"} == FINDING_FIELDS, (set(finding) - {"drawn"}) ^ FINDING_FIELDS
+    assert isinstance(finding.get("drawn", False), bool)
+    pack = ta_pack()
     pack_rule = pack.by_id(finding["ruleId"].split("/", 1)[1]) if finding["ruleId"].startswith("ta-irv/") else None
     if pack_rule is not None:
         # A pack rule: its metadata and versions come from the pack.
         assert finding["rule"] == pack_rule.name
         assert (finding["layer"], finding["category"], finding["confidence"], finding["severity"]) == (
             pack_rule.layer, pack_rule.category, pack_rule.confidence, pack_rule.severity)
-        assert finding["packVersion"] == pack.pack_version and finding["ruleRevision"] == pack_rule.version
-        assert finding["ruleVersion"] == f"{pack.pack_version}#{pack_rule.version}"
+        # A rule moved out of the engine's code keeps the stamp it had there (legacyVersion).
+        pack_version = pack_rule.legacy_version or pack.pack_version
+        assert finding["packVersion"] == pack_version and finding["ruleRevision"] == pack_rule.version
+        assert finding["ruleVersion"] == (pack_rule.legacy_version or f"{pack.pack_version}#{pack_rule.version}")
         assert finding["inline"] is pack_rule.inline
     else:
         meta = RULES[finding["rule"]]
@@ -1461,7 +1501,7 @@ def test_real_dispatcher_auto_open_edit_and_project_guard(fixture_project):
     try:
         _r = call(engine, "project.open", {"path": str(fixture_project)})
         assert _r["success"], _r
-        assert wait(engine._language_qa)["language"]["pack"] == "tamil"
+        assert wait(engine._language_qa)["language"]["pack"] == "ta-irv"
         wrong = call(engine, "languageQa.pause", {"projectPath": "other", "paused": True})
         assert not wrong["success"]
         _r = call(engine, "verse.edit", {"chapter": "1", "verse": "1", "newText": "தமிழ் �"})
@@ -1485,7 +1525,15 @@ def test_recovery_block_cannot_be_resumed(tmp_path):
 
 
 def test_continuous_foreground_polling_does_not_starve_worker(tmp_path):
-    project = project_at(tmp_path, verses={str(n): "சரியான உரை" for n in range(50)})
+    # The first ta-irv pass in a process also loads the indic-qa layer's OV
+    # lexicon and IRV snapshot (~1.7 s, cached for the process). That is load
+    # time, not starvation, so a pass over another book pays it first and the
+    # deadline below times only the pass the foreground keeps interrupting.
+    warm = LanguageQaManager(debounce=0, yield_seconds=0)
+    warm.bind(project_at(tmp_path / "warm", book="rut", verses={"1": "சரியான உரை"}))
+    wait(warm)
+    warm.unbind()
+    project = project_at(tmp_path / "polled", verses={str(n): "சரியான உரை" for n in range(50)})
     manager = LanguageQaManager(debounce=0, yield_seconds=.001)
     manager.bind(project)
     deadline = time.monotonic() + 3

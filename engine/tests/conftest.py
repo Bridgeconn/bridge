@@ -52,6 +52,7 @@ _SLOW_FILES = (
 )
 _FILE_MARKERS = {
     "test_stdio_e2e.py": ("subprocess", "slow"),
+    "test_stdio_protocol_stream.py": ("subprocess",),
     "test_versification_concurrency.py": ("subprocess", "slow"),
     "test_semantic_mapping_stage3.py": ("stage3db",),
     "test_correction_acceptance_queue_visibility.py": ("external",),
@@ -59,6 +60,11 @@ _FILE_MARKERS = {
     "test_correction_case_c_production.py": ("external",),
     "test_php_review_walkthrough_stage9a.py": ("external",),
     "test_passage_semantic_foundation.py": ("external",),
+    "test_indic_qa_vendor.py": ("packs",),
+    "test_indic_qa_packs.py": ("packs",),
+    "test_indic_qa_tamil_layer.py": ("packs",),
+    "test_indic_qa_general_corpus.py": ("packs",),
+    "test_import_indic_qa_labels.py": ("external",),
 }
 
 

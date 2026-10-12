@@ -106,6 +106,29 @@ describe("verse-text underlines", () => {
       rule: "spacing.extra", layer: "integrity", category: "spacing", inline: true,
     })]))).toEqual([["beta", "m-lqa-spacing"]]);
   });
+
+  it("draws an indic-qa finding the engine says is drawn, though its rule is not reviewed inline", () => {
+    // Settings > Language QA: `drawn` is the engine's answer under the user's
+    // threshold; `inline` stays the reviewed flag the CI human gate reads.
+    const consistency = { rule: "hi.style.ye-ending-consistency", category: "consistency" as const, inline: false };
+    expect(marked(buildSegments(TEXT, [], [], [], [termFinding({ ...consistency, drawn: true })])))
+      .toEqual([["beta", "m-lqa-typo"]]);
+    expect(marked(buildSegments(TEXT, [], [], [], [termFinding({ ...consistency, drawn: false })]))).toEqual([]);
+  });
+
+  it("segments a dense verse with many drawn findings quickly", () => {
+    // Every indic-qa finding is drawn by default now: a verse can carry many marks.
+    const long = "word ".repeat(400);
+    const findings = Array.from({ length: 200 }, (_, i) => termFinding({
+      id: `f${i}`, start: (i * 7) % (long.length - 10), end: ((i * 7) % (long.length - 10)) + 6,
+      originalText: long.slice((i * 7) % (long.length - 10), ((i * 7) % (long.length - 10)) + 6),
+      inline: false, drawn: true,
+    }));
+    const started = performance.now();
+    const segments = buildSegments(long, [], [], [], findings);
+    expect(performance.now() - started).toBeLessThan(250);
+    expect(segments.filter((s) => s.className).length).toBeGreaterThan(0);
+  });
 });
 
 describe("Language QA indicator per category", () => {
@@ -121,6 +144,7 @@ describe("Language QA indicator per category", () => {
     [{ category: "unicode", confidence: "high", layer: "integrity" }, "m-lqa-unicode"],
     [{ category: "termbase", confidence: "high", layer: "housestyle" }, "m-term"],
     [{ category: "name", confidence: "medium", layer: "housestyle" }, "m-term"],
+    [{ category: "learned", confidence: "medium", layer: "housestyle" }, "m-lqa-learned"],
   ];
   it.each(cases)("%o -> %s", (overrides, expected) => {
     expect(languageQaMarkClass(lqaFinding(overrides))).toBe(expected);
@@ -128,9 +152,24 @@ describe("Language QA indicator per category", () => {
       .toEqual([["beta", expected]]);
   });
 
+  it("draws a learned fix over a possible typo where the two overlap", () => {
+    // The reviewer's own earlier change outranks a guess at the same severity.
+    const learned = termFinding({ id: "l", category: "learned", layer: "housestyle", severity: "low", inline: true });
+    const typo = termFinding({ id: "t", category: "typo", layer: "pattern", confidence: "medium", severity: "low", inline: true });
+    expect(marked(buildSegments(TEXT, [], [], [], [typo, learned]))).toEqual([["beta", "m-lqa-learned"]]);
+  });
+
   it("styles every category the engine can send", () => {
-    const categories: LanguageQaCategory[] = ["typo", "sandhi", "word-joining", "punctuation", "unicode", "spacing", "termbase", "name", "usfm"];
+    const categories: LanguageQaCategory[] = ["typo", "sandhi", "word-joining", "punctuation", "unicode", "spacing", "termbase", "name", "usfm",
+      "consistency", "grammar", "learned"];
     expect(Object.keys(LANGUAGE_QA_CATEGORY_MARKS).sort()).toEqual([...categories].sort());
+  });
+});
+
+describe("indic-qa profile pack categories", () => {
+  it("draws a consistency lead like a possible typo and a grammar lead like a sandhi lead", () => {
+    expect(languageQaMarkClass({ category: "consistency", confidence: "low", layer: "lexicon" })).toBe("m-lqa-typo");
+    expect(languageQaMarkClass({ category: "grammar", confidence: "low", layer: "pattern" })).toBe("m-lqa-sandhi");
   });
 });
 

@@ -8,6 +8,7 @@ regex cannot make this test pass accidentally.
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import os
 import queue
@@ -136,13 +137,18 @@ def main() -> int:
     resources_dir = repository_root / "engine" / "resources"
     if not resources_dir.is_dir():
         raise SystemExit(f"Expected bundled resources at {resources_dir} for this smoke test")
+    # The Language QA packs ship the same way (--language-packs-dir).
+    packs_dir = repository_root / "engine" / "language_packs"
+    if not (packs_dir / "index.json").is_file():
+        raise SystemExit(f"Expected the Language QA packs at {packs_dir} for this smoke test")
 
     with tempfile.TemporaryDirectory(prefix="bridge-frozen-smoke-") as temp:
         project = _fixture_project(Path(temp))
         process_env = os.environ.copy()
         process_env["LOCALAPPDATA"] = str(Path(temp) / "app-data")
         process = subprocess.Popen(
-            [str(engine), "--resources-dir", str(resources_dir)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            [str(engine), "--resources-dir", str(resources_dir), "--language-packs-dir", str(packs_dir)],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True, encoding="utf-8", env=process_env,
         )
         frames: queue.Queue[dict] = queue.Queue()
@@ -157,6 +163,19 @@ def main() -> int:
 
         threading.Thread(target=read_stdout, daemon=True).start()
 
+        # stderr must be drained too: it is a pipe, and once its buffer (a few
+        # KB on Windows) is full the engine blocks on its next diagnostic line,
+        # mid-request. The desktop shell reads it continuously (sidecar.rs);
+        # the timing traces (2026-10-08) made this harness the first to fill it.
+        stderr_tail: "collections.deque[str]" = collections.deque(maxlen=200)
+
+        def read_stderr() -> None:
+            assert process.stderr is not None
+            for line in process.stderr:
+                stderr_tail.append(line.rstrip("\n"))
+
+        threading.Thread(target=read_stderr, daemon=True).start()
+
         def request(request_id: str, method: str, params: dict, timeout: float = 30) -> dict:
             assert process.stdin is not None
             process.stdin.write(json.dumps({"id": request_id, "method": method, "params": params}) + "\n")
@@ -169,12 +188,31 @@ def main() -> int:
                     break
                 if response.get("id") == request_id:
                     return response
-            raise SystemExit(f"Request {request_id} timed out")
+            tail = "\n".join(list(stderr_tail)[-5:])
+            raise SystemExit(f"Request {request_id} timed out" + (f"; engine stderr ends:\n{tail}" if tail else ""))
 
         try:
+            # Boot first, on its own clock: request() would otherwise count the
+            # onefile unpack and imports against the first request (#242).
+            boot_started = time.monotonic()
+            while True:
+                try:
+                    frame = frames.get(timeout=max(0.01, 60 - (time.monotonic() - boot_started)))
+                except queue.Empty:
+                    raise SystemExit("Frozen engine never reported ready")
+                if frame.get("id") == "__ready__":
+                    break
+            print(f"Frozen engine ready in {time.monotonic() - boot_started:.2f}s.")
+            info_started = time.monotonic()
             info = request("info", "engine.info", {})
+            info_seconds = time.monotonic() - info_started
             if not info.get("success"):
                 raise SystemExit(f"Request info failed: {info}")
+            # engine.info used to build uroman on the dispatcher, ~5 s with
+            # nothing else answered; it now loads on a background thread (#242).
+            if info_seconds >= 2.0:
+                raise SystemExit(f"engine.info took {info_seconds:.2f}s; it must not wait for uroman")
+            print(f"engine.info answered in {info_seconds * 1000:.0f}ms.")
             if info.get("result", {}).get("bridgeVersion") != expected_bridge_version:
                 raise SystemExit(f"Frozen engine version is stale or inconsistent: {info}")
             wildebeest = (
@@ -257,6 +295,26 @@ def main() -> int:
                 or raw_top_tokens[0].get("word") != "Παῦλος"
             ):
                 raise SystemExit(f"Frozen UGNT token initialization failed: {raw_alignment}")
+            # #219/#221: the automatic alignment modules are new top-level and
+            # tc_ai_bridge imports a freeze could drop without failing to
+            # build. Both calls are offline: the estimate builds real window
+            # payloads, and a pass with no key must answer `unavailable`
+            # without sending anything.
+            estimate = request("auto-align-estimate", "alignment.autoAlign.estimate", {
+                "scope": "chapter", "chapters": ["1"],
+            })
+            if (
+                not estimate.get("success")
+                or estimate.get("result", {}).get("windows") != 1
+                or estimate.get("result", {}).get("calls") != 2
+                or not estimate.get("result", {}).get("estimatedInputTokens")
+            ):
+                raise SystemExit(f"Frozen automatic-alignment estimate failed: {estimate}")
+            offline_pass = request("auto-align-offline", "alignment.window.autoAlign", {
+                "chapter": "1", "verses": ["1", "2"],
+            })
+            if (offline_pass.get("result", {}).get("unavailable") or {}).get("reason") != "no-api-key":
+                raise SystemExit(f"Frozen automatic alignment did not degrade offline: {offline_pass}")
 
             if args.import_source:
                 started_at = time.perf_counter()
@@ -339,6 +397,10 @@ def main() -> int:
                 raise SystemExit(
                     f"Frozen names/transliteration check missed Titus/Tituss: {names_check}"
                 )
+            names_state = (request("info-after-names", "engine.info", {}).get("result", {})
+                           .get("greekRoom", {}).get("adapters", {}).get("names", {}))
+            if names_state.get("state") != "loaded":
+                raise SystemExit(f"Frozen uroman did not report loaded after the names check: {names_state}")
 
             alignment = request("alignment-get", "alignment.get", {"chapter": "1", "verse": "1"})
             if not alignment.get("success") or not alignment["result"].get("sourceAvailable"):
@@ -484,6 +546,72 @@ def main() -> int:
                 raise SystemExit(f"Frozen checker missed duplicate verse: {sorted(check_types)}")
             if not any("missing_verses" in value for value in check_types):
                 raise SystemExit(f"Frozen checker missed absent verse: {sorted(check_types)}")
+
+            # The indic-qa profile packs: the vendored checker (inside the exe)
+            # and a dictionary plus IRV snapshot (beside it, --language-packs-dir)
+            # must both resolve in the frozen build. A Hindi project with one
+            # reviewed misspelling must report it from hi-irv.
+            hindi = Path(temp) / "hindi"
+            _write_json(hindi / "manifest.json", {
+                "project": {"id": "rut", "name": "Ruth"},
+                "target_language": {"id": "hin", "name": "Hindi"}, "tc_version": "8",
+            })
+            _write_json(hindi / "rut" / "1.json", {"1": "उसकी आयु सताईस वर्ष की थी।"})
+            _write_json(hindi / ".apps" / "translationCore" / "alignmentData" / "rut" / "1.json",
+                        {"1": {"alignments": [], "wordBank": []}})
+            (hindi / "rut.usfm").write_text("\\id RUT\n\\c 1\n\\v 1 उसकी आयु सताईस वर्ष की थी।\n",
+                                            encoding="utf-8")
+            opened_hindi = request("open-hindi", "project.open", {"path": str(hindi)})
+            if not opened_hindi.get("success"):
+                raise SystemExit(f"Frozen open of the Hindi project failed: {opened_hindi}")
+            lqa_started = time.monotonic()
+            lqa: dict = {}
+            while time.monotonic() - lqa_started < 90:
+                lqa = request(f"lqa-hindi-{int((time.monotonic() - lqa_started) * 10)}", "languageQa.status",
+                              {"projectPath": str(hindi), "limit": 100}).get("result") or {}
+                if lqa.get("state") in {"completed", "failed"}:
+                    break
+                time.sleep(0.2)
+            lqa_rules = {f.get("ruleId") for f in lqa.get("findings", [])}
+            if (lqa.get("state") != "completed" or lqa.get("language", {}).get("pack") != "hi-irv"
+                    or "hi-irv/hi.lex.known-misspelling" not in lqa_rules):
+                raise SystemExit(f"Frozen indic-qa Hindi pack did not report its finding: state={lqa.get('state')} "
+                                 f"language={lqa.get('language')} rules={sorted(lqa_rules)} "
+                                 f"limitations={lqa.get('limitations')}")
+            print(f"Frozen indic-qa Hindi pack passed in {time.monotonic() - lqa_started:.2f}s.")
+
+            # ta-irv's indic-qa layer: the Tamil profile over the OV dictionary,
+            # beside the pack's own rules. GEN 1:27 as the IRV has it carries the
+            # ஒற்று the reviewer's house style removes before தேவ- (no_theva); the
+            # finding must arrive with the OV verse attached.
+            tamil = Path(temp) / "tamil"
+            tamil_text = "அவனைத் தேவசாயலாகவே சிருஷ்டித்தார்"
+            _write_json(tamil / "manifest.json", {
+                "project": {"id": "gen", "name": "Genesis"},
+                "target_language": {"id": "tam", "name": "Tamil"}, "tc_version": "8",
+            })
+            _write_json(tamil / "gen" / "1.json", {"27": tamil_text})
+            _write_json(tamil / ".apps" / "translationCore" / "alignmentData" / "gen" / "1.json",
+                        {"27": {"alignments": [], "wordBank": []}})
+            (tamil / "gen.usfm").write_text(f"\\id GEN\n\\c 1\n\\v 27 {tamil_text}\n", encoding="utf-8")
+            opened_tamil = request("open-tamil", "project.open", {"path": str(tamil)})
+            if not opened_tamil.get("success"):
+                raise SystemExit(f"Frozen open of the Tamil project failed: {opened_tamil}")
+            lqa_started = time.monotonic()
+            lqa = {}
+            while time.monotonic() - lqa_started < 90:
+                lqa = request(f"lqa-tamil-{int((time.monotonic() - lqa_started) * 10)}", "languageQa.status",
+                              {"projectPath": str(tamil), "limit": 100}).get("result") or {}
+                if lqa.get("state") in {"completed", "failed"}:
+                    break
+                time.sleep(0.2)
+            layer = [f for f in lqa.get("findings", []) if f.get("ruleId") == "ta-irv/indicqa.sandhi.extra"]
+            if (lqa.get("state") != "completed" or lqa.get("language", {}).get("pack") != "ta-irv"
+                    or not layer or (layer[0].get("reference") or {}).get("ref") != "GEN 1:27"):
+                raise SystemExit(f"Frozen ta-irv indic-qa layer did not report its finding: state={lqa.get('state')} "
+                                 f"rules={sorted({f.get('ruleId') for f in lqa.get('findings', [])})} "
+                                 f"limitations={lqa.get('limitations')}")
+            print(f"Frozen ta-irv indic-qa layer passed in {time.monotonic() - lqa_started:.2f}s.")
         finally:
             process.terminate()
             try:
@@ -497,8 +625,8 @@ def main() -> int:
         "pinned UGNT source tokens, versification, names/transliteration, "
         "alignment statistics/proposal packaging, "
         "AI explain packaging, desktop connectors, project registry/duplicate import, "
-        "first-open live-review responsiveness, alignment/export/undo, and "
-        "duplicate/missing-verse checks succeeded."
+        "first-open live-review responsiveness, alignment/export/undo, "
+        "duplicate/missing-verse checks, the indic-qa Hindi pack and ta-irv's indic-qa layer succeeded."
     )
     return 0
 

@@ -30,12 +30,38 @@ export const LANGUAGE_QA_CATEGORY_MARKS: Record<LanguageQaCategory, string> = {
   termbase: "m-term",              // purple double
   name: "m-term",
   usfm: "m-lqa-spacing",           // markup hygiene, not a text change
+  // indic-qa profile packs (pa, ml, hi, or): drawn by default, behind the
+  // reviewer's threshold in Settings > Language QA (each finding's `drawn`).
+  consistency: "m-lqa-typo",       // a minority spelling: the same family as a possible typo
+  grammar: "m-lqa-sandhi",         // a lead between two words, like a sandhi lead
+  // A word the reviewer replaced before (language_qa_learned.py): blue dotted.
+  // Dotted like a possible typo but a different colour, and named "learned
+  // fix" in the panel and menu, so colour is never the only difference.
+  learned: "m-lqa-learned",
+};
+
+/** What the panel's kind legend calls each category. */
+export const LANGUAGE_QA_CATEGORY_LABELS: Record<LanguageQaCategory, string> = {
+  typo: "Possible typo",
+  sandhi: "Sandhi",
+  "word-joining": "Word joining",
+  punctuation: "Punctuation",
+  spacing: "Spacing",
+  unicode: "Unicode",
+  termbase: "Term",
+  name: "Name",
+  usfm: "Markup",
+  consistency: "Consistency",
+  grammar: "Grammar lead",
+  learned: "Learned fix",
 };
 
 /** The class for one Language QA finding. */
 export function languageQaMarkClass(
   finding: Pick<LanguageQaFinding, "category" | "confidence" | "layer">,
 ): string {
+  // Before the lexicon rule: a learned fix is the reviewer's own earlier change.
+  if (finding.category === "learned") return "m-lqa-learned";
   if (finding.layer === "lexicon") return "m-lqa-typo";
   if (finding.category === "typo" && finding.confidence === "high") return "m-lqa-typo-high";
   return LANGUAGE_QA_CATEGORY_MARKS[finding.category] ?? "m-lqa-typo";
@@ -43,7 +69,8 @@ export function languageQaMarkClass(
 
 // When Language QA marks overlap, one class supplies the underline:
 // highest severity first, then this class order (the brief's table order).
-const LQA_CLASS_ORDER = ["m-lqa-typo-high", "m-lqa-typo", "m-lqa-sandhi", "m-lqa-spacing", "m-lqa-unicode", "m-term"];
+// A learned fix outranks a guess: the team already made that change once.
+const LQA_CLASS_ORDER = ["m-lqa-typo-high", "m-lqa-learned", "m-lqa-typo", "m-lqa-sandhi", "m-lqa-spacing", "m-lqa-unicode", "m-term"];
 const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 
 /** Lower wins. Exported for its test. */
@@ -200,10 +227,13 @@ export function buildSegments(
   // (see language_qa_jobs.py's own docstring) and never get cast into a fake
   // QaFinding here, matching how nativeChecks/aiReviews above are mapped in
   // their own native shape rather than forced into QaFinding's either.
-  // Only findings the engine marked `inline` carry a span; the rest are
-  // listed in the panel only.
+  // Only findings the engine says are drawn carry a span; the rest are listed
+  // in the panel only. `drawn` is the engine's answer under the user's inline
+  // threshold (language_qa_drawn.py), so an unreviewed indic-qa rule can be
+  // drawn while `inline` stays the reviewed flag. A payload without `drawn`
+  // falls back to `inline`.
   for (const finding of languageQaFindings) {
-    if (!finding.inline) continue;
+    if (!(finding.drawn ?? finding.inline)) continue;
     spans.push({
       start: finding.start, end: finding.end, id: finding.id,
       className: languageQaMarkClass(finding), title: finding.message,

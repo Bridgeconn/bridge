@@ -14328,6 +14328,1651 @@ the maintainer decided: the 15 s import smoke budget.
 **Verified.** Export and parser tests; full engine suite, `npm run check`/`test`/
 `build` and the frozen smoke in the commit.
 
+## 2026-09-30 — Language QA packs are data: registry, rule kinds, the end of `tamil: bool` (ml-irv Step 1)
+
+Step 1 of the Malayalam brief (`ml-irv`): the architecture decision of 29 Sep
+("packs are data, not code") applied to Tamil first, with Tamil output proven
+unchanged before any Malayalam work. Design record: `docs/LANGUAGE_QA_PACKS.md`.
+
+**What moved.**
+
+- Pack data left the Python package: `engine/tc_ai_bridge/language_packs/ta-irv/`
+  -> `engine/language_packs/ta-irv/`, beside `engine/resources/`. The lexicon
+  is `lexicon.json.gz` (deterministic gzip, mtime 0; 3.25 MB -> 0.44 MB; the
+  decompressed bytes are the old file's, sha1 `00c07988…`).
+- `language_packs/index.json` is the registry (`ta -> ta-irv`, aliases
+  `tam/mal/hin`). `detect_language` returns a pack name or `"common"`, never
+  `"tamil"`; `language` is the registry code (`ta`, was `tam`).
+- `scan_text`/`scan_verse` take `pack: RulePack | None`; `tamil: bool` is gone
+  everywhere, as are the Tamil defaults on `default_pack`/`loaded_pack`/
+  `load_project_overrides`/`bundled_seed`.
+- The Tamil code rules became ta-irv rules on generic kinds (`indic/kinds.py`):
+  `tamil.dependent-sign` (sign-sequence), `tamil.mixed-word` (mixed-script),
+  `tamil.repeated-word` (reduplication-allowlist, still disabled),
+  `lexicon.known-split` / `known-misspelling` / `rare-near-common`
+  (lexicon-lookup), `tamil.wordlist-variant` (wordlist-variant).
+  `tamil_distance.py` became the `confusion-set` kind over `ta-irv/confusion.json`
+  (also used by the house-style name check).
+- **`legacyVersion`** is new in the rule schema: a rule moved out of code keeps
+  the `packVersion`/`ruleVersion` stamp (`language-qa-7`) its findings carried,
+  so a decision made before the move is not turned into a "recheck", and the
+  human benchmark's population hash is unchanged. The pack version stays
+  `ta-irv@1.1.0` for the same reason (no matching changed).
+- Packs ship outside the onefile exe: removed from `bridge-engine.spec`
+  `datas`; `build-sidecars.ps1` copies them to `src-tauri/language_packs/`
+  (gitignored), `bundle.resources` ships them, `sidecar.rs` passes
+  `--language-packs-dir`, `main.py` sets `BRIDGE_LANGUAGE_PACKS_DIR`. CI's
+  cargo job copies them like `resources/` (tauri-build requires every
+  resource path to exist). A build without its packs now reports "Language
+  packs unavailable … common checks only" as a limitation instead of
+  silently dropping to common checks.
+- Tests: `tests/language_packs/` (generic kinds on synthetic Malayalam and
+  Devanagari packs, the registry, and one `test_pack[<pack>]` under the new
+  `packs` marker); shared helper `tests/support/packs.py`.
+
+**Tamil regression, before (base `83568c8`, a separate worktree) vs after.**
+
+- Whole-Bible scan of `D:\Claude Lab\IRV Tamil` (66 books, 2,621 findings)
+  through the benchmark's `scan_book`: the sorted JSONL of (book, chapter,
+  verse, ruleId, start, end, originalText, suggestion) is **byte-identical**,
+  and so is the full dump of every finding field (ids, messages, version
+  stamps, suggestions, limitations).
+- Human benchmark `--human-labels benchmark/human --gate`: pass before and
+  after, table identical, `benchmark/human/baseline.json` unchanged.
+- pytest: base 4,656 passed (after copying the gitignored Stage 3 DB into the
+  worktree; without it 12 `test_semantic_mapping_stage3.py` tests fail) ->
+  4,659 passed after, plus 34 in `tests/language_packs`.
+- Frozen engine: exe 13.21 -> 12.81 MB; ping-after-spawn medians over two
+  rounds of 10 launches 1.40 / 1.76 s before, 1.58 / 1.29 s after — no
+  measurable difference (the lexicon was already compressed in the archive; a
+  larger Malayalam lexicon is where this pays). A frozen pass on a Tamil
+  fixture finds the same three findings before and after.
+
+**Differences that are not findings.** Before the first pass, `status.inlineRules`
+is now the in-code list only (`spacing.extra`, `terminology.deprecated-form`),
+because `lexicon.known-*` are pack rules; after a pass it is identical. For a
+project resolved to common checks, `rulePack` is `"common"` (was `ta-irv@1.1.0`)
+and the house-style seed list is empty (was ta-irv's seed for every language).
+The chapter cache key changed (`"tamil"` -> `"ta-irv"`), so each project's
+persisted Language QA cache is rescanned once.
+
+**Not done in this step.** The per-project Language QA setting's *storage*
+and its Settings UI: the engine reads `manifest.language_qa.pack`
+(`auto`/`off`/pack) and applies it (`resolve_language`), but nothing writes it
+— writing manifest.json at runtime would be Bridge's first post-import writer
+to a translationCore file, against CLAUDE.md's "every Bridge-private store
+lives in bridge-workbench.sqlite3". Raised as a question before building it.
+`scripts/build_ta_irv_pack.py` (now keeps the kind rules) and
+`build_tamil_lexicon.py` (now writes the gzip) were compile-checked, not run:
+both need the review inputs.
+
+**Found, not fixed (pre-existing on the base too).** `tests/service/test_language_qa.py`
+fixtures intermittently fail under `-n auto` with `[WinError 5] Access is
+denied … rut\1.json` from `verse.edit` — the edit's file replace racing the
+background Language QA worker's read of the same chapter. Reproduced on the
+untouched base worktree (2 of 3 runs). A translator's edit can hit the same
+race; to be filed separately.
+
+## 2026-10-07 — ml-irv Step 1 rebased onto 0.13.0 (#91), ahead of the indic-qa packs
+
+The entry above was written on 2026-09-30 against a base that predates #91.
+It is re-applied onto `main` at `ea14f39` (0.13.0) as the first step of
+bringing indic-qa's Punjabi, Malayalam, Hindi and Odia checkers into Bridge
+(vendored, panel-only; plan recorded with the maintainer on 2026-10-07).
+
+Conflicts, and how each was resolved:
+
+- `language_qa.py` imports: kept #91's `from .usfm_verse import lift_verse`;
+  added the registry and token imports. The `usfm.marker_balance_issues`
+  import is dropped because nothing calls it since #91.
+- `test_language_qa.py`: kept `tests.support.projects` (#74 phase 4) and
+  added `tests.support.packs`. The borrowed `tests.service.test_bridge_service`
+  import does not return.
+- `scripts/build_ta_irv_pack.py`: kept #91's `lift_verse(text).notes` loop
+  and dropped the removed `tamil=True` argument.
+- `BUILD_LOG.md`: both appends kept.
+
+One follow-on fix was needed. ml-irv reports the detected language as `ta`,
+not `tam`, so the panel's `"tam" ? "Tamil"` literal stopped matching.
+`detect_language` now returns `name` from the registry, the panel shows that
+name, and the script-suggestion line no longer says "Tamil" for every
+language.
+
+Verified on the rebased tree, 2026-10-07:
+
+- **Whole-Bible Tamil scan.** All 66 books of `D:\Claude Lab\IRV Tamil` went
+  through the benchmark's `scan_book` on `main` (`ea14f39`, separate worktree)
+  and on this branch. Every field of every finding, plus per-book limitations,
+  was dumped sorted. The two dumps are **byte-identical**: 2,618 findings,
+  sha256 `60aa46a4…`. The 2,621 above was measured on the pre-#91 base, so
+  the difference comes from #91, not from this change.
+- **Human gate.** `--human-labels benchmark/human --gate` passes, and
+  `baseline.json` is unchanged.
+- **Engine suite.** `pytest -n auto`: 4,759 passed and 1 failed. The failure
+  was `test_logos_get_state_spawns_the_real_helper…`; it passes alone, and
+  passes on `main`, so it was load timing during the parallel run. The
+  Language QA areas alone gave 3,322 passed.
+- **Frontend.** svelte-check reported 0 errors and 0 warnings, and the build
+  passed. Vitest gave 529 of 530: the `VerseList` 100 ms click-budget case
+  failed while pytest was saturating the CPU, and passed 63 of 63 on rerun.
+- **Shell.** `cargo check` passed, and `cargo test` gave 10 passed.
+- **Frozen pair.** `build-sidecars.ps1` copied `engine/language_packs` to
+  `src-tauri/language_packs`, and `smoke_sidecars.py` passed. The engine exe
+  went from 13.48 MB to 13.04 MB because the lexicon now ships outside it.
+
+## 2026-10-07 — indic-qa vendored: checker core and four dictionaries (PR 1 of the indic-qa plan)
+
+`scripts/sync_indic_qa.py --source <clone> --commit 248eb81` copied 55 files:
+
+| What | Where | Size |
+|---|---|---|
+| Checker core, the profiles and `scripts/build_dictionary.py` | `engine/vendor/indic-qa/` | 0.6 MB |
+| Hindi dictionary | `engine/language_packs/hi-irv/dictionary/` | 1.3 MB |
+| Malayalam dictionary | `engine/language_packs/ml-irv/dictionary/` | 7.5 MB |
+| Odia dictionary | `engine/language_packs/or-irv/dictionary/` | 2.3 MB |
+| Punjabi dictionary | `engine/language_packs/pa-irv/dictionary/` | 1.6 MB |
+
+The allow-list is every file name that `Lexicon.load` or a profile's
+`load_lexicon_extra` opens, checked with grep against the four profiles and
+the table modules, plus `clusters.tsv` for seeding and `build_info.json` for
+provenance. Every vendored `open`/`read_text` names its encoding (grep).
+
+**Found while integrating.** The first copy came from a Windows clone with
+`core.autocrlf=true`, so every file was CRLF. Python's text-mode reads would
+have hidden this, but the hashes would differ from a Linux checkout. The sync
+now reads `git show <commit>:<path>`, and `.gitattributes` marks both trees
+`-text`.
+
+No `pack.json` yet. `test_packs.py` treats any folder with one as a shipped,
+registered pack. The manifests land with the adapter that can load them.
+
+`tc_ai_bridge/language_packs/indic_qa_vendor.py` resolves the tree (under
+`sys._MEIPASS` when frozen) and imports it on first need.
+`bridge-engine.spec` adds it to `datas`.
+
+**Verified:** `tests/language_packs`: 41 passed, including the new
+`test_indic_qa_vendor.py` (`packs` marker). That test checks:
+
+- every vendored file matches its hash;
+- the modules and `build_dictionary` resolve to the vendor tree, not Bridge's
+  `scripts/`;
+- each dictionary loads with its `build_info` word count and no `\r`;
+- a `Checker` builds its suggestion index.
+
+**Not yet verified:** the frozen exe exercises none of this until the PR 2
+smoke extension.
+
+**Open:** the licence of the OV-derived wordlists (`NOTICE.md`).
+
+## 2026-10-07 — indic-qa profile packs: Punjabi, Malayalam, Hindi and Odia in Language QA (PR 2 of the indic-qa plan)
+
+A project declared `hin`, `mal`, `ory` or `pan` now gets Language QA findings
+from indic-qa's own checker (`docs/LANGUAGE_QA_PACKS.md`, "Profile packs").
+They arrive as ordinary Language QA findings, carrying decisions, house style,
+ignore expiry, history and the panel with them.
+
+**Run on real input first.** Before writing the mapping, the vendored checker
+was run on Genesis in all four languages. That run showed what the plan had
+wrong:
+
+- Statuses `rare_near_common` and `compound` exist.
+- Leads have a `grammar` kind.
+- Sub-rules (`hi.norm.nuqta-order`) map to catalogue rules through
+  `SHAPE_RULE_SWITCH`.
+- `words.tsv` lists only Old Version words. IRV-only words are missing, and
+  they are exactly the ones that decide `irv_ok` and the consistency
+  majorities. Seeding from it, as the plan said, would have been wrong.
+
+**The IRV snapshot instead.** The fix is indic-qa's own index of all 66 IRV
+books, built through Bridge's importer and the same synthetic-book path as a
+pass:
+
+| Language | Gzipped snapshot | Load time |
+|---|---|---|
+| Hindi | 0.93 MB | 0.17 s |
+| Malayalam | 3.37 MB | 0.54 s |
+| Odia | 1.57 MB | 0.27 s |
+| Punjabi | 0.42 MB | 0.08 s |
+
+Rebuilding a snapshot gives byte-identical output.
+
+**Bugs the measurements caught, fixed before commit:**
+
+1. **Malayalam grouped encoding fix.** It works per text run. A synthetic line
+   with one run spanning a lifted footnote produced a span across markup,
+   which was then dropped (GEN 6:3, 11:28). Lines are now split into runs
+   where lifted markup was, as indic-qa's runs are.
+2. **Double-counted book.** A book code in the wrong case added a 67th book
+   instead of replacing the open one. The index key is now Bridge's
+   lower-case book id.
+3. **Coverage.** A profile pack's categories never reached `status()`, so a
+   Hindi project showed Tamil coverage.
+4. **Panel message.** The language message said "no dictionaries" for a pack
+   that has one.
+
+**Parity with indic-qa** (`scripts/measure_indic_qa.py`). The reference
+indexes and checks verse text only, as Bridge reads it.
+
+| Book | Hindi | Malayalam | Odia | Punjabi |
+|---|---|---|---|---|
+| GEN | 200 = 200 | 987 = 987 | 71 = 71 | 20 = 20 |
+| PSA | 265 = 265 | capped (see below) | 47 = 47 | 244 indentation spaces differ (see below) |
+
+- **Malayalam Psalms** reaches the existing 3,000-finding book cap
+  (`MAX_BOOK_FINDINGS`, together with the common rules' findings). Everything
+  missing comes after the cap.
+- **Punjabi Psalms.** The 244 extra native `pa.norm.spacing` findings are
+  double spaces that indent a source line before `\q \v N`. They lie between
+  verses, so Bridge's import does not keep them as verse text.
+- **Outside verses.** Headings and footnotes are not scanned by Bridge's
+  Language QA (an existing limitation). Hindi Genesis has 8 ellipsis and 8
+  misspelling findings in footnotes that Bridge does not see.
+
+**Time and memory** (Windows, this machine):
+
+| Book | First pass (with load) | Next pass | `check_chapter` p95 | Peak working set |
+|---|---|---|---|---|
+| hi GEN | 3.7 s | 2.3 s | 27 ms | 183 MB |
+| ml GEN | 6.8 s | 1.9 s | 19 ms | 375 MB |
+| or GEN | 4.2 s | 1.8 s | 15 ms | 221 MB |
+| pa GEN | 2.8 s | 1.6 s | 13 ms | 153 MB |
+
+The peak working set includes the measurement's own native run, which parses
+66 books, so it overstates the engine.
+
+**Latency gate** (`benchmark_language_qa.py --gate --cores 2`), now with
+`--language hi`. It passes. The gated p95s during a Hindi pass:
+
+| Request | p95 |
+|---|---|
+| `verse.decide` | 21 ms |
+| `languageQa.status` | 1.0 ms |
+| `languageQa.inline` | 2.4 ms |
+| `verse.get` | 3.7 ms |
+| `ping` | 0.9 ms |
+
+Ungated: `verse.edit` p95 was 404 ms for Hindi against 220 ms for Tamil. An
+edit changes the book's counts, which rebuilds the clusters without yielding
+(0.4 s for Hindi, 2.5 s for Malayalam). Filed as a follow-up; not hidden.
+
+**Tamil unchanged.** The whole-Bible scan is byte-identical to `main`: 2,618
+findings. The human gate passes.
+
+**Frozen.** `smoke_sidecars.py` now opens a Hindi project and requires its
+`hi-irv` finding: it passed in 2.1 s. The engine exe is 13.24 MB (was 13.04).
+
+**Tests:**
+
+- `tests/language_packs`: 79 passed, including the adapter and `packs` files.
+- `tests/service/test_language_qa_indic.py`: 3 passed.
+- Language QA areas together: 3,401 passed.
+- Vitest: 531. svelte-check: 0 errors, 0 warnings. Build passed.
+
+## 2026-10-07 — Settings > Language QA: choosing a project's pack (PR 4 of the indic-qa plan)
+
+**What changed:**
+
+- `languageQa.setPack {projectPath, pack}` validates the pack against the
+  registry plus `auto`/`off`. It writes `manifest.json` `language_qa.pack` in
+  one journalled transaction (`tc_project.set_language_qa_pack`), rebinds
+  Language QA, and returns the status.
+- `languageQa.status` now also reports `setting` and `packs`.
+- **Settings.** The Terminology pane, which is per project, gains a "Rules"
+  choice: Automatic, each registered pack, or Common checks only.
+- **Panel.** It names the active pack ("Hindi · devanagari script · hi-irv
+  rules"). Its "Checks / Does not check" headings are bilingual only when the
+  coverage statement itself is Tamil.
+
+**Verified:**
+
+- `test_language_qa_indic.py`: 9 passed. The new tests check that:
+  - the manifest gets exactly the new key and keeps every other byte of
+    content;
+  - an unknown pack, `""`, `None` or a number is refused and leaves the
+    manifest untouched;
+  - the request is project-guarded;
+  - `off` → common checks, then `auto` → `hi-irv` again.
+- **Vitest:** 534 passed. New cases cover the Settings choice (and that a
+  failed status load hides it without breaking the pane) and the panel for a
+  Hindi project with no Tamil text.
+- svelte-check: 0 errors, 0 warnings. Build passed.
+
+**Not run:** the desktop app at 1366×768. The Settings control and the
+panel's pack label have only been seen in jsdom.
+
+## 2026-10-07 — indic-qa reviewer verdicts as Bridge human labels (PR 5 of the indic-qa plan)
+
+`scripts/import_indic_qa_labels.py` imported two real rounds from
+`C:\Users\Benz\projects\indic-qa\outputs\`:
+
+| Round | Workbook | Labels | Verdicts |
+|---|---|---|---|
+| `benchmark/human/hi/final-completed` | Hindi `hi-irv_qa-app_final_workbook_completed.xlsx` | 120 | 109 TP, 8 TP_OTHER_FIX, 3 FP |
+| `benchmark/human/ml/round4-reviewed` | Malayalam `ml-irv_qa-app_reviewer_workbook_round4_reviewed.xlsx` | 323 | 320 TP, 3 TP_OTHER_FIX |
+
+The rows that were not imported are reported by reason:
+
+- **Hindi:** 76 inside a note (Bridge scans verse text only), 21 outside
+  verses (titles, headings), and 18 whose text was not unique in the verse.
+- **Malayalam:** 75 judging something other than a finding (`status:irv_ok`,
+  `ml.lex.compound`), 47 under rules that are off in Bridge (`long-token`,
+  `lex.unknown`), 38 outside verses, 28 inside notes, and 58 not unique.
+
+**Two problems found while importing, both fixed:**
+
+1. **Labels must sit on Bridge's own findings**, as the Tamil rounds do. A
+   workbook's "finding" text often differs from Bridge's span: a word against
+   a punctuation span, or one part of Malayalam's grouped encoding fix. The
+   gate then counted every such label as a lost confirmed finding. The importer
+   now moves each label onto the overlapping Bridge finding of its rule. It
+   scans exactly the verses written to `verses.jsonl`, so the gate scans the
+   same text.
+2. **A book's findings depended on which books were checked before it.** The
+   resident checker kept every book's live counts for the whole session, so
+   consistency majorities changed with the order books were opened. A pass over
+   a different book now starts again from the IRV snapshot.
+   `test_a_books_findings_do_not_depend_on_the_books_checked_before_it` pins
+   this. It costs one reload per book switch (Malayalam ≈ 3 s).
+
+**Gate.** `language_qa_benchmark.py --human-labels benchmark/human/<code>
+--language <declared> --gate` scores with that language's pack, gates only
+its rules, and keeps its baseline beside its rounds. Both pass:
+
+| Language | Time |
+|---|---|
+| Hindi | 41 s |
+| Malayalam | 140 s |
+
+The Tamil gate is unchanged (2 rounds, 818 rows, pass). CI runs all three.
+
+**Candidates for inline, not promoted.** These have ≥ 20 labels at ≥ 0.90:
+
+| Rule | Confirmed |
+|---|---|
+| `hi.shape.errors` | 34 / 34 |
+| `ml.shape.independent-vowel-mid-word` | 46 / 46 |
+| `ml.norm.encoding` | 31 / 31 |
+| `ml.lex.rare-near-common` | 26 / 26 |
+| `ml.punct.quote-direction` | 25 / 25 |
+| `ml.style.yk` | 21 / 21 |
+| `ml.shape.errors` | 20 / 20 |
+
+These are late-round samples. Malayalam round 4 has no false positives at all,
+which suggests earlier rounds had already removed the clear failures. Promoting
+one is a `rule_versions.json` change with a DECISIONS line, for the maintainer.
+
+`openpyxl` joins the engine's `dev` extra. Only this script uses it; the
+engine never imports it.
+
+## 2026-10-07 — Handoff: indic-qa Language QA published to selvabenz/Bridge `main`; branches tidied
+
+**Where the work is.** The six commits of the indic-qa integration, `60630f3`
+to `ac572c0`, were pushed as a fast-forward to `origin/main`
+(selvabenz/Bridge). They are **not** on `upstream` (RevantCI/bridge) and have
+no PR there. In order:
+
+1. **`60630f3`** — the ml-irv registry, rebased onto 0.13.0.
+2. **`67fc70c`** — the checker and dictionaries vendored.
+3. **`218e1f3`** — the profile packs and the adapter.
+4. **`0275be2`** — Settings > Language QA.
+5. **`f6aabc1`** — a book's findings no longer depend on which books were
+   checked before it.
+6. **`ac572c0`** — the human labels and the per-language gate.
+
+The entries above give the detail and the numbers for each.
+
+**Repository state at handoff:**
+
+- Local `main` equals `origin/main` (`ac572c0`).
+- The worktree is clean apart from an untracked `AGENTS.md`, an older Codex
+  copy of `CLAUDE.md` left for the owner to decide.
+- The `bridge-baseline` worktree has been removed. The two stashes are kept.
+
+**Branches.**
+
+- **Deleted locally as duplicates.** `ml-irv` (`3897d2c`) and
+  `ml-irv-rebased` (`60630f3`) are both commit 1 above. `fix/lqa-project-path`
+  (`cb5c6b3`) duplicates `main`'s `83568c8`, a separate fix for #186. The old
+  `language-qa` (`72d34f0`) is already inside `main`. `indic-qa-integration`
+  was only a name for the commits that are now on `main`. Any of them can be
+  restored with `git branch <name> <sha>`.
+- **Audited and still present.** All five are duplicates or outdated, and
+  deletion is the owner's call.
+
+  | Branch | What `main` has instead |
+  |---|---|
+  | `backup/main-before-squash` | Its tree is identical to `0668a62` |
+  | `beta14-stage3-semantic-mapping` | Contained in the branch above |
+  | `fix/editor-toolbar-narrow-window` | `de6feef`, the same code |
+  | `submission-9b3b` | Its net change is `c5e3c35` plus 3 `.gitignore` lines already in `main` |
+  | `usfm-parser-91` | `b7d3884`, the same content |
+
+  The review fix `ed1e829` on the first two branches is in `main` through
+  `bd20d4e` and `0668a62`. Its tests are in
+  `engine/tests/ai/test_ai_review_protocol.py`.
+- **On `upstream`, untouched.** `upstream/language-qa`,
+  `upstream/fix/lqa-project-path`, `upstream/submission-9b3b` and
+  `upstream/usfm-parser-91`.
+
+**Open, in the order to take them:**
+
+1. **Licence of the pa/ml/hi/or wordlists.** They are OV-derived and their
+   terms are unstated (`engine/vendor/indic-qa/NOTICE.md`). Decide before any
+   public installer ships them.
+2. **Upstream.** Decide whether this work goes to RevantCI/bridge, as one PR
+   per piece (CONTRIBUTING.md), and file the issue it needs. The maintainer has
+   not seen it.
+3. **Desktop check at 1366×768.** Open a Hindi, a Malayalam and a Tamil
+   project. Check the Settings "Rules" choice, the panel's pack label and the
+   Indic glyph shaping. This has never been run (QA matrix A98, A99).
+4. **Edit latency.** An edit rebuilds the clusters without yielding. During a
+   Hindi pass, `verse.edit` p95 is 404 ms against 220 ms for Tamil; the
+   Malayalam rebuild takes about 2.5 s. File an issue; the fix is to rebuild
+   off the dispatcher's path or incrementally.
+5. **Inline promotion.** The candidates are in the PR 5 entry above. Each one
+   is a `rule_versions.json` change with a DECISIONS line, for the maintainer.
+   Malayalam round 4 has no false positives at all, so ask for a fresh sample
+   first.
+6. **More label rounds.** Import Hindi round 1 and Malayalam rounds 1–3 with
+   `scripts/import_indic_qa_labels.py`. Odia and Punjabi have no completed
+   workbook yet.
+7. **The Malayalam Psalms cap.** The book reaches `MAX_BOOK_FINDINGS` (3,000).
+   Decide whether the cap or the grouped-encoding volume should change.
+8. **Headings and footnotes.** Bridge's Language QA reads verse text only.
+   Hindi Genesis alone has 16 indic-qa footnote findings it does not see. This
+   is the existing LQA limitation, not new.
+
+**For whoever picks this up:**
+
+- Re-vendoring is `scripts/sync_indic_qa.py`. Then:
+  - bump the rule revisions it names;
+  - run `scripts/build_indic_qa_packs.py --rule-versions`;
+  - rebuild each `--irv-state`;
+  - run `scripts/measure_indic_qa.py`.
+- `test_each_snapshot_is_for_the_vendored_dictionary` fails until the
+  snapshots are rebuilt.
+- The CI human gates are three runs: Tamil, then `benchmark/human/hi
+  --language hin` and `benchmark/human/ml --language mal`.
+- `docs/LANGUAGE_QA_PACKS.md`, under "Profile packs", is the reference for all
+  of the above.
+
+## 2026-10-07 — Housekeeping: CI-era issues closed, both project boards synced
+
+**Closed, each with a comment naming the fix:**
+
+| Issue | Closed because |
+|---|---|
+| #186 (CI red: guard rejects 8.3 temp path) | `83568c8` compares the Language QA guard's paths with `canonical_path_key()` |
+| #189 (latency gate 112 ms vs 50 ms on CI) | The maintainer's option 1 is applied in `efb2683`: a 300 ms budget on the CI step only, with the local default left at 50 ms. `f817033` took back the 410 ms that the exponential retry had added |
+| #184 (Language QA flaky under `-n auto`) | Both causes are fixed: the guard (`83568c8`) and the write racing the scan's read (`d077aa0`, `f817033`). The closing comment says plainly that one clean run is not proof, and asks for a reopen if it recurs |
+| #74 (modular test suite) | Phases 1–3 landed. Phase 4 was stopped deliberately, for the reasons in the 2026-09-30 entry above. CLAUDE.md now holds the two rules that keep the coupling from growing again |
+
+Each one is closed on RevantCI/bridge and on its selvabenz/Bridge mirror.
+
+**Evidence.** CI on upstream `main` passed 15 runs in a row through
+`ea14f39` (0.13.0), all serial. That leaves the configuration #184 is named
+for, so it was run locally: full engine suite, `pytest -n auto`, Windows, at
+`8c88639`. Result: **4815 passed, 1 skipped, 3 xfailed, 0 failed**, in 10m12s.
+`8c88639` is upstream's `ea14f39` plus the six Language QA commits that are only
+on the fork; #184 carries a follow-up comment saying so.
+
+**Boards.** RevantCI project 6 tracks upstream issues and selvabenz project 3
+tracks the fork's mirrors. Both had the same drift:
+
+- #91, #184 and #189 were closed but still in Todo.
+- #74 was closed but still In Progress.
+- #186 was missing.
+- #191, #192, #193 and #200 were missing; the first three were filed during #91.
+
+The closed items are now Done, and the missing open issues are in Backlog, as
+the rest of the 30 Sep – 1 Oct manual-testing batch is. Each board now has 202
+items, and no item's status disagrees with its issue.
+
+**Left alone on purpose.**
+
+- #82, #93, #112 and #169 stay In Progress. They are triage calls, not drift.
+- #82 was "blocked by #74 step 4". Its home now exists:
+  `tests/support/semantic.py`'s `semantic_runtime`. So it is unblocked, but not
+  started.
+- `src-tauri/language_packs/` is ignored by `.gitignore` since `60630f3`.
+- `AGENTS.md` (the Codex copy, 580 lines against CLAUDE.md's 651) is excluded
+  in `.git/info/exclude` at the owner's choice. The file is kept and nothing is
+  committed.
+
+**Next, in priority order:**
+
+1. **#208.** Cross-verse corpus suggestions do not appear offline, which
+   breaks the offline invariant. #188 may share the cause.
+2. **#197 and #207.** Both are wrong results in what a reviewer sees.
+3. **#210, then #201.**
+4. **The easy engine bugs:** #191 and #193.
+5. **The upstream PR question** for the indic-qa commits, from the entry above.
+   Adding `engine/vendor/indic-qa/` is a third vendored tree, which CLAUDE.md
+   puts on the stop-and-ask list. The maintainer needs to see it before a PR.
+
+## 2026-10-07 — ta-irv gains indic-qa's Tamil checker as a layer (everything `webapp` Tamil QA had and Bridge did not)
+
+**Asked.** Compare Bridge's Tamil Language QA with indic-qa's `webapp` branch,
+then add all ten gaps without duplicating or breaking anything. DECISIONS has
+the new entry. It replaces the earlier "never run indic-qa's Tamil profile".
+
+**Upstream.** Between the vendored pin `248eb81` and `webapp` HEAD `ab53636`,
+Tamil changed in one dictionary word (நன்றாக) and in where the editor's
+"learned" plumbing lives. The `sandhi_rules.tsv` with the reviewer's rules
+(no_theva, no_clitic, east…) is identical. So the pin stays, and only the
+Tamil `dictionary/` was added through `sync_indic_qa.py`. Every existing
+vendored file came out byte-identical.
+
+**Shape.** ta-irv keeps its 19 JSON rules and its version (1.1.0), so no
+reviewer ignore expires. `pack.json` `indicQa` adds 17 book-stage `indicqa.*`
+rules:
+- `indic_qa_tamil.py` is the catalogue and the item mapping. The Tamil profile
+  has no `RULES`.
+- `indic_qa_rules.json` is Bridge's view of each rule.
+- `irv_state.json.gz` (1.3 MB, deterministic: rebuilt twice, same sha256) is
+  the whole-IRV index.
+
+The ten points, as built:
+
+1. **OV lexicon** (94,378 forms): `indicqa.lex.near-miss`.
+2. **Typing-slip ranking** and the reviewer's `corrections.tsv`: suggestions on
+   every word finding.
+3. **Two known words**: `indicqa.lex.compound`, with the split as the first
+   suggestion.
+4. **The 71-row sandhi grammar** with OV statistics and the IRV veto:
+   `indicqa.sandhi.missing` and `indicqa.sandhi.conflict`.
+5. **"Remove this ஒற்று"**: `indicqa.sandhi.extra`. GEN 1:27 அவனைத் தேவசாயலாகவே
+   is the reviewer's no_theva rule.
+6. **OV pair and suffix statistics**: inside 4 and 5, and named in each
+   message.
+7. **Dangling and wrong-letter ஒற்று**: `indicqa.sandhi.dangling` and
+   `indicqa.sandhi.wrong-class`.
+8. **Warnings**: `indicqa.punct.no-space-after`,
+   `indicqa.shape.initial-pulli`, `indicqa.shape.unusual-initial` and
+   `indicqa.shape.malformed` (visual ௌ, ஶ).
+9. **The OV verse beside each finding** (`reference`, from `ov_reference.py` and
+   `dictionary/verses.tsv`), and OV/IRV counts in each message. Both panels
+   show it.
+10. **Headings and footnote prose are checked.**
+    - Headings come from `<chapter>.headings.json`; `\r`, `\mr` and `\sr` are
+      skipped.
+    - Footnote parts become separate streams, located inside the note's raw
+      range.
+    - A footnote finding has raw verse offsets. A heading finding has
+      `context: "heading"`, `contextText`, and no suggestion: no writer edits
+      headings, and the verse writer must not get one.
+
+**Not duplicating.**
+- The checks Bridge already runs over verse text are switched off for verse
+  text and kept for headings and footnotes: double space, zero width, repeated
+  punctuation, space before punctuation, and the யெகோவா/-வதற்கு defects.
+- Digits, repeated words and a space before a note's end are off, per the
+  2026-09-28 review.
+- The pass drops a layer finding that overlaps a raw pack or common finding of
+  the same category (`_already_flagged`). Raw means before decisions, so
+  ignoring the original keeps its twin hidden.
+
+On IRV Genesis this removed about 90 sandhi leads that ta-irv already raised.
+A scripted check found 0 overlaps left and all ids unique.
+
+**Measured, IRV GEN through the real `LanguageQaManager`.**
+- The pass reports 314 findings. 195 are layer findings: 7 in footnotes,
+  119 compound, 36 missing, 14 extra, 18 conflict, 5 near-miss.
+- MAT: 6 heading findings.
+
+The unknown-word volumes set the defaults:
+- 2,237 / 2,694 / 1,295 OV-unknown tokens in GEN / PSA / JHN. Samples are
+  mostly valid modern Tamil: honorific -ார், IRV-only words.
+- So `indicqa.lex.unknown` is off.
+- Only words used at most twice in the IRV are reported, as near misses when
+  their best suggestion is a slip, or as compounds.
+
+**Speed.** A Tamil pass first loads the layer, which took 1.6 s. Its checker is
+rebuilt on every book switch, for determinism. The restored index state is now
+kept pickled in memory, and the read-only Tamil lexicon is shared between
+rebuilds, so a reload takes 0.15 s. Each checker still gets its own copy, and a
+test pins that.
+
+**Tests changed, and why.**
+- `test_tamil_is_not_offered` pinned the old decision. It is now
+  `test_tamil_runs_only_as_the_ta_irv_layer`.
+- `test_pack[ta-irv]` and the ten-examples test exempt `match_type="indic-qa"`
+  rules, as profile packs already were.
+- `_rules` still accepts a profile module, so the adapter tests are unchanged.
+- The manifest test covers Tamil.
+- New: `tests/language_packs/test_indic_qa_tamil_layer.py` (30 tests) and a
+  panel test for context and reference.
+- `smoke_sidecars.py` gains a Tamil-layer check.
+
+**Verified.**
+- Engine suite: 4,843 passed, 1 skipped, 3 xfailed.
+- `npm run check`: 0 errors and 0 warnings.
+- `npm run test`: 534 passed, plus the new panel test.
+- `npm run build`: passes.
+- `sync_indic_qa.py --check`: ok.
+- Frozen pair rebuilt; `smoke_sidecars.py` passes, including the new Tamil-layer check
+  (3.4 s).
+
+**Not verified.** The desktop app. The OV wordlist licence question in NOTICE
+is less open for Tamil: the 1957 OV is public domain in India, and the
+digitisation is MIT.
+
+## 2026-10-07 — indic-qa re-vendored at ab53636 (branch `indic-qa-editor`, commit 0)
+
+First commit of the branch that brings indic-qa's editor features into Bridge
+(plan: learned fixes, scoped accept, flags, project words, book words,
+reference text and related words, verse history, bookmarks, the panel legend).
+Every one of them needs the checker API that upstream added after our pin, so
+this commit only moves the pin.
+
+**What changed upstream (`248eb81` → `ab53636`).**
+- `checker.py`: a project's ignored words and learned fixes moved from the
+  shared `Lexicon` to each `Checker` (`Checker.ignored`, `learned`,
+  `set_ignored`, `set_learned`, `is_ignored`).
+- The five profiles call `checker.is_ignored(w)` in `classify_first`, and their
+  `LABELS["legend"]` became a flat list of kind ids. Hindi, Malayalam and Odia
+  dropped the `unknown_color` style toggle.
+- `dictionary_hi/extra_words.txt` gained 16 words, and Tamil's
+  `dictionary/extra_words.txt` gained one (நன்றாக). So the ta-irv
+  dictionary manifest changes too.
+
+`scripts/sync_indic_qa.py` changed exactly those eight files plus the
+manifests and `VENDORED.json`. Every `open(` in the vendored code still names
+its encoding (NOTICE contract 3).
+
+**The snapshots were rebuilt from the original IRV, not from indic-qa's
+corpora.** Before rebuilding, each snapshot's `provenance.inputs` was compared
+with both candidate folders:
+
+| Language | `D:\Claude Lab\IRV <name>` (the recorded `irvFolder`) | indic-qa `corpora/irv/<code>` |
+|---|---|---|
+| hi | 66/66 identical | 65 of 66 files differ in content |
+| ml, or, pa | 66/66 identical | identical |
+| ta | 66/66 identical | 1 file differs (2 lines) |
+
+The Hindi differences are reviewers' corrections that indic-qa's editor saved
+into its working copy, for example लिये→लिए applied across the Bible under the
+-ए/-ई house style. Tamil's is one ஒற்று correction in GEN. Building from that
+copy would have moved Hindi's consistency majorities inside a vendor bump. All
+five were rebuilt from `D:\Claude Lab`. Rebuilding Hindi twice gave the same
+sha256 (`4bdf0961…`), so the build is still deterministic. Sizes are
+unchanged: hi 0.93 MB, ml 3.37, or 1.57, pa 0.42, ta 1.30. This trap is now an
+integration finding in NOTICE.md and a step in `LANGUAGE_QA_PACKS.md`
+"Updating".
+
+**No rule revision was bumped, and that was measured.**
+`--rule-versions` and `--ta-layer` added nothing: hi 40 rules, ml 42, or 37,
+pa 29, ta 17 layer rules. Every pack finding of a real `LanguageQaManager`
+pass was then dumped as a multiset of (chapter, verse, ruleId, text), before
+and after the sync. Books: hi GEN/PSA/ACT, ml GEN, or GEN/PSA, pa GEN, ta
+GEN/MAT.
+
+| hi GEN | hi PSA | hi ACT | ml GEN | or GEN | or PSA | pa GEN | ta GEN | ta MAT |
+|---|---|---|---|---|---|---|---|---|
+| 200 | 265 | 99 | 987 | 71 | 47 | 20 | 313 | 125 |
+
+All nine multisets are byte-identical. The new extra words change only what
+counts as "unknown", and `<code>.lex.unknown` is off in every profile pack.
+`is_ignored` equals the old test while no project sets an ignore. Bumping would
+have expired every reviewer's ignore for nothing.
+
+**Tests.**
+`test_ignored_and_learned_words_belong_to_one_checker_not_the_shared_lexicon`
+pins the property later commits rely on. Two Hindi checkers share one
+Lexicon, and an ignore or learned fix on one leaves the other unchanged. The
+dictionary is never touched.
+
+**Verified.**
+- `sync_indic_qa.py --check`: ok.
+- Pack and Language QA subsets (`tests/language_packs`, `test_language_qa*.py`,
+  `test_language_pack.py`): 3,347 passed, 3 xfailed.
+- Three human gates (Tamil, `hi --language hin`, `ml --language mal`): pass,
+  with output byte-identical to the run before the sync.
+- Frozen pair rebuilt (`bridge-engine.exe` 13.26 MB): `smoke_sidecars.py`
+  passes, including the Hindi pack (4.5 s) and the Tamil layer (7.6 s).
+- Full engine suite: 4,846 passed, 1 skipped, 3 xfailed. That is the baseline plus the new test.
+- Baseline before the sync: 4,844 passed, 1 failed. The failure,
+  `test_logos_get_state_spawns_the_real_helper…`, passes alone in 1.2 s, so it
+  is a load-timing flake on unchanged `main`.
+
+**Not verified.** The desktop app. Nothing user-visible changed.
+
+## 2026-10-07 — indic-qa findings drawn by default, behind the reviewer's threshold (branch `indic-qa-editor`, commit 1)
+
+DECISIONS 2026-10-07, "indic-qa findings are drawn in the text by default".
+Every enabled indic-qa rule is now underlined unless the reviewer's Settings >
+Language QA threshold hides it.
+
+**Two flags, not one.** CI's human gate reads `inline`
+(`language_qa_benchmark.human_inline_rules`) and fails any inline rule with
+fewer than 20 labels. Odia and Punjabi have no labels at all. So `inline`
+stays the reviewed flag and no pack file changed. A new served field,
+`drawn`, is worked out per request by `tc_ai_bridge/language_qa_drawn.py`.
+A finding is drawn when it is reviewed-inline, or when it is an indic-qa
+finding (`match_type == "indic-qa"`) whose rule passes both thresholds:
+
+- **Minimum measured precision**, 0–100, default 0. The precision comes from
+  the new `rule_precision.json` in the pack folder. A rule nobody labelled is
+  unmeasured and passes any value.
+- **Lowest rule confidence**, default "low".
+
+The four tests that pin "no indic-qa rule is reviewed inline" pass unchanged.
+
+**Applied per request, never during a pass.** The pass records only which
+rules are indic-qa rules and their precision (`_gated`). `inline()`,
+`status()` and `verse()` apply the threshold when they answer. Moving the
+slider rescans nothing and changes no cache key, finding id or decision. A
+test pins that the generation does not move.
+
+**`rule_precision.json`.** `language_qa_benchmark.py --human-labels …
+--write-precision` writes it from the same scoring the gate uses: aggregates
+only, for labelled rules of that pack. Measured rules: hi 17, ml 20, ta 12.
+For Tamil this includes ta-irv's JSON rules, which the threshold ignores.
+Some rules rest on one to four labels, so a high slider value treats a 1-of-1
+rule as 100 %. The panel will show the label count.
+
+**`languageQa.status` gains:**
+- `chapter` and `categories` filters;
+- `categoryCounts`, narrowed by chapter only so the legend shows every kind;
+- `drawnRules` and `inlinePolicy`.
+
+**Settings.**
+- Engine: `languageQaInlinePrecision` and `languageQaInlineConfidence`, both
+  app-level `AppSettings` properties beside `triage_hide_threshold`, clamped.
+  `set_settings` passes them to the manager.
+- UI: a new **Language QA** pane holds the threshold (slider, confidence
+  select, its own Apply), the pack picker and House style. The last two moved
+  verbatim from Terminology.
+- House style now loads when its own pane opens. Five Vitest tests were
+  re-pointed to the new pane, and three were added.
+
+**Two things found and fixed on the way.**
+1. `highlight.ts` dropped every finding whose `inline` was false. The engine's
+   new marks would never have appeared. It now honours `drawn`, falling back
+   to `inline` for a payload without it. Tests cover both, plus a 200-mark
+   verse budget.
+2. **Lock contention.** With every Hindi indic-qa finding drawn,
+   `languageQa.inline` deep-copied a whole chapter of findings while holding
+   the manager lock. `verse.decide` waits on that lock. The latency gate
+   (`--language hi`, 50 ms) failed 3 of 3 runs (65, 69 and 1,415 ms p95),
+   against 1 of 3 for the old code (51.9 ms). `inline()` now picks under the
+   lock and copies after releasing it. That is safe because a published
+   finding is never changed in place: a pass replaces `_summary` whole. After
+   the fix: 3 of 3 pass.
+
+**A pre-existing fragility, not fixed here.** Running only
+`tests/service/test_language_qa.py` under `-n auto` errors in 6–8 setups.
+Every worker loads the Tamil indic-qa layer (about 2.8 s of CPU) at once,
+and the tests' `wait()` gives up at 8 s. The code before this commit fails
+the same way (2 failed and 6 errors, twice). The file passes serially, as CI
+runs it: 297 passed. The full parallel suite spreads these tests out, which
+is why the baseline full run passed.
+
+**Verified.**
+- Engine:
+  - `test_language_qa.py` serially: 297 passed.
+  - `test_language_qa_indic.py` (5 new tests), `tests/jobs/test_language_qa_drawn.py`
+    (7 new), the benchmark test, `tests/language_packs`, house style and
+    `test_bridge_service.py`: 239 passed.
+  - Latency gate, both at 50 ms: Tamil pass; Hindi pass 3 of 3.
+- Frontend:
+  - `npm run check`: 0 errors, 0 warnings.
+  - `npm run test`: 540 passed.
+  - `npm run build`: ok.
+
+**Not verified.** The desktop app (QA matrix A102), and how noisy the text
+looks with every indic-qa finding drawn.
+
+## 2026-10-07 — Workbench schema v6: batches, learned fixes, flags (branch `indic-qa-editor`, commit 2)
+
+The three Bridge-private stores the next commits need are designed together,
+so the workbench ladder moves once. Any later column is v7; v6 is not edited
+again.
+
+| Table | Lifted columns | What a row is |
+|---|---|---|
+| `language_qa_batches` | `chapter`, `kind` (accept, undo), `state` (applied, undone) | One scoped correction, or one undo of it. It only *groups* ordinary journalled verse edits (`apply_scripture_edit`, once per verse); it never writes Scripture. Undo writes a new row and moves the original's state. |
+| `language_qa_learned_fixes` | `old_word`, `new_word`, `enabled` (unique per book and pair) | A reviewer's single-word replacement. Count, forget, restore and retract re-write the row; it is never deleted. Keyed in NFC. |
+| `language_qa_flags` | `chapter`, `verse`, `status` | A reviewer's question on a passage. Delete is `status: "deleted"`. |
+
+All lifted columns are nullable, as in v3 and v4, so the generic per-table
+tests (write, change_log row, mutable-table set) cover the new tables
+unchanged. No `human_decisions` rebuild: project words (commit 6) are a
+house-style list, `kind='housestyle'`.
+
+**`tc_project.py` accessors.**
+- Batches: `language_qa_batches`, `record_language_qa_batch` and
+  `set_language_qa_batch_state`.
+- Learned fixes: `learned_fixes`, `record_learned_fix`, `retract_learned_fix`,
+  `set_learned_fix_enabled` and `learned_map`. `learned_map` lists only fixes
+  that are enabled and still counted, most used first.
+- Flags: `language_qa_flags`, in reading order, `record_language_qa_flag` and
+  `update_language_qa_flag`.
+- Verse history: `verse_edit_history` and `verse_edit_counts` read the native
+  `checkData/verseEdits` records every Scripture edit already writes. There is
+  no new store for history.
+
+**Tests.**
+- `tests/persistence/test_language_qa_editor_stores.py`, 9 tests:
+  - every write keeps its earlier images in change_log;
+  - a forgotten fix stays forgotten when used again;
+  - a fix retracted to zero is no longer offered, but its row is kept;
+  - the composed and decomposed forms of one letter (U+0B94, and U+0B92 +
+    U+0BD7) are one row;
+  - a flag's id cannot be overwritten by a patch;
+  - flags list in reading order (verse 2 before verse 10);
+  - history is read newest first from real edits.
+- `test_workbench_v5_to_v6_adds_the_three_editor_stores_and_keeps_v5_data`
+  completes the ladder's migration tests. The pre-release amendment does not
+  require one for an additive change, but every earlier step has one.
+- The four "latest is 5" assertions now say 6.
+
+**Not fixed, reported.** `tests/persistence/test_workbench_sync.py` imports
+`_REQUIRED_EXTRA_COLUMNS` and `_write` from
+`tests.persistence.test_workbench_repository`. CLAUDE.md's rule 2 ("never
+import from another test module") forbids that. The import predates this
+branch. The helpers belong in `tests/support/`, in a commit of their own.
+
+**Verified.**
+- `tests/persistence`: 214 passed.
+- Full engine suite: 4,874 passed, 1 skipped, 3 xfailed. Commits 1 and 2 add 28 tests, and nothing regressed.
+
+## 2026-10-07 — Learned fixes (branch `indic-qa-editor`, commit 3)
+
+DECISIONS 2026-10-07, "Learned fixes come from the reviewer's own single-word
+edits". This is indic-qa's learned-fix feature, built on Bridge's own
+tokenizer and the v6 table from commit 2.
+
+**Engine.**
+- `language_qa_learned.py` holds two pure functions:
+  - `learned_pair(old_raw, new_raw)` lifts both texts, then requires the same
+    word count, exactly one differing word, and identical visible text before
+    and after it. So a spacing or punctuation change, a footnote, or
+    unbalanced markup learns nothing.
+  - `learned_findings` turns a book's text plus the learned map into findings
+    with raw offsets and stable ids. Each suggestion's rationale says how
+    often and where the word was last replaced.
+- `language_qa.py` adds:
+  - the `learned` category;
+  - `learned.replacement` (pack `project`, layer `housestyle`, medium);
+  - that rule in `INLINE_RULES`. It repeats the reviewer's own decision, and
+    pack `project` is outside the human gate.
+- `LanguageQaManager`:
+  - reads `project.learned_fixes` on every pass;
+  - keeps the book text whenever there are fixes;
+  - runs the step after names, outside the per-verse cache, so the chapter
+    cache key is unchanged;
+  - `configure(learned_fixes=…)` runs a pass when the switch flips.
+- `edit_verse` records, or retracts when the reviewer types the word back.
+  It never fails a saved edit. The result now carries `learned` and
+  `warnings`, which are the display's marker warnings, for raw USFM edits.
+- New RPCs: `languageQa.learned.list`, `.forget` and `.restore`, inside the
+  project-guarded Language QA block. New setting:
+  `languageQaLearnedFixes`, default on.
+
+**Per book, not per collection.** The plan had each fix written to every
+materialized sibling book. That is one fsync'd transaction per sibling on
+every single-word edit, too slow for `verse.edit`, which is already the
+slowest RPC. Fixes stay in the book they were learned in. This is recorded in
+DECISIONS with its revisit condition.
+
+**Frontend.**
+- The `m-lqa-learned` mark is blue dotted (`--learned`). It ranks above a
+  possible typo when the two overlap, and is checked before the lexicon
+  shortcut in `languageQaMarkClass`.
+- The `learned` category and `learned` suggestion source are added to the
+  types. Both engine parity tests pass.
+- Review panel: a "learned fix" badge and "Forget this fix", which removes
+  every recurrence from the list.
+- Verse menu: "Forget this learned fix".
+- `src/lib/learnedFixes.ts`: a shared optimistic forget. It drops the
+  chapter's marks at once and puts them back if the engine refuses. It
+  records no decision.
+- Language QA panel: a panel-level tab row, **Issues** and **Dictionary**.
+  The Issues tab holds the three existing lists. The Dictionary tab lists
+  the learned fixes, with Forget and Restore, and fetches only when opened.
+  The panel-level tab is "Issues", not "Findings", so it never shares an
+  accessible name with the engine-view "Findings" tab.
+- Settings > Language QA: an "Offer my earlier replacements" switch.
+
+**Also fixed.** The verse menu's "Ignore more widely" tooltip still pointed at
+Settings → Terminology → House style, which moved in commit 1. It now says
+Language QA.
+
+**Verified.**
+- Engine:
+  - `test_language_qa_learned.py`, 7 dispatcher tests: learn and offer, a
+    multi-word edit, retract, forget and restore, ignore, the switch, and a
+    raw edit warning.
+  - `test_language_qa_learned_pure.py`: 5 tests.
+  - `test_language_qa.py` serially: 297 passed.
+  - Learned, jobs, indic, bridge service, packs, house style and persistence:
+    476 passed.
+  - Latency gate, Tamil and Hindi: pass.
+- Frontend:
+  - `npm run check`: 0 errors, 0 warnings.
+  - `npm run test`: 546 passed, 6 new.
+  - `npm run build`: ok.
+
+**Not verified.** The desktop app (QA matrix A103).
+
+## 2026-10-07 — Scoped corrections: verse, chapter or book, confirmed, with batch undo (branch `indic-qa-editor`, commit 4)
+
+DECISIONS 2026-10-07, "A scoped Language QA correction is one journalled edit
+per verse". This is indic-qa's "Here / Chapter / Book". The cross-book
+"Bible" scope is out, by Benz's choice.
+
+**Engine.**
+- `language_qa_scope.py` is pure:
+  - `match_key`: a word-like finding matches on rule, sub-rule and NFC text;
+    a warning on rule and sub-rule alone.
+  - `occurrences` returns them in reading order. It refuses a heading or
+    footnote origin, and a chosen suggestion applies to words while a warning
+    keeps its own fix.
+  - `splice` works right to left and refuses overlaps, or text that is not
+    what the pass saw.
+- `LanguageQaManager.scope_findings` returns the origin and every shown
+  finding of the last pass. It raises if the origin is no longer there.
+- `BridgeEngine` adds `language_qa_scope_find`, `language_qa_scope_apply`
+  (accept or ignore) and `language_qa_batch_undo`, and lists batches. Accept
+  works one verse at a time:
+  - it checks the verse hash, then splices;
+  - it writes once with `apply_scripture_edit`, carrying a `context_id`
+    with the `batchId`;
+  - it decides each finding `accepted`, with the same issue fields as the
+    frontend's `languageQaDecisionIssue`;
+  - it learns the fix when both sides are one word;
+  - it writes one batch row, and invalidates once per touched chapter.
+- Undo restores only verses whose text is still the batch's new text. It
+  writes an `undo` batch, moves the original to `undone`, and retracts the
+  learned uses. Accepted decisions stay: they never hide anything, so a
+  restored finding reappears on the next pass.
+- `src-tauri/src/sidecar.rs`: `languageQa.scopeApply` and `.batchUndo` get
+  600 s. `scopeFind` and `batches` keep 30 s. A new `#[test]` pins it.
+
+**Frontend.**
+- `src/lib/scopedApply.ts` holds the dialog state, the last batch and the
+  notice:
+  - `openScopeDialog` asks the engine first;
+  - `confirmScopeDialog` writes, and on an engine error keeps the dialog and
+    says to reopen the chapter;
+  - `undoLastBatch` undoes;
+  - all of it resets on a book switch.
+- `ScopeConfirmDialog.svelte`:
+  - lists each place with `<del>`/`<ins>` from the loaded text, capped at 200;
+  - the primary button says "Change N verses", and Cancel has focus first;
+  - Escape cancels, and focus returns to where it was.
+- `ScopeNotice.svelte` keeps "Undo all" until it is dismissed.
+- `verseEditor.applyEngineChanges` shows engine-written text through the same
+  `showVerseText` a saved edit uses.
+- Review panel: an "Apply to: This verse | Chapter | Book" radiogroup. "This
+  verse" keeps the existing single-verse path.
+- Verse menu: one new "Use in more places ▸" item, listing "“X” in this
+  chapter…" and "… in this book…" for each suggestion. The planned design
+  turned each Use into a submenu; this instead leaves the one-click Use and
+  its tests untouched. The submenu shows no counts, so a right-click costs no
+  book-wide call; the dialog shows the exact count.
+
+**Open question for the maintainer.** CLAUDE.md's stop-and-ask list names
+"an alternative path for applying corrections to the text". A scoped
+correction adds no writer and no journal format. But a bulk Use behind one
+confirmation is new, so CLAUDE.md now says so beside that line, and the
+handoff will ask.
+
+**Verified.**
+- Engine:
+  - `test_language_qa_scope.py`, 9 dispatcher tests:
+    - find within scope;
+    - accept writes one journalled edit per verse, each verseEdits record
+      carrying the batch id, without touching the double space beside it;
+    - a verse changed behind the pass is skipped;
+    - undo restores both verses and keeps both batches, and a second undo is
+      refused;
+    - undo leaves a verse edited after the batch;
+    - ignore across a chapter and across a book (house style);
+    - a finding with no replacement cannot be accepted;
+    - bad parameters are refused.
+  - `test_language_qa_scope_pure.py`: 6 tests.
+  - `test_language_qa.py` serially: 297 passed.
+  - Scope, learned, jobs, indic, bridge service, packs, house style,
+    persistence and project I/O: 585 passed.
+- Shell: `cargo check`, and `cargo test` 11 passed.
+- Frontend:
+  - `npm run check`: 0 errors, 0 warnings.
+  - `npm run test`: 553 passed.
+  - `npm run build`: ok.
+- Latency gate:
+  - Hindi: pass.
+  - Tamil: 5 of 7 runs pass. The two failures were `verse.decide` p95
+    56.7 ms and a 230 ms outlier. The previous commit passed 3 of 3, and the
+    pre-branch code failed this gate 1 run in 3 earlier today. Nothing in this
+    commit runs on the decide path, so this is read as machine noise. It is
+    recorded, not hidden.
+
+**Not verified.** The desktop app, and how long a book-wide accept takes on a
+long book. Each verse pays a full journal transaction with its backup;
+expect seconds for Genesis.
+
+## 2026-10-07 — Reviewer flags (branch `indic-qa-editor`, commit 5)
+
+This is indic-qa's ⚑: a question for the team on a passage. It is stored in
+the workbench (`language_qa_flags`, v6). It is not a finding, and it never
+writes the verse.
+
+**Engine.**
+- `languageQa.flags.list`, `.add`, `.update` and `.delete`, inside the
+  project-guarded block.
+- `_valid_flag` checks the verse as it is now: the span must be non-empty and
+  inside the verse, and `text` must be exactly `verse[start:end]` in raw code
+  points. A flag can never point at text that is not there.
+- The type comes from `FLAG_TYPES`; the note may be up to 4,000 characters.
+- An update may change only status, note, type or the suggested form, never
+  the span. Delete is a status.
+- A one-word flag with a one-word suggested form records a learned fix
+  (`source: "flag"`), as indic-qa does; a passage records nothing.
+
+**Frontend.**
+- `utils/verseDisplay.rawOffsetFromPlain` is the inverse of `plainOffset`. A
+  span's start goes after a lifted note and its end before one. A test checks
+  it round-trips at every raw offset of every engine display fixture.
+- `utils/selection.selectionInVerse` turns the reader's selection into code
+  points of the rendered text, skipping the note, flag and history buttons.
+- `withNoteMarkers` threads ⚑ markers too. A flag comes before a footnote
+  callout at the same spot. `VersePiece` gains `flag`, and the old
+  `usfmNotes` tests narrow on it.
+- VerseList draws ⚑ (plain Unicode, labelled) after the flagged text. The
+  verse menu gains "Flag selected text…", disabled with a reason when nothing
+  is selected, and "Flag this verse…". The Language QA menu gains "Flag for
+  review…". A selection that runs across a footnote is refused, not guessed.
+  The selection is read before the menu takes focus, on mouse and on
+  Shift+F10.
+- `FlagDialog`: type radiogroup, note, optional suggested form, and "through
+  verse" offering only later verses. Save stays disabled until a type is
+  chosen. Focus starts in the note and is restored on close.
+- `FlagPopover`: kept inside the window; Resolve, Reopen, and Delete behind a
+  second click. Changes show at once and are put back on a refusal
+  (`src/lib/flags.ts`).
+- Flags load per chapter as chapters are shown, through `startFlagLoader` in
+  App. They are cleared in `resetBookState`.
+- The Review panel gains "⚑ Flag…". The Language QA panel gains a **Flags**
+  tab: the whole book, open by default or with resolved ones, with
+  navigation, Resolve or Reopen, and Delete.
+
+**Verified.**
+- Engine:
+  - `test_language_qa_flags.py`, 4 tests:
+    - add, list, update and delete, with three change_log images and the
+      verse unchanged;
+    - seven invalid flags refused;
+    - an update may not move the span;
+    - a one-word suggestion is learned and a passage is not.
+  - Touched suites: 350 passed.
+- Frontend:
+  - `npm run check`: 0 errors, 0 warnings.
+  - `npm run test`: 566 passed, 13 new.
+  - `npm run build`: ok.
+
+**Not verified.** The desktop app. Mouse selection in a real WebView2 is the
+part jsdom cannot show (QA matrix A105).
+
+## 2026-10-07 — Project word list, Book words, IRV occurrences (branch `indic-qa-editor`, commit 6)
+
+These are indic-qa's "Add to dictionary", unknown-word table and occurrence
+list. DECISIONS 2026-10-07, "A project word is a house-style list entry".
+
+**Engine.**
+- `housestyle.LISTS` gains `projectWords`.
+- `HouseStyle.suppresses` hides typo, name, consistency and learned findings
+  whose text is a project word.
+- `list_fingerprint` now covers only the scan lists (`SCAN_LISTS`, which is
+  `properNouns`). Two consequences:
+  - Existing cache keys are byte-identical, because the hashed JSON is the
+    same as before.
+  - Adding a project word scans 0 verses. A test pins this.
+- The plan had project words go into the vendored checker through
+  `Checker.set_ignored`. Suppressing after the scan made that unnecessary,
+  and the resident checker key stays as it was.
+- `language_packs/indic_qa_adapter.word_statuses` classifies words with the
+  resident checker, under its lock. `LanguageQaManager.book_words` serves the
+  last pass's `book_counts` and `book_first_seen`.
+- New RPCs:
+  - `languageQa.words.add`: single words only, at most 500, NFC, book or
+    project scope, recorded through `housestyle_record`.
+  - `languageQa.words.list`.
+  - `languageQa.bookWords`.
+  - `languageQa.occurrences` with `source: "irv"`. `source: "ov"` waits for
+    the reference text (commit 7).
+
+**Frontend.**
+- `src/lib/projectWords.ts`:
+  - `addProjectWords` drops the word's spelling findings at once and keeps
+    grammar leads. It puts them back on a refusal, and takes an explicit
+    project path when the caller has one.
+  - `isKnownMisspellingRule`.
+- Verse menu: "Add “X” to the project word list". It is disabled, with the
+  reason, on a known-misspelling rule or a multi-word span, as in indic-qa's
+  editor. Also "Show IRV occurrences…".
+- Review panel: "Add to word list".
+- `OccurrencesPopup`: the word is marked in each snippet; an IRV hit opens its
+  verse through a new `onNavigate` prop on VerseList, which App wires to
+  `navigateToReportRow`.
+- Language QA panel:
+  - a **Book words** tab: tick by IRV frequency, add the ticked words for
+    this book or every book, with a sticky table header;
+  - a project-words section in Dictionary, with Remove.
+- Settings › House style names a project word as one.
+
+**Verified.**
+- Engine:
+  - `test_language_qa_words.py`, 5 tests:
+    - a project word hides its findings and scans 0 verses;
+    - removing it brings them back;
+    - input is checked;
+    - Book words has real Hindi data: राज्यपाल is `irv_ok`, counted twice,
+      with its first verse;
+    - occurrences come with raw offsets, snippet and cap.
+  - `test_language_qa.py` serially: 297 passed.
+  - House style, words, flags, scope, learned, indic, packs, jobs and bridge
+    service: 285 passed.
+  - Latency gate, Tamil and Hindi: pass.
+- Frontend:
+  - `npm run check`: 0 errors, 0 warnings.
+  - `npm run test`: 571 passed.
+  - `npm run build`: ok.
+
+**Not verified.** The desktop app.
+
+## 2026-10-07 — Reference Bible panel, OV occurrences, related words (branch `indic-qa-editor`, commit 7)
+
+These are indic-qa's OV panel, "OV occurrences" and related-word
+suggestions. DECISIONS 2026-10-07, "The reference Bible is a folder the
+reviewer chooses".
+
+**Engine.**
+- New `language_packs/reference_text.py`:
+  - `detect` tells a `verses.tsv` folder from a USFM folder;
+  - USFM books go through `language_qa_benchmark.book_verses` (the
+    importer), never a regex;
+  - `ReferenceHolder` builds on a daemon thread and caches the plain text
+    under `reference-cache/` beside `settings.json`, keyed by each file's
+    name, size and mtime.
+- New `language_packs/related_words.py`, a port of upstream `related.py`.
+  Before porting, upstream was run on a real Hindi IRV/OV pair. The port's
+  equivalents matched upstream's except one count (गये: 6 vs 7).
+- Settings: `languageQaReferenceDirs` (validated with `detect`, `""`
+  clears) and `languageQaRelatedWords`.
+- RPCs:
+  - `languageQa.reference`;
+  - `languageQa.related`, built in the background once per pack;
+  - `languageQa.occurrences` with `source: "ov"`.
+- ta-irv falls back to its bundled `verses.tsv`.
+- NOTICE.md no longer says Bridge lacks the related-word lookup. The
+  non-Tamil `verses.tsv` files are still not vendored.
+
+**Frontend.**
+- `ReferencePanel.svelte`: the "Ref." toolbar toggle, remembered in
+  `editorPrefs.ts` (localStorage). Its "follow" checkbox scrolls the panel
+  to the selected verse, and clicking a reference verse selects it in the
+  text. It is hidden under 1,200 px.
+- `RelatedWords.svelte` appears in the review panel for the verse's first
+  single-word Language QA finding. It shows equivalents, the same-stem
+  family and IRV/OV counts, with links to both occurrence lists.
+- The verse menu gains "Show OV occurrences…".
+- Settings › Language QA:
+  - a Reference Bible row per pack, with Browse (`pick_project_folder`);
+  - a "Show related words" checkbox.
+
+**Verified.**
+- Engine:
+  - `test_reference_text.py`: 5 passed;
+  - `test_related_words.py`: 4 passed;
+  - `tests/service/test_language_qa_reference.py`: 5 passed. These cover the
+    bundled Tamil OV, a Settings folder replacing it and being cached, an
+    empty folder refused, OV occurrences, and related words built once and
+    turned off.
+  - Latency gate: Tamil passed. Hindi passed 2 of 3 runs; the failing run
+    had `verse.get` at 55.87 ms against the 50 ms local budget. This is the
+    same flakiness recorded at commits 1 and 4.
+- Frontend:
+  - `npm run check`: 0 errors, 0 warnings;
+  - `npm run test`: 578 passed;
+  - `npm run build`: ok.
+  - One full vitest run, made while the engine tests were running alongside
+    it, failed the VerseList click-budget test (356 ms against a 100 ms
+    budget). It passed alone and in a full run with nothing else running.
+
+**Not verified.**
+- The desktop app.
+- A real USFM reference folder of a whole Bible. Only the test fixtures and
+  the bundled Tamil TSV have been read.
+
+## 2026-10-07 — Verse change history and Raw view (branch `indic-qa-editor`, commit 8)
+
+indic-qa's per-verse history (↺), its history list and its raw USFM view.
+No new store: every Scripture edit already writes a native
+`checkData/verseEdits` record (`apply_scripture_edit`), and that is what is
+read.
+
+**Engine.**
+- `verse.history {chapter?, verse?, limit?}` covers one verse, a chapter or
+  the open book, newest first, with a cap of 500 by default and 5,000 at most.
+  Each entry carries both raw texts, their visible text (`plainBefore`,
+  `plainAfter`, through `lift_verse`, so the diff never parses USFM), tags,
+  `groupId`, and the scope `batchId` / `undoes` from the record's
+  `contextId`.
+- `chapter.verseData` gains `editCounts`, which costs one directory listing
+  per edited verse and reads no records.
+
+**Frontend.**
+- `historyCountByVerse` store: cleared by `resetBookState`, filled from
+  `editCounts`, and bumped by every confirmed save, `applyEngineChanges`
+  and a correction application.
+- ↺N after an edited verse's text, and "Change history…" in the verse menu.
+  Both open `VerseHistoryPopover`, which has a grapheme diff and "Restore the
+  text before this change". The restore is confirmed by a second click and
+  done by `revertVerseTo`, an ordinary edit, so it is journalled and listed.
+- The verse pieces now sit in `.vbody` inside `.vtext`. Svelte trims the
+  whitespace inside `{#each}` only when the each block is its parent's sole
+  content, and adding the ↺ after it put a space before every ⚑. A
+  footnote test was pointed at `.vbody`.
+- The Language QA panel has an **Edits** tab: the book's edits by day, a
+  diff, change sets marked, and the reference navigating to the verse.
+- The toolbar has a **Raw** toggle (`editorPrefs.rawView`, localStorage).
+  When it is on, the display is `identityDisplay(raw)`, so every raw offset
+  is its own display offset and the marks stay on the same characters.
+  Notes are not lifted, so they show as markers.
+- After a save, the engine's marker `warnings` show under the verse.
+  They never block the save, and the next edit clears them.
+
+**Verified.**
+- Engine: `tests/service/test_verse_history.py`, 3 tests. Service, stdio,
+  import and display-payload tests: 111 passed. Latency gate (Tamil): pass.
+- Frontend:
+  - `npm run check`: 0 errors, 0 warnings.
+  - `npm run test`: 586 passed.
+  - `npm run build`: ok.
+
+**Not verified.** The desktop app, including how the ↺ and Raw text look at
+1366×768.
+
+## 2026-10-07 — Bookmarks, recent chapters, text size (branch `indic-qa-editor`, commit 9)
+
+These are indic-qa's bookmarks, recent chapters and A−/A+.
+
+**Engine.**
+- Two app-level settings, `AppSettings.bookmarks` and `recent_chapters`.
+  They are `settings_kv` rows in `workspace.sqlite3`, never `settings.json`.
+- `settings.get` and `settings.set` gain `bookmarks` and `recentChapters`.
+- `_valid_places` checks a place's shape:
+  `{collection, book, chapter[, verse], label, ts}`. It lower-cases the book,
+  keeps the newest of a repeat, and caps bookmarks at 200 and recent
+  chapters at 20.
+- `collection` is the open collection's id, or the project path when there
+  is none. A list can therefore span projects, and each project shows only
+  its own places.
+
+**Frontend.**
+- `src/lib/bookmarks.ts`:
+  - `toggleBookmark` is optimistic and puts the list back if the save is
+    refused;
+  - `recordRecentChapter` records a chapter after 2 s on it, called from
+    `activateChapter`;
+  - `buildPlacesMenu` is pure.
+- The toolbar's **★ Bookmarks** button opens `FindingContextMenu`. A place
+  goes through `navigateToReportRow`, which switches book inside the
+  collection.
+- The toolbar's **A− / A+** buttons step `editorPrefs.textScale` (0.85 to
+  1.7, localStorage). It sets `--verse-scale` on `.editor-col`, which the
+  verse text, the edit box and the reference panel use. Every toolbar button
+  has a text label (gotcha 9).
+
+**Verified.**
+- Engine: `tests/service/test_settings_places.py`, 3 tests. They check the
+  lists survive a restart, are kept out of `settings.json`, have no repeats,
+  are capped, and refuse a bad shape. Settings tests in `tests/service`: 10
+  passed.
+- Frontend:
+  - `npm run check`: 0 errors, 0 warnings.
+  - `npm run test`: 591 passed.
+  - `npm run build`: ok.
+
+**Not verified.** The desktop app, including how the toolbar fits at
+1366×768 now that it has seven buttons.
+
+## 2026-10-07 — Kind legend, list scope and F8 in the Language QA panel (branch `indic-qa-editor`, commit 10)
+
+These are indic-qa's kind legend, its verse/chapter/book list and its
+next/previous-issue keys. Frontend only: commit 1 had already given
+`languageQa.status` its `chapter` and `categories` filters and
+`categoryCounts`.
+
+**Frontend.**
+- `highlight.ts`: `LANGUAGE_QA_CATEGORY_LABELS`. It is typed over
+  `LanguageQaCategory`, so a new category fails the type check until it has
+  a label.
+- Language QA panel:
+  - **Verse / Chapter / Book** radiogroup. Chapter filters the status page.
+    Verse lists `languageQa.verse` for the selected verse and counts its
+    kinds itself.
+  - **Legend**: one `aria-pressed` button per kind, with a swatch drawn by
+    the same global `mark.m-lqa-*` class as the text, the label and the
+    count. Ticking kinds narrows the list. Filters are sent only when set,
+    so an unfiltered page is the same call as before.
+  - **F8 / Shift+F8** (`svelte:window`): walk the marks drawn in the text
+    (`languageQaFindingsByVerse`, which the legend narrows) in reading
+    order. Each step sets `selectedVerse` and the new
+    `activeLanguageQaFindingId` store, scrolls the mark into view, and
+    announces "Finding k of n" in a `role="status"` line.
+    - Past the end of a chapter it opens the next one (previous for
+      Shift+F8) and lands on the first (last) mark once they arrive. It
+      stops at either end of the book.
+    - It is ignored in an input, a textarea or a select, while a verse is
+      being edited, or while any dialog is open.
+- VerseList rings the store's mark. Left/Right or a row click clear the
+  store, so the row's own active mark (and Shift+F10's menu) takes over
+  again.
+
+**Verified.**
+- `npm run check`: 0 errors, 0 warnings.
+- `npm run test`: 595 passed. This includes:
+  - the legend narrowing the list;
+  - the chapter and verse scopes;
+  - F8 and Shift+F8 order, the input guard and moving to the next chapter;
+  - the ring from the store, and the row click clearing it.
+- `npm run build`: ok.
+
+**Not verified.**
+- The desktop app.
+- Whether the WebView2 shell reserves F8. jsdom does not.
+
+## 2026-10-07 — Handoff: branch `indic-qa-editor` (indic-qa's editor features)
+
+**Where the work is.** The branch is local only: not pushed and no PR. It was
+cut from `main` at `8604ad2`. It ports every editor feature of the approved
+mockup except indic-qa's import/export writers and its hosted app. The
+mockup is https://claude.ai/artifact/JUdjTd7RDTnMieZ4xw4W4V, private to its
+owner. There is one commit per feature, in order:
+
+| Commit | What | Matrix |
+|---|---|---|
+| `f912eb3` | Re-vendor indic-qa at `ab53636`; rebuild the five IRV snapshots | A101 |
+| `19e62f4` | indic-qa findings drawn inline behind the reviewer's precision and confidence threshold; Settings › Language QA pane | A102 |
+| `38a6ad4` | Workbench schema v6: `language_qa_batches`, `language_qa_learned_fixes`, `language_qa_flags` | — |
+| `6872bda` | Learned fixes from single-word edits | A103 |
+| `2a668d0` | Accept or ignore in the verse, chapter or book, with confirmation and batch undo | A104 |
+| `43c72bb` | Reviewer flags | A105 |
+| `a47b189` | Project word list, Book words, IRV occurrences | A106 |
+| `3225c6f` | Reference Bible panel from a user folder; OV occurrences; related words | A107 |
+| `00026d8` | Verse change history, Edits tab, Raw view | A108 |
+| `1ea9bd5` | Bookmarks, recent chapters, text size | A109 |
+| `675dfbd` | Kind legend, Verse/Chapter/Book list scope, F8/Shift+F8 | A110 |
+| `797ec78` | Test fix: the in-code inline rules include `learned.replacement` | — |
+
+`797ec78` is a late fix to `6872bda`'s test coverage. That commit ran only
+the Language QA tests, and `test_language_pack.py` pins the exact inline
+list. The full suite caught it at the end of the branch, and only the
+expectation changed.
+
+**Verified at the branch head, with the commands as written:**
+
+- `python scripts/sync_indic_qa.py --check`: ok.
+- `pytest -n auto` (engine): 4,928 passed, 1 skipped, 3 xfailed, and one
+  failure (the `797ec78` test, then fixed). `test_language_pack.py`: 47
+  passed. The pre-branch baseline was 4,843 passed, 1 skipped, 3 xfailed.
+- Human gates (`scripts/language_qa_benchmark.py --human-labels … --gate`,
+  no `--write-baseline`): Tamil, Hindi and Malayalam all pass.
+- Latency gate (`scripts/benchmark_language_qa.py --gate --cores 2`), source:
+  - Tamil passed.
+  - Hindi failed once, with `verse.decide` (languageQa) at p95 199.99 ms
+    against the 50 ms budget, then passed twice.
+  - Earlier on the branch Hindi also failed once on `verse.get` (55.87 ms).
+    One-off spikes on a busy machine are the pattern so far, but they are
+    not explained.
+- Latency gate, frozen (`--engine engine\dist\bridge-engine.exe`): Tamil and
+  Hindi pass. This needed `BRIDGE_LANGUAGE_PACKS_DIR=engine\language_packs`.
+  Without it the script launches the exe with no packs folder, so the Tamil
+  run asserts `pack == "ta-irv"` and gets `common`. The script gap predates
+  this branch; see Open.
+- `npm run check`: 0 errors, 0 warnings. `npm run test`: 595 passed.
+  `npm run build`: ok.
+- `cargo check`: ok. `cargo test`: 11 passed. The sidecar timeouts changed
+  in `2a668d0`.
+- Frozen pair: `scripts/build-sidecars.ps1`, then
+  `python scripts/smoke_sidecars.py engine/dist/bridge-engine.exe`: passed,
+  including the indic-qa Hindi pack and ta-irv's indic-qa layer.
+  - In Windows PowerShell 5.1, `*>` redirection turns PyInstaller's INFO
+    lines on stderr into a terminating error. Run the script through
+    `powershell -File` instead.
+
+**Not verified:** the desktop app at 1366×768. Rows A101–A110 are all
+"Desktop NOT RUN". The plan's desktop script for Hindi GEN and Tamil
+covers the following. Each row's BUILD_LOG entry names what jsdom cannot
+show.
+- the slider at 0 and 100;
+- a learned mark;
+- a chapter accept and Undo all;
+- a flag that survives reopening;
+- Book words;
+- an OV folder;
+- bookmarks across books;
+- F8;
+- glyph shaping in the new tabs.
+
+**Open, for the maintainer (@RevantCI) and the owner:**
+
+1. **Is a bulk Use an "alternative path for applying corrections"?**
+   CLAUDE.md stop-and-ask. A chapter or book accept makes one ordinary
+   `apply_scripture_edit` per verse, after the reviewer confirms the listed
+   verses, and the batch can be undone. It never crosses books. The
+   maintainer has not ruled on this.
+2. **OV licence.** Nothing OV-derived for hi, ml, or or pa is bundled; the
+   reviewer points Settings at their own folder. The question in
+   `engine/vendor/indic-qa/NOTICE.md` is unchanged.
+3. **Inline promotion.** The reviewed `inline` flag was never flipped. Drawing
+   indic-qa findings is a runtime predicate over the reviewer's threshold
+   (DECISIONS 2026-10-07). Promoting the seven rules at ≥ 0.90 precision is a
+   separate, reviewed edit.
+4. **Edit latency during a scoped accept.** Each verse is a full edit, and a
+   Malayalam cluster rebuild runs per edit. An issue should move that rebuild
+   off the dispatcher path.
+5. **Learned fixes are per book.** They are written to the materialized
+   books of a collection, not lazy ones, which is the same gap house style
+   has at project scope.
+6. **`scripts/benchmark_language_qa.py --engine`** passes no
+   `--language-packs-dir`, so a frozen run is common-only unless
+   `BRIDGE_LANGUAGE_PACKS_DIR` is set. Fix in the script.
+7. **Three test files import from another test module**, against CLAUDE.md
+   rule 2. `tests/persistence/test_workbench_sync.py`,
+   `test_metrics_and_backups_index.py` and `test_workspace_repository.py`
+   all import from `test_workbench_repository.py`. This predates the branch
+   and was found while adding tests. The helpers belong in `tests/support/`.
+8. **Upstream.** Decide whether this goes to RevantCI/bridge, as one PR per
+   commit with issues (CONTRIBUTING.md).
+
+## 2026-10-07 — Follow-ups to the indic-qa editor handoff: two fixed, two corrected
+
+The handoff above listed four follow-ups. Two have been fixed. Measuring the
+other two showed my descriptions were wrong. The corrections are recorded
+here, and those two now wait on a decision.
+
+**Fixed: the benchmark launched a frozen engine without its data**
+(`980209b`).
+- Root cause: `benchmark_language_qa.py --engine` started the exe with no
+  arguments. The packs and the tN/tW/UHB/UGNT resources ship outside the
+  onefile exe, and Tauri passes `--resources-dir` and
+  `--language-packs-dir` (`sidecar.rs`).
+- The script now passes the same two folders as Tauri and
+  `smoke_sidecars.py`.
+- Verified: the frozen Tamil and Hindi gates pass with
+  `BRIDGE_LANGUAGE_PACKS_DIR` unset.
+
+**Fixed: test modules importing other test modules** (CLAUDE.md rule 2).
+- There were 25, not the 3 the handoff named, across 17 files from 11 lending
+  modules. Relative imports (`from .test_x import`) had been missed.
+- Nothing enforced the rule. #74 phase 4 had brought these imports to 0 on
+  2026-09-30, and they grew back.
+- Helpers moved verbatim into `tests/support/`: `language_qa.py`,
+  `workbench.py`, `alignment.py`, `cross_verse.py`, `ai_review.py`,
+  `analysis_jobs.py`, `correction_9b0.py`, `correction_9b1.py`,
+  `correction_9b3b.py` and `qa_target_hash.py`. `semantic.qa8_runtime` was
+  added, and `test_qa_report.py` now imports from `tests.support.projects`.
+- Each lending module imports the helpers back, so no call site changed.
+- Each correction stage has its own support module, because `_fixture`,
+  `TEXT` and `_hash` mean different things in different stages.
+- Two `call` copies identical to `tests.support.projects.call` were
+  replaced by that import.
+- **Guard**: `tests/support/test_no_cross_test_imports.py`. It fails on the
+  old tree and passes now.
+- How the move was kept safe, given the 2026-09-30 hazards:
+  - A mover script cut each helper from its first decorator, with any
+    comments directly above it.
+  - It carried exactly the imports the moved code uses, and refused to move
+    a helper that needed an unmoved one.
+  - After every move, `--collect-only` had to stay at 4,932, and pyflakes
+    undefined names had to stay at 0.
+  - Imports a move left unused were removed, but never one that was already
+    unused before the refactor.
+
+**Corrected, open: "a chapter accept is slow on Malayalam because a rebuild
+runs after each verse."** That is wrong. Measured on Malayalam Romans:
+- Language QA rebuilds the indic-qa index once, in the background, after
+  all the writes (`build_index` 1,620 ms).
+- The 15-verse chapter accept took 5,930 ms on the dispatcher (7.1 s under
+  cProfile). All of it is 15 calls to `apply_scripture_edit`, about 0.4–0.48 s
+  each. The same cost applies to every `verse.edit`, in every language.
+- Per edit, the cost is:
+  - rewriting and fsyncing the chapter and alignment JSON (about 165 ms);
+  - `PassageSemanticRuntime.synchronize_alignment_state` (about 154 ms). It
+    digests every alignment file of the book twice and rescans them all for
+    legacy issues, because any content change moves the whole-directory
+    digest. This part grows with the size of the book.
+  - backups and the journal.
+- A real fix is in the Scripture writer or the Stage 4 runtime, not in
+  Language QA. It needs a decision (see the open questions).
+
+**Corrected, open: "learned fixes reach only the books that have been
+opened."** Also wrong. Learned fixes are written only to the open book, by
+the recorded decision (DECISIONS 2026-10-07, "per book"; sharing them is
+"Rules out ... in this version"). There is no lazy-book bug. Applying a
+fix across a collection is a feature change to that decision.
+
+**Verified.**
+- `pytest -n auto`: 4,931 passed, 1 skipped, 3 xfailed.
+- The persistence and Language QA subset (699 tests) passed four further
+  times.
+- One earlier run of that subset reported 1 failed and 698 passed. Its name
+  was not captured, and it has not recurred in five runs since or in the
+  full suite. It is recorded here rather than dismissed.
+
+## 2026-10-07 — Every verse edit re-scanned the whole book's alignment files; now only the changed chapter
+
+Follow-up 1 of the indic-qa editor handoff, after measurement showed the
+chapter-accept cost is in the Scripture write path (entry above). Benz chose
+"rescan only the changed chapter". Who writes Scripture is unchanged.
+
+**Root cause.** `apply_scripture_edit` rewrites one chapter's alignment file.
+`PassageSemanticRuntime.synchronize_alignment_state` keyed the
+legacy-compatibility scan on a digest of the whole alignment folder, so any
+edit changed it. Then, per edit:
+1. Every chapter file of the book was read twice, once for each digest.
+2. Every chapter file was re-parsed and re-scanned (O(book)).
+3. Every legacy issue found in the unchanged chapters was inserted into
+   `migration_quarantine` again. That table is append-only and not
+   deduplicated.
+
+**Fix.**
+- Each chapter file is read once per sync (`alignment_files`), and the same
+  bytes feed both digests. The digest values are unchanged, so Stage 6B's run
+  fingerprint is not affected; a test pins this.
+- The scan now also keeps a per-file memo: one `migration_runs` row per
+  chapter file and content, schema
+  `translationCore.alignmentData.compatibility-scan.file.v1`. A file that
+  already has a row is not scanned again.
+- The folder-level run and its report schema are kept as they were. The
+  report gains `filesUnchanged`, and `filesScanned` now counts the files
+  actually scanned.
+- Runs are saved in one transaction (`save_migration_runs`), and the
+  recorded hashes are read in one query (`migration_run_hashes`). No schema
+  change: the table and its unique key were already there.
+- A project opened under the old code has no per-file rows, so its first
+  sync after this change scans every file once. That is what every edit did
+  before.
+
+**Measured** (median `verse.edit`, Language QA off; old code, then new):
+
+| Book | Edits | Old | New |
+|---|---|---|---|
+| Malayalam Romans | 10 | 381 ms | 273 ms |
+| Malayalam Psalms | 6 | 483 ms | 292 ms |
+
+The per-edit cost no longer grows with the size of the book. What remains
+(about 270 ms) is the writer's own fixed work: the chapter and alignment
+JSON with fsync, backups and the journal. A chapter accept is still one such
+edit per verse. Writing a whole chapter in one transaction would change the
+one Scripture writer, which stays a maintainer question (CLAUDE.md
+stop-and-ask).
+
+**Verified.**
+- `test_passage_semantic_runtime.py` has three new tests:
+  - A one-chapter change scans one file and records nothing twice. On the
+    old code this fails with `assert 2 == 1`: chapter 1's issue is recorded
+    twice.
+  - A changed chapter is still scanned, including a malformed file.
+  - The digests are the same from shared bytes.
+- The existing quarantine-batch and raw-import-stub tests are unchanged and
+  pass.
+- semantic, correction, alignment, project_io and `test_bridge_service.py`:
+  797 passed.
+
+## 2026-10-07 — Learned fixes shared across a collection's books
+
+Follow-up 2 of the indic-qa editor handoff. Benz chose to share fixes
+across the collection, so the DECISIONS line that ruled this out is
+superseded (DECISIONS 2026-10-07, "Learned fixes are shared across a
+collection's books").
+
+**Engine.**
+- `language_qa_learned.merge_learned_fixes` is pure. Per (old, new) it
+  returns:
+  - `count`, the net uses in every book;
+  - `own`, this book's share;
+  - `books`, the books with uses;
+  - `enabled`, which is False if any book has the fix forgotten;
+  - the earliest `firstRef` and the latest `lastRef`, reviewer and source.
+- `tc_project.peek_learned_fixes` reads a sibling's rows through the
+  existing read-only `_peek_workbench`. It never constructs, creates or
+  migrates anything, and returns `[]` for a book without the v6 table.
+- `TranslationCoreProject.collection_learned_fixes` reads the siblings once
+  per project instance, and again after it writes a fix. `bind` hands it to
+  the manager in place of `learned_fixes`. Learned rows were already read
+  on every pass and kept out of the cache key, so a pass needs no rescan.
+- A retraction looks for the reverse fix across the collection. It
+  decrements this book's row with a floor of minus the siblings' uses, so
+  the collection's total reaches zero and stops but never goes below it.
+  For a single book the floor is 0, as before, and
+  `test_language_qa_editor_stores` is unchanged. A scoped batch undo uses
+  the same floor.
+- `languageQa.learned.list` returns the merged view. `.forget` and
+  `.restore` write this book (creating a row with no uses if it has none)
+  and every materialized sibling that holds the fix, and report
+  `failedBooks`.
+
+**Frontend.** The Dictionary tab has a Books column, and a fix with no net
+uses is shown struck through. The panel, Settings and the flag dialog say
+the fix applies to the project's other books too.
+
+**Verified.**
+- `tests/service/test_language_qa_learned_collection.py`, 4 tests:
+  - offered in a sibling;
+  - Forget and Restore reach the book the fix was learned in;
+  - a retraction in a sibling takes the total to zero and no lower, after
+    which typing back is learned as the reverse;
+  - a lazy book is read only once it is materialized.
+- Two pure merge tests.
+- Every existing learned, scope, flag and store test passes unchanged
+  (32).
+- Frontend: `npm run check` 0/0, 595 passed, build ok.
+
 ## 2026-10-07 — The Collection QA runner gets an issue and a place in the docs (#215)
 
 The "Run QA on all N books" panel at the top of the dashboard was asked about and
@@ -14351,3 +15996,1884 @@ now has one, pointing at LANGUAGE_QA_PLAN. Not touched, already stale and noted 
 
 **Verified.** The six engine test files `affected_tests.py` selects for a docs-only
 change (165 tests) pass. No code changed.
+
+## 2026-10-08 — Automatic cross-verse alignment, part 1: null alignment decisions (#216)
+
+The first of seven parts of automatic cross-verse alignment (#216–#222, extending
+#214; plan agreed with Benz 2026-10-07/08, mockup
+https://claude.ai/artifact/C75bSQPQEfCUEAs2dyNZXc). This part gives Bridge
+somewhere to say "this word has no counterpart, and that is correct". Before it,
+a Greek article with no Tamil word, or a Tamil word that is pure grammar, could
+only stay a gap, and Stage 8 could only read it as a possible omission or
+addition.
+
+**Storage: workbench v5 → v6.** Two tables. `alignment_null_decisions` is a
+sibling of v3's link table: chapter, verse, side, signature, reason and state are
+lifted, and it is unique on (book, chapter, verse, side, signature).
+`alignment_verdicts` is the per-verse cache the automatic pass (#219–#221) will
+write; it is created now so the series needs one bump, not two. Neither carries a
+CHECK on side or reason. v5 shows that widening a CHECK costs a table rebuild;
+both sets are validated in `alignment_null_decisions.validate`. **Schema-number
+collision:** `indic-qa-editor` (not on main) also takes v6 for its Language QA
+batch tables. Whichever branch merges second renumbers its block to v7.
+
+**Store.** `alignment_null_decisions.py` mirrors `cross_verse_links.py`: three
+writes per change, history without a backup, and invalidation on a text edit
+inside `apply_scripture_edit`'s transaction (reported as
+`nullDecisionsInvalidated`). Decisions on the source side are never invalidated
+by an edit, because no edit removes a source token. A source signature the load
+cannot resolve is reported `stale` on read, not written. Two differences from
+the link store, both deliberate:
+- `origin` is on the row, not only the event, so the automatic pass can
+  supersede only its own rows;
+- the history id includes the row id. `_timestamp` has millisecond resolution,
+  and a burst of decisions in one verse would otherwise overwrite each other's
+  history row. The link store has the same latent collision; the automatic
+  pass's link groups (part 2) will need the same fix there.
+
+**Service.** `alignment.null.set` / `.clear`. A token that already has a home (a
+group with target words, any target group, or either end of an active link)
+cannot be marked, and a marked token cannot be linked. `gap_ids` takes
+`null_source_ids` / `null_target_ids`, so `_alignment_context` and `gapScan`
+share one definition. The context gains `nullDecisions`, `accountedBy` and
+`accounted`. `fullyAccounted` now counts nulls as well as links. The digest is
+folded into `alignment_state_digest` only when a book has decisions, so every
+existing project keeps the digest, and the cached runs, it had.
+
+**Not in this part.** `_save_alignment` (realign / save / aiApplyProposal) does
+not yet refuse a token that has a null or a link. That is part 2 (#217), with
+the N:M link groups.
+
+**Verified.** 13 new tests (`tests/alignment/test_alignment_null_decisions.py`,
+`tests/service/test_alignment_null_rpc.py`) pass. Full engine suite with
+`-n auto`: 4735 passed, 1 skipped, 3 xfailed. `npm run check` is clean. Neither
+golden moved. Frozen sidecars not rebuilt for this part.
+
+## 2026-10-08 — Automatic cross-verse alignment, part 2: one token one home, N:M link groups (#217)
+
+**The hole it closes.** The #117 link store refused only an exact duplicate pair.
+One Greek word could be linked into two different verses with nothing tying the
+links together, and after part 1 a word could also be "grammatical" and aligned
+at the same time.
+
+**Groups.** `groupId` lives in the link payload. It is a sha1 of the members'
+chapter:verse:signature, prefixed `xvg_`. The unique pair index, the per-verse
+reads and the Stage 6B reader are unchanged. No column was added and there is
+no schema bump; grouping is done in Python over the rows of one source verse.
+A group is written and removed as a unit: N×M rows and events, one history row.
+Membership never changes in place. A single-pair drop onto a word already
+grouped between the same two verses extends the group by unlinking it and
+linking the union, because refusing it would make dragging a second word
+useless. A text edit that removes any target member invalidates the whole
+group. Unlinking any pair removes the whole group. This is visible in today's
+UI: × on one card of a 1:N group removes them all. The part 7 UI draws the
+group.
+
+**One home.** Each of these refuses a token that already has a home elsewhere:
+`link_cross_verse`, `alignment.null.set`, and the new
+`_refuse_if_homed_elsewhere` in `_save_alignment`. In `_save_alignment` only
+tokens that *gain* a group in that save are checked. A token that was already
+double-homed before this change is not repaired silently; I don't know of any.
+The AI review's auto-align path also goes through `_save_alignment`; a refusal
+there is caught by its existing "must not sink the review" handler.
+
+**History id collision**, noted in part 1, is fixed in the link store too: the
+record id is now part of the history id.
+
+**Verified.** 8 new tests (`tests/service/test_alignment_one_home.py`). The
+existing `test_alignment_cross_verse.py` passes unchanged once the
+exact-duplicate case refuses instead of "extending" into itself, which was the
+one bug the existing tests caught. Full engine suite with `-n auto`, run on this
+part alone (later parts stashed): 4743 passed, 1 skipped, 3 xfailed.
+`npm run check` is clean.
+
+## 2026-10-08 — Automatic cross-verse alignment, part 3: Stage 6B/8 read groups and null decisions (#218)
+
+**Why.** On a verse with no alignment, Stage 8 raises `POSSIBLE_OMISSION` for
+every unlocated content word. Parts 1 and 2 give a reviewer, or the automatic
+pass, a way to say "grammatical", "implicit" or "this whole group, across the
+verse boundary". Stage 8 still could not hear it: links reached Stage 6B only
+as 1:1 pairs, and decisions did not reach it at all.
+
+**Evidence.** `_cross_verse_precedents` folds rows by `groupId` into one
+precedent per group, with every member or none. The new
+`null_precedents_for_range` resolves active decisions in the range through the
+same resolvers the tC path uses: exact NFC word plus occurrence on the pinned
+pack for a source token, and the current text revision for a target word. It
+never raises.
+
+**Stage 8.** `source_coverage_for` and `target_support_for` take an optional
+`null_precedent`. `QaAuditEngine._unit_null` applies it to a unit only when
+every token of the unit carries a decision with the same reason, so a decision
+on one word never explains its neighbour. A source decision explains only an
+absence (NOT_LOCATED, or no relationship). AMBIGUOUS and SEARCH_INCOMPLETE stay
+UNCERTAIN; I didn't widen that. The plan listed "should a *human* null override
+AMBIGUOUS?" as a question, and it is still open. A target decision comes before
+the English and Tamil word lists.
+
+**Versions.** `tc-word-alignment-v4` and `qa-policy-v2`. Neither string appears
+in either golden. The three pins in `test_word_alignment_evidence.py` move with
+the bump, and that file's version test is renamed `..._is_v4`.
+
+**Verified.** 8 new tests (`tests/semantic/test_null_and_group_evidence.py`).
+The end-to-end test shows θεός, unlocated in a Tamil verse that does not name
+God, going from `POSSIBLE_OMISSION` to `COVERED_BY_RESTRUCTURING` once marked
+IMPLICIT. The run fingerprint moves, and every other unlocated word in the verse
+is still reported. Full engine suite with `-n auto`, run on this part with later
+parts' files ignored: 4751 passed, 1 skipped, 3 xfailed. Both golden tests pass
+unchanged.
+
+## 2026-10-08 — Automatic cross-verse alignment, part 4: two-pass agreement writes (#219)
+
+**What it does.** `alignment.window.autoAlign` builds #214's window, asks it
+source-first and target-first, compares the two passes
+(`alignment_agreement.agree`), writes what both agree on, suggests the rest, and
+reports what neither placed. Maintainer sign-off for the zero-click gate is
+recorded in DECISIONS (2026-10-08) and on #214.
+
+**Three corrections made while designing, each a bug the first sketch had:**
+- **Each pass must account for both sides.** If only the target-first pass
+  spoke about target-only words, a Tamil grammar word could never be agreed
+  on, and no verse containing one could end clean.
+- **Homed tokens leave the compiler's input.** `compile_link_proposal` in
+  gap_fill mode *extends* a protected group whenever an edge touches one of its
+  tokens, which would have let the automatic pass grow a reviewer's group. Any
+  edge on a token with a home is filtered out before compiling.
+- **Overlapping windows.** Window [1-3] could link v2→v3, and window [3-5] would
+  then revert v3's ledger and delete that link without being able to see v2. A
+  pass owns, and reverts, only link groups whose two ends are both inside its
+  window. Kept groups carry forward into the new ledger.
+
+**The corpus rule, stated precisely.** The agreed cross-verse edge is blocked
+only when the corpus has a *different* top candidate, or the target word is
+contested. A corpus with nothing to say about the word does not block it.
+Requiring the corpus to propose the edge would have made a warm project stricter
+than a cold one.
+
+**Not done.** Whether a *human* null should override an AMBIGUOUS Stage 6B
+outcome is still open (part 3). The chapter job, the verse check findings and
+the UI are parts 5-7.
+
+**Verified.** 11 pure agreement and window tests and 11 protocol tests over a
+fake transport (`tests/service/test_auto_align_window.py`). They cover:
+- a clean window written with no click, with the tC group, the 1:2 link group,
+  the null, the ledger and `origin: "ai-auto"` on the events;
+- a one-pass edge becoming a suggestion;
+- unplaced words reported and not forced;
+- no key, so no request;
+- `apply: false`, which writes only the verdict;
+- a reviewer's IMPLICIT kept against two GRAMMATICAL votes;
+- a re-run superseding its own writes;
+- revert, including a reviewer-changed group being skipped;
+- an invented handle failing with nothing written;
+- window validation.
+
+Rust: the 540 s timeout is pinned in `sidecar::tests`; `cargo test` passes
+(10). Full engine suite with `-n auto` on this part: 4773 passed, 1 skipped,
+3 xfailed. `npm run check` is clean.
+
+## 2026-10-08 — Automatic cross-verse alignment, part 5: possible omission/addition in the verse editor (#220)
+
+`alignment_gap_checks.gap_issues` runs inside `_run_verse_checks_for_project`
+whenever `local` or `alignment` checks run. It uses the `project` handle it is
+given, not `self.project`, because check jobs open their own handles.
+
+- **When it fires.** Only for live gaps, and only on a verse with a non-reverted
+  verdict or a translationCore completion. Firing on every unaligned verse would
+  repeat `ALIGN_UNALIGNED_*` once per word and bury the verse.
+- **Codes.** `ALIGN_POSSIBLE_OMISSION` / `_ADDITION` keep the `ALIGN_` prefix,
+  so `_categorize_qaissue` files them under Alignment.
+- **Spans.** A target finding gets a highlight-only span: offsets and the
+  original text, no replacement. The span comes from `_first_token_span`
+  generalised to the n-th occurrence, so a repeated word underlines the right
+  copy.
+- **Failure handling.** A failure inside the gap check is swallowed, so a
+  verse's ordinary checks are never sunk by optional evidence.
+
+QA matrix rows A97–A101 now cover parts 1–5, all at source level only.
+
+**Verified.** 6 new protocol tests. Full engine suite with `-n auto`: 4779 passed,
+1 skipped, 3 xfailed.
+
+## 2026-10-08 — Automatic cross-verse alignment, part 6: the chapter job (#221)
+
+`engine/alignment_auto_align_jobs.py` copies `AIReviewJobManager`'s lifecycle:
+- one active job per engine;
+- a daemon thread;
+- cancellation between provider requests;
+- a failed window recorded, not fatal;
+- retry of what did not succeed.
+
+Each window is the service's own `auto_align_window`, so there is no second
+code path for agreement or writes.
+
+**A deviation from the plan.** The plan sketched a three-phase job: ask every
+window, reconcile votes across windows offline, then write. It is built as
+sequential windows instead, where the later window re-decides the overlap
+verse. Part 4's window-scoped ownership is what makes that safe: a later window
+never reverts a link reaching into a verse it cannot see.
+
+Cross-window voting would make an agreed edge stronger when two windows both
+found it. That is worth measuring once there is real-provider data (#131), and
+not worth building blind.
+
+**Estimate.** Offline. It builds every window's real payload and counts about
+three characters per token, plus 1,500 output tokens per call, priced through
+`model_router.estimate_cost`. The Rust timeout is 180 s for the estimate,
+because a whole book is hundreds of windows. `start`, `status` and `cancel` stay
+interactive at 30 s.
+
+**Frozen build.** `scripts/smoke_sidecars.py` now calls the estimate and an
+offline `alignment.window.autoAlign`. That proves the new top-level module and
+the `tc_ai_bridge` agreement and window modules are in the onefile exe, and that
+a pass with no key answers `unavailable` without sending anything.
+
+**Verified.** 6 job tests. Full engine suite with `-n auto`: 4785 passed, 1 skipped,
+3 xfailed. `cargo test` passes (10). The frozen smoke was not run for this part;
+it is run once at the end of the series, after the sidecars are rebuilt.
+
+## 2026-10-08 — Automatic cross-verse alignment, part 7: the page (#222)
+
+Built to the mockup approved on 2026-10-08
+(https://claude.ai/artifact/C75bSQPQEfCUEAs2dyNZXc).
+
+**`CrossVerseAlignmentModal`.** The shell, the drag/drop, the lexicon popup and
+both columns are unchanged.
+- **Removed:** the gap strip and the suggestion strip.
+- **Auto-bar:** **Align automatically** sits beside **Suggest links**. It is
+  disabled, with the reason, when there is no key or the range cannot be one
+  window. The bar also carries a usage line.
+- **Verdict strip:** a card per verse (✓ Aligned / ? Needs review / ↻ Edited
+  since the pass / · Not aligned yet), filtering as the gap cards did.
+- **Run notice:** includes **Undo a verse**.
+- **Source cells:** an `ai` tag and the group's shape (2:1, 1:2) on cards;
+  null cards; `? possible omission` with **Not missing ▾**; disputed
+  suggestions with both votes on hover and ✓/×; offline corpus suggestions now
+  inline as well.
+- **Bank:** null words, `? possible addition` with **Not an addition ▾**, and
+  target-side options.
+- **Cards:** two lines, so a long Tamil word ellipsizes in a 150px track
+  (#206's overflow).
+- **#146's "Suggest with AI" is gone.** Align automatically supersedes it. Its
+  engine method `alignment.crossVerse.aiPropose` is left in place and is no
+  longer called from the UI. Removing it would be a separate cleanup.
+
+**A Svelte 4 trap hit while building this.** A template expression re-runs only
+when a variable *named in it* changes. Helpers that read `verdicts` or
+`visibleProposals` from the closure never refreshed their cells. The dismiss
+test caught it. Every helper the template calls now takes its state as an
+argument, the same way the gloss lookups already took `glossVersion`.
+
+**Chapter toolbar.** `AutoAlignChapterButton` runs in four states on one
+toolbar row:
+1. the offline estimate, with Start or Cancel, so nothing is sent before Start;
+2. progress, with Cancel;
+3. the result, with **Open review** on the first verses that need review;
+4. idle.
+
+When a job ends it reloads the chapter.
+
+`alignmentGroups.unaccountedTargets` / `unrealizedSources` now count null
+decisions as accounted, matching the engine's `gap_ids`.
+
+**Surprise, not fixed.** `VerseList.test.ts`'s "click budget under 100 ms" test
+failed once while the engine suite was saturating the CPU, and passes alone and
+in a quiet full run. It is timing-sensitive under load. That is worth an issue,
+and it is unrelated to this work.
+
+**Verified.** `npm run check` is clean. `npm run test` passes 41 files, 540
+tests, including 28 modal, 4 toolbar and 7 helper tests. `npm run build`
+succeeds. **Not verified:** the 1366×768 rendering in the desktop app, because
+jsdom does not lay out. QA row A103 says so.
+
+**Frozen pair, 2026-10-08, after part 7.** `.\scripts\build-sidecars.ps1` rebuilt
+both sidecars from this branch, and `python scripts/smoke_sidecars.py
+engine/dist/bridge-engine.exe` passed. That run includes the two new
+automatic-alignment checks: the offline estimate (one window, two calls) and a
+no-key pass answering `unavailable`.
+
+Follow-ups filed:
+- #223: Stage 6B scores span containment, not coverage. A linked word ties with
+  the phrase around it. This may move the 6B golden.
+- #224: the `VerseList` click-budget test is load-sensitive.
+
+**Still not run:**
+- the desktop app at 1366×768;
+- a real-provider pass (#131). The precision of two-pass agreement on IRV is
+  unmeasured until someone runs it with a key.
+
+## 2026-10-08 — Fix: "no such table: alignment_null_decisions" in the desktop app (workbench v6 → v7)
+
+**What Benz saw.** Opening Align Words or Cross-verse alignment on IRV Tamil GEN
+1:10 failed with `no such table: alignment_null_decisions`. The verse recheck
+failed the same way, and so did "Align chapter with AI" in the toolbar.
+
+**Cause.** This is the schema collision the part 1 entry warned about.
+`indic-qa-editor` took workbench v6 for its Language QA batch tables, and the
+real projects were already migrated to it on 2026-10-07. A read-only scan of all
+five materialised project databases found four at that v6 and one at v5. This
+branch also called its alignment tables "v6". So a database already at "v6"
+skipped them: the ladder trusts the number. No database had this branch's v6, so
+renumbering is safe for every one of them.
+
+**Fix.**
+- `indic-qa-editor`'s v6 block is carried **verbatim**. The v1–v6 migration
+  strings were compared programmatically and are byte-identical, so both
+  branches build the same ladder and merge without a renumber.
+- The alignment tables are **v7**. The three Language QA tables are registered
+  in `MUTABLE_TABLES` as they are on that branch.
+- `test_workbench_v7_upgrade.py` pins two paths: a database at the other
+  branch's v6 gains the alignment tables, and a v5 database climbs both rungs.
+
+**Verified on real data**, on a scratch copy, so the user's project was
+untouched:
+- A copy of GEN's workbench database upgrades to 7, gaining both tables and
+  keeping the Language QA ones.
+- A copy of the whole GEN project, opened through the engine, serves
+  `alignment.get` 1:10 (0.16 s), `getRange` 9–11 (0.24 s) and
+  `verse.runChecks alignment` (4.6 s, cold).
+- The chapter 1 estimate comes back as 15 windows, 30 requests, ~123k input
+  tokens and about $1.97, in 1.6 s.
+- A keyless pass answers `unavailable`.
+
+**Not explained here.** The two 30 s timeouts in the diagnostics
+(`ai.review.status`, `navigation.poll`). The sidecar answers one request at a
+time, so a long request at that moment would delay both. Nothing in this fix
+targets them; if they recur after the fix, that needs its own look.
+
+## 2026-10-08 — Branches merged into `main`; the starvation test timed a cold load, not starvation
+
+**Merge.** `indic-qa-editor` (fast-forward) and then `auto-cross-verse` (merge
+`0a007d1`) are on `main`, together with upstream's #215 docs, which
+`auto-cross-verse` held, and upstream's Greek Room findings doc (`8d3a42f`).
+Every conflict was resolved by keeping both sides. Workbench is v7: v6 is
+`indic-qa-editor`'s block, identical on both branches. Two `indic-qa-editor`
+tests that merged without a textual conflict still asserted v6; `963c114` moves
+them to 7. Not merged, because each is already on `main` or replaced there:
+`fix/editor-toolbar-narrow-window`, `usfm-parser-91`,
+`upstream/fix/lqa-project-path` (#186, fixed by `canonical_path_key`),
+`upstream/chore/contribution-process` (#66), `submission-9b3b`,
+`backup/main-before-squash` and `beta14-stage3-semantic-mapping`.
+
+**The red CI.** `origin/main` CI has failed since `8604ad2` (the ta-irv indic-qa
+layer, run 37613130029) on
+`test_continuous_foreground_polling_does_not_starve_worker`, and nothing
+recorded it. The test fails 3 times out of 3 at `8604ad2` and passes at every
+earlier commit.
+
+**Cause.** The cause is load time, not starvation. A 50-verse Tamil pass, timed
+the way the test runs it:
+
+| | before `8604ad2` | after |
+|---|---|---|
+| first pass in a process | 1.5 s | 3.5 s |
+| later passes | 0.94 s | 0.95 s |
+
+Constant polling makes no difference to either. The extra 2 s is the layer's
+one-time load: `Lexicon.load` of the OV dictionary (0.8 s) and decoding
+`irv_state.json.gz` (0.9 s). Both are cached for the process (`_LEXICON_CACHE`,
+`_STATE_CACHE`), and a reload costs 0.17 s. The test's 3 s deadline was set
+when a cold pass took 1.5 s, so it now times the load.
+
+**Fix: the test only.** A pass over another book (`rut`) first warms the
+process caches. The deadline, unchanged at 3 s, then times only the polled pass.
+No engine code changed. In the app, the first Tamil pass of a session costs
+about 2 s more, on the background worker. Requests don't wait for it.
+
+**Verified.**
+- The test passes 5 times out of 5 alone.
+- `tests/service/test_language_qa.py`: 297 passed.
+- With the deferral cap in `_yield` removed (`and now - self._last_deferral >= .5`),
+  the test fails with "Frequent foreground requests starved Language QA". It
+  still detects real starvation.
+- Full engine suite, `-n auto`: 5,013 passed, 1 skipped, 3 xfailed, exit 0.
+  Before this fix it was 3 failed.
+
+**Not run:** CI itself, since `main` is not pushed yet; the frozen sidecar smoke
+on the merged result. Upstream's `main` has the same red test; this fix has not
+been offered there.
+
+## 2026-10-08 — Docs brought up to date after the merge; matrix row ids de-duplicated
+
+**`QA_TEST_MATRIX.md` had duplicate ids.** Both branches numbered their new rows
+from the same base, so A97–A103 each meant two different rows. The Language QA
+rows (A97–A110) keep their ids. The automatic alignment rows are renumbered as
+follows; the earlier entries in this log that cite the old ids are left as written:
+
+| old | new | row |
+|---|---|---|
+| A97 | A111 | Null alignment decisions (#216) |
+| A98 | A112 | One token one home; N:M groups (#217) |
+| A99 | A113 | Stage 6B/8 read groups and nulls (#218) |
+| A100 | A114 | Automatic window alignment (#219) |
+| A101 | A115 | Possible omission/addition findings (#220) |
+| A102 | A116 | Chapter-wide automatic alignment job (#221) |
+| A103 | A117 | Cross-Verse Alignment page (#222) |
+
+**Other docs updated:**
+- `DEVELOPER_GUIDE.md`: two roadmap rows, for the indic-qa languages and editor
+  and for automatic cross-verse alignment, each with its verification state.
+- `ARCHITECTURE.md`: §4 adds the Language QA path, the automatic alignment
+  overlay, and a paragraph on N:M groups and null decisions as Stage 6B
+  evidence. §5 adds the Language QA, reference and Cross-verse alignment
+  surfaces. §6 adds the cross-verse/automatic alignment and Language QA
+  modules. There are now three vendored trees, not two.
+- `CLAUDE.md`: `bridge_service.py` is 7,142 lines and 59 test files import it;
+  there are 11 `sidecar::tests`; the workbench note no longer names a branch.
+- `LANGUAGE_QA_PACKS.md`: the first pass's one-time checker load.
+
+Every number above was measured or counted on `main` today: `wc -l`, a grep
+for the dispatcher import, `cargo test -- --list`, and the matrix rows'
+own status columns.
+
+## 2026-10-08 — Fix: a shared ending fused two pairs into one 3:2 group (#219)
+
+**What Benz saw.** On IRV Tamil 1 Cor 7:2, γυναῖκα, καὶ and ἄνδρα each showed
+*both* Tamil words, மனைவியையும் and கணவனையும், every card tagged "3:2". The
+verdict ledgers confirm it: the pass wrote one many-to-many group
+`{γυναῖκα, καὶ, ἄνδρα} → {கணவனையும், மனைவியையும்}`. Psalm 1:3 and 1:4 hold the
+same shape (a conjunction and a particle fused with their neighbours).
+
+**Why.** Both passes agreed on four edges: the two real pairs, plus καὶ to each
+Tamil word, because "-உம்" ("and") sits on both. `compile_link_proposal` makes
+one group of every connected set of edges, and καὶ connected the two pairs. So
+the compiler was correct, and the outcome still lost the one fact a reviewer
+wants: which Greek word goes with which Tamil word.
+
+**Fix.** `alignment_agreement.split_bridges`: a word is a bridge when removing
+it leaves two or more parts that each still hold a source and a target word.
+The parts are written on their own. The bridge's own edges become suggestions,
+and "grammatical" is offered as Bridge's reading, with both votes shown as
+false, since no pass gave it. A real 1:2 is not a bridge, since removing the
+source leaves two lone target words. A fully joined 2:2 idiom is not a bridge
+either, since the rest stays connected. The prompt gained a rule against
+linking a repeated ending to each word it sits on. `two-pass-agreement-v2`.
+
+**Not changed.** Existing verdicts and groups already written stay as they are.
+A re-run of the pass supersedes its own 3:2 group with the split result.
+
+**Verified.** 5 new pure tests (bridge, 1:2 kept, 2:2 kept, a target-side
+bridge, the prompt rule) and one protocol test replaying 1 Cor 7:2 through a
+fake transport: two 1:1 groups, three suggestions, and `accounted` once καὶ is
+marked grammatical. Full engine suite with `-n auto`: 5019 passed, 1 skipped,
+3 xfailed. A first run in a fresh worktree failed 12 tests because the gitignored
+Stage 3 database and `src-tauri/resources/` were absent; with both linked in
+from the main checkout, nothing fails.
+
+## 2026-10-08 — Unknown words are drawn under the slider (indic-qa parity, step 1)
+
+Benz compared `main` with the indic-qa web app and found that "not all the
+typos are visible" and that the menu offered no suggestions or "Add to
+dictionary". Three read-only investigations traced both complaints to one
+cause: the web app's main mark, a word not in the dictionary, was off in
+every Bridge pack. With no mark there is no menu. Benz chose to draw unknown
+words under the slider, and to keep the grey accepted-word marks undrawn.
+See DECISIONS 2026-10-08.
+
+**Engine.**
+- `indic_qa_adapter.default_entry`: `lex.unknown` is low/low and follows
+  upstream (on). The four `rule_versions.json` entries were edited by hand
+  (the build script never rewrites an entry); `revision` stays 1, because
+  nothing was decided under the disabled rule.
+- `indic_qa_tamil`:
+  - `IRV_ACCEPT_MIN = 5`: an unknown word the IRV uses that often is house
+    practice;
+  - a compound the IRV uses more than twice is accepted;
+  - `indicqa.lex.unknown` is on in `indic_qa_rules.json`.
+- `language_qa.suggestion()` gains `kind` and `freq`, set from the
+  checker's `cls`/`op` and `freq` in both adapters (a split is kind
+  `split`). `MAX_SUGGESTIONS` goes from 5 to 9, as in the web app's menu.
+- `language_qa_jobs`:
+  - book-stage findings are settled, then kept by `_cap_order` (confidence,
+    then severity, reading order within a rank), with a per-rule "omitted"
+    note;
+  - `_already_flagged` defers only to an inline overlap;
+  - the profile pack message no longer says agreement leads are never
+    drawn.
+
+**Tests.**
+- New:
+  - `test_unknown_default_entry_is_low_confidence_and_follows_upstream`;
+  - `test_unknown_words_are_on_low_confidence_and_never_inline` (4 packs);
+  - `test_unknown_words_are_findings_with_suggestions_and_low_confidence`
+    (मनूष्य → मनुष्य, vowel_length);
+  - `tests/language_packs/test_indic_qa_tamil_unknown.py` (3);
+  - `tests/jobs/test_language_qa_cap_and_dedupe.py` (2);
+  - `tests/jobs/test_language_qa_suggestion_fields.py` (2);
+  - two dispatcher tests in `test_language_qa_indic.py`: drawn by default
+    and hidden by the floor, and silenced by a project word.
+- Changed: the three that pinned "unknown is off". `test_a_disabled_rule_reports_nothing`
+  now disables the rule with a project override.
+- Isolated: `test_language_qa.py` and `test_language_qa_benchmark.py` use
+  made-up Tamil words that are not in the OV, so their autouse fixtures
+  also call the new `tests/support/packs.switch_off_ta_unknown_words`.
+  - Without it, seven tests failed on unexpected `indicqa.lex.unknown`
+    findings.
+  - One of those was the benchmark harness's synthetic typo முழவதும். The
+    new rule does find it, which is correct, but that test is about the
+    harness's counting.
+- `scripts/benchmark_language_qa.py`'s Tamil sanity check pinned "exactly
+  one finding". It now checks that the corruption in verse 3-4 is reported
+  and is gone after the edit.
+
+**Measured** (one book through the adapter):
+
+| Book | Verses | Unknown words | All indic-qa findings |
+|---|---|---|---|
+| Tamil Ruth | 85 | 129 | 159 |
+| Tamil Genesis | 1,533 | 1,152 | 1,447 |
+| Tamil Luke | 1,140 | 1,140 | 1,266 |
+| Malayalam Genesis | 1,533 | 658 | 1,645 |
+| Hindi Genesis | 1,533 | 4 | 24 |
+
+All are under the 3,000 cap.
+
+**Verified.**
+- Human gates (ta, hi, ml): pass. `ml.lex.unknown` has 27 labelled, 27 TP,
+  0 lost.
+- Latency gates: Tamil passed twice, Hindi passed.
+- `tests/language_packs` and the Language QA service tests pass; the full
+  suite result is in the commit message.
+
+**Not verified.** The desktop app: whether a reviewer finds the Tamil
+density (about one unknown word per verse) useful at the default threshold.
+
+## 2026-10-08 — Checker settings, engine side (indic-qa parity, step 2)
+
+These are the web app's Settings dialog values, per collection (DECISIONS
+2026-10-08). The frontend dialog comes in step 4.
+
+**Engine.**
+- New `language_packs/indic_qa_settings.py`:
+  - `validate(raw, pack)` keeps what the pack's checker understands, drops
+    defaults, and lists refusals;
+  - `merged(pack)` is what the checker runs with;
+  - also the label tables for Tamil's 11 sandhi controls and the profile
+    packs' two numbers.
+- `loader`:
+  - `RulePack.checker_settings`;
+  - `apply_overrides` reads `overrides["checker"]`, and a file may hold
+    only that;
+  - `enabled: true` is accepted for an indic-qa rule; inline stays refused.
+- `indic_qa_adapter`:
+  - `_settings` layers the project's sections, the pack's rule switches,
+    then the layer's forced switches;
+  - `with_resident(pack, read)` reads the resident checker under `_LOCK`.
+- `LanguageQaManager.rule_counts()` returns the last pass's findings per
+  rule.
+- New `language_qa_checker_settings.py`:
+  - `describe` builds the dialog's model, with labels from the vendored
+    profiles: `settings_warn`, `RULES`, `style_toggles`;
+  - `save` validates the whole patch first, then writes each book's
+    overrides atomically, keeping other keys, and removes a file that ends
+    up empty.
+- `bridge_service`:
+  - `languageQa.checkerSettings.get` and `.set`, project-guarded like every
+    `languageQa.*`;
+  - `.set` rebinds the open book.
+- `languageQa.occurrences` takes `match: "text"` for the menu's "Search in
+  this book". This is instead of the separate `languageQa.search` the plan
+  named: same shape and less new surface.
+- `tests/support/projects.link_collection`.
+
+**Verified.**
+- `tests/service/test_language_qa_checker_settings.py`, 13 tests:
+  - the Hindi model after a pass, and before it (`ready: false`);
+  - a save changes the findings and writes both books;
+  - a book's abstains are kept;
+  - six refusals, with nothing written;
+  - the project guard;
+  - the Tamil layer's model;
+  - a pack with no checker.
+- `tests/language_packs/test_indic_qa_settings.py`, 13 tests.
+- `test_overrides_may_enable_an_indic_qa_rule_but_never_inline_or_a_json_rule`.
+- `test_search_in_this_book_finds_any_run_of_text_not_only_whole_words`.
+- The full suite result is in the commit message.
+
+**Found while verifying.** `tests/support/language_qa.wait` still had a literal
+8 s budget, the pattern `tests/support/waits.py` exists to replace (#85).
+- Under `pytest -n auto`, a first Tamil pass that also loads the indic-qa
+  layer's OV dictionary and IRV snapshot outran it: one full run failed
+  `test_vallinam_ignored_decision_suppresses_the_finding` with the pass still
+  `running` on chapter 0. That test passes 3/3 on its own.
+- This is the likely cause of the 2026-10-07 "1 failed, not recurred" subset
+  run as well.
+- It now uses `job_timeout(8)`. The 442 tests that use it pass in parallel.
+
+**Not verified.** The dialog, which comes in step 4.
+
+## 2026-10-08 — The word menu, as the indic-qa editor's (indic-qa parity, step 3)
+
+Benz's second complaint was that the context menu did not show the relevant
+suggestions and had no "add to dictionary".
+
+**`FindingContextMenu.svelte`** gains four fields on an action:
+- `header`: a line of text (the word and what was found), not an item.
+- `tag`: a right-aligned, muted label such as "vowel length · 412". It is
+  `aria-hidden`, and the item's `aria-label` is "label, tag", so a screen
+  reader hears it as its own phrase.
+- `target`: the label is set in the target-script font.
+- `scopes`: small buttons on the item's row (the editor's
+  Here/Chapter/Book). Each dispatches `${id}:${scope}`; Right/Left move
+  across them, and Up/Down skip them.
+
+The menu is now up to 34rem wide and scrolls when it is tall.
+
+**The Language QA menu** (`VerseList.buildLangQaActions`), in the editor's
+order:
+- the header;
+- up to nine suggestions (`languageQaSuggestions.orderedSuggestions`):
+  learned first, then the cut to nine, so a learned fix is never the one
+  dropped. Each shows `suggestionTag` (kind · frequency, "split", "learned
+  fix"; nothing for a rule's fix) and has Chapter/Book on its row, which
+  replace "Use in more places ▸";
+- Forget a learned fix;
+- Add, shown only where `projectWords.canAddProjectWord` says it would
+  silence the finding (one word, a typo/name/consistency category, not
+  learned, not a reviewed misspelling). The review panel uses the same
+  function;
+- Ignore, with Book/Project on its row (house style), plus "Ignore this
+  rule ▸";
+- False positive, Flag, Copy, Search in this book (`occurrences` `match:
+  text`), IRV/OV occurrences, Edit;
+- related words, fetched after the menu opens and never on the click path.
+
+**Other menus and the review panel.**
+- A Greek Room mark adds Flag, Copy and Search.
+- The mixed menu is one flat list with a header per finding. As flyouts,
+  its "Use in more places" and "Ignore more widely" dispatched ids that no
+  handler recognised.
+- Right-clicking an unmarked word (`utils/wordAt.wordAtPoint`, from the
+  browser's caret API) adds Add, Copy, Search, occurrences and "Flag “word”
+  for review…" to the verse menu.
+- The review panel shows the same suggestions, learned first with their
+  tags, plus Copy and Search, and Add through the shared rule.
+
+**A test fix found on the way.** The click-budget test cleared
+`document.body.innerHTML` between its actions without destroying the
+component, so each round left a live VerseList subscribed to the stores.
+Each later click re-rendered every earlier copy, and the second action was
+always the slow one.
+- Measured inside full parallel runs, the old code took 168 ms on "Mark as
+  false positive" as well.
+- The test now calls `cleanup()` and keeps the fastest of three clicks per
+  action. Every click must still change the screen with the engine silent,
+  and the 100 ms budget is unchanged.
+- Measured alone, the new menu costs about 5–10 ms more per click than the
+  old one (Ignore 56–77 ms against 47–59 ms).
+- Three full runs passed after the fix.
+
+**Verified.**
+- `npm run check`: 0 errors, 0 warnings.
+- `npm run test`: 624 passed.
+  - 17 new tests: menu header, tag and scopes; `canAddProjectWord` (7
+    cases); text search; `wordAt` (3); nine suggestions with kind and
+    frequency; a scope from the mixed menu; and word actions on an unmarked
+    word and on a typo mark.
+  - 9 expectations changed to the new menu.
+- `npm run build`: ok.
+
+**Not verified.** The desktop app: the menu's width and scrolling at
+1366×768, and whether WebView2 implements `caretPositionFromPoint` or
+`caretRangeFromPoint`. If it implements neither, the unmarked-word actions
+simply do not appear.
+
+## 2026-10-08 — Checker settings dialog (indic-qa parity, step 4)
+
+Benz asked for the indic-qa web app's settings "at the relevant size and
+design", and collapsible. Step 2 gave the engine side
+(`languageQa.checkerSettings.get/set`); this is the dialog.
+
+**`Fieldset.svelte`** is the web app's `foldable`: the legend is a button
+(`aria-expanded`, `aria-controls`) with ▾/▸ before it; a closed section shows
+only its legend over a top rule. The caller holds the open state.
+
+**`CheckerSettingsDialog.svelte`**, opened from a new row in Settings ›
+Language QA ("N of M rules on · checks … · W/T warnings", then "Checker
+settings…"; no row for a language without an indic-qa checker):
+- the web app's size: `min(92vw, 40rem)`, anchored 1.5rem from the top,
+  head / scrolling body / foot, at z-index 60 above the 640×480 modal. At
+  1366×768 the body has about 620 px before it scrolls;
+- sections in the web app's order: contexts, Sandhi leads (Tamil layer only),
+  the pack's own legend (rules with their count in this book and the rule id
+  as tooltip, spelling-style selects, the two numbers), warnings,
+  suggestions and compounds, project words;
+- every section starts closed and stays as the reviewer left it
+  (`editorPrefs.checkerSettingsOpen`, localStorage
+  `bridge.checkerSettings.open.v1`);
+- Save sends only the sections that changed (and only the changed keys of
+  `warnings`, `style`, `sandhi`), then `nudgeLanguageQa()`. A refusal from
+  the engine is shown in the foot and the dialog stays open. Cancel, Esc and
+  ✕ send nothing; Tab is trapped inside; focus returns on close;
+- before a pass has loaded the checker, `ready: false` shows "Still being
+  prepared" (the style choices are the checker's own clusters).
+
+**Two departures from the web app, on purpose.**
+- `sandhi.suffix_pct` is shown as the share the engine stores (0.5–1), as
+  its label says, not as a percent: one number, one unit.
+- "Project words" shows the count and points to Language QA › Dictionary in
+  place of the web app's Rebuild button. Bridge never writes the dictionary
+  files that Rebuild re-reads, and a save already runs a pass.
+
+**Verified.** `npm run check` 0/0; `npm run test` 639 passed (15 new:
+11 dialog, 2 Fieldset, 2 Settings); `npm run build` ok. Desktop NOT RUN.
+
+## 2026-10-08 — Handoff: indic-qa parity round 2 (steps 1–4)
+
+The four commits on `indic-qa-editor`, on top of `0e8325e`:
+- `93b70ab`: unknown words are findings.
+- `36a7029`: per-collection checker settings.
+- `06c91d9`: the word menu.
+- `ba557b2`: the Checker settings dialog.
+
+**Gates run after the last commit.**
+- `pytest -n auto`: 5055 passed, 1 skipped, 3 xfailed (16m47s).
+- The three human gates passed: Tamil, `hi --language hin`, and
+  `ml --language mal`.
+- Frontend: `npm run check` 0/0, `npm run test` 639 passed, `npm run build`
+  ok.
+- Rust: `cargo check` ok, `cargo test` 11 passed.
+- Frozen pair: rebuilt with `build-sidecars.ps1`; `smoke_sidecars.py`
+  passed. The Hindi pack took 2.02 s and the ta-irv layer 3.42 s.
+- Latency gate (`--gate --cores 2`): passed for Tamil source, Tamil frozen
+  and Hindi frozen.
+  - Hindi source failed once: `verse.decide (languageQa)` p95 was 1035 ms
+    against a 50 ms budget.
+  - It passed on two reruns, with p95 25 ms and 47 ms.
+  - Only 10 samples are timed, so p95 is the maximum and one stall fails it.
+  - The 47 ms rerun is close to the budget. Step 1 added unknown-word
+    findings, so a decided verse can carry more findings than before.
+  - Reported, not tuned. Watch this gate if it fails again.
+
+**Not done.**
+- The desktop check at 1366×768 has not been run. What it should cover is
+  listed in A118–A121.
+- `rule_precision.json` has no entries for the `lex.unknown` rules yet, so
+  the slider treats them as unmeasured and always draws them. Regenerating it
+  with `--write-precision` would be its own commit.
+- Open for the maintainer:
+  - Profile packs check verse text only. Checking headings and footnotes
+    needs their `irv_state.json.gz` rebuilt.
+  - Tamil's `IRV_ACCEPT_MIN = 5` is a Bridge choice.
+  - A lazy sibling materialized after a save has no copy of the checker
+    settings. This is the same gap as project-scope house style.
+
+## 2026-10-08 — Timing instrumentation for the checks; first measurements (open, whole book, edit)
+
+Benz asked which checks the app runs, how often the same work is repeated,
+and for numbers before any of it is changed. This entry adds the
+instrumentation (measurement only; no check behaves differently) and records
+the first measurements on two copies of the IRV Tamil import: PHP (4 chapters,
+104 verses) and GEN (50 chapters, 1,533 verses), real Wildebeest 0.9.2, Python
+3.12, source engine, in-process RPCs under a scratch `LOCALAPPDATA`.
+
+**What was added.**
+- `tc_ai_bridge/check_timing.py`: `Timings`, a thread-safe accumulator of
+  (name -> ms, calls); `activate()`/`current()` so code deep in a check path
+  records against the job or pass that owns it without a new parameter on
+  every signature; `trace()` writes one `[trace] timing ...` line on stderr,
+  the channel `_trace` already uses.
+- `check_jobs.py`: every job owns a `Timings`; `stage:<label>` and `preflight`
+  are timed; the snapshot carries `timings` and `elapsedSeconds`; one trace
+  line per finished job.
+- `bridge_service.py`: `_run_verse_checks_for_project` times each engine
+  (`greekroom.wildebeest`, `usfm.book`, `names.book`, `consistency.book`,
+  `local.*`, `decisions.reapply`, `verse.read_text`); the preflight phases;
+  `verse.runChecks` traces a request-local `Timings`; `handle_request` traces
+  any RPC that held the dispatcher for 100 ms or more.
+- `local_checks.run_local_qa`: one step per sub-check.
+- `language_qa_jobs._scan`: one `Timings` per pass, reported as `timings` on
+  the summary (so `languageQa.status` carries it); phases `lqa.*`; the common
+  rules in `language_qa.scan_text` one step each (`rule.*`); the indic-qa
+  layer's build/load/index/check phases in `indic_qa_adapter.profile_findings`.
+  `lqa.book.layer_dropped_as_duplicate` is count-only: `calls` = layer findings
+  `_already_flagged` removed.
+- `src/lib/types/finding.ts`: `CheckJobSnapshot.timings?`/`elapsedSeconds?`.
+- Tests: `tests/jobs/test_check_timing.py` (the accumulator) and
+  `tests/service/test_check_timing_protocol.py` (the snapshot and the pass).
+
+**Measurements.** Whole-book job = `checks.start scope=book` with
+`["local","greekroom","languageQa"]`, what "Run whole book" sends.
+
+| | PHP 104 v | GEN 1,533 v |
+|---|---|---|
+| project.open RPC | 0.34–0.39 s | 1.4 s |
+| background Language QA pass after open (cold process) | 7.7 s | 8.0 s |
+| whole-book job #1 | 7.4 s | 295 s |
+| whole-book job #2, text unchanged | 7.4 s | 262 s |
+| of which Wildebeest, per verse, no cache | 4.3 s (41 ms/v) | 171–177 s (112 ms/v) |
+| of which `decisions.reapply`, 2 calls per verse | 0.7 s | 25–30 s |
+| of which names preflight (first time / after an edit) | 11.5 s | 18.6 s |
+| of which Language QA (verses cached) | 0.1 s | 1.0 s |
+| verse.edit RPC | 0.55 s | 1.0 s |
+| verse.runChecks after the edit | 0.10–0.14 s | 0.38 s |
+| background pass after one edit | 1.6 s | 5.4–5.7 s |
+| chapter job (a chapter visit) | 1.9–2.3 s | 3.3 s |
+| verse.runChecks ["greekroom"] on selection | 35–55 ms | 32–35 ms |
+
+Where the Language QA pass goes, cold (GEN): checker load 1.4 s, pack
+resolve 0.36 s (the pack's 523 rule examples are scanned at load, once per
+process), build_index 0.23 s, check_chapter 0.69 s/50, build_book 0.29 s,
+learned 0.18 s. Warm, with every verse cached: ~1.0 s on GEN, of which
+build_book 0.27, check_chapter 0.21, learned 0.17, index_book 0.07, names
+0.05. After an edit build_index runs again (0.23–0.30 s).
+
+**The repeats, with numbers.**
+1. `checks.status` blocks the dispatcher for as long as it takes to deep-copy
+   every verse result so far. GEN run #1, polled every 100 ms: 626 polls,
+   183 s blocked in total, 4.6 s for one poll near the end; the polls also
+   slow the job (Wildebeest is 112 ms/verse inside the job on GEN, 33 ms when
+   called alone). The app polls every 500 ms (`App.svelte`). PHP, polled every
+   500 ms: 15 polls, max 184 ms.
+2. Wildebeest is 58–68 % of a whole-book job and runs once per verse with no
+   cache keyed on the text: run #2 cost the same as run #1.
+3. `qa_decisions_for_verse` is read twice per verse (once per stage): 10 % of
+   the GEN job.
+4. The whole-book Language QA pass runs on every chapter job (1.0 s on GEN),
+   and the reopen sequence (project.open, then the first chapter job at once)
+   ran three passes.
+5. Names: cached on a sha256 of the whole book's text, so one verse edit means
+   a full re-run at the next open (11.5 s PHP, 18.6 s GEN). The USFM
+   subprocess cache behaved: 0 ms after the first run.
+6. Local QA: cheap per verse (editorial 0.2 ms, integrity 0.2 ms, usfm 1–2 ms)
+   but `tc_checks` 6–10 s and `alignment_gap` 9–11 s on GEN, every run.
+
+**Overlap on real text.** On unedited IRV text the overlapping checks
+rarely fire together: GEN has 6 `TA_REPEAT_WORD`, 0 double spaces, 0
+zero-width, 0 NFC findings; name spelling is flagged on 258 verses, 2 of them
+by both Greek Room names and Language QA. The indic-qa layer raised 103
+findings on GEN that `_already_flagged` dropped as pack duplicates. On the
+edited verse (one U+200B inserted into the last word, one double space), the
+one zero-width character produced `TA_HIDDEN_CHAR`, `wildebeest.zero_width`,
+`unicode.invisible` and, on GEN, `indicqa.shape.malformed` +
+`tamil.dependent-sign` as well: 3 engines, up to 5 findings, one problem. The
+double space produced `spacing.extra` only (`TA_DOUBLE_SPACE` tests the
+stripped text, where the editor's space handling had already collapsed it).
+
+**Verified.** `pytest` on tests/service/test_language_qa.py,
+test_bridge_service.py, test_stdio_e2e.py and tests/jobs: 421 passed; the two
+new files: 7 passed with the cross-import guard; `npm run check` 0/0. Desktop
+not run. The scripts that produced the numbers (`measure.py`, `show.py`) live
+in the session scratchpad, not the repo; the table above is the record.
+
+**Not done, by design.** No cache, no dedupe, no change to which engine owns
+which check: Benz will decide ownership from these numbers. The fixes are
+listed as candidates in the chat handoff, in order of measured cost: the
+status snapshot, Wildebeest text-hash cache, one decisions read per verse,
+the chapter-job pass, the names cache key.
+
+## 2026-10-08 — checks.status returns only new verses (#229)
+
+**Problem.** Every `checks.status` poll deep-copied every verse result so far
+under the job's lock, and the transport then serialised all of it. On a
+whole book the polls grew to 15.7 MB each, stalled the stdio dispatcher, and
+slowed the job itself, because the job thread writes its results under the
+same lock.
+
+**Change.**
+- `_CheckJob.result_order` records the order verses finish in.
+- `snapshot(since)` copies only the verses after `since` and reports
+  `resultsSince`/`resultsCursor`.
+- Without `since`, a poll returns every verse as before. Tests, retry and the
+  `cancelChecks` reply rely on that.
+- `checks.status` refuses a `since` that is not a non-negative integer, rather
+  than reading it as "everything".
+- `App.svelte` `monitorJob` passes the cursor back and keeps a per-job tally
+  of verse statuses. The end-of-job bookkeeping (failed/cancelled marks,
+  `loadedChapters`) reads the tally, not `snapshot.results`.
+- `stopActiveJob` waits without copying results, then reads them all once.
+- The collection runner polls with a cursor past every verse and reads the
+  full set once, after the job ends.
+- `check_jobs` times the completion hook (`on_complete`).
+
+**Measured.** GEN copy (1,533 verses), one whole-book job,
+`local+greekroom+languageQa`, polled every 750 ms. That is App.svelte's
+real interval; the previous entry's "every 500 ms" was wrong. Each mode ran
+in its own process with nothing else running:
+
+| | full snapshot (before) | cursor (after) |
+|---|---|---|
+| job wall time | 136.5 s | 104.4 s |
+| dispatcher blocked by the 130 polls | 37.9 s | 6.4 s |
+| mean poll | 292 ms | 49 ms |
+| JSON produced by polls | 870 MB | 17 MB |
+| Wildebeest per verse inside the job | 45.9 ms | 32.8 ms |
+
+An earlier pair of runs gave 188 s vs 104 s, but `npm run test` was running
+during the "full" run, so it is not used.
+
+**Found, not fixed (#235).** The last poll of every whole-book job took
+4.5-5.0 s in both modes. That poll was at stage "Complete" and carried
+140 KB. `_fire_on_complete` writes the rollup and every chapter's findings
+snapshot while holding the job lock, by design: a poll must never see
+"succeeded" first. The dispatcher waits on that lock.
+
+**Verified.**
+- Engine: pytest over tests/jobs, test_bridge_service, test_language_qa,
+  test_stdio_e2e, test_qa_report and the timing tests: 445 passed. New:
+  `tests/jobs/test_check_job_cursor.py`, where incremental polls during a
+  held job add up to exactly the full result set in order, and
+  `tests/service/test_check_status_cursor_protocol.py`, covering the
+  protocol and refusals.
+- Frontend: `npm run check` 0/0, `npm run test` 639 passed, `npm run build`
+  ok.
+- The `App.svelte` monitor change has no unit test; App.svelte has none.
+- Desktop not run.
+
+## 2026-10-08 — Wildebeest cache (#230) and one decisions read per verse (#231)
+
+**#230.** `wb_ana.process(text, lang)` is pure for the package the process
+loaded. The adapter now keeps the three parts of the report it reads
+(`notable-token`, `non-canonical`, `block.ZERO_WIDTH`):
+- keyed by language and sha1 of the text;
+- bounded at 50,000 entries, oldest out;
+- for the life of the sidecar.
+
+Findings are still built on every call. A failed analysis is not cached.
+
+The cache is not persisted: `check_cache` rows go through the workbench
+writer, which appends to `change_log`, and a row per verse would flood the
+journal. For the same reason the issue's second half was not done. The
+alignment modals still ask for `greekroom`, which is now a cache hit.
+Dropping it would also have replaced the verse's findings list without its
+Wildebeest findings.
+
+**#231.** `run_stage` keeps a memo for the current verse only (`reads`).
+The verse's two QaFinding stages share one text read and one decisions read.
+The memo is cleared at the next verse, so a decision recorded mid-job on a
+later verse is still read when the job reaches it.
+
+**Measured.** GEN copy. Two whole-book jobs back to back in one process,
+`local+greekroom+languageQa`, cursor polls every 750 ms, #229-#231 all in:
+
+| | run 1 (cold) | run 2 (text unchanged) |
+|---|---|---|
+| wall | 95.8 s | 34.2 s |
+| Wildebeest | 49.5 s | 0.08 s |
+| decisions (1,533 reads) | 4.6 s | 5.3 s |
+| local stage | 23.6 s | 26.5 s |
+| preflight (names first time / cached) | 18.1 s | 1.0 s |
+| completion hook (#235) | 4.3 s | 6.4 s |
+
+Verse selection (`verse.runChecks ["greekroom"]`): 3.4-4.8 ms, was 33-55 ms.
+
+Against the first measurement of the day (295 s and 262 s, polled every
+100 ms) and the clean 750 ms baseline (136.5 s), a whole-book re-run on GEN
+is now 34 s.
+
+**A guess corrected.** I took the decisions cost to be a new workbench
+SQLite connection per read, at about 8 ms. Counting connections
+(`workbench.connect`, new) shows 2 ms each, 65 per 25 verses. The
+connection is most of a decisions read (2.9 ms) but only about 4 s of a GEN
+run, so no issue was filed for it.
+
+What is left in a re-run is the local stage, at about 17 ms per verse:
+`alignment_gap`, `alignment_load` and the tC check reads. Then come the
+completion hook (#235) and the Language QA pass (#232).
+
+**Tests.**
+- New: `greek_room_engine/tests/test_wildebeest_cache.py` (a stand-in
+  `wb_ana`, so no wildebeest-nlp install is needed) and
+  `tests/service/test_check_job_verse_reads.py`. The second checks that a
+  decision reaches both stages and that there is one read per verse.
+- `test_wildebeest_real`'s failure test now starts from an empty cache.
+- Four stubs of `_run_verse_checks_for_project` take the new keyword. The
+  first full run caught two of them failing. `failing_verse_checks` had kept
+  passing only because the TypeError also failed the job.
+- Engine `pytest -m "not slow"` on the committed tree: 4863 passed,
+  3 xfailed.
+
+## 2026-10-08 — A chapter job reuses a current Language QA pass (#232)
+
+**Problem.** Every chapter job ran `language_qa.run_pass()` over the whole
+book, even with nothing changed: about 1 s on GEN. And whenever a job's pass
+published, the background worker took the generation change for new input,
+looped, and ran another full pass (4.6 s on GEN). So reopen or an edit
+followed by a chapter job cost two passes.
+
+**Change** (`language_qa_jobs.py` only).
+- `_current(context, generation)` returns the published summary when it is
+  still what a pass would produce. That means:
+  - its state is "completed" at the caller's generation;
+  - the chapter files' signature equals the one that pass read.
+- Every input change already goes through `_schedule`, which bumps the
+  generation and resets the summary to "queued". That covers an edit, a
+  decision, the termbase, house style, learned fixes and the pack or checker
+  settings (through `bind`). A file changed outside Bridge shows in the
+  signature.
+- `run_pass` asks `_current` before scanning, and again (`_scan(reuse=...)`)
+  once it holds the pass lock. The second check catches a worker pass that
+  published while the job waited for the lock.
+- The worker exits, instead of starting another pass, when it finds a
+  published "completed" summary at the top of its loop.
+
+**Measured.** GEN copy, same script before (the change stashed) and after.
+A visit is a chapter job with `local+greekroom+languageQa`.
+
+| | before | after |
+|---|---|---|
+| chapter visit, Language QA part | 0.98-1.08 s, 1 pass | 1.3 ms, 0 passes |
+| reopen + immediate chapter job | 2 passes (1.07 s + 4.59 s) | 1 pass (1.13 s) |
+| edit 4:1 + chapter 4 job | 2 passes (1.02 s + 4.60 s) | 1 pass (1.06 s) |
+
+**A test changed, and why.**
+- `test_job_path_and_live_path_produce_identical_findings` asserted
+  `status()["scannedVerses"] == 0` after the job. Its comment says the job
+  "rescanned nothing".
+- Since this change the job may reuse the live pass outright. `status()`
+  then reports what the live pass scanned, which was 1 under `-n auto` (the
+  edited verse) and 0 when run alone. So the test failed 3/3 in parallel and
+  passed alone.
+- It now counts `scan_verse` calls during the job and asserts none. That
+  holds before and after #232, in either ordering.
+
+**Verified.**
+- New: `tests/service/test_language_qa_pass_reuse.py`. It covers no pass when
+  nothing changed, one pass after an edit, a pass after a file changed outside
+  Bridge, and one pass at reopen.
+- test_language_qa.py + the new file, `-n auto`, three runs: 300 passed each.
+  The fixed test also passes serially.
+- Full engine suite before the test fix: 4865 passed, 1 failed (this test).
+- Desktop not run.
+
+## 2026-10-08 — One owner for zero-width and double spaces (#234); no lock during the completion hook (#235); names cache (#233)
+
+**#234, ownership decided by Benz.**
+- `local_checks.target_editorial_checks` no longer emits
+  `{TA|LANG}_DOUBLE_SPACE` or `{TA|LANG}_HIDDEN_CHAR`.
+- Language QA owns both, as `spacing.extra` and `unicode.invisible`.
+  Measured on the edited GEN verse: one U+200B used to produce three
+  findings, from local, Wildebeest and Language QA.
+- Wildebeest's three checks stay. Repeated word stays local.
+- `_categorize_qaissue` and the triage family table still know the two codes,
+  because snapshots and reports written before this change carry them.
+- A decision recorded on one of these findings now matches nothing.
+- Test: `tests/jobs/test_local_checks_ownership.py`.
+
+**#235.**
+- `_fire_on_complete` used to write the rollup and every chapter's findings
+  snapshot inside `job.lock`. On GEN the next status poll, and the dispatcher
+  behind it, waited 4.5-5 s.
+- `_finish` now sets a non-terminal `finalizing` state ("Saving results"),
+  runs the hook without the lock, then sets the outcome.
+  - The guarantee holds: no poll sees "succeeded" before the writes.
+  - `cancel` during finalizing changes nothing.
+  - The hook reads `job.outcome`.
+- Frontend: `CheckJobState` and the progress store include `finalizing`, and
+  Cancel is disabled during it.
+- GEN whole book, cursor polls every 750 ms:
+  - slowest poll 5.0 s -> 0.53 s; that poll now falls in "Preparing checks",
+    and the final poll no longer waits;
+  - dispatcher blocked by polls 6.4 s -> 1.4 s;
+  - job wall time 95.5 s.
+- Test: `tests/jobs/test_check_job_finalizing.py`.
+
+**#233.** Measured first, with `names.*` phases. The dispatcher records them
+from the adapter's `last_phases`, so `greek_room_engine` still imports nothing
+from `tc_ai_bridge`. GEN:
+
+| phase | first open | after an edit, before | after an edit, with the cache |
+|---|---|---|---|
+| load uroman + SED (once per process) | 8.0-8.4 s | 0 | 0 |
+| romanize 7,279 tokens | 3.9-4.2 s | 4.2 s | 0.008 s |
+| SED over 38,577 candidate pairs | 8.0-8.6 s | 8.6 s | 0.05 s |
+| candidate pairs + text map | ~1.0 s | ~1.1 s | ~1.0 s |
+| total | 21.6 s | 14.1 s | 1.37 s |
+
+- Romanizations are cached per (language, token), and SED results per
+  (language, romanized pair).
+- The caches last for the sidecar's life and are bounded at 300k and 400k
+  entries, oldest dropped first.
+- They are not persisted, for the reason given under #230.
+- The adapter's docstring says the uroman load takes about 2 s. Measured here,
+  the load is 8.0-8.4 s, uroman and SED together. That is still once per
+  process.
+- Moving the load off the first open would mean preloading at startup. That
+  is a product question and is left open.
+- Test: `greek_room_engine/tests/test_names_cache.py`, against the real
+  dependencies. It checks that unchanged words are not romanized or compared
+  again, and that a new word is romanized once.
+
+**Suite.**
+- One full run on the combined #234 + #235 tree: 4870 passed.
+- With #233, one run had 1 failure that I did not capture by name. The
+  rerun, with failures printed, had 4872 passed and 3 xfailed. Recorded as
+  unexplained, not cleared.
+
+**Frozen smoke: a regression in the harness, exposed by the traces.**
+- After #233 the rebuilt pair failed `smoke_sidecars.py` 3/3 with
+  `Request open-tamil timed out`. That is the step right after the Hindi
+  pack.
+- `scripts/smoke_sidecars.py` starts the engine with `stderr=PIPE`. It reads
+  stdout on a thread but never reads stderr.
+- Today's `[trace] timing ...` lines filled that pipe, which holds a few KB
+  on Windows, and the engine blocked on its next stderr write in the middle
+  of a request.
+- From source, in-process, the same open took 0.8 s.
+- `sidecar.rs` reads stderr continuously and records every line as a
+  diagnostics entry, so the desktop app does not block.
+- Fixes:
+  - the harness now drains stderr into a 200-line tail, and a timeout prints
+    the last 5 lines;
+  - `verse.runChecks` traces only when it took 100 ms or more, as RPCs
+    already did;
+  - trace summaries are capped at the 12 slowest steps. The full set stays
+    on the job's or pass's `timings`.
+- With the harness fix the smoke test passed: Hindi 2.45 s, ta-irv layer
+  3.55 s.
+- Final gate on the final tree, after the trace reduction:
+  - `build-sidecars.ps1` rebuilt both exes;
+  - `smoke_sidecars.py` passed: Hindi 2.08 s, ta-irv layer 3.20 s;
+  - engine `pytest -m "not slow"`: 4872 passed, 3 xfailed.
+- Frontend for #235: `npm run check` 0/0, `npm run test` 639 passed,
+  `npm run build` ok.
+- Rust is untouched; neither `cargo check` nor `cargo test` was run.
+- The desktop app was not run.
+
+## 2026-10-08 — Verse screen UI fixes (#236) and the "misspelling not underlined" report (#237)
+
+Fork issues #236 and #237, from Benz's review of the verse screen. Frontend only;
+no engine, schema or protocol change.
+
+**#236, the seven UI items.**
+- Review panel folds to a 32px strip (▶ in its header, ◀ on the strip). The
+  contents stay mounted (`.panel-body.folded` is `display: none`), so a running
+  check, the open tab and a draft survive. Persisted as
+  `bridge.editor.reviewPanelCollapsed.v1` in `editorPrefs.ts`.
+- Reference panel has a drag handle on its left edge (`role="separator"`):
+  drag, ←/→ (Shift for 3×), Home/End, double-click to reset. 200–640px, capped
+  at 45vw in CSS, saved when the drag ends as
+  `bridge.editor.referencePanelWidth.v1`. Svelte flags a focusable separator
+  as non-interactive, so the handle carries a `svelte-ignore`; without it
+  svelte-check reports two a11y warnings.
+- Editor and reference start at the same height: the toolbar now spans both
+  (`.work-col` > toolbar + `.work-row`), and the review panel keeps the full
+  height. Side effect: `--verse-scale` now reaches the reference panel, so
+  A−/A+ resize its text too (it already used the variable but sat outside the
+  element that set it).
+- The context notice ("Finish the current check or edit…", copy, ignore…)
+  clears itself after 5 s, or 10 s for an error; hovering holds it, ✕ clears
+  it. One reactive timer on `contextNotice` covers all ~15 places that set it.
+  The house-style notice is unchanged: it carries an Undo and already has ✕.
+- The Language QA launcher, on the editor screen only, hides 6 s after a pass
+  completes or at once from its ✕, and comes back for the next pass. The
+  status bar gains a "Language QA" button that opens and closes the panel
+  (`languageQaPanelUi.ts`, a counter store). On the dashboard, report and
+  alignment-review screens there is no status bar, so there the launcher never
+  hides (`launcherHides={screen === "editor"}`).
+- Right-click on an underlined word no longer scrolls the verse to the top.
+  Cause: the reactive `scrollSelectedToTop` fires when `$selectedVerse`
+  changes to a key other than `lastScrolledKey`; a left click went through
+  `selectFromList()`, which sets that key first, but the three `<mark>`
+  right-click handlers, the keyboard paths and Shift/Ctrl-click called
+  `onSelect` directly. All of them now use `selectFromList`. The new test
+  fails on the old call (checked by putting it back).
+- No focus box on right-click. The box was `mark.active-finding`: where
+  Shift+F10 would open the menu. The mouse path never set the active index,
+  so it fell back to 0 and the ring sat on the verse's first underline,
+  whichever word was clicked. The ring is now drawn only under
+  `.verse:focus-visible`; the panel's F8 ring is a separate `panel-ring`
+  class and always shows. Keyboard behaviour is unchanged (row is still the
+  single tab stop).
+- "Alignment: N complete · N partial" and "N/M chapters approved" moved from
+  the toolbar to the status bar.
+
+**#237, the misspelling that was not underlined.**
+- Benz's typo tests were in GEN, not LEV: the LEV import has no edits. GEN's
+  learned fixes record each test edit (old → typed). Replayed every one on a
+  scratch copy of GEN with the real engine and the real indic-qa Tamil layer
+  (`LOCALAPPDATA` pointed at the scratch folder; real slider settings
+  precision 0 / floor "low"):
+
+  | Verse | Typed | Drawn on the word |
+  |---|---|---|
+  | 1:9 | தண்ணீ | `indicqa.lex.unknown` |
+  | 1:12 | தங்கள்தங்க | `indicqa.lex.compound` |
+  | 1:12 | வகைகயின்படியே | `indicqa.lex.unknown` |
+  | 1:13 | முடிநதது (added) | `indicqa.lex.near-miss` |
+  | 1:9 | சேர்நது (added) | `indicqa.lex.near-miss` |
+  | 1:13 | முடிந்து | nothing |
+
+- முடிந்து is a real word: OV 4× (`words.tsv`, DEU 9:11, JOB). A dictionary
+  check accepts it correctly. The slip is grammatical (a participle ending
+  the sentence where the finite verb முடிந்தது belongs), which ta-irv
+  declares out of scope. In GEN's correct text no sentence ends in -ந்து
+  (0 of 1,533 verses), so a narrow rule looks feasible; filed as #238
+  rather than added here, because it widens the pack's declared coverage.
+- Each pass after an edit took about 5 s on GEN (the indic-qa layer runs over
+  the whole book), and the edited verse has no marks until it completes.
+- Fixed on the way: the panel's Verse scope keyed its list on
+  `generation|chapter|verse`. A pass publishes under the generation it was
+  scheduled with, and `_by_verse` holds the previous pass until then, so the
+  list fetched while `queued` showed pre-edit findings and was never read
+  again. The key now includes the state. The new test fails without it.
+
+**Verified.**
+- `npm run check` 0 errors / 0 warnings; `npm run test` 648 passed (50 files);
+  `npm run build` ok.
+- The replay above ran against the real engine from source.
+- Not run: the desktop app. Nothing here was seen at 1366×768; jsdom does not
+  lay out, so the folded strip, the drag handle and the shared top edge are
+  checked by structure only. Engine, Rust and the frozen pair are untouched,
+  so pytest, cargo and the frozen smoke were not run.
+
+
+## 2026-10-09 — Compact review header and one-line tabs (#236); the general corpus for every indic-qa pack (#246); the Tamil sentence-final participle rule (#238, stage 1)
+
+Benz's follow-up to the #236/#237 round: the review panel's header wrapped,
+its tab labels broke across lines, and "no misspelling will be left" was the
+ask for item 5. Decisions taken with Benz (AskUserQuestion, 2026-10-08):
+a general-corpus lexicon per language **and** context rules for real-word
+slips; GPL-3-compatible sources only; 5 MB per language; the tN/tW tab reads
+"Core check".
+
+**Header and tabs (87b01f8).** Measured in Segoe UI, the UI font on Windows:
+the four labels in bold at 12px (the stylesheet's minimum) are 78 + 69 + 80
++ 61 = 288px, a count pill 22px, the panel's content width 367px. So the
+labels fit on one line only with the counts out of the flow; they sit in the
+tab's corner now. "tN/tW/Alignment" (106px) did not fit and is "Core check"
+with the tooltip "Translation Notes, Words alignment". The header is two
+rows (reference + a 22px ghost fold button; open count + the two actions),
+about 74px against about 110px wrapped. Not seen in the desktop app.
+
+**The general corpus: what it is.** DECISIONS 2026-10-09 and the
+LANGUAGE_QA_PACKS.md subsection "General corpus" have the design. In short:
+`general_corpus.tsv.gz` + manifest per pack, Bridge-owned, outside
+`dictionary/` (no vendored file, no sha256 pin moves), consulted after the
+checker on the two exits it leaves unexplained; a new listed-only rule
+`<code>.lex.irv-consistent-slip`.
+
+**Sources and licences, checked, not assumed.**
+- The "IIT corpus" Benz had in mind is AI4Bharat's (IIT Madras). Its v1,
+  IndicNLP corpus, ships ready-made word-frequency files but is
+  **CC BY-NC-SA 4.0**: non-commercial, not shippable under Bridge's GPL-3.
+  Excluded.
+- IndicCorp v2 (ACL 2023): the AI4Bharat README says CC0; the aikosh listing
+  says CC BY-SA 4.0; either is compatible. Raw text only, on Hugging Face:
+  ta 11.8 GB, ml 26.3 GB, hi 3 × 26.7 GB, pa 9.5 GB, or 2.2 GB. The server
+  answers Range requests (206, `accept-ranges: bytes`) through its CDN
+  redirect, so the build reads eight evenly spaced 187.5 MB windows per
+  language and never the whole file.
+- KaniyamFoundation `all_tamil_words`: public domain; `word,count` per
+  source site; one member (`azhiyasudargal`) is letter pairs from a broken
+  tokenisation and is skipped by a median-length check.
+- Shreeshrii `hindi-hunspell` `hi_IN.txt`: GPL-3 (its LICENSES-en.txt);
+  476,642 lines, no affix flags.
+
+**A urllib finding.** The first Hindi build sat for minutes: every fresh
+urllib connection to huggingface.co took 168 s, while curl connected at
+once. Resolving to IPv4 only brought it to 0.4 s (an IPv6 attempt timing out
+before the fallback). The script forces IPv4 unless `--allow-ipv6`.
+
+**Builds.**
+
+| Pack | IndicCorp sample | distinct forms | list source | rows shipped | gz bytes | build |
+|---|---|---|---|---|---|---|
+| hi | 111.9M tokens | 807,939 | hunspell 392,324 | 300,000 (cap; 198,900 list-only) | 1,374,457 | 251 s |
+| ml | 53.0M tokens | 3,424,346 | — | 278,908 | 1,876,849 | 264 s |
+| ta | 59.2M tokens | 2,613,708 | Kaniyam 68,904 (floor 20) | 270,774 | 1,665,874 | 583 s |
+| pa | 113.7M tokens | 979,408 | — | 113,646 | 642,767 | 273 s |
+| or | 79.2M tokens | 1,171,247 | — | 158,865 | 967,004 | 486 s |
+
+Malayalam's 3.4M distinct forms in 53M tokens says how inflected the
+language is in web text; only 278,908 reached the floor of 10.
+
+**Hindi, GEN, before → after** (`measure_indic_qa.py`; timings taken while
+other builds ran, so the seconds are noisy):
+- `hi.lex.unknown` 4 → 3; one word accepted from the corpus; one
+  `hi.lex.irv-consistent-slip`: **गमोरा** (Gomorrah). A proper name: the
+  false-positive class this rule will mostly see. It stays listed-only at
+  low severity for Benz's spot check.
+- Human gate (120 label rows): pass, nothing lost. Parity with indic-qa's own
+  run holds under `--without-corpus` (0 missing, 0 extra); with the corpus
+  on, the one accepted word is the one "missing", as intended.
+- Peak working set 192.6 → 232.0 MB; the corpus load is 764 ms on the first
+  pass (the loader was then changed to one decompress and split: 0.48 s
+  against 0.67 s on the same file).
+- मनूष्य, the test fixture's vowel-length slip, is not in the corpus; मनुष्य
+  is (4,536×). The checker's answer is unchanged.
+
+**Malayalam, GEN, before → after.** `ml.lex.unknown` 647 → 481; 177 words
+accepted; the book's 3,000-finding cap, reached before, is not reached after
+(2,842). Eight `irv-consistent-slip` words, among them അങ്ങേയുടെ, അയയ്ക്കേണം,
+വയ്ക്കേണം: IRV verb forms the web lacks, so mostly not slips. The gate
+passes with the same 323 labels and nothing lost; four labels moved rules
+(two to chillu-conjunct, one to vowel-length, one to the slip rule: a
+reviewer-confirmed misspelling the IRV repeats, reported where it was house
+practice). Peak 424.9 → 467.9 MB; corpus load 622 ms.
+
+**Punjabi, GEN:** `pa.lex.unknown` 118 → 78, 40 accepted; 14 slip words, of
+which 9 of the 13 listed are Bible names (ਅਫ਼ਰੋਨ, ਪੇਲੇਗ, ਮੇਸ਼ੇਕ, ਲੋਤਾਨ …).
+Peak 157.2 → 177.6 MB. No labels exist for pa, so no gate.
+
+**Odia, GEN:** `or.lex.unknown` 60 → 48, 12 accepted, no slips. Peak
+239.8 → 265.3 MB. No labels, no gate.
+
+**The slip rule ships off.** Three of the four languages with hits show
+names or house verb forms; one reviewer-confirmed catch in Malayalam. By the
+plan's own rule (below ≈0.5 precision, ship `enabled: false`) it is off in
+every pack until Benz's spot check; the word lists above are the material.
+
+**Tamil, GEN / LUK** (scratch copies of the real projects, the real engine,
+`count_tamil_unknown.py` in the session scratch; counts over every verse,
+not the 3,000-finding summary): `indicqa.lex.unknown` GEN 1,194 → 801 with
+395 words accepted, LUK 1,139 → 659 with 480 accepted; near-miss and
+compound unchanged. The plan's target was ≤ 700 on both; GEN is above it.
+The remaining unknowns are either absent from a 59M-token web sample at a
+floor of 10 or have a corpus neighbour 50× commoner; lowering the floors
+(IndicCorp 10, Kaniyam 20) is a rebuild with its own gate run, not done
+here. The Tamil gate passes with the same 340 labels and nothing lost.
+
+**Replay of the #237 typos** (`replay_typos.py`, scratch GEN, corpus on):
+GEN's first pass 1,529 → 1,136 findings. தண்ணீ stays `lex.unknown`: the web
+has it 69 times, but தண்ணீர் is in the corpus far above the 50× ratio, so it
+is a popular slip, not a word; the finding's message now says so. தங்கள்தங்க
+compound, வகைகயின்படியே unknown, முடிநதது and சேர்நது near-miss: unchanged.
+முடிந்து is now found by `typo.participle.sentence-final`, in the panel's
+list but not underlined: a pack rule is drawn only once inline, and inline
+needs the human gate (20 labels at 0.90), which this rule cannot reach on
+correct text. That is the pack's existing policy, not a gap in the rule.
+
+**The Tamil rule (c105c5f).** A `token-context` rule cannot see a sentence
+end (it needs a next word), so the rule is `regex` with an `expand` fix, as
+`typo.suffix.dropped-tha`. Counted on the pack data and the four local Tamil
+books: sentence-final -ந்து is 10 of 29,540 OV sentence ends (numerals,
+விருந்து, six verse-end participles) and 1 of 5,122 in IRV GEN/LEV/PSA/1CO
+(PSA 8:6 தந்து), whose one-letter stem the rule does not match. The bare
+statistic "this word never ends a sentence" would have been about 164 false
+alarms per 1,000 verses on GEN; the neighbour gate is what discriminates.
+`build_ta_irv_pack.py` derived the ten incorrect examples from real verses;
+run without `--reviews`, it also regenerated the other rules' examples, and
+those changes were discarded.
+
+**Verified.**
+- Frontend: `npm run check` 0/0, `npm run test` 649 passed, `npm run build` ok
+  (for the header and tabs).
+- Engine: `pytest -n auto -m "not slow"` 4,912 passed, 3 xfailed, with all
+  five corpora shipped and the slip rule off. New tests: the build script
+  offline (9), `general_corpus.py` (9), the real hi-irv pack and ta-irv layer
+  over a synthetic corpus through `profile_findings` (6, the slip rule
+  enabled by overrides), the Tamil token exits, the shipped-pack test that
+  runs `build_corpus_lexicon.py --verify` on every pack, the sentence-final
+  rule (3).
+- Human gates with the corpora on: hi pass (120 labels), ml pass (323,
+  nothing lost, four reattributed), ta pass (340, unchanged). Parity with
+  indic-qa's own run holds under `--without-corpus` (hi GEN: 0 missing,
+  0 extra).
+- Timings on the idle machine, corpus on, GEN (first / second pass, peak
+  working set, corpus load): hi 3.75 / 1.92 s, 232 MB, 316 ms; ml 6.51 /
+  1.74 s, 468 MB, 299 ms; pa 2.72 / 1.44 s, 178 MB, 115 ms; or 3.81 / 1.52 s,
+  265 MB, 157 ms. The before-numbers above were taken while other builds ran,
+  so the seconds do not compare; the peak working set does: +39 MB (hi),
+  +43 (ml), +20 (pa), +25 (or), within the +60 MB bound.
+- Frozen pair rebuilt (`build-sidecars.ps1`) and `smoke_sidecars.py` passed
+  with the new pack data: Hindi pack 2.53 s, ta-irv layer 3.78 s.
+
+
+**Not run.** The desktop app, so the header, the tabs and the corpus's
+effect on the verse underlines were not seen on screen. Benz's spot check
+of the slip-rule word lists is the open decision.
+
+## 2026-10-09 — A chapter cache behind TranslationCoreProject's read-only accessors (#239)
+
+**Problem.** `TranslationCoreProject` had no cache for chapter JSON. In a
+check job each verse parsed the target chapter three times and the alignment
+chapter twice. A further `project.verses()`/`chapters()` call at the USFM
+block re-parsed the alignment chapter and globbed the directory, and it ran
+outside every timing step.
+
+**Change** (`tc_project.py`).
+- `_cached_file_json` caches a parsed chapter file per (kind, chapter). Each
+  read checks the file's (file id, `st_mtime_ns`, `st_size`).
+- On a miss the file is read between two stats, and the parse is kept only
+  when the stats agree.
+- The file id is in the signature because NTFS timestamps tick roughly every
+  15 ms. An atomic replace gives a new file id, so two same-size writes in one
+  tick still differ. Checked on this machine.
+- It serves `load_verse_alignment`, `verses`, `chapters` (cached on the
+  directory's mtime) and `target_verse_text`.
+- `load_alignment_chapter` and `target_chapter` still return a fresh parse,
+  because writers mutate what they return.
+- Bridge's own writers and rollbacks also clear the cache: `save_verse_alignment`,
+  `restore_alignment_backup`, `apply_scripture_edit`, `_rollback_paths` and
+  `recover_incomplete_transactions`.
+- A miss is timed as `project.chapter_parse`.
+
+**Measured.** GEN copy, two whole-book jobs (`local+greekroom+languageQa`),
+cursor polls every 750 ms. Before is `main` at 5adc914.
+
+| | before, run 2 | after, run 2 |
+|---|---|---|
+| wall | 37.8 s | 23.4 s |
+| local stage | 32.0 s | 17.8 s |
+| `local.alignment_load` | 5.8 s | 0.34 s |
+| target reads (`verse.read_text` + `local.read_text` + `local.usfm`) | 2.1 s | 0.49 s |
+| local stage not covered by any step | ~9 s | ~2.5 s |
+| chapter parses in the job | (per verse) | run 1: 50, run 2: 0 |
+
+**Tests.**
+- `tests/project_io/test_tc_project_chapter_cache.py`:
+  - each file is parsed once while unchanged;
+  - another program's same-length `os.replace` rewrite is read on the next
+    access, as is an in-place write with a new mtime;
+  - Bridge's own writes are read back;
+  - a rolled-back write leaves the accessors equal to disk;
+  - the writer loaders stay fresh;
+  - chapters added or removed show up;
+  - the error messages are unchanged.
+- `tests/service/test_check_job_findings_identical.py`:
+  - a book job's findings equal `verse.runChecks ["local"]` for every verse,
+    byte for byte apart from `created_at` (the clock each run stamps). The
+    alignment and tC branches are confirmed to fire.
+  - an edit made mid-job, after chapter 2 was cached, is seen by 2:1;
+  - a job parses each chapter file at most once.
+- Engine `pytest -m "not slow"`: 4890 passed, 3 xfailed. The 11 failures in
+  that run were #240's test file, which was written during the run and fails
+  until #240 lands, as intended.
+
+## 2026-10-09 — tC check state read once per verse (#240)
+
+**Problem.** `translationcore_check_issues` called `check_staleness` once per
+tN/tW entry on the verse. Each call globbed and parsed every
+`checkData/selections/<book>/<ch>/<v>/*.json`, and the verse edits as well.
+`check_state_for_verse` then parsed all four state directories again. With N
+entries on a verse, its selections were parsed N+1 times.
+
+**Change.**
+- `check_staleness(..., state=...)` answers from the records that
+  `check_state_for_verse` already read.
+- The selection rule is now one helper, `_latest_matching`, used by both
+  paths. It covers the same order, the `modifiedTimestamp or timestamp or
+  file name` fallback, the `>=` tie-break, and tool/group matched only when
+  given.
+- `translationcore_check_issues` reads the state once and passes it in.
+- `_checks_by_verse` is timed as `tc.index_build`. That measures follow-up
+  issue B (index rebuilds forced by `check.listForVerse`); in the scripted
+  runs it built once per job.
+
+**Measured.** GEN, after #239 (run 2):
+- `local.tc_checks`: 1.86 s → 0.85 s.
+- Wall: 23.4 s → 21.9 s.
+
+GEN has few tC checks per verse. A project with more gains in proportion.
+
+**Tests.**
+- `tests/jobs/test_local_checks_tc_reads.py` compares `check_staleness`
+  with and without `state=` over current, stale and pending checks, a
+  timestamp-only record, a tie between two files, blank tool/group, and a
+  verse with no edits. It also checks that each state directory is listed
+  once per verse, and compares the issue list against a recording of the
+  pre-#240 code.
+  - That recording corrected my own expectation: a selection with only
+    `timestamp` counts as stale, because its blank `modifiedTimestamp`
+    sorts first.
+- New builders in `tests/support/tc_checks.py`. The private ones in
+  test_qa_report.py stay there.
+- The byte-identical job test's fixture now has tN/tW entries, a stale
+  selection, an invalidated word and a comment.
+- Engine `pytest -m "not slow"`: 4901 passed. The 3 failures are #241's
+  test file, written during the run.
+
+## 2026-10-09 — The gap check reads a job-owned prefetch (#241)
+
+**Problem.** For every verse, `alignment_gap_checks.gap_issues` read the
+verse's verdict with `workbench.get`. Each read opens a new SQLite connection
+and runs five PRAGMAs, about 3 ms on GEN. An aligned verse also read its links
+(2 connections) and its null decisions (1).
+
+**Change.**
+- `WorkbenchRepository.write_generation` counts committed row writes per
+  database file, in this process. It is bumped after the commit in `_write`,
+  `_delete`, `batch` (not after a rollback) and `import_events`.
+- The count is keyed by the file, not the repository object, because a
+  collection run can open the editor's book through a second project object.
+- `alignment_gap_checks.GapReads` reads every link, null decision and verdict
+  row of the book in three queries.
+- Its per-verse views select and order exactly as the readers they replace:
+  - links by the lifted (chapter, verse) and (target_chapter, target_verse)
+    columns;
+  - decisions by (chapter, verse);
+  - verdicts by row id.
+- It reads all rows, active or not, so the filters in `gap_issues` see what
+  they always saw. It does not use `active_links()`, which filters on a
+  different column.
+- `prefetch()` keeps it in a dict the job holds and reads again when the
+  generation moved. `gap_issues(reads=...)` uses it. `verse.runChecks` passes
+  no prefetch and reads per verse, as before. If the prefetch fails, the
+  per-verse reads are used.
+- The test stubs of `_run_verse_checks_for_project` now take `**_kwargs`, so
+  the next keyword does not break them as `reads=` did (#231).
+
+**Measured.** GEN, after #239 and #240 (run 2):
+
+| | before | after |
+|---|---|---|
+| wall | 21.9 s | 12.8 s |
+| `local.alignment_gap` | 5.8 s | 0.26 s |
+| `workbench.connect` | 3,177 connections | 1,641 connections |
+| `gap.prefetch` | (none) | 1 call, 11 ms |
+
+**Tests.**
+- `tests/persistence/test_workbench_write_generation.py`:
+  - writes and deletes count, and reads do not;
+  - a committed batch counts once, and a rolled-back one not at all;
+  - two repositories on one file share the count.
+- `tests/service/test_alignment_gap_prefetch.py` drives the automatic pass
+  through a fake model. `gap_issues` with and without the prefetch gives the
+  same issues:
+  - after the pass;
+  - after a null decision;
+  - after an edit that makes the verdict stale;
+  - after a revert.
+
+  `prefetch()` reads again after a write.
+- Two additions to the byte-identical job test:
+  - a null decision written mid-job is seen by the later verse, with the
+    prefetch read exactly twice;
+  - without writes it is read once.
+- Engine `pytest -m "not slow"`: 4910 passed, 1 failed. The failure was
+  #239's directory-listing test, a real race fixed in the next entry.
+
+## 2026-10-09 — Fix: the chapter cache trusted a timestamp from the same tick (#239)
+
+**Found by the suite.** After #241, one run of `pytest -n auto` failed
+`test_a_new_or_removed_chapter_shows_in_chapters`. It had passed in the two
+runs before.
+
+**Reproduced.**
+- With 8 processes each adding a chapter and then removing one straight
+  after, `chapters()` returned the stale list 27-47 times in 200 per process
+  after the removal. After the add it never did.
+- Cause: NTFS timestamps tick about every 15 ms. Two changes inside one tick
+  leave the directory's mtime where it was, so the cached listing matched.
+- The file cache had the same hole for a different case: an in-place,
+  same-size rewrite inside one tick keeps the file id, size and mtime. #239's
+  file id only covers atomic replaces.
+
+**Fix.** Git's "racy clean" rule (`_racy`). A cached listing or parse whose
+timestamp is less than 2 s old is read again rather than trusted. Older than
+that, a later change always moves the timestamp.
+
+**Verified.**
+- Stress after the fix: 0 stale in 1,600, after both the add and the
+  removal.
+- Two new tests:
+  - a same-size in-place rewrite with the mtime pinned;
+  - 50 add-then-remove rounds.
+
+  Both fail with `_racy` disabled and pass with it on.
+  - The first version of the tick test passed even with the rule off. Its
+    "same length" text was one code point shorter, so the size gave the
+    change away. It now uses ன → ள (both 3 bytes) and asserts the size.
+- The test fixtures that count parses now age their files by a minute, as
+  real project files are.
+- GEN: no extra parses (run 1: 50, run 2: 0). The local stage is unchanged
+  within noise.
+- Engine `pytest -m "not slow"`: 4913 passed, 3 xfailed.
+
+## 2026-10-09 — uroman loads off the dispatcher, after the sidecar is ready (#242)
+
+**Problem.**
+- `NamesAdapter.is_available()` built `Uroman()`, which takes 4.5-5.2 s.
+- `GreekRoomEngine.info()` calls it, and `TopBar.svelte` calls `engine.info`
+  on mount. So every app start held the single-threaded dispatcher about 5 s,
+  and nothing else was answered meanwhile. `engine-events.log` showed
+  `rpc engine.info took 4944ms` and `5810ms`.
+- Correction to the 2026-10-08 entry. Its "8.0-8.4 s first-open load" came
+  from a harness that never called `engine.info` first. In the desktop app
+  that cost was paid at startup, not at the first open.
+
+**Change.**
+- `names_adapter`:
+  - `_import_uroman()` checks the package and the data files its loader
+    needs, without building anything (about 0.06 s);
+  - `is_available()` = package and data present, plus SED, and no recorded
+    load failure;
+  - `_ensure_uroman()` records a failure reason and calls `gc.enable()` in a
+    `finally`. Uroman's own `__init__` disables gc with no try/finally, so a
+    failed load used to leave the collector off for the whole process;
+  - `load_state()` reports `not-loaded`, `loading`, `loaded` or `failed`;
+  - `preload_async()` starts an idempotent daemon thread named
+    `uroman-preload` and logs one `[trace] uroman preload took` line.
+- `CheckAdapter.status()` lets `engine.info` add `state` and `error` per
+  adapter. This is additive; the frontend reads nothing under `adapters`.
+- `run_stdio_loop(on_ready=...)` runs `on_ready` once, after `__ready__`. A
+  failure there is logged and never stops the loop.
+- `main.py` passes `engine.start_background_warmup`, and that is the only
+  starter. `BridgeEngine()` in tests starts no thread.
+- `smoke_sidecars.py`:
+  - waits for `__ready__` and prints the boot time;
+  - fails if `engine.info` takes 2 s or more;
+  - requires `state: loaded` after the names check.
+- `docs/DECISIONS.md` has an entry for this, and QA matrix row A15 now
+  covers the new assertions.
+
+**Measured.**
+- In-process: `engine.info` 56 ms, where it was about 5 s. The background
+  load took 5.47 s.
+- Frozen pair, built from this branch: ready in 1.28 s, `engine.info` 31 ms,
+  names `loaded` after the check.
+- The smoke test passed: Hindi 3.31 s, ta-irv layer 3.88 s.
+
+**Tests.**
+- `greek_room_engine/tests/test_names_adapter.py`:
+  - `is_available` never constructs;
+  - a failed construction reports `failed`, restores gc, and makes
+    `check_book` raise `NamesCheckError` with the reason;
+  - the preload runs once on `uroman-preload`.
+- `tests/service/test_names_check.py`:
+  - `engine.info` builds nothing and names still finds Tituss, with exactly
+    one construction;
+  - a book whose names cache matches never loads uroman.
+- `tests/service/test_stdio_e2e.py`: a real `main.py` answers `engine.info` in
+  under 2 s and reaches `loaded`.
+- Engine `pytest -m "not slow"`: 4918 passed, 3 xfailed. stdio e2e: 2 passed.
+- Not run: the frontend gate, since no frontend file changed; cargo; the
+  desktop app.
+
+**Follow-ups filed, not done.**
+- #243: the second `Uroman()` in alignment statistics.
+- #244: `check.listForVerse` rebuilds the tN/tW index on every call.
+- #245: `decisions.reapply` reads one connection per verse. It is now the
+  largest local-stage step on GEN.
+- The stdio e2e `Sidecar` helper also pipes stderr without draining it. The
+  preload adds one short line, under the pipe buffer, but it is the same
+  hazard `d2a0a8d` fixed in the smoke harness.
+
+## 2026-10-09 — `ai.review.status` timed out: `redirect_stdout` on a job thread swallowed the response
+
+Benz's screenshot: a chapter AI review on GEN 1 stuck at "Preparing AI review ·
+0% · 0/30 verses" with "sidecar request 'ai.review.status' timed out" twice.
+This is the timeout the 2026-10-08 entry left "not explained here".
+
+**What the log said.** `engine-events.log`: `ai.review.start` took 103 ms;
+30 s later `ai.review.status`, `languageQa.status` and `navigation.poll` all
+timed out, and no request in that window was traced as slow (every RPC over
+100 ms is). So the dispatcher was not busy; the answers were going missing.
+
+**Cause, reproduced.** A stdio driver over `main.py` on a scratch copy of GEN,
+real endpoint with an invalid key (401, no charge), polling like the panel: the
+second status poll after the start timed out. Instrumented, the engine *read*
+that request, *handled* it and *wrote* an 875-byte response at the same instant,
+and the bytes never reached the pipe. `usfm_parser._usfmtc_documents` ran every
+parse under `contextlib.redirect_stdout(io.StringIO())`, which swaps the
+process-global `sys.stdout` for every thread. The AI worker's "Mapping source
+meanings" step parses the book (`passage_semantic_runtime.py:186` →
+`parse_usfm`), so any response the dispatcher printed during that parse went
+into the worker's StringIO. Any background parse (check job, Language QA) can
+do the same to any request. Two overlapping redirects can also restore each
+other's StringIO and leave `sys.stdout` stuck on it -- every later response
+lost until restart, which fits the 2026-10-08 log's wall of timeouts.
+
+**Not the cause, measured.** The job manager's locks (status never slow
+in-process, worst 10 ms over 13 verses with a fake provider); GIL starvation by
+the urllib/ssl worker (worst main-thread lag 31 ms); the Rust reader loop.
+
+**Fix.**
+- `stdio_transport.run_stdio_loop` writes responses only to `sys.__stdout__`,
+  captured once (a thread mid-redirect cannot hand it a StringIO), and points
+  `sys.stdout` at stderr, so a stray `print` goes to the log, not the protocol.
+- `usfm_parser` no longer redirects; the docstring note that justified it says why.
+- `ReviewPanel.pollAIJob` kept no poll alive after one failure, so the panel
+  froze on the start snapshot while the job ran on. It now keeps polling
+  through up to five failures in a row and clears its error on the next answer.
+
+**Verified.** `tests/service/test_stdio_protocol_stream.py` (new, `subprocess`):
+300 requests while a job thread loops `redirect_stdout` and prints -- fails
+before the fix (300 of 300 lost without the prints; a JSONDecodeError with
+them), passes after. `ReviewPanelAiPolling.test.ts` (new): fails before, passes
+after. Engine suite `-n auto`: 5124 passed, 1 failed --
+`test_logos_get_state_spawns_the_real_helper...` (the real PowerShell helper not
+up in time under 16 workers); it passes alone with and without this change.
+Frontend: check 0/0, 651 tests, build. Frozen pair rebuilt, `smoke_sidecars.py`
+passed; the stdio driver against the frozen exe: 197 of 197 answered, the
+status stage advancing (before: first poll lost).
+
+**Found on the way, not fixed here.**
+- On this machine every AI call spends ~43 s before the request is sent: an
+  IPv6 connect to api.openai.com hangs 21 s per address (WinError 10060), IPv4
+  connects in 0.04 s. A one-verse review took ~88 s for two model calls.
+- `versification.py` uses `contextlib.redirect_stderr` twice (load, and
+  `detect_schema` under `_lock`): the same global swap on stderr. It cannot
+  drop a response, but it swallows other threads' trace lines and tracebacks
+  while active, and two overlapping could leave stderr stuck.
+
+**Not run.** The desktop app: the panel was not watched recovering on screen.
+
+## 2026-10-09 — AI calls connect IPv4 first (#247); versification stops swapping stderr (#248)
+
+The two findings from the `ai.review.status` entry above, filed as fork
+#247 and #248 and fixed one commit each.
+
+**#247, `29c00d6`.** Every AI call spent ~43 s before the request was sent:
+urllib connects through `socket.create_connection`, which tries addresses in
+`getaddrinfo` order (IPv6 first) and gives each the whole timeout, and on this
+network every IPv6 connect to api.openai.com hangs 21 s (WinError 10060).
+`tc_ai_bridge/ai_http.py` is a urllib opener whose connections try IPv4 first
+and cap every address but the last at 5 s (`FALLBACK_CONNECT_TIMEOUT`); the
+last keeps the full timeout, so IPv6-only and slow networks still connect.
+Both `ai_client` call sites (`default_transport`, `test_connection`) use it;
+proxies, redirects and HTTP errors stay urllib's defaults. Against the real
+endpoint with an invalid key: HTTP 401 in 0.37-1.16 s, previously 42.5-43.0 s.
+`tests/ai/test_ai_http.py` pins the order and the timeouts, a dead first
+address (TEST-NET-1), IPv6 still reached when IPv4 is refused, and the opener
+wiring. One run of that file hung for over 2 minutes the first time; six
+later runs took ~3.5 s each and the cause was not found.
+
+**#248, `cb11aaa`.** `versification.py` wrapped `load_versifications` and
+`detect_schema`'s scan in `contextlib.redirect_stderr`, the same global swap
+as the `redirect_stdout` above, on stderr: other threads' trace lines and
+tracebacks were lost while it ran. Measured before removing them: the load
+and a whole-GEN `detect_schema` write **nothing** to stderr with the redirect
+disabled, because `_match_schema_cost` replaced the noisy `VersificationMatch`.
+Both are gone; what the vendored module still writes is an error and belongs
+in the log. `tests/service/test_no_global_stream_redirects.py` now fails on
+any `redirect_stdout`/`redirect_stderr` call in engine code outside `vendor/`
+and `tests/`; it and a `detect_schema` test fail before, pass after.
+
+## 2026-10-09 — Collection QA folds; the Language QA panel gets a sticky header, an (i) and organised filters; the language message (#236, #246)
+
+Benz's screenshots of the dashboard and the open Language QA panel: make
+Collection QA collapsible; put the coverage text behind an (i); keep the
+title and Close at the top; organise the tabs and the filters.
+
+**Decisions taken with Benz (AskUserQuestion).**
+- The whole coverage statement goes behind the (i), as asked. That reverses
+  the "not behind a disclosure" part of DECISIONS 2026-09-24; a one-line
+  boundary kept in view was offered and declined. DECISIONS 2026-10-09
+  records it, and the 2026-09-24 entry notes the supersession.
+- Fix the engine's language message, which said "grammar and spelling
+  dictionaries are not included" although every pack has shipped both the OV
+  dictionary and the general corpus since #246.
+- Collection QA remembers its fold, and opens itself while a run is going.
+
+**What changed.**
+- `CollectionQaPanel.svelte`: a ▸/▾ fold button beside the title; folded, the
+  panel is one row with a summary ("66 books · 60 done · 2 failed · last run …"
+  or "never run") and the Run button. A run in progress always shows the
+  table and disables the fold. `collectionQaCollapsed` in `editorPrefs.ts`
+  (`bridge.dashboard.collectionQaCollapsed.v1`).
+- `LanguageQaPanel.svelte`: the section no longer pads itself; a sticky
+  header holds the title, the (i), Pause/Resume and Close, the status line,
+  errors and the coverage-incomplete warning with its details. The (i) opens
+  a region with the detection basis, the pack's message, the bilingual
+  checks / does-not-check lists with reasons, the hand-off doc and the storage
+  line; Escape (focus back to the (i)), a second click or a click elsewhere
+  closes it. The five tabs are an underline bar that sticks under the header
+  (its offset is the header's measured height). The Issues filters are one
+  block of three labelled rows, List / Show / Kinds, with Clear on the kinds.
+  Roles and accessible names are unchanged, so the other 24 panel tests
+  pass untouched.
+- `language_qa.py`: `pack_message()` builds the message from the selected
+  pack's `pack.json`, read and cached per path, never loaded as a pack:
+  "Tamil rules with the OV dictionary and the general word list; grammar and
+  meaning are not checked."
+
+**A commit that landed inside another session's merge.** Another session was
+merging `origin/main` into this working tree at the same time. I staged the
+Collection QA files with `git add` while that merge was in progress; the
+commit was refused for the unmerged files, and a moment later the other
+session's merge commit (b0d1db3, "Merge origin/main: local-stage and startup
+speed work") took the three staged files with it. The content is the
+intended change and nothing was pushed; the history was left as it is rather
+than rewriting another session's merge. Every later commit of this work was
+made with a path-limited `git commit -- <paths>` and nothing staged, so a
+concurrent commit cannot pick it up.
+
+**Verified.**
+- `npm run check` 0/0; `npm run test` 655 passed (51 files); `npm run build`
+  ok. New tests: Collection QA folds, remembers, still offers a run, opens
+  itself during a run; Language QA (i) hidden until opened, Escape and an
+  outside click close it, focus returns; header contents and the tab bar
+  after it; the three filter rows and Clear.
+- Engine: `tests/service/test_language_qa.py`, `test_language_pack.py`,
+  `test_language_qa_indic.py` and `tests/language_packs`: 542 passed,
+  including the new message test (a copied pack folder with the corpus off
+  drops the word-list part).
+- Full `pytest -n auto -m "not slow"`, three runs while another session was
+  committing into the same working tree (HEAD moved from a8e3c90 to 3fe00cf
+  during them): 77 failed and 43 errors the first time, overlapping that
+  session's own runs; then no failures recorded (summary lost to my
+  pipeline); then 1 failed, 4,959 passed, 3 xfailed. The one failure is
+  `test_names_adapter.py::test_preload_runs_once_on_a_background_thread`
+  from #242: alone it failed once in three runs. Its trace shows a real
+  uroman load (5,012 ms) finishing inside the test, a leftover thread from an
+  earlier test setting the global the fixture reset. Filed as #249, not
+  fixed here. The first run's failures were not reproduced and were not
+  investigated one by one.
+- Not run: the desktop app, so the sticky header, the (i) and the folded
+  dashboard were not seen on screen; the frozen pair was not rebuilt for a
+  message string.
+
+## 2026-10-09 — A fresh review of the session's work: what it found, what changed
+
+Benz asked whether the work was done and whether to review it again. Two
+reviewers were given the commits, not my conclusions: one for the frontend
+(fe65e58, 87b01f8, the Collection QA part of b0d1db3, 107f9f3), one for the
+engine (eb954a0, 5c3d0da, d7cd0f2, c105c5f, a8e3c90, the data commits).
+Every finding below was checked against the code or by running it before
+anything changed. Fixes: 8945ef1 (frontend), 91a533d (engine).
+
+**Engine, the serious ones.**
+- **The corpus hid real misspellings.** कवियत्री (web 36x) beside कवयित्री
+  (137x), one vowel sign swapped; सन्यासी (129x) beside संन्यासी (240x), one
+  anusvara. Neither is a grapheme-cluster edit, neither neighbour is 50x
+  commoner, and the checker offered no suggestion of its own, so both were
+  accepted. A web corpus is a quarter to a half misspelled for such words;
+  the 50x guard was wishful. Now a known word is accepted only when no word
+  one code point away (searched in the whole corpus, 0.34 s per 200 words)
+  or one cluster added or dropped is commoner. My claim of 2026-10-09 that
+  "the ratio guard keeps popular web typos out" was wrong; DECISIONS carries
+  the amendment.
+- **Malayalam suggestions were lookup keys.** canon folds a final ു to ്, so
+  ഒറു was offered ഒര്, which Use would have written into Scripture. Format 2
+  stores each key's commonest spelling; ഒറു now gets ഒരു.
+- **The Tamil rule flagged correct verses.** Its own "incorrect" examples
+  included PRO 12:18 மருந்து and PRO 13:17 நல்மருந்து, nouns. My "zero false
+  alarms" covered four books; the rule had never been run over all 66. Its ை
+  exclusion, meant for numerals, also skipped every verb stem in ை (குறைந்து,
+  நிறைந்து), a recall hole the first version already had. A first fix that
+  excluded திரு anywhere broke -ந்திருந்து forms; the builder's own example check
+  caught it. Final: nouns and numeral endings in any compound, imperatives
+  only as whole words, a closing quote allowed before the full stop.
+- **build_ta_irv_pack.py dropped pack.json's generalCorpus key** on every
+  rebuild; it now keeps it.
+- Smaller: the slip rule's once-per-book key sliced the raw verse with
+  display offsets (the rule ships off); the language message now checks the
+  corpus file exists; measure_indic_qa.py no longer exits 1 for the corpus's
+  own acceptances.
+
+**After the engine fixes** (all five corpora rebuilt from the cached
+windows):
+
+| GEN unless said | unknown before the corpus | first rule | now | accepted now |
+|---|---|---|---|---|
+| ta | 1,194 | 801 | 994 | 200 |
+| ta LUK | 1,139 | 659 | 892 | — |
+| ml | 647 | 481 | 546 | 112 |
+| pa | 118 | 78 | 106 | 12 |
+| or | 60 | 48 | 52 | 8 |
+| hi | 4 | 3 | 3 | 1 |
+
+The first rule's larger drop was partly misspellings disappearing. Human
+gates: hi 120, ml 323, ta 340 labels, all pass, nothing lost. The five #237
+typos keep their rules. 565 targeted engine tests pass; the frozen pair was
+rebuilt and `smoke_sidecars.py` passed (Hindi pack 3.31 s, ta-irv layer
+5.08 s).
+
+**Frontend.** The status-bar Language QA button showed a stale count after a
+failed poll (now "unavailable"); an AI review started from the verse menu ran
+inside the folded review panel (it now unfolds it and opens the AI tab); the
+(i) box opened above the visible area once the panel had scrolled (it is now
+inside the sticky header, capped and scrolling in place); an open coverage-
+details list could push the sticky header past the panel's height (capped at
+120 px); the status line cut off its counts (it wraps); a pass that finished
+between two polls did not bring the launcher back (the generation is now in
+its key); Collection QA errors were hidden while folded; the reference panel
+saved 640 px while CSS drew 45vw (one cap in code now); and one VerseList test
+could not fail (it now checks that a right-click clears the panel's F8 ring).
+npm run check 0/0, npm run test 655 passed, npm run build ok.
+
+**Not done.** The desktop app was not run. The Hindi file's hunspell source
+is GPL-3, the same licence as Bridge, but a maintainer should confirm it with
+the OV licence question in NOTICE.md before an installer ships.

@@ -1,11 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { bridge, type EngineInfo } from "../api/bridgeClient";
+  import { nudgeLanguageQa } from "../languageQaInline";
   import { manualOverrideMode, navigationStatus, project, reviewerMode } from "../stores";
-  import type { NavigationSyncState, SettingsData, TerminologyRule } from "../types/finding";
+  import type { InlineConfidence, NavigationSyncState, SettingsData, TerminologyRule } from "../types/finding";
   import type { HouseStyleEntry, HouseStyleListResponse, HouseStyleProposal } from "../types/houseStyle";
+  import type { CheckerSettings } from "../types/languageQa";
+  import CheckerSettingsDialog from "./CheckerSettingsDialog.svelte";
 
-  type Pane = "ai" | "quality" | "connections" | "resources" | "terminology" | "security";
+  type Pane = "ai" | "quality" | "connections" | "resources" | "terminology" | "languageQa" | "security";
 
   export let onClose: () => void;
   export let initialPane: Pane = "ai";
@@ -26,6 +29,16 @@
   let reviewerName = "";
   let reviewerNameUpdatedAt = "";
   let engineInfo: EngineInfo | null = null;
+  // Settings > Language QA: which indic-qa findings are drawn in the text.
+  // App-level (a reviewer's tolerance), applied by the engine per request.
+  let inlinePrecision = 0;
+  let inlineConfidence: InlineConfidence = "low";
+  let learnedFixes = true;
+  let relatedWords = true;
+  // The reference Bible per Language QA pack (folder path; "" = none).
+  let referenceDirs: Record<string, string> = {};
+  let inlineSaving = false;
+  let inlineMessage = "";
 
   let terminologyRules: TerminologyRule[] = [];
   let terminologyLoaded = false;
@@ -92,6 +105,11 @@
       logosNavigation = s.logosNavigation;
       reviewerName = s.reviewerName || "";
       reviewerNameUpdatedAt = s.reviewerNameUpdatedAt || "";
+      inlinePrecision = s.languageQaInlinePrecision ?? 0;
+      inlineConfidence = s.languageQaInlineConfidence ?? "low";
+      learnedFixes = s.languageQaLearnedFixes ?? true;
+      relatedWords = s.languageQaRelatedWords ?? true;
+      referenceDirs = { ...(s.languageQaReferenceDirs ?? {}) };
       reviewerMode.set(s.reviewerMode);
       navigationStatus.set(await bridge.navigationStatus());
     } catch (e) {
@@ -157,6 +175,40 @@
       return target.error ? `Saved. ${name}: ${target.error}` : `Saved. Waiting for ${name}…`;
     }
     return "";
+  }
+
+  /** Its own save: the threshold is not part of the AI/quality form, and the
+   *  panel and marks should follow at once (the engine rescans nothing). */
+  async function saveInlineThreshold(): Promise<void> {
+    inlineSaving = true;
+    inlineMessage = "";
+    try {
+      const result = await bridge.setSettings({
+        languageQaInlinePrecision: inlinePrecision, languageQaInlineConfidence: inlineConfidence,
+        languageQaLearnedFixes: learnedFixes,
+        languageQaRelatedWords: relatedWords,
+        languageQaReferenceDirs: referenceDirs,
+      });
+      inlinePrecision = result.languageQaInlinePrecision ?? inlinePrecision;
+      inlineConfidence = result.languageQaInlineConfidence ?? inlineConfidence;
+      learnedFixes = result.languageQaLearnedFixes ?? learnedFixes;
+      relatedWords = result.languageQaRelatedWords ?? relatedWords;
+      referenceDirs = { ...(result.languageQaReferenceDirs ?? referenceDirs) };
+      inlineMessage = "Applied.";
+      nudgeLanguageQa();
+    } catch (e) {
+      inlineMessage = e instanceof Error ? e.message : String(e);
+    } finally {
+      inlineSaving = false;
+    }
+  }
+
+  /** Every pack a reference Bible can be set for: the registered ones. */
+  $: referencePacks = lqaPacks.length ? lqaPacks : [];
+
+  async function browseReference(pack: string): Promise<void> {
+    const folder = await bridge.pickFolder();
+    if (folder) referenceDirs = { ...referenceDirs, [pack]: folder };
   }
 
   async function refreshConnections(): Promise<void> {
@@ -228,6 +280,7 @@
   }
 
   function describeEntry(e: HouseStyleEntry): string {
+    if (e.list === "projectWords") return `project word “${e.word}”`;
     if (e.list) return `proper noun “${e.word}”`;
     return e.scope.startsWith("word") ? `“${e.word}” for ${e.ruleId}` : `${e.ruleId} off`;
   }
@@ -239,13 +292,99 @@
       const result = await bridge.terminologyList();
       terminologyRules = result.rules;
       terminologyLoaded = true;
-      houseStyle = await bridge.housestyleList().catch(() => null);
-      nameSuggestions = (await bridge.housestyleNameSuggestions().catch(() => null))?.suggestions ?? [];
     } catch (e) {
       terminologyMessage = e instanceof Error ? e.message : String(e);
     } finally {
       terminologyLoading = false;
     }
+  }
+
+  // House style lives in the Language QA pane; loaded when that pane opens.
+  let houseStyleLoaded = false;
+
+  async function loadHouseStyle(): Promise<void> {
+    houseStyleLoaded = true;
+    houseStyle = await bridge.housestyleList().catch(() => null);
+    nameSuggestions = (await bridge.housestyleNameSuggestions().catch(() => null))?.suggestions ?? [];
+  }
+
+  // Language QA's pack for this project (manifest language_qa.pack). Loaded
+  // on its own so a failure never blocks the terminology pane.
+  let lqaSetting = "auto";
+  let lqaPacks: { language: string; name: string; pack: string }[] = [];
+  let lqaLoaded = false;
+  let lqaBusy = false;
+  let lqaMessage = "";
+
+  async function loadLanguageQaSetting(path: string): Promise<void> {
+    lqaLoaded = true;
+    try {
+      const status = await bridge.languageQaStatus(path, 0, 0);
+      lqaSetting = status.setting ?? "auto";
+      lqaPacks = status.packs ?? [];
+    } catch {
+      lqaPacks = [];
+    }
+    void loadCheckerSummary(path);
+  }
+
+  // The indic-qa checker's own settings: a one-line summary here, the full
+  // set in CheckerSettingsDialog (the web app's Settings dialog).
+  let checkerSummary = "";
+  let checkerAvailable = false;
+  let checkerDialogOpen = false;
+
+  function summarizeChecker(s: CheckerSettings): string {
+    const on = s.rules.filter((r) => r.enabled).length;
+    const warnings = Object.values(s.warnings.values);
+    const contexts = s.contexts.checked.map((c) => s.contexts.labels[c] ?? c).join(", ") || "none";
+    return `${on} of ${s.rules.length} rules on · checks ${contexts}`
+      + (warnings.length ? ` · ${warnings.filter(Boolean).length}/${warnings.length} warnings` : "");
+  }
+
+  async function loadCheckerSummary(path: string): Promise<void> {
+    try {
+      const got = await bridge.languageQaCheckerSettingsGet(path);
+      checkerAvailable = got.pack !== null;
+      checkerSummary = got.pack !== null ? summarizeChecker(got as CheckerSettings) : "";
+    } catch {
+      checkerAvailable = false;
+      checkerSummary = "";
+    }
+  }
+
+  function closeCheckerDialog(path: string, saved: boolean): void {
+    checkerDialogOpen = false;
+    if (saved) {
+      lqaMessage = "Checker settings saved for every book; Language QA is checking again.";
+      void loadCheckerSummary(path);
+    }
+  }
+
+  async function setLanguageQaPack(path: string, pack: string): Promise<void> {
+    lqaBusy = true;
+    lqaMessage = "";
+    try {
+      const status = await bridge.languageQaSetPack(path, pack);
+      lqaSetting = status.setting ?? pack;
+      lqaMessage = pack === "off" ? "Language QA now runs the common checks only."
+        : pack === "auto" ? "Language QA chooses the pack from the project language."
+        : `Language QA now runs ${lqaPacks.find((p) => p.pack === pack)?.name ?? pack} rules.`;
+      nudgeLanguageQa();
+      void loadCheckerSummary(path);
+    } catch (e) {
+      lqaMessage = e instanceof Error ? e.message : String(e);
+    } finally {
+      lqaBusy = false;
+    }
+  }
+
+  $: if (activePane === "languageQa" && $project && !lqaLoaded) {
+    void loadLanguageQaSetting($project.path);
+  }
+
+  $: if (activePane === "languageQa" && $project && !houseStyleLoaded) {
+    void loadHouseStyle();
   }
 
   // Rules are book-scoped, so this only fires once a project is actually
@@ -307,6 +446,7 @@
       <button class="nav-item" class:active={activePane === "connections"} on:click={() => (activePane = "connections")}>Connections</button>
       <button class="nav-item" class:active={activePane === "resources"} on:click={() => (activePane = "resources")}>Resources & licenses</button>
       <button class="nav-item" class:active={activePane === "terminology"} on:click={() => (activePane = "terminology")}>Terminology</button>
+      <button class="nav-item" class:active={activePane === "languageQa"} on:click={() => (activePane = "languageQa")}>Language QA</button>
       <button class="nav-item" class:active={activePane === "security"} on:click={() => (activePane = "security")}>Security</button>
       {#if engineInfo}
         <div class="about-version" title="What this window is actually running, not what Windows says was installed">
@@ -502,6 +642,97 @@
             {#if editingConcept}<button class="btn" on:click={resetTerminologyForm} disabled={terminologySaving}>Cancel</button>{/if}
             {#if terminologyMessage}<span class="save-msg">{terminologyMessage}</span>{/if}
           </div>
+          {#if terminologyConflict}
+            <div class="term-conflict" role="alertdialog" aria-label="Replace existing terminology rule">
+              <p>
+                A rule for <strong>{terminologyConflict.conceptId}</strong> already exists
+                (preferred: {terminologyConflict.approvedRenderings.join(", ") || "none"} · rejected:
+                {terminologyConflict.rejectedRenderings.join(", ") || "none"}). Replace it?
+              </p>
+              <div class="save-row">
+                <button class="btn primary" on:click={() => addTerminologyRule(true)} disabled={terminologySaving}>Replace</button>
+                <button class="btn" on:click={() => (terminologyConflict = null)} disabled={terminologySaving}>Keep existing</button>
+              </div>
+            </div>
+          {/if}
+        {/if}
+      {:else if activePane === "languageQa"}
+        <h3>Language QA</h3>
+        <p class="desc">Offline spelling, punctuation and consistency checks of the target text. Nothing here changes Scripture text.</p>
+        <h3 class="sub">Drawn in the text</h3>
+        <p class="desc">indic-qa findings (Punjabi, Malayalam, Hindi, Odia, and the Tamil OV layer) are underlined in the verse text unless this threshold hides them. Hidden ones stay in the Language QA panel. A rule reviewers have not labelled has no measured precision and always passes the slider. Rules reviewed as inline are always drawn.</p>
+        <div class="field">
+          <label for="lqa-precision">Minimum measured precision: {inlinePrecision}%</label>
+          <input id="lqa-precision" type="range" min="0" max="100" step="5" bind:value={inlinePrecision}
+            aria-valuetext={inlinePrecision === 0 ? "0: draw every finding" : `${inlinePrecision} percent`} />
+          <div class="hint">{inlinePrecision === 0 ? "Every indic-qa finding is drawn." : `Rules reviewers confirmed less than ${inlinePrecision}% of the time are listed, not drawn.`}</div>
+        </div>
+        <div class="field">
+          <label for="lqa-confidence">Lowest rule confidence drawn</label>
+          <select id="lqa-confidence" bind:value={inlineConfidence}>
+            <option value="low">Low and above (every rule)</option>
+            <option value="medium">Medium and above</option>
+            <option value="high">High only</option>
+          </select>
+          <div class="hint">A rule must pass both the precision and the confidence threshold to be drawn.</div>
+        </div>
+        <h3 class="sub">Learned fixes</h3>
+        <label class="mode-option" class:selected={learnedFixes}>
+          <input type="checkbox" bind:checked={learnedFixes} />
+          <span><b>Offer my earlier replacements</b><small>When you replace one word in a verse, the same word elsewhere in this book and the project's other books gets a blue dotted underline offering your change. Manage them in Language QA › Dictionary.</small></span>
+        </label>
+        <label class="mode-option" class:selected={relatedWords}>
+          <input type="checkbox" bind:checked={relatedWords} />
+          <span><b>Show related words</b><small>In the review panel: what the reference Bible used in the same place, and forms sharing the word's stem.</small></span>
+        </label>
+        <h3 class="sub">Reference Bible</h3>
+        <p class="desc">An Old Version beside the text, for each language: a folder of USFM books, or an indic-qa dictionary folder with verses.tsv. Tamil has the 1957 OV built in. Nothing is copied into Bridge; the folder is read once and kept.</p>
+        {#each referencePacks as p (p.pack)}
+          <div class="field">
+            <label for={`ref-${p.pack}`}>{p.name} ({p.pack})</label>
+            <div class="ref-row">
+              <input id={`ref-${p.pack}`} type="text" bind:value={referenceDirs[p.pack]}
+                placeholder={p.pack === "ta-irv" ? "Built in: the 1957 OV" : "Not set"} />
+              <button class="btn" type="button" on:click={() => browseReference(p.pack)}>Browse…</button>
+            </div>
+          </div>
+        {:else}
+          <p class="muted">Open a project to list its language's packs.</p>
+        {/each}
+        <div class="save-row">
+          <button class="btn primary" on:click={saveInlineThreshold} disabled={inlineSaving}>{inlineSaving ? "Saving…" : "Apply"}</button>
+          {#if inlineMessage}<span class="save-msg" role="status">{inlineMessage}</span>{/if}
+        </div>
+        {#if !$project}
+          <p class="muted">Open a project to choose its Language QA rules and manage its house style.</p>
+        {:else}
+          {#if lqaPacks.length && $project}
+            {@const projectPath = $project.path}
+            <h3 class="sub">Language QA</h3>
+            <p class="desc">Which language's rules check this book. Automatic uses the project language; a pack chosen here is used whatever the metadata says.</p>
+            <div class="kv">
+              <label for="lqa-pack">Rules</label>
+              <select id="lqa-pack" value={lqaSetting} disabled={lqaBusy}
+                on:change={(e) => setLanguageQaPack(projectPath, e.currentTarget.value)}>
+                <option value="auto">Automatic (from the project language)</option>
+                {#each lqaPacks as p (p.pack)}<option value={p.pack}>{p.name} ({p.pack})</option>{/each}
+                <option value="off">Common checks only</option>
+              </select>
+            </div>
+            {#if checkerAvailable}
+              <div class="kv checker-row">
+                <span>Checker</span>
+                <span>{checkerSummary}
+                  <button class="btn link" type="button" on:click={() => (checkerDialogOpen = true)}>Checker settings…</button>
+                  <small class="hint">Saved with the project, for every book.</small>
+                </span>
+              </div>
+            {/if}
+            {#if lqaMessage}<p class="save-msg" role="status">{lqaMessage}</p>{/if}
+            {#if checkerDialogOpen}
+              <CheckerSettingsDialog {projectPath} onClose={(saved) => closeCheckerDialog(projectPath, saved)} />
+            {/if}
+          {/if}
           <h3 class="sub">House style</h3>
           <p class="desc">What this project has decided is not a problem. Learned entries come from your Ignores ({houseStyle?.thresholds.learnIgnores ?? 3} of the same word, none Used); every entry only hides or ranks, never adds a check.</p>
           {#if houseStyle}
@@ -520,7 +751,8 @@
                 <span>{describeEntry(e)} · from the language pack's reviewed house style
                   <!-- Removing a bundled entry records this project's own entry for it, state removed. -->
                   <button class="btn link" on:click={() => houseStyleAct(() => bridge.housestyleRecord({ scope: e.scope,
-                    ruleId: e.ruleId, word: e.word, list: e.list === "properNouns" ? "properNouns" : "",
+                    ruleId: e.ruleId, word: e.word,
+                    list: e.list === "properNouns" || e.list === "projectWords" ? e.list : "",
                     provenance: "curated", state: "removed" }))} disabled={houseStyleBusy}>Remove</button>
                 </span>
               </div>
@@ -559,19 +791,6 @@
             <button class="btn" on:click={importHouseStyle} disabled={houseStyleBusy}>Import…</button>
             {#if houseStyleMessage}<span class="save-msg">{houseStyleMessage}</span>{/if}
           </div>
-          {#if terminologyConflict}
-            <div class="term-conflict" role="alertdialog" aria-label="Replace existing terminology rule">
-              <p>
-                A rule for <strong>{terminologyConflict.conceptId}</strong> already exists
-                (preferred: {terminologyConflict.approvedRenderings.join(", ") || "none"} · rejected:
-                {terminologyConflict.rejectedRenderings.join(", ") || "none"}). Replace it?
-              </p>
-              <div class="save-row">
-                <button class="btn primary" on:click={() => addTerminologyRule(true)} disabled={terminologySaving}>Replace</button>
-                <button class="btn" on:click={() => (terminologyConflict = null)} disabled={terminologySaving}>Keep existing</button>
-              </div>
-            </div>
-          {/if}
         {/if}
       {:else if activePane === "security"}
         <h3>Security & privacy</h3>
@@ -614,6 +833,8 @@
   .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .btn:disabled { opacity: 0.6; cursor: not-allowed; }
   .save-msg { font-size: var(--fs-xs); color: var(--success); }
+  .ref-row { display: flex; gap: 6px; }
+  .ref-row input { flex: 1; }
   .term-conflict { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--warning); border-radius: 6px; background: var(--warning-bg); font-size: var(--fs-sm); }
   .term-conflict p { margin: 0 0 8px; }
   .field textarea { width: 100%; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: var(--fs-sm); color: var(--text); background: var(--surface-2); box-sizing: border-box; font-family: inherit; }

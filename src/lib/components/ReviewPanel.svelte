@@ -3,7 +3,16 @@
   import { bridge } from "../api/bridgeClient";
   import { decideLanguageQaFindingOptimistically, decideLocalFinding } from "../findingActions";
   import { languageQaChannel } from "../languageQaInline";
-  import type { LanguageQaFinding, LanguageQaSuggestion } from "../types/languageQa";
+  import { forgetLearnedFix, isLearnedFinding, learnedPairOf } from "../learnedFixes";
+  import { openScopeDialog } from "../scopedApply";
+  import { addFlag } from "../flags";
+  import { addProjectWords, canAddProjectWord } from "../projectWords";
+  import { orderedSuggestions, suggestionTag } from "../languageQaSuggestions";
+  import FlagDialog from "./FlagDialog.svelte";
+  import RelatedWords from "./RelatedWords.svelte";
+  import OccurrencesPopup from "./OccurrencesPopup.svelte";
+  import type { FlagInput } from "../types/languageQa";
+  import type { LanguageQaFinding, LanguageQaScope, LanguageQaSuggestion } from "../types/languageQa";
   import AlignmentModal from "./AlignmentModal.svelte";
   import TranslationHelpsReview from "./TranslationHelpsReview.svelte";
   import { aiJobAppliesToReference, isAIReviewJobActive } from "../utils/aiJobScope";
@@ -20,8 +29,10 @@
   } from "../verseEditor";
   import { alignmentOpen, alignmentKey, openAlignment } from "../alignmentUi";
   import { aiReviewRequest, aiJobActive } from "../aiReviewUi";
+  import { reviewPanelCollapsed } from "../editorPrefs";
   import type { AiExplainResult, AIReviewJobSnapshot, FindingStatus } from "../types/finding";
 
+  $: openFindingCount = $selectedFindings.filter((f) => f.status === "open").length;
   let greekRoomChecking = false;
   let lastCheckedKey = "";
   let liveCheckSequence = 0;
@@ -108,10 +119,15 @@
     }
   }
 
+  /** The same suggestions, in the same order, as the verse menu offers. */
   function lqaSuggestions(finding: LanguageQaFinding): LanguageQaSuggestion[] {
-    if (finding.suggestions?.length) return finding.suggestions.slice(0, 5);
-    return finding.suggestedReplacement
-      ? [{ text: finding.suggestedReplacement, rank: 1, source: "rule", rationale: "" }] : [];
+    return orderedSuggestions(finding);
+  }
+
+  function copyWord(word: string): void {
+    const write = typeof navigator !== "undefined" ? navigator.clipboard?.writeText(word) : undefined;
+    lqaNotice = write ? `Copied “${word}”.` : "The clipboard is not available here.";
+    write?.catch(() => { lqaNotice = "Could not copy to the clipboard."; });
   }
 
   function restoreLqa(finding: LanguageQaFinding): void {
@@ -120,8 +136,19 @@
     }
   }
 
+  // Where a Use applies: this verse (written at once, as before), or every
+  // place of the same finding in the chapter or book (asked first).
+  let lqaScope: LanguageQaScope = "verse";
+  const LQA_SCOPES: { scope: LanguageQaScope; label: string }[] = [
+    { scope: "verse", label: "This verse" }, { scope: "chapter", label: "Chapter" }, { scope: "book", label: "Book" },
+  ];
+
   function useLqa(finding: LanguageQaFinding, chosen: LanguageQaSuggestion): void {
     if (lqaBusy) return;
+    if (lqaScope !== "verse") {
+      void openScopeDialog(finding, chosen.text, lqaScope);
+      return;
+    }
     lqaBusy = true;
     lqaNotice = "";
     lqaFindings = lqaFindings.filter((f) => f.id !== finding.id);
@@ -130,6 +157,56 @@
       lqaNoticeError = !result.ok;
       if (!result.ok) restoreLqa(finding);
     }).finally(() => { lqaBusy = false; });
+  }
+
+  /** Forget a learned fix: every recurrence of it goes, not just this one. */
+  function forgetLqa(finding: LanguageQaFinding): void {
+    const pair = learnedPairOf(finding);
+    if (!pair) return;
+    const isSame = (f: LanguageQaFinding) => learnedPairOf(f)?.old === pair.old && learnedPairOf(f)?.newWord === pair.newWord;
+    const removed = lqaFindings.filter(isSame);
+    lqaFindings = lqaFindings.filter((f) => !isSame(f));
+    lqaNotice = `No longer offering “${pair.old}” → “${pair.newWord}”. Restore it in Language QA › Dictionary.`;
+    lqaNoticeError = false;
+    void forgetLearnedFix(pair.old, pair.newWord).then((error) => {
+      if (!error) return;
+      lqaNotice = error;
+      lqaNoticeError = true;
+      removed.forEach(restoreLqa);
+    });
+  }
+
+  // Related words are offered for the first single-word finding of the verse.
+  $: relatedWord = lqaFindings.map((f) => f.originalText.trim()).find((w) => w && !/\s/.test(w)) ?? "";
+  let occurrences: { word: string; source: "irv" | "ov"; match?: "word" | "text" } | null = null;
+  /** Opens a verse anywhere in the book (an IRV occurrence). */
+  export let onNavigate: (book: string, chapter: string, verse: string) => void = () => {};
+
+  // Flag for review: a question for the team, never a change to the verse.
+  let lqaFlagDraft: LanguageQaFinding | null = null;
+
+  async function saveLqaFlag(input: FlagInput): Promise<string> {
+    if (!$project) return "No project is open.";
+    const result = await addFlag($project.path, input);
+    if (result.error) return result.error;
+    lqaFlagDraft = null;
+    lqaNotice = "Flag saved.";
+    lqaNoticeError = false;
+    return "";
+  }
+
+  /** "This word is spelt right in this project": its spelling findings go. */
+  function addLqaWord(finding: LanguageQaFinding): void {
+    const word = finding.originalText.trim();
+    lqaFindings = lqaFindings.filter((f) => f.originalText.trim() !== word);
+    lqaNotice = `“${word}” is now a project word.`;
+    lqaNoticeError = false;
+    void addProjectWords([word]).then((error) => {
+      if (!error) return;
+      lqaNotice = error;
+      lqaNoticeError = true;
+      restoreLqa(finding);
+    });
   }
 
   function decideLqa(finding: LanguageQaFinding, status: "ignored" | "rejected"): void {
@@ -295,10 +372,22 @@
     }
   }
 
-  async function pollAIJob(jobId: string, sequence: number): Promise<void> {
+  // A failed poll says nothing about the job, which keeps running in the
+  // engine: one lost `ai.review.status` used to freeze the panel on its last
+  // snapshot for good. Polling continues through a few failures in a row, and
+  // the first answer after them clears the error they put up.
+  const AI_POLL_MAX_FAILURES = 5;
+  let aiPollFailed = false;
+
+  async function pollAIJob(jobId: string, sequence: number, failures = 0): Promise<void> {
     try {
       const snapshot = await bridge.aiReviewStatus(jobId);
       if (sequence !== aiPollSequence) return;
+      if (aiPollFailed) {
+        aiPollFailed = false;
+        aiExplainError = "";
+        aiExplainErrorJobId = "";
+      }
       aiJob = snapshot;
       syncAIJobResult(snapshot);
       if (["queued", "running", "cancelling"].includes(snapshot.state)) {
@@ -320,6 +409,10 @@
         aiExplainError = error instanceof Error ? error.message : String(error);
         aiExplainErrorJobId = jobId;
         aiExplainErrorReference = "";
+        aiPollFailed = true;
+        if (failures + 1 < AI_POLL_MAX_FAILURES) {
+          aiPollTimer = setTimeout(() => void pollAIJob(jobId, sequence, failures + 1), 650);
+        }
       }
     }
   }
@@ -335,6 +428,7 @@
       `Run AI review for this ${scope}? Each verse may use one or two model requests and incur API charges.`,
     )) return;
     aiExplainError = "";
+    aiPollFailed = false;
     aiExplainErrorJobId = "";
     aiExplainErrorReference = "";
     aiExplainResult = null;
@@ -357,6 +451,10 @@
   $: if ($aiReviewRequest) {
     const { chapter, verse, scope } = $aiReviewRequest;
     aiReviewRequest.set(null);
+    // The job's progress, errors and results live in the AI review tab: a
+    // folded panel would run a paid call where nobody can see it.
+    reviewPanelCollapsed.set(false);
+    activeTab = "ai";
     void startAIReview(scope, chapter, verse);
   }
 
@@ -374,6 +472,7 @@
   async function retryAIReview(): Promise<void> {
     if (!aiJob || !["failed", "cancelled"].includes(aiJob.state)) return;
     aiExplainError = "";
+    aiPollFailed = false;
     aiExplainErrorJobId = "";
     aiExplainErrorReference = "";
     try {
@@ -397,6 +496,7 @@
     aiJob = null;
     aiExplainResult = null;
     aiExplainError = "";
+    aiPollFailed = false;
     aiExplainErrorJobId = "";
     aiExplainErrorReference = "";
     aiPollSequence += 1;
@@ -487,21 +587,34 @@
   }
 </script>
 
-<div class="panel">
+<div class="panel" class:collapsed={$reviewPanelCollapsed}>
+  {#if $reviewPanelCollapsed}
+    <button type="button" class="expand-rail" on:click={() => reviewPanelCollapsed.set(false)}
+      aria-expanded="false" aria-label="Show the review panel" title="Show the review panel">
+      <span aria-hidden="true">◀</span>
+      <span class="rail-label">Review{#if $selectedVerse} {$currentChapter}:{$selectedVerse}{/if}</span>
+      {#if openFindingCount}<span class="rail-count">{openFindingCount}</span>{/if}
+    </button>
+  {/if}
+  <!-- Folded, not unmounted: a running check, an open tab or a draft in
+       here carries on while the panel is out of the way. -->
+  <div class="panel-body" class:folded={$reviewPanelCollapsed}>
   {#if $selectedVerse}
-    <!-- Title and the two per-verse actions share one row where they fit;
-         the row wraps the buttons onto their own line rather than squeezing
-         them when the reference or the finding count runs long. The AI run
-         is not here -- it lives in the AI review tab with its progress and
-         errors, so a run can be started and watched in one place. -->
+    <!-- Two short rows, neither of which wraps: the reference with the fold
+         button, then the open count with the two per-verse actions. At the
+         panel's 400px the title and both buttons do not fit on one row, and
+         a wrapped row cost a third line of height. The AI run is not here --
+         it lives in the AI review tab with its progress and errors, so a run
+         can be started and watched in one place. -->
     <div class="panel-header">
-      <div class="header-title">
+      <div class="header-row">
         <div class="ref">Review {($project?.bookId ?? "").toUpperCase()} {$currentChapter}:{$selectedVerse}</div>
-        <div class="sub">
-          {$selectedFindings.filter((f) => f.status === "open").length} open finding(s)
-        </div>
+        <button type="button" class="collapse-btn" on:click={() => reviewPanelCollapsed.set(true)}
+          aria-expanded="true" aria-label="Hide the review panel" title="Hide the review panel">▶</button>
       </div>
-      <div class="verse-actions">
+      <div class="header-row">
+        <div class="sub">{openFindingCount} open finding(s)</div>
+        <div class="verse-actions">
         <button
           class="align-btn"
           on:click={() => openAlignment($currentChapter, $selectedVerse ?? "")}
@@ -514,6 +627,7 @@
           disabled={$checkingProgress.running || Boolean($editingChapter) || $editSaving || Boolean($recheckingKey)}
           title={$checkingProgress.running ? "Wait for background checking to finish before editing" : "Edit this verse"}
         >✎ Edit verse</button>
+        </div>
       </div>
     </div>
 
@@ -546,8 +660,9 @@
         <button
           type="button" role="tab" aria-selected={activeTab === "tntw"}
           class:active={activeTab === "tntw"} on:click={() => (activeTab = "tntw")}
+          title="Translation Notes, Words alignment"
         >
-          tN/tW/Alignment
+          Core check
           {#if tntwOpenCount > 0}<span class="tab-count">{tntwOpenCount}</span>{/if}
         </button>
         <button
@@ -718,20 +833,44 @@
               <div class="finding lqa-finding" data-lqa-id={f.id}>
                 <div class="verdict">
                   <span class="badge {severityBadge[f.severity] ?? 'badge-review'}">{f.severity}</span>
-                  <span class="engine-badge">{f.category}</span>
+                  <span class="engine-badge">{isLearnedFinding(f) ? "learned fix" : f.category}</span>
                   <span class="check-id">{f.ruleId}</span>
                   {#if f.previouslyIgnored}<span class="badge badge-decided" title="Ignored under an older rule version; check it again">re-check</span>{/if}
+                  {#if f.context}<span class="engine-badge" title={f.context === "heading" ? `Section heading: ${f.contextText ?? ""}` : "Footnote text"}>in {f.context}</span>{/if}
                 </div>
                 <p class="explain"><b>{f.originalText}</b> — {f.message}</p>
+                {#if f.reference}<p class="explain lqa-reference"><b>{f.reference.label} {f.reference.ref}:</b> {f.reference.text}</p>{/if}
                 <div class="decision-row lqa-actions">
                   {#each lqaSuggestions(f) as s (s.rank)}
                     <button class="edit-inline" disabled={lqaBusy || $checkingProgress.running || Boolean($editingChapter)}
                       title={s.rationale || "Replace the flagged text with this form and re-check the verse"}
-                      on:click={() => useLqa(f, s)}>Use “{s.text}”</button>
+                      on:click={() => useLqa(f, s)}>{s.source === "learned" ? "Change to" : "Use"} “{s.text}”{#if suggestionTag(s)}<small class="sugg-tag">{suggestionTag(s)}</small>{/if}</button>
                   {/each}
                   <button class="ignore" on:click={() => decideLqa(f, "ignored")}>⊘ Ignore</button>
                   <button class="ignore" on:click={() => decideLqa(f, "rejected")}>False positive</button>
+                  {#if isLearnedFinding(f)}
+                    <button class="ignore" title="Stop offering this replacement anywhere in the book; it can be restored"
+                      on:click={() => forgetLqa(f)}>Forget this fix</button>
+                  {/if}
+                  <button class="flag" title="Ask the team about this text; nothing in the verse changes"
+                    on:click={() => (lqaFlagDraft = f)}>⚑ Flag…</button>
+                  {#if canAddProjectWord(f)}
+                    <button class="ignore" title="This word is spelt right in this project: stop reporting it anywhere in the book"
+                      on:click={() => addLqaWord(f)}>Add to word list</button>
+                  {/if}
+                  <button class="ignore" title="Copy the flagged text" on:click={() => copyWord(f.originalText.trim())}>Copy</button>
+                  <button class="ignore" title="Every place this text occurs in the book"
+                    on:click={() => (occurrences = { word: f.originalText.trim(), source: "irv", match: "text" })}>Search</button>
                 </div>
+                {#if lqaSuggestions(f).length && !f.context}
+                  <div class="scope-row" role="radiogroup" aria-label="Apply a suggestion to">
+                    <span class="scope-label">Apply to</span>
+                    {#each LQA_SCOPES as option (option.scope)}
+                      <button type="button" role="radio" aria-checked={lqaScope === option.scope}
+                        class:on={lqaScope === option.scope} on:click={() => (lqaScope = option.scope)}>{option.label}</button>
+                    {/each}
+                  </div>
+                {/if}
               </div>
             {:else}
               <p class="none">
@@ -741,6 +880,10 @@
               </p>
             {/each}
           </div>
+          {#if relatedWord && $project}
+            <RelatedWords projectPath={$project.path} word={relatedWord}
+              onShowOccurrences={(word, source) => (occurrences = { word, source })} />
+          {/if}
           {#if lqaHidden.length > 0}
             <details class="section ignored-section">
               <summary class="section-title ignored-summary">Decided ({lqaHidden.length})</summary>
@@ -874,42 +1017,81 @@
     </div>
 
   {:else}
-    <div class="empty-panel">Select a verse to review its findings.</div>
+    <div class="empty-panel">
+      <span>Select a verse to review its findings.</span>
+      <button type="button" class="collapse-btn" on:click={() => reviewPanelCollapsed.set(true)}
+        aria-expanded="true" aria-label="Hide the review panel" title="Hide the review panel">▶</button>
+    </div>
   {/if}
+  </div>
 </div>
 
 {#if $alignmentOpen && $selectedVerse}
   <AlignmentModal chapter={$currentChapter} verse={$selectedVerse} onClose={() => alignmentOpen.set(false)} />
 {/if}
 
+{#if occurrences && $project}
+  <OccurrencesPopup projectPath={$project.path} word={occurrences.word} source={occurrences.source}
+    match={occurrences.match ?? "word"} {onNavigate} onClose={() => (occurrences = null)} />
+{/if}
+{#if lqaFlagDraft}
+  <FlagDialog
+    draft={{ chapter: lqaFlagDraft.chapter, verse: lqaFlagDraft.verse, start: lqaFlagDraft.start, end: lqaFlagDraft.end,
+      text: lqaFlagDraft.originalText, suggested: lqaFlagDraft.suggestions?.[0]?.text, findingId: lqaFlagDraft.id }}
+    reference={`${lqaFlagDraft.book.toUpperCase()} ${lqaFlagDraft.chapter}:${lqaFlagDraft.verse}`}
+    onSave={saveLqaFlag}
+    onCancel={() => (lqaFlagDraft = null)}
+  />
+{/if}
+
 <style>
   .panel { width: 400px; flex-shrink: 0; background: var(--surface); display: flex; flex-direction: column; overflow: hidden; border-left: 1px solid var(--border); }
-  .panel-header { padding: 14px 16px; border-bottom: 1px solid var(--border); display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
-  .header-title { flex: 1 1 auto; min-width: 0; }
+  .panel.collapsed { width: 32px; }
+  .panel-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .panel-body.folded { display: none; }
+  .expand-rail {
+    flex: 1; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 12px 0;
+    border: 0; background: var(--surface-2); color: var(--text-2); cursor: pointer; font: inherit; font-size: var(--fs-2xs);
+  }
+  .expand-rail:hover { background: var(--accent-bg); color: var(--accent); }
+  .rail-label { writing-mode: vertical-rl; font-weight: 700; white-space: nowrap; }
+  .rail-count { font-size: var(--fs-3xs); font-weight: 700; padding: 1px 5px; border-radius: 999px; background: var(--accent); color: white; }
+  .collapse-btn {
+    flex-shrink: 0; width: 22px; height: 22px; padding: 0; border-radius: 5px; border: 0;
+    background: transparent; color: var(--text-3); cursor: pointer; font-size: var(--fs-3xs);
+  }
+  .collapse-btn:hover { background: var(--accent-bg); color: var(--accent); }
+  .panel-header { padding: 10px 16px 8px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
+  .header-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
   .panel-pinned { flex-shrink: 0; padding: 14px 16px; border-bottom: 1px solid var(--border); overflow-y: auto; max-height: 60vh; }
-  .ref { font-size: var(--fs-md); font-weight: 700; color: var(--text); }
-  .sub { font-size: var(--fs-xs); color: var(--text-2); margin-top: 2px; }
+  .ref { flex: 1; min-width: 0; font-size: var(--fs-md); font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sub { flex: 1; min-width: 0; font-size: var(--fs-2xs); color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .panel-scroll { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
   .operation-status { display: flex; align-items: center; gap: 7px; border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; font-size: var(--fs-xs); line-height: 1.4; }
   .operation-status.checking { color: var(--accent); background: var(--accent-bg); }
   .operation-status.saved { color: var(--success); background: var(--success-bg); }
   .operation-status.failed { color: var(--danger); background: var(--danger-bg); }
-  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); flex-shrink: 0; padding: 14px 16px 0; background: var(--surface); }
+  /* One line, every label whole. At 400px the four labels fit only if the
+     count and the live dot stay out of the flow (they sit in the corner), and
+     the row scrolls rather than wraps should a wider UI font ever overflow it. */
+  .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); flex-shrink: 0; padding: 10px 10px 0; background: var(--surface); overflow-x: auto; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
   .tab-content { flex: 1; overflow-y: auto; padding: 14px 16px; }
   .tabs button {
-    flex: 1; display: flex; align-items: center; justify-content: center; gap: 5px;
-    padding: 8px 6px; font-size: var(--fs-2xs); font-weight: 700; color: var(--text-2);
+    flex: 1 1 auto; position: relative; display: flex; align-items: center; justify-content: center;
+    padding: 9px 4px 7px; font-size: var(--fs-3xs); font-weight: 700; color: var(--text-2); white-space: nowrap;
     background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0;
     cursor: pointer;
   }
   .tabs button:hover:not(.active) { color: var(--text); }
   .tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
   .tab-count {
-    font-size: var(--fs-3xs); font-weight: 700; padding: 1px 6px; border-radius: 999px;
+    position: absolute; top: 0; right: 0; line-height: 14px;
+    font-size: var(--fs-3xs); font-weight: 700; padding: 0 4px; border-radius: 999px;
     background: var(--accent-bg); color: var(--accent);
   }
   .tabs button.active .tab-count { background: var(--accent); color: white; }
-  .tab-live { width: 6px; height: 6px; border-radius: 50%; background: var(--pass); flex-shrink: 0; }
+  .tab-live { position: absolute; top: 4px; left: 0; width: 6px; height: 6px; border-radius: 50%; background: var(--pass); }
   .tab-panel:empty { display: none; }
   .section { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; }
   .section-title { font-size: var(--fs-xs); font-weight: 700; color: var(--text); display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
@@ -952,25 +1134,34 @@
   .decision-row.two-up { grid-template-columns: 1fr 1fr; }
   .decision-row.one-up { grid-template-columns: 1fr; }
   .decision-row.lqa-actions { display: flex; flex-wrap: wrap; }
+  .scope-row { display: flex; align-items: center; gap: 0; margin-top: 8px; }
+  .scope-label { font-size: var(--fs-2xs); font-weight: 700; color: var(--text-2); margin-right: 8px; white-space: nowrap; }
+  .scope-row button { flex: 1; padding: 5px 0; font-size: var(--fs-2xs); font-weight: 600; color: var(--text-2);
+    background: var(--surface); border: 1px solid var(--border-strong); border-left-width: 0; cursor: pointer; }
+  .scope-row button:first-of-type { border-left-width: 1px; border-radius: 6px 0 0 6px; }
+  .scope-row button:last-of-type { border-radius: 0 6px 6px 0; }
+  .scope-row button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
   .decision-row.lqa-actions button { flex: 1 1 auto; }
   .lqa-notice { margin: 0 0 6px; font-size: var(--fs-xs); color: var(--text-3); }
   .lqa-notice.failed { color: var(--danger); }
   .decision-row button { padding: 7px; font-size: var(--fs-xs); font-weight: 700; border-radius: 6px; border: none; cursor: pointer; }
   .accept { background: var(--success); color: #fff; }
   .ignore { background: #F5EBFC; color: #9333EA; }
+  .flag { background: var(--flag-bg); color: var(--flag); }
   .undo-ignore, .undo-accept { background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border-strong); }
   .edit-inline { background: var(--accent-bg); color: var(--accent); }
   .none { font-size: var(--fs-xs); color: var(--text-3); }
   .decision-row button:disabled { opacity: .55; cursor: not-allowed; }
-  .verse-actions { display: flex; gap: 8px; flex: 0 0 auto; margin-left: auto; }
-  .edit-btn { padding: 8px 10px; font-size: var(--fs-xs); font-weight: 700; border-radius: 7px; border: none; background: var(--accent-bg); color: var(--accent); cursor: pointer; white-space: nowrap; }
-  .align-btn { padding: 8px 10px; font-size: var(--fs-xs); font-weight: 700; border-radius: 7px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); cursor: pointer; white-space: nowrap; }
+  .verse-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+  .edit-btn { padding: 5px 9px; font-size: var(--fs-2xs); font-weight: 700; border-radius: 6px; border: none; background: var(--accent-bg); color: var(--accent); cursor: pointer; white-space: nowrap; }
+  .align-btn { padding: 5px 9px; font-size: var(--fs-2xs); font-weight: 700; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); cursor: pointer; white-space: nowrap; }
   .ai-run-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
   .ai-run-label { font-size: var(--fs-sm); font-weight: 700; color: var(--text); white-space: nowrap; }
   .ai-run-buttons { display: flex; gap: 6px; margin-left: auto; }
   .ai-scope-btn { padding: 7px 12px; font-size: var(--fs-xs); font-weight: 700; border-radius: 7px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--accent); cursor: pointer; white-space: nowrap; }
   .edit-btn:disabled, .align-btn:disabled, .ai-scope-btn:disabled { opacity: .55; cursor: not-allowed; }
-  .empty-panel { padding: 24px 16px; font-size: var(--fs-sm); color: var(--text-3); }
+  .empty-panel { padding: 24px 16px; font-size: var(--fs-sm); color: var(--text-3); display: flex; align-items: flex-start; gap: 10px; }
+  .empty-panel span { flex: 1; }
   .ai-explain-section { border-color: var(--accent); }
   .ai-cost { margin-left: auto; font-size: var(--fs-2xs); font-weight: 400; color: var(--text-3); }
   .ai-summary { font-size: var(--fs-sm); color: var(--text); line-height: 1.5; margin: 0 0 10px; }
@@ -990,4 +1181,5 @@
   .ai-job-actions { margin-top: 6px; }
   .ai-job-background { margin-top: 9px; padding: 8px; border-radius: 7px; font-size: var(--fs-3xs); line-height: 1.4; color: var(--text-2); background: var(--surface-2); }
   .ai-control-error { margin: 8px 0 0; font-size: var(--fs-2xs); line-height: 1.4; color: var(--danger); overflow-wrap: anywhere; }
+  .sugg-tag { margin-left: 0.4em; color: var(--text-3); font-size: var(--fs-2xs); font-weight: 400; }
 </style>

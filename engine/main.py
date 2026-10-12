@@ -24,12 +24,17 @@ def _apply_cli_overrides() -> None:
     onefile archive. Reading argv directly rather than pulling in argparse
     for one optional flag."""
     args = sys.argv[1:]
-    if "--resources-dir" in args:
-        index = args.index("--resources-dir")
-        if index + 1 < len(args):
-            os.environ["BRIDGE_BUNDLED_RESOURCES_DIR"] = args[index + 1]
+    # --language-packs-dir: the Language QA packs (engine/language_packs),
+    # shipped the same way and for the same reason (docs/LANGUAGE_QA_PACKS.md).
+    for flag, variable in (("--resources-dir", "BRIDGE_BUNDLED_RESOURCES_DIR"),
+                           ("--language-packs-dir", "BRIDGE_LANGUAGE_PACKS_DIR")):
+        if flag in args:
+            index = args.index(flag)
+            if index + 1 < len(args):
+                os.environ[variable] = args[index + 1]
 
 
 if __name__ == "__main__":
     _apply_cli_overrides()
-    run_stdio_loop(BridgeEngine())
+    engine = BridgeEngine()
+    run_stdio_loop(engine, on_ready=engine.start_background_warmup)
