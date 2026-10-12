@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { bridge } from "./lib/api/bridgeClient";
+  import { BUSY_LABEL, MAX_BUSY_TIMEOUTS, checkFailureMessage, isBusyTimeout } from "./lib/checkMonitor";
   import ImportScreen from "./lib/components/ImportScreen.svelte";
   import TopBar from "./lib/components/TopBar.svelte";
   import VerseList from "./lib/components/VerseList.svelte";
@@ -917,11 +918,21 @@
     const seen: Record<string, "succeeded" | "failed"> = {};
     for (const [key, result] of Object.entries(initial.results)) seen[key] = result.status;
     let cursor = initial.resultsCursor ?? 0;
+    let busyTimeouts = 0;
     try {
       while (!["succeeded", "failed", "cancelled"].includes(snapshot.state)) {
         await new Promise((resolve) => setTimeout(resolve, 750));
         if (generation !== monitorGeneration) return;
-        snapshot = await bridge.checkStatus(snapshot.jobId, cursor);
+        try {
+          snapshot = await bridge.checkStatus(snapshot.jobId, cursor);
+        } catch (error) {
+          // A busy sidecar, not a failed check (#210): say so and poll again.
+          if (!isBusyTimeout(error) || ++busyTimeouts >= MAX_BUSY_TIMEOUTS) throw error;
+          if (generation !== monitorGeneration) return;
+          checkingProgress.update((progress) => ({ ...progress, label: BUSY_LABEL }));
+          continue;
+        }
+        busyTimeouts = 0;
         if (generation !== monitorGeneration) return;
         cursor = snapshot.resultsCursor ?? cursor;
         applyJobSnapshot(snapshot, seen);
@@ -934,7 +945,7 @@
         label: "Checking failed",
         jobId: snapshot.jobId,
         state: "failed",
-        error: error instanceof Error ? error.message : String(error),
+        error: checkFailureMessage(error),
         scope: snapshot.scope,
       });
     } finally {

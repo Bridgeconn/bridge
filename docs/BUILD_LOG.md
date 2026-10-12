@@ -18399,3 +18399,26 @@ disagreements (v1 என்னவென்றால் grammatical vs explicitat
 implicit) became suggestions, unwritten. First successful real-provider run
 of the #219 path. Desktop app not run. Observation for Benz: v2's
 `complete_cross_verse` came from null decisions alone, no link (#228's rule).
+
+## 2026-10-12 — #210, the frontend part: a busy sidecar no longer fails the check notice
+
+Root cause (measured, on #210): a request ahead of a `checks.status` poll —
+opening a never-opened sibling, `materialize_lazy` 60 s while a check runs —
+holds the single dispatcher past Rust's 30 s limit, and the monitor turned
+that one timeout into "Checking failed: Sidecar request 'checks.status' timed
+out". The root fix (materialize off the dispatcher, #112's area) is Revant's;
+Benz chose (2026-10-12) to land only this part.
+
+**What changed.** `src/lib/checkMonitor.ts`: a timed-out poll is a busy
+sidecar, not a failed check. `App.svelte` `monitorJob` (not the startup path)
+keeps polling after one, with the progress label "Waiting for Bridge to finish
+another task"; ten timeouts in a row (about five minutes) still end it. The
+failure notice now reads "Bridge stopped answering while checking." or
+"Checking stopped because of an error.", then "Your text is not affected;
+press Retry to check again.", with the sidecar's text kept as "(Details: …)".
+
+**Verified.** `checkMonitor.test.ts` (3): both Rust timeout wordings are read
+as busy, the give-up bound, the wording. `npm run check` 0/0, `npm run test`
+56 files / 683 passed, `npm run build` ok. Engine suite not run (no engine
+change). Not run: the desktop repro (open an unopened book during a check and
+watch the label); the protocol repro on #210 is what showed the 63 s wait.
