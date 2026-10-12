@@ -18366,3 +18366,22 @@ test now expects Show and Kinds in the box.
 **Verified.** `npm run check` 0/0, `npm run test` 55 files / 680 passed,
 `npm run build` ok. Not run: the desktop visual check at 1366×768 for both
 issues (jsdom does not lay out, so sticky behaviour is unproven by the tests).
+
+## 2026-10-12 — Cross-verse re-tests: #208 closed; #188 blocked by the provider's spend limit
+
+Both issues waited on #214's window alignment (#216–#222, now on `main`).
+Driven against the real stdio sidecar, isolated data folder, IRV 1 Corinthians.
+
+**#208 (offline, closed).** `alignment.crossVerse.propose` on 7:1-3 of a book
+with no completed alignments returns 0 proposals with `unavailable.reason:
+"no-completed-alignments"` and its explanation; the corpus pass makes no
+network call. The page's rendering of that message is pinned by
+`CrossVerseAlignmentModal.test.ts`. Desktop not run.
+
+**#188 (one paid window, Benz's go-ahead).** The offline estimator put
+1 Co 7:1-3 at ~6,800 input tokens over 2 requests, $0.12–0.51 on gpt-5.6.
+`alignment.window.autoAlign` (what "▶ Align automatically" calls; the old
+"Suggest with AI" is gone since #222) was refused by OpenAI with HTTP 429,
+"organization has reached its configured enforced spend limit", after 10.8 s.
+Nothing was written; the error reached the caller as `ai_error`. No retry was
+made. #188 stays open until the limit is raised and the window is run again.
