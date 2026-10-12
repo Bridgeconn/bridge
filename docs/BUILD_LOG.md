@@ -17959,3 +17959,31 @@ LANGUAGE_QA_BENCHMARK.md; `lexicon_curated.csv` is under
 `benchmark/human/<date>/`; `textScale` is in `src/lib/editorPrefs.ts`;
 `legacy:human` is not yet in code (it is #237's); the wire `actorId` fallback
 is at `bridge_service.py:7049`.
+
+## 2026-10-12 — Actor id: the engine stamps its own; the wire fields go (#183)
+
+Benz left the question to us. Decided: every write is attributed to the
+identity the engine holds for the caller, and a request that names its own
+actor is refused. DECISIONS.md 2026-10-12 has the entry; the #183 comment has
+the reasoning in full. The code change — dropping `actorId`, `actor` and
+`requestedBy` from the correction methods in `bridge_service.py:7049-7111`,
+the matching optional fields in `bridgeClient.ts:1156-1232`, the six
+`reviewerActorId()` sends in `CorrectionReviewPanel.svelte`, the `"human"`
+fallback in `correctionApplication.ts:70`, and the seven wire usages in the
+correction tests — lands with #236, where `authorize()` first depends on it.
+
+**What the survey found, against the issue's premise.** The issue counted 26
+test usages of the wire field. Seven calls actually go through the
+dispatcher with an asserted actor (`test_correction_stage9b1.py` three,
+`test_correction_stage9b3b.py` one, `test_correction_stage9b4.py` two,
+`test_correction_stage9b3c.py` one); the other occurrences assert on
+`actorId` in returned proposal history or pass `actor=` straight to a
+service method, which the decision does not touch. The desktop sends
+`settings.localUserId` on every one of these calls, so the engine's own id
+and the asserted one are already the same and no row changes when the field
+goes. The service layer already refuses a non-HUMAN wire actor on apply and
+acknowledge, so the `actor` object could only ever carry what the engine
+would build itself.
+
+**Verified.** Docs only; no code changed, no gates run. The file:line
+references above were read in the tree today.

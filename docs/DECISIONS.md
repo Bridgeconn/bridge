@@ -868,3 +868,36 @@ using the whole alignment surface, and a tick that cannot be earned on a verse t
 tool itself linked contradicts what the link means.
 **Rules out:** closing #241 on cross-verse links alone; keeping the ✓ rule as it is.
 **Revisit when:** not planned.
+
+## 2026-10-12 — The engine stamps its own actor id; a request never names its actor (#183)
+**Decision:** Every write is attributed to the identity the engine itself holds for the
+caller — today `current_actor_id()`, the one local user; under the hub (#79, #80), the
+user bound to the device token the request arrived with. The wire fields that let a
+client name an actor — `actorId` on `correction.createProposal`, `editProposal`,
+`rejectProposal` and `regenerateProposal`; the `actor` object on `applyProposal` and
+`acknowledgeCorrected`; `requestedBy` on `reanalyzeAffected` and `verifyApplication`
+(`bridge_service.py:7049-7111`) — leave the contract. A request that carries one is
+refused with a clear error, not silently re-attributed: a stale client fails loudly and
+a forged one writes nothing. The service-layer `actor_id` parameters stay; they and
+`settings.reviewer_name` are the test injection points, so no test needs the wire field.
+The removal lands with #236, the first code that depends on it, with a test that a
+request asserting another actor is refused and nothing is written.
+**Because:** Benz left it to us (2026-10-12). `authorize()` (#236) checks the role of the
+caller the engine knows; if the body could still name someone else, it would authorize
+one person and the append-only ledger (`change_log` triggers, proposal history
+snapshots) would record another, permanently. The alternative — keep the field and let
+`authorize()` verify the claim — is a second identity path to keep consistent with the
+first, for no gain: the desktop already sends `localUserId`, the same id the engine
+stamps, so dropping the field changes no row today; and the service layer already
+refuses a non-HUMAN wire actor (`correction_application.py:59`,
+`correction_verification.py:987`), so the `actor` object could only ever carry what the
+engine would build itself. The issue's "26 tests use the wire field" overstated the cost:
+seven calls do (`test_correction_stage9b1.py` ×3, `_stage9b3b.py`, `_stage9b4.py` ×2,
+`_stage9b3c.py`); the rest assert on returned history or call the services directly.
+**Rules out:** any wire field, on any method, that names the acting user; a client-side
+`"human"` fallback (`correctionApplication.ts:70`); a hub endpoint that trusts a body
+field for identity. The engine's own AI and migration actors (`ActorType.AI`,
+`MIGRATION`) are unaffected: they are stamped by engine paths, never by a request.
+**Revisit when:** a legitimate delegated write appears — one person recording a decision
+on another's behalf. That would be an explicit `onBehalfOf` field with its own audit
+column and its own `authorize()` action, not a return of `actorId`.
