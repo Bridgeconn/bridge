@@ -222,16 +222,23 @@ jobs:
           APPLE_SIGNING_IDENTITY: "-"
         run: npm run tauri build
 
-      # The bundler is expected to sign the externalBin sidecars along with the
-      # app. An unsigned arm64 sidecar would be killed at spawn and the app
-      # would report a sidecar timeout, so check here rather than on a user's
-      # machine. `codesign -dv` exits non-zero on an unsigned file.
+      # The bundler signs the externalBin sidecars along with the app (the
+      # build log shows "Signing .../Contents/MacOS/bridge-engine"). An
+      # unsigned arm64 sidecar would be killed at spawn and the app would
+      # report a sidecar timeout, so check here rather than on a user's
+      # machine. The check reads the DMG: with only `dmg` in bundle.targets
+      # the bundler deletes bundle/macos/Bridge.app once the image is packed
+      # (first run, 2026-10-12). `codesign -dv` exits non-zero on an unsigned
+      # file.
       - name: Verify the macOS signature covers the sidecars
         if: runner.os == 'macOS'
         shell: bash
         run: |
           set -euo pipefail
-          app=$(ls -d src-tauri/target/release/bundle/macos/*.app | head -n 1)
+          dmg=$(ls src-tauri/target/release/bundle/dmg/*.dmg | head -n 1)
+          mount=$(hdiutil attach -nobrowse -readonly "$dmg" | grep -o '/Volumes/.*' | tail -n 1)
+          trap 'hdiutil detach "$mount" -quiet || true' EXIT
+          app=$(ls -d "$mount"/*.app | head -n 1)
           codesign --verify --deep --strict --verbose=2 "$app"
           for bin in "$app"/Contents/MacOS/bridge-engine* "$app"/Contents/MacOS/bridge-usfm-checker*; do
             echo "== $bin"
