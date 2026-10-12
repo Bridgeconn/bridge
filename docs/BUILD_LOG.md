@@ -17915,3 +17915,47 @@ hidden-not-removed), SideRail (toggles, Settings, badges), docked Language QA
 and its titles, the glyph class; npm run build ok. Not run: the desktop app.
 The layout change is the largest of the session, and nothing in jsdom shows
 how the columns sit at 1366×768.
+
+## 2026-10-12 — Benz's decisions of 2026-10-12 recorded (#226)
+
+Benz answered the 2026-10-09 requirements list by email. Four DECISIONS.md
+entries, all dated 2026-10-12:
+
+- **Users and hub are v1 scope; dashboard is Option A.** Supersedes 2026-09-16.
+  Requirement 4 is #45 as #236 (roles, `authorize()`), #237 (Users screen,
+  picker, `legacy:human`), #240 (assignments, My work). Requirement 6 is #46 as
+  #227 (architecture review, the SRS §14 step for `FUTURE-002`/`003`), then
+  #79, #80, #81. This is the maintainer's decision to add a server: CLAUDE.md's
+  first stop-and-ask bullet now says "decided 2026-10-12 for the hub only; any
+  other network dependency is still a question", and the offline-invariant
+  paragraph names the hub as the one exception, a sync peer the desktop never
+  waits on. Option B (a web workbench) is off the table.
+- **Language QA accuracy.** The 70% target is dropped; the 2026-09-28 0.90 gate
+  is the standard. Recall is the abstain-class still-missed rate of
+  LANGUAGE_QA_BENCHMARK.md; the proposed target is at most 10% per class on at
+  least 20 reviewed abstains, awaiting Benz. Labels come as JSONL in the
+  existing verdict format, 50+ per rule; the word list as a CSV shaped like
+  `lexicon_curated.csv`. First batch 2026-10-13.
+- **Requirement 8 scaling** means `editorPrefs.textScale`, RTL correct at each
+  step; Windows 125%/150% must only not break layout.
+- **Requirement 9** covers the automatic alignment path too; the verse ✓ dead
+  end for cross-verse-linked verses is fixed by #228, not blocking the interim
+  release.
+
+Also from the email, not a DECISIONS entry: requirement 2 (loading screen,
+#233) goes before requirement 1 (speed, #229); the field-spec machine is
+available from 2026-10-15; #183 (actor id) is left to us and is the next
+commit.
+
+**Files.** `docs/DECISIONS.md` (four entries appended), `CLAUDE.md` (the
+stop-and-ask bullet and the offline paragraph), `docs/TEAM_ARCHITECTURE.md`
+(a scope note under the header; §10's order of work carries the issue numbers
+and the review step), `docs/SOFTWARE_REQUIREMENTS_SPECIFICATION.md` (§14: the
+three FUTURE items moved into v1 scope, pointing at the decision and #227).
+
+**Verified.** Docs only; no code changed, no gates run. Claims checked against
+the tree before writing: the still-missed-rate table exists in
+LANGUAGE_QA_BENCHMARK.md; `lexicon_curated.csv` is under
+`benchmark/human/<date>/`; `textScale` is in `src/lib/editorPrefs.ts`;
+`legacy:human` is not yet in code (it is #237's); the wire `actorId` fallback
+is at `bridge_service.py:7049`.

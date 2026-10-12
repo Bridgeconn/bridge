@@ -422,6 +422,8 @@ a translator hits during normal work. The one bundled network-shaped thing —
 `ai_client.py` — is explicitly optional, human-invoked, and never on the path that
 imports, checks, or opens a project. If a feature seems to need a network call, say
 so and stop; that is an architecture decision, not an implementation detail.
+The team hub (#46, decided 2026-10-12) is the one agreed exception, and it is a
+sync peer the desktop never waits on, not a dependency on any path above.
 
 ## The analysis pipeline, and why stage numbers matter
 
@@ -675,7 +677,11 @@ These are cheap to start and expensive to undo. If a task appears to require one
 raise it as a question in the issue rather than deciding it in a commit:
 
 - Anything that adds a server, an account, a login, or a network round-trip on a
-  runtime path a translator hits
+  runtime path a translator hits. Decided 2026-10-12 for the hub only
+  (`docs/DECISIONS.md`; #46, architecture review in #227 before #79): the team
+  hub is an optional sync peer the desktop never waits on. Any other network
+  dependency — an account, a login, a hosted service, a call on the import,
+  check or open path — is still a question
 - Re-baselining either golden
 - Changing the confidence thresholds or the auto-apply behaviour. Still on this
   list after #146 and #219: those decisions were taken for cross-verse links

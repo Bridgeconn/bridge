@@ -834,6 +834,12 @@ Before implementation, each future item requires an issue, architecture review,
 privacy/offline analysis, acceptance criteria, and an explicit decision about
 which current requirements it may affect.
 
+`FUTURE-001`, `FUTURE-002` and `FUTURE-003` were moved into v1 scope on
+2026-10-12 by the maintainer's decision (`docs/DECISIONS.md` 2026-10-12, #226;
+issues #45 and #46 under milestone 1). The architecture review this section
+requires is #227, before #79 starts. The offline requirements above are not
+relaxed: the hub is a sync peer the desktop never waits on.
+
 ## 15. Change control
 
 - Changes to this SRS shall identify affected requirement IDs.

@@ -796,3 +796,75 @@ boundary of the offline engine (2026-09-24, LQA-3).
 **Revisit when:** a reviewer or consultant reads a clean Language QA result as
 a review of grammar, meaning or the source; then bring a one-line boundary
 back into view (the alternative offered on 2026-10-08).
+
+## 2026-10-12 — Full user management and the team hub are v1 scope; the dashboard is a browser app, not a web workbench
+**Decision:** Full user management (October requirement 4: a display-name picker at
+startup, the stable user id on every human write, three roles behind one `authorize()`,
+a Users screen, `legacy:human` rendering) is v1 scope: #45, built as #236, #237 and
+#240 under milestone 1. The team hub and the browser dashboard it serves (requirement
+6) are v1 scope: #46, built as #227 (the architecture review first, the step the SRS
+§14 requires for `FUTURE-002`/`FUTURE-003`), then #79, #80, #81. That is the
+maintainer's decision to add a server, the first bullet of CLAUDE.md's stop-and-ask
+list, taken for the hub only. Requirement 7 is Option A only: the browser surface is
+the dashboard inside the hub (progress, assignments, reports, users) at its own URL in
+Chrome and Edge; there is no full Bridge workbench in the browser.
+**Because:** Benz's email of 2026-10-12, answering the 2026-10-09 requirements list
+("Requirements Final", items 4, 6 and 7). Teams are the product's users; #78 already
+stamps a stable user id on every write, so a picker and roles attribute new rows
+correctly without touching old ones; and the hub is the sync-based collaboration the
+2026-09-11 offline decision allows. Option B was estimated and declined: it moves the
+engine's process boundary and the local project files into a server and gives up the
+offline desktop.
+**Rules out:** a full web workbench (Option B); any network dependency on a translator's
+desktop path other than hub sync, which never blocks (2026-09-11 stands); skipping a
+later stop-and-ask on the strength of this one — an account, a login or a hosted
+service beyond the hub is still a fresh question. #97 stays closed; its scope is #237.
+**Revisit when:** not planned. The hub's shape (join codes, push/pull, conflicts) is
+#227's to review before #79.
+**Supersedes:** 2026-09-16, "One local user per installation until after v1; the hub
+after v1".
+
+## 2026-10-12 — Language QA accuracy: the 0.90 human-precision gate is the standard; recall is the abstain-class proxy
+**Decision:** Requirement 3's 70% inline-precision target is dropped. The existing gate
+(2026-09-28: at least 0.90 human-labelled precision on at least 20 labelled findings) is
+the standard for every inline rule. Recall is not measured directly: the measure is the
+still-missed rate per abstain class in `docs/LANGUAGE_QA_BENCHMARK.md` (items the
+reviewer said were missed that the pack still does not flag, over that class's reviewed
+abstains). Proposed per-class target, awaiting Benz's reply: at most 10%, on at least
+20 reviewed abstains per class. Labels arrive as JSONL in the existing verdict format
+(`benchmark/human/<date>/human_labels.jsonl`), 50 or more per rule; the word list as a
+CSV with the columns of `lexicon_curated.csv`. First batch 2026-10-13.
+**Because:** Benz's email of 2026-10-12. A 70% gate would draw inline the rules the
+2026-09-28 review showed reviewers stop trusting; and the harness requirement 3 named
+measures precision against human labels, with recall only as a proxy, because the
+labels sample the abstains and not the text.
+**Rules out:** a second, lower inline threshold; quoting the proxy as recall (the
+benchmark doc says it is not); editing or regenerating committed labels.
+**Revisit when:** a labelled sample of the text itself exists, which would make real
+recall measurable.
+
+## 2026-10-12 — "Scalable" source text means the in-app text-size control; Windows scaling must only not break layout
+**Decision:** Requirement 8's scaling acceptance is read against `editorPrefs.textScale`,
+the in-app text-size control: Hebrew and Greek must render correctly, right-to-left
+where the script is, at every step of that control. Windows 125% and 150% display
+scaling must only not break the layout.
+**Because:** Benz's email of 2026-10-12, clarifying "100/125/150% scaling" in item 8's
+acceptance. The control exists; #67 needed a definition of "scales" it can be tested
+against.
+**Rules out:** a separate font-size setting for the source column; treating a
+Windows-scaling rendering glitch as a #67 blocker.
+**Revisit when:** a reviewer works at a Windows scale where the source column is
+unreadable.
+
+## 2026-10-12 — Translator feedback covers the automatic alignment path; a cross-verse-aligned verse must be able to show complete
+**Decision:** Requirement 9's "verify, not build" covers the two-pass automatic alignment
+(#219) as well as cross-verse links (#146): the verification on the installed 0.14.0
+build (#241) exercises both and its gap list reports on both. The verse ✓ dead end — a
+verse aligned only through a cross-verse link can never show complete, because the ✓
+requires complete tC same-verse alignment (894b4a8) — is not accepted. It gets a
+"complete via cross-verse" state (#228), which does not block the interim release.
+**Because:** Benz's email of 2026-10-12. The translator's feedback will come from
+using the whole alignment surface, and a tick that cannot be earned on a verse the
+tool itself linked contradicts what the link means.
+**Rules out:** closing #241 on cross-verse links alone; keeping the ✓ rule as it is.
+**Revisit when:** not planned.
