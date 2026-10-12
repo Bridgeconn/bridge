@@ -18518,3 +18518,50 @@ passed when rerun alone (4 passed, 10.8 s): three Logos helper-process tests
 `test_passage_semantic_runtime.py::test_moved_project_retains_identity_but_live_copy_is_rejected`,
 new to this flake list. Frozen sidecars rebuilt; `smoke_sidecars.py` passed,
 including the ta-irv indic-qa layer.
+
+## 2026-10-13 — Cross-verse verification, part 2: the installed builds (#241)
+
+0.14.0 exists after all: Benz's selvabenz/Bridge release was built from this
+repo's `c76bc91`, the 0.14.0 bump, so its installer is the real one; it was
+installed here. 0.15.0 was cut from `main` (8e56a71, `chore(release):
+0.15.0`), published by the maintainer from a drafted release with
+hand-written notes, built by the workflow in 14 minutes and installed over
+0.14.0 at the end of the walk. Benz also raised the OpenAI spend limit.
+
+**Driving the installed app.** Screen coordinates are physical (the desktop
+is at 125 %, the Bridge window renders at 100 %, and a DPI-unaware helper
+process sees a virtualised screen), so the helper calls
+`SetProcessDPIAware` first; the window is pinned topmost so clicks are not
+stolen by the editor; the app runs with `LOCALAPPDATA` pointed at a scratch
+folder holding a copy of the real settings and the throwaway projects, so
+the maintainer's registry and projects were never touched. A copied
+collection book must keep its `directoryName` (`collection.json` resolves
+siblings by name under the parent folder), or the dashboard says the folder
+is missing and Open does nothing.
+
+**0.14.0, Cross-Verse Alignment on GEN 1:1–3.** The page opened on the
+selected verse ±1 with the copied workbench's real links drawn under their
+source words. **Suggest links** ran. **Align automatically** ran 275.6 s and
+ended with "The read operation timed out", the AI client's socket timeout,
+writing nothing. For the whole call the dispatcher was held: `languageQa
+.status` timed out seven times (30 s each), the status bar read "Language
+QA: unavailable", and the page's "Aligning… pass 2 of 2" is a 20 s timer in
+`CrossVerseAlignmentModal.svelte:217`, not a stage the engine reported.
+Over the protocol the provider answered: `aiPropose` on the PHP fixture in
+4.5 s, `window.autoAlign` on PHP 1:3–4 in 26.7 s with 2 calls, 3,447 tokens,
+USD 0.047, both passes agreeing on every pair and both verses ending
+`complete_cross_verse`. A synthetic drag, and pick-then-click, did not
+register in WebView2; the on-screen manual link stays NOT RUN.
+
+**0.15.0.** Loading screen on first launch after install: card at 2.7 s
+("Engine process started, loading Python"), "Loading engine modules · 2 s"
+at 4.7 s, Home by 6.6 s; spawn to ready 2.4 s. On the auto-aligned fixture
+the status bar reads "0 complete · 2 via cross-verse · 0 partial" and the ⇄
+tooltip "Alignment: complete (cross-verse)" (#228 on the installed build).
+
+**Proposed, not filed.** (1) `alignment.window.autoAlign` runs its two
+provider calls on the dispatcher thread; make it a job like the chapter
+path, so status polls keep answering. (2) The modal's pass label should come
+from the engine, and the failure text should be plain ("The AI provider did
+not answer within 4 minutes") rather than the socket's. QA matrix: M48, D14,
+M49, M50, M53, M56, M58 updated.
