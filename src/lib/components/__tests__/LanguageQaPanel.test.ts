@@ -213,6 +213,25 @@ describe("Language QA", () => {
     expect(head.nextElementSibling?.getAttribute("role")).toBe("tablist");
   });
 
+  it("pins the Findings / Re-check / False positives switch under the tab bar, outside the scrolling list (#178)", async () => {
+    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
+    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
+    await screen.findByText("Check source encoding.");
+    const tabs = screen.getByRole("tablist", { name: "Language QA panel" });
+    const row = tabs.nextElementSibling as HTMLElement;
+    expect(row.classList.contains("list-row")).toBe(true);
+    const lists = screen.getByRole("tablist", { name: "Language QA lists" });
+    expect(row.contains(lists)).toBe(true);
+    expect(lists.closest(".panel-body")).toBeNull();
+    expect([...lists.querySelectorAll('[role="tab"]')].map((t) => t.textContent?.trim().replace(/\s+/g, " ")))
+      .toEqual(["Findings", "Re-check (0)", "False positives (0)"]);
+    await fireEvent.click(screen.getByRole("tab", { name: /Re-check/ }));
+    expect(screen.getByRole("tab", { name: /Re-check/ }).getAttribute("aria-selected")).toBe("true");
+    // Only the Issues tab has lists to switch.
+    await fireEvent.click(screen.getByRole("tab", { name: "Book words" }));
+    expect(screen.queryByRole("tablist", { name: "Language QA lists" })).toBeNull();
+  });
+
   it("lays the filters out as labelled rows, and Clear drops every ticked kind", async () => {
     statusCall.mockImplementation(async (_path, _offset, limit) => snapshot({
       findings: limit ? snapshot().findings : [], categoryCounts: { typo: 2, sandhi: 1 } }));
@@ -220,7 +239,7 @@ describe("Language QA", () => {
     await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
     await screen.findByText("Check source encoding.");
     const labels = [...document.querySelectorAll(".filters .filter-label")].map((n) => n.textContent);
-    expect(labels).toEqual(["List", "Show", "Kinds"]);
+    expect(labels).toEqual(["Show", "Kinds"]);
     expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
     const typo = screen.getByRole("button", { name: /Possible typo/ });
     await fireEvent.click(typo);

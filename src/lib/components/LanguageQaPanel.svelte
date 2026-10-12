@@ -254,6 +254,7 @@
   let infoButton: HTMLButtonElement | null = null;
   let aboutBox: HTMLDivElement | null = null;
   let headHeight = 0;
+  let tabsHeight = 0;
 
   function onWindowPointerdown(event: PointerEvent): void {
     if (!aboutOpen) return;
@@ -507,7 +508,7 @@
 <aside class="language-qa" class:docked aria-label="Language QA">
   <p class="walk-status" role="status" aria-live="polite">{walkStatus}</p>
   {#if expanded}
-    <section id="language-qa-results" aria-label="Language QA results" style:--head-h="{headHeight}px">
+    <section id="language-qa-results" aria-label="Language QA results" style:--head-h="{headHeight}px" style:--tabs-h="{tabsHeight}px">
       <!-- The header stays put while the panel scrolls: title, the (i), Pause and
            Close, then one status line and, when a pass left text out, the warning. -->
       <div class="panel-head" bind:clientHeight={headHeight}>
@@ -585,19 +586,17 @@
       {/if}
       </div>
       {#if status}
-        <div class="panel-tabs" role="tablist" aria-label="Language QA panel">
+        <div class="panel-tabs" role="tablist" aria-label="Language QA panel" bind:clientHeight={tabsHeight}>
           <button role="tab" aria-selected={panelTab === "findings"} on:click={() => showPanelTab("findings")}>Issues</button>
           <button role="tab" aria-selected={panelTab === "bookWords"} on:click={() => showPanelTab("bookWords")}>Book words</button>
           <button role="tab" aria-selected={panelTab === "flags"} on:click={() => showPanelTab("flags")}>Flags</button>
           <button role="tab" aria-selected={panelTab === "edits"} on:click={() => showPanelTab("edits")}>Edits</button>
           <button role="tab" aria-selected={panelTab === "dictionary"} on:click={() => showPanelTab("dictionary")}>Dictionary</button>
         </div>
-        <div class="panel-body">
         {#if panelTab === "findings"}
-        <!-- The filters, one labelled row each: which list, how much of the
-             book, which kinds. -->
-        <div class="filters">
-          <div class="filter-row">
+          <!-- Which list stays in reach with the header and tabs (#178); the
+               other filters scroll with the list. -->
+          <div class="filter-row list-row">
             <span class="filter-label">List</span>
             <div class="views segmented" role="tablist" aria-label="Language QA lists">
               <button role="tab" aria-selected={view === "findings"} on:click={() => showView("findings")}>Findings</button>
@@ -609,6 +608,12 @@
               </button>
             </div>
           </div>
+        {/if}
+        <div class="panel-body">
+        {#if panelTab === "findings"}
+        <!-- The filters, one labelled row each: how much of the book, which
+             kinds. -->
+        <div class="filters">
           {#if view === "recheck"}
             <p class="filter-hint">Ignored before, under an older version of the rule. Check each one again.</p>
           {:else if view === "falsePositives"}
@@ -907,6 +912,9 @@
   .panel-tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
   .filters { margin: 4px 0 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); }
   .filter-row { display: grid; grid-template-columns: 44px 1fr; align-items: center; gap: 8px; margin: 4px 0; }
+  /* The list switch, pinned under the tab bar; padded to line up with the filter box's rows. */
+  .list-row { position: sticky; top: calc(var(--head-h, 0px) + var(--tabs-h, 0px)); z-index: 2; margin: 0;
+    padding: 6px 25px; background: var(--surface); border-bottom: 1px solid var(--border); }
   .filter-label { font-size: 11px; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: .03em; }
   .filter-hint { margin: 2px 0 2px 52px; font-size: 11px; color: var(--text-3); }
   .segmented { display: inline-flex; flex-wrap: wrap; justify-self: start; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }

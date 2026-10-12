@@ -18335,3 +18335,34 @@ owns them as `spacing.extra` and `unicode.invisible` for every pack, and
 zero-width space give the Language QA findings and no local one. That commit
 never referenced #191, so the issue stayed open. Nothing to change; verified
 `b919731` is an ancestor of `origin/main` and the test passes on today's main.
+
+## 2026-10-12 — Language QA panel: #177 verified done; #178's list switch pinned
+
+**#177 (coverage behind an ⓘ).** Already delivered on 2026-10-09 by `107f9f3`
+and `8945ef1` (DECISIONS 2026-10-09). Checked against the issue's acceptance
+in the current code: the statement is hidden until the (i) in the sticky
+header is clicked (`aboutOpen`, `aria-expanded`, `aria-controls`, accessible
+name "About these checks"); it closes on the (i), Escape (focus returns to the
+(i)) or a click elsewhere; it is a real button, so keyboard-reachable; the
+Tamil keeps its `lang="ta"` spans; the box is capped at min(320px, 45vh).
+`LanguageQaPanel.test.ts` "states what it checks … behind the (i)" asserts
+all of that. No code change.
+
+**#178 (controls in reach, less prose).** The 2026-10-09 work pinned the title,
+(i), Pause/Resume and Close in a sticky header with one status line under it,
+and the Issues / Book words / Flags / Edits / Dictionary tab bar under that;
+"No candidates found … This is not publication approval." is kept. The one
+gap: the Findings / Re-check / False positives switch lived in the Issues
+filter box inside the scrolling body, so it scrolled away. Benz chose
+(2026-10-12) to pin only that row. It is now a third sticky row under the tab
+bar (`.list-row`, `top: head-h + tabs-h`, the tab bar's height bound like the
+header's), shown on the Issues tab only; Show and Kinds still scroll with the
+list. Roles unchanged (`tablist` "Language QA lists", `tab`, `aria-selected`).
+
+**Tests.** New Vitest: the switch is the tab bar's next sibling, outside
+`.panel-body`, switches the list, and is absent on Book words. The filter-rows
+test now expects Show and Kinds in the box.
+
+**Verified.** `npm run check` 0/0, `npm run test` 55 files / 680 passed,
+`npm run build` ok. Not run: the desktop visual check at 1366×768 for both
+issues (jsdom does not lay out, so sticky behaviour is unproven by the tests).
