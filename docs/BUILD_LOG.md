@@ -17987,3 +17987,20 @@ apply); the edited `build-sidecars.ps1` builds both exes into
 On the fork: see the run links in the PR. Not verified anywhere: launching
 Bridge on a real macOS or Linux desktop. The first dispatch run of this
 workflow is the first time the Tauri crate has ever compiled on either OS.
+
+**CI runs (fork, same day).** Dispatch run 38231024308: Windows and Linux
+green on the first try; macOS built, smoked, tested and signed, then the
+verify step failed because the bundler deletes `bundle/macos/Bridge.app`
+once the DMG is packed when `dmg` is the only macOS target (f1bbb41 mounts
+the DMG read-only and verifies inside it). Dispatch run 38233849078: all
+green; `codesign -dv` shows `Signature=adhoc` with `flags=0x10002(adhoc,runtime)`
+on both sidecars. Tag run 38235008945: the macOS attach failed with
+"no matches found for `U`" -- with one bundle, `Where-Object` hands back a
+bare string and splatting a string passes one character per argument; the
+Linux leg only worked because it had two (16a47f5 forces `@(...)`). The tag
+was moved to 16a47f5 and tag run 38236268130 went green on every leg. The
+draft pre-release `v0.14.0-mac-linux.1` on selvabenz/Bridge carries
+`Bridge_0.14.0_x64-setup.exe` (77 MB), `Bridge_0.14.0_aarch64.dmg` (97 MB),
+`Bridge_0.14.0_amd64.AppImage` (193 MB) and `Bridge_0.14.0_amd64.deb`
+(125 MB). Publishing it is Benz's click. `fork/main` was fast-forwarded to
+the same commit; nothing was pushed to RevantCI.
