@@ -14,7 +14,7 @@ function ctx(overrides: Partial<AlignmentContext> = {}): AlignmentContext {
     groups: [{ id: "G001", topIds: ["H001"], bottomIds: [] }, { id: "G002", topIds: ["H002"], bottomIds: [] }],
     status: "untouched", completionState: "pending", sourceAvailable: true, sourceMessage: "",
     sourceDirection: "ltr", targetDirection: "ltr", issues: [], canComplete: false, history: [],
-    chapterStatus: { complete: 0, partial: 0, untouched: 1, invalid: 0 },
+    chapterStatus: { complete: 0, complete_cross_verse: 0, partial: 0, untouched: 1, invalid: 0 },
     gaps: { sourceUnmatched: 2, targetUnmatched: 1 },
     crossVerseLinks: [], crossVerseGroups: [], crossVerseAccountedIds: [], crossVerseRealizedIds: [],
     crossVerseAccounted: 0, crossVerseRealized: 0, fullyAccounted: false,

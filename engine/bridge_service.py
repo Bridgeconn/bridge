@@ -590,6 +590,11 @@ class BridgeEngine:
         # Not invalidated by verse.edit — see _usfm_findings_for_book.
         self._usfm_findings_by_book: dict[str, list[QaFinding]] = {}
         self._usfm_errors_by_book: dict[str, str] = {}
+        # #228: which verses an active cross-verse link or null decision
+        # touches, for the per-verse alignment status; see
+        # _cross_verse_touch_index for the cache key.
+        self._cross_verse_index_key: tuple[str, str, int] | None = None
+        self._cross_verse_index: dict[tuple[str, str], dict[str, list[str]]] = {}
         # Names/transliteration spelling-consistency is also inherently
         # whole-book (there's nothing to compare a single verse's spelling
         # against), so it's cached the same way as USFM findings — not
@@ -1706,19 +1711,102 @@ class BridgeEngine:
             result.append(TokenRef(word, seen[word], totals[word], type="bottomWord"))
         return result
 
-    @staticmethod
     def _alignment_verse_status(
-        project: TranslationCoreProject, chapter: str, verse: str,
+        self, project: TranslationCoreProject, chapter: str, verse: str,
     ) -> str:
+        """The verse's alignment status as the UI shows it.
+
+        `invalid`, and translationCore's `untouched` / `partial` / `complete`,
+        as before -- plus `complete_cross_verse` (#228): the verse is not
+        tC-complete, but its remaining gaps, net of active cross-verse links
+        and null decisions (the same rule `gaps` and `gapScan` use), are none,
+        and at least one token was closed that way. So the ✓ can be earned on
+        a verse the tool itself linked. Export is unchanged: `canComplete`
+        still asks translationCore's question. A verse no link or null touches
+        pays nothing new; the chapter-level index decides that.
+        """
         if project.word_alignment_state(chapter, verse) == "invalid":
             return "invalid"
-        return project.alignment_work_state(chapter, verse)
+        work_state = project.alignment_work_state(chapter, verse)
+        if work_state == "complete":
+            return work_state
+        touched = self._cross_verse_touch_index(project).get((str(chapter), str(verse)))
+        if not touched:
+            return work_state
+        alignment = project.load_verse_alignment(chapter, verse)
+        inventory = make_inventory(alignment)
+
+        def resolve(signatures: list[str], lookup: dict[str, str]) -> list[str]:
+            # Stored as signatures, never ids (#117); resolved per load.
+            return [token_id for signature in signatures if (token_id := lookup.get(signature))]
+
+        realized = resolve(touched["realized"], inventory.top_sig_to_id)
+        accounted = resolve(touched["accounted"], inventory.bottom_sig_to_id)
+        null_source = resolve(touched["nullSource"], inventory.top_sig_to_id)
+        null_target = resolve(touched["nullTarget"], inventory.bottom_sig_to_id)
+        remaining_sources, remaining_targets = alignment_gaps.gap_ids(
+            inventory, alignment_gaps.group_views(alignment, inventory),
+            realized_ids=realized, accounted_ids=accounted,
+            null_source_ids=null_source, null_target_ids=null_target,
+        )
+        if alignment_gaps.complete_via_cross_verse(
+            source_available=bool(inventory.top_ids),
+            remaining_sources=remaining_sources, remaining_targets=remaining_targets,
+            closed_ids=[*realized, *accounted, *null_source, *null_target],
+        ):
+            return alignment_gaps.STATUS_COMPLETE_CROSS_VERSE
+        return work_state
+
+    def _cross_verse_touch_index(
+        self, project: TranslationCoreProject,
+    ) -> dict[tuple[str, str], dict[str, list[str]]]:
+        """Which verses an active link or null decision touches, as the stored
+        signatures, for `_alignment_verse_status` (#228). Two queries, kept
+        until the workbench's write generation moves (the #241 counter) or
+        another book is current, so a chapter load or a chapter scan pays for
+        them once instead of three connections per verse."""
+        try:
+            generation = int(project.workbench.write_generation)
+        except Exception:
+            generation = -1
+        identity = project.workbench_identity
+        key = (identity.project_id, project.book_id, generation)
+        if generation >= 0 and self._cross_verse_index_key == key:
+            return self._cross_verse_index
+        index: dict[tuple[str, str], dict[str, list[str]]] = {}
+
+        def entry(chapter: Any, verse: Any) -> dict[str, list[str]]:
+            return index.setdefault(
+                (str(chapter or ""), str(verse or "")),
+                {"realized": [], "accounted": [], "nullSource": [], "nullTarget": []},
+            )
+
+        try:
+            links = project.cross_verse_links.active_links()
+        except Exception:
+            links = []
+        for link in links:
+            source, target = link.get("source") or {}, link.get("target") or {}
+            entry(source.get("chapter"), source.get("verse"))["realized"].append(str(source.get("signature") or ""))
+            entry(target.get("chapter"), target.get("verse"))["accounted"].append(str(target.get("signature") or ""))
+        try:
+            decisions = project.null_decisions.active_decisions()
+        except Exception:
+            decisions = []
+        for decision in decisions:
+            side = "nullSource" if decision.get("side") == "source" else "nullTarget"
+            entry(decision.get("chapter"), decision.get("verse"))[side].append(
+                str((decision.get("token") or {}).get("signature") or ""),
+            )
+        self._cross_verse_index_key = key
+        self._cross_verse_index = index
+        return index
 
     def alignment_status(self, chapter: str = "") -> dict[str, Any]:
         self._require_project()
         project_chapters = self.project.chapters()
         chapters = [str(chapter)] if chapter else project_chapters
-        counts = {"complete": 0, "partial": 0, "untouched": 0, "invalid": 0}
+        counts = {"complete": 0, "complete_cross_verse": 0, "partial": 0, "untouched": 0, "invalid": 0}
         verses: dict[str, str] = {}
         for ch in chapters:
             if ch not in project_chapters:

@@ -151,7 +151,7 @@ def test_get_range_returns_one_context_per_verse_in_caller_order(engine):
     status = call(engine, "alignment.status", {"chapter": "1"})
     assert status["success"] is True, status
     assert result["chapterStatus"] == status["result"]["counts"]
-    assert result["chapterStatus"] == {"complete": 1, "partial": 1, "untouched": 2, "invalid": 0}
+    assert result["chapterStatus"] == {"complete": 1, "complete_cross_verse": 0, "partial": 1, "untouched": 2, "invalid": 0}
     for ctx in result["verses"]:
         assert ctx["chapterStatus"] == result["chapterStatus"]
 

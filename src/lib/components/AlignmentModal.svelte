@@ -5,6 +5,7 @@
     alignmentStatusByVerse, checkStatusByVerse, findingsByVerse, project,
     verseKey,
   } from "../stores";
+  import { alignmentStatusLabel } from "../alignmentStatus";
   import { bookDisplayName } from "../utils/reportStats";
   import type { AlignmentContext, AlignmentToken } from "../types/finding";
   import { createPointerDrag } from "../alignmentDrag";
@@ -109,7 +110,7 @@
   // total is the chapter's verse count, and saying so is what makes the row
   // readable. "Chapter:" alone read as a count of chapters.
   $: chapterVerseTotal = context
-    ? context.chapterStatus.complete + context.chapterStatus.partial
+    ? context.chapterStatus.complete + (context.chapterStatus.complete_cross_verse ?? 0) + context.chapterStatus.partial
       + context.chapterStatus.untouched + context.chapterStatus.invalid
     : 0;
 
@@ -257,10 +258,11 @@
       <div class="loading"><span class="spin" /> Loading alignment…</div>
     {:else if context}
       <div class="summary">
-        <span class="status {context.status}">Verse: {context.status}</span>
+        <span class="status {context.status}">Verse: {alignmentStatusLabel(context.status)}</span>
         <span class="tally">
           Chapter {chapter} — {chapterVerseTotal} verse{chapterVerseTotal === 1 ? "" : "s"}:
           <span title="Every target word is placed, and no source word is left without one.">{context.chapterStatus.complete} complete</span> ·
+          {#if context.chapterStatus.complete_cross_verse}<span title="Every remaining word is accounted for by a cross-verse link or a null decision; translationCore itself cannot mark these complete.">{context.chapterStatus.complete_cross_verse} via cross-verse</span> ·{/if}
           <span title="Some target words are placed, but the word bank is not empty or a source word has none.">{context.chapterStatus.partial} partial</span> ·
           <span title="No target word has been placed in this verse yet.">{context.chapterStatus.untouched} untouched</span>
           {#if context.chapterStatus.invalid}· <span class="danger" title="Marked invalid in translationCore.">{context.chapterStatus.invalid} invalid</span>{/if}
@@ -453,7 +455,7 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   .summary { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: var(--fs-xs); color: var(--text-2); padding: 12px 0; }
   .status { border-radius: 999px; padding: 3px 8px; background: var(--surface-2); font-weight: 700; }
-  .status.complete, .completed { color: var(--success); background: #EAF7EF; }
+  .status.complete, .status.complete_cross_verse, .completed { color: var(--success); background: #EAF7EF; }
   .status.partial { color: var(--warning); background: var(--warning-bg); }
   .status.invalid, .danger { color: var(--danger); }
   .tally span { border-bottom: 1px dotted var(--border-strong); cursor: help; }

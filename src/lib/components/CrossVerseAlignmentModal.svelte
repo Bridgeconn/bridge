@@ -13,6 +13,7 @@
   import {
     alignmentStatusByVerse, checkStatusByVerse, currentChapter, findingsByVerse, verseKey, verseNums,
   } from "../stores";
+  import { alignmentStatusLabel } from "../alignmentStatus";
   import type {
     AlignmentContext, AlignmentCounts, AlignmentToken, AutoAlignIssue, AutoAlignSuggestion, AutoAlignVerdict,
     CrossVerseLink, CrossVerseLinkResult, CrossVerseProposal, NullDecisionEntry, NullReason,
@@ -754,7 +755,7 @@
             <span>Range: {totalGaps.sourceUnmatched} source · {totalGaps.targetUnmatched} target unmatched</span>
           {/if}
           {#if chapterStatus}
-            <span>Chapter: {chapterStatus.complete} complete · {chapterStatus.partial} partial · {chapterStatus.untouched} untouched{#if chapterStatus.invalid} · {chapterStatus.invalid} invalid{/if}</span>
+            <span>Chapter: {chapterStatus.complete} complete{#if chapterStatus.complete_cross_verse} · {chapterStatus.complete_cross_verse} via cross-verse{/if} · {chapterStatus.partial} partial · {chapterStatus.untouched} untouched{#if chapterStatus.invalid} · {chapterStatus.invalid} invalid{/if}</span>
           {/if}
           {#if suggested.length > 0}
             <span class="widened">↔ widened with v.{suggested.join(", ")} <button type="button" class="link" on:click={resetToDefaultRange} disabled={busy}>Back to {verse} ±1</button></span>
@@ -923,7 +924,7 @@
               <div class="verse-block">
                 <div class="verse-head">
                   <span class="vnum">{chapter}:{v}</span>
-                  <span class="status {context.status}">{context.status}</span>
+                  <span class="status {context.status}">{alignmentStatusLabel(context.status)}</span>
                 </div>
                 <div
                   class="bank"
@@ -1128,7 +1129,7 @@
   .issue-menu button small { display: block; color: var(--text-3); font-size: var(--fs-3xs); }
   .issue-menu button:hover { background: var(--accent-bg); }
   .status { border-radius: 999px; padding: 1px 7px; background: var(--surface-2); font-weight: 700; font-size: var(--fs-2xs); color: var(--text-2); }
-  .status.complete { color: var(--success); background: #EAF7EF; }
+  .status.complete, .status.complete_cross_verse { color: var(--success); background: #EAF7EF; }
   .status.partial { color: var(--warning); background: var(--warning-bg); }
   .status.invalid { color: var(--danger); background: var(--danger-bg); }
   .notice, .error { border-radius: 9px; padding: 8px 12px; margin-bottom: 8px; font-size: var(--fs-sm); line-height: 1.45; flex-shrink: 0; }

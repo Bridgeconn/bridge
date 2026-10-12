@@ -165,7 +165,11 @@ export interface VerseAlignment {
   wordBank: TokenRef[];
 }
 
-export type AlignmentWorkStatus = "complete" | "partial" | "untouched" | "invalid";
+/** translationCore's untouched / partial / complete, Bridge's invalid, and
+ * `complete_cross_verse` (#228): not tC-complete, but every remaining gap is
+ * closed by an active cross-verse link or a null decision. The verse ✓
+ * accepts it; export does not change. */
+export type AlignmentWorkStatus = "complete" | "complete_cross_verse" | "partial" | "untouched" | "invalid";
 
 export interface AlignmentToken extends TokenRef {
   id: string;
@@ -202,6 +206,7 @@ export interface AlignmentHistoryEntry {
 
 export interface AlignmentCounts {
   complete: number;
+  complete_cross_verse: number;
   partial: number;
   untouched: number;
   invalid: number;

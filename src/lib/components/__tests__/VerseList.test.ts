@@ -1169,7 +1169,7 @@ describe("VerseList right-click, ring and notices (#236)", () => {
 });
 
 describe("VerseList ✓ and alignment glyph (Benz, 2026-10-09)", () => {
-  function clearVerse(alignment: "complete" | "partial" | "untouched" | "invalid", findings: QaFinding[] = []): void {
+  function clearVerse(alignment: "complete" | "complete_cross_verse" | "partial" | "untouched" | "invalid", findings: QaFinding[] = []): void {
     seed("alpha beta", findings);
     checkStatusByVerse.set({ [verseKey("1", "6")]: "succeeded" });
     alignmentStatusByVerse.set({ [verseKey("1", "6")]: alignment });
@@ -1182,6 +1182,17 @@ describe("VerseList ✓ and alignment glyph (Benz, 2026-10-09)", () => {
     expect(number().textContent).toContain("✓");
     expect(number().getAttribute("title")).toBe("Checked: no open findings, alignment complete");
     expect(verseRow().classList.contains("approved")).toBe(true);
+  });
+
+  it("ticks a verse completed through a cross-verse link or a null decision, and says so (#228)", async () => {
+    clearVerse("complete_cross_verse");
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    expect(number().textContent).toContain("✓");
+    expect(number().getAttribute("title")).toBe("Checked: no open findings, alignment complete (cross-verse)");
+    expect(verseRow().classList.contains("approved")).toBe(true);
+    const glyph = screen.getByLabelText(/Open Align Words/) as HTMLElement;
+    expect(glyph).toHaveClass("complete_cross_verse");
+    expect(glyph.getAttribute("title")).toContain("Alignment: complete (cross-verse)");
   });
 
   it.each([

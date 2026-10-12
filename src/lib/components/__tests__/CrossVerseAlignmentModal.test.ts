@@ -71,7 +71,7 @@ function context(verse: string, sources: string[], targets: string[], aligned: n
     sourceAvailable: true, sourceMessage: "",
     sourceDirection: "ltr", targetDirection: "ltr",
     issues: [], canComplete: false, history: [],
-    chapterStatus: { complete: 1, partial: 1, untouched: 2, invalid: 0 },
+    chapterStatus: { complete: 1, complete_cross_verse: 0, partial: 1, untouched: 2, invalid: 0 },
     gaps: {
       sourceUnmatched: groups.filter((g) => g.bottomIds.length === 0).length,
       targetUnmatched: targets.length - aligned,

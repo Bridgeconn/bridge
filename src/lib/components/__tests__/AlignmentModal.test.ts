@@ -54,7 +54,7 @@ function context(extra: Partial<AlignmentContext> = {}): AlignmentContext {
     sourceDirection: "rtl", targetDirection: "ltr",
     issues: [], canComplete: false, history: [],
     // 0 + 3 + 28 = 31, Genesis 1's verse count -- the tally is per verse.
-    chapterStatus: { complete: 0, partial: 3, untouched: 28, invalid: 0 },
+    chapterStatus: { complete: 0, complete_cross_verse: 0, partial: 3, untouched: 28, invalid: 0 },
     gaps: { sourceUnmatched: 1, targetUnmatched: 2 },
     crossVerseLinks: [],
     crossVerseGroups: [],

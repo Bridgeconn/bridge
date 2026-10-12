@@ -18138,3 +18138,58 @@ for #134's list (protocol PASS where the run covered it, desktop NOT RUN).
 exists, and the maintainer was using the desktop while this session ran,
 so no synthetic clicks were sent. The verse-list, modal and finding entry
 points are named from the code in the #241 comment for Benz.
+
+## 2026-10-12 — `complete_cross_verse`: the verse ✓ on a verse aligned through a link (#228)
+
+Since 2026-10-09 the verse ✓ needs word alignment `complete`, and a verse
+whose words are aligned through a cross-verse link can never reach it:
+translationCore's rule wants every word in a two-sided group, aligned USFM
+cannot express the link, so the verse read "Not clear: alignment partial"
+for ever. Benz (2026-10-12): not acceptable. Option 1 of the issue is what
+landed: a fifth status value, not a change to export.
+
+**Engine.** `alignment_gaps.STATUS_COMPLETE_CROSS_VERSE` and
+`complete_via_cross_verse()`: source tokens present, `gap_ids`' remaining
+sources and targets both empty (so net of active links and null decisions,
+the one gap definition), and at least one id closed by a link or a null —
+without that last clause the verse would be tC-complete already.
+`BridgeEngine._alignment_verse_status` (now an instance method) returns it
+when the tC work state is `partial` or `untouched` and the rule holds;
+`invalid` and `complete` are untouched. It reaches every reader of that
+method: `alignment.status` (whose `counts` gain the key), `alignment.get`
+and `getRange` (`status`, so the modals' badges and the stores update on a
+link), and the chapter load that seeds the verse list. `canComplete`,
+`completionState`, `fullyAccounted` and `accounted` are unchanged.
+
+**Cost.** A verse no link or null touches pays nothing new. The engine keeps
+`_cross_verse_touch_index`: the active links and null decisions of the book
+as stored signatures, keyed by (chapter, verse), from two queries, cached on
+(project id, book, `workbench.write_generation` — the #241 counter) so a
+chapter load or scan reads them once, not three connections per verse; a
+touched verse then loads its alignment once more and runs `gap_ids`.
+
+**Frontend.** `alignmentStatus.ts` (`isAlignmentComplete`,
+`alignmentStatusLabel` → "complete (cross-verse)"). `VerseList`: the ✓ rule
+and the title ("Checked: no open findings, alignment complete
+(cross-verse)"), the ⇄ title and class (success tint with an inset ring).
+`App` status bar and both modals' chapter tallies show "N via cross-verse"
+when non-zero; the badges use the label. `AlignmentCounts` gains the key.
+
+**Tests.** `tests/service/test_alignment_status_cross_verse.py` (4): the
+link alone leaves τῷ a gap (`partial`); link + null → `complete_cross_verse`
+in `alignment.get`, `getRange`, `alignment.status` counts and the chapter
+load, with `canComplete` false and `completionState` pending; unlink or
+clearing the null reopens it; a verse edit that invalidates the link drops
+it on the source verse and marks the edited verse `invalid`; the touch index
+follows writes and is reused within a generation. The #117 test that pinned
+`untouched` for a fully-linked verse now expects the new value, with its tC
+assertions unchanged; the get-range counts literal and three TypeScript
+fixtures gain the key. Vitest: the ✓ test for the new state (title, class,
+glyph title) and `alignmentStatus.test.ts`.
+
+**Verified.** Engine `pytest -n auto`: 5193 passed, 3 xfailed, 1 failed (`test_logos_get_state_spawns_the_real_helper…`, which passes alone both times it was rerun today; it spawns a real PowerShell helper and fails only in the parallel run while a sidecar build competes for the machine). Frontend: `npm run check` 0/0, `npm run test` 55 files / 679 passed, `npm run build` ok. Shell: no Rust change. Frozen: `build-sidecars.ps1` then `smoke_sidecars.py` passed (engine ready in 2.25 s).
+
+**Not done.** Progress totals do not yet count it as aligned: the aligned
+dimension is #239's (next in the order), where this value joins `complete`.
+The desktop check of the tick on a real linked verse is M53 in the QA
+matrix, NOT RUN.

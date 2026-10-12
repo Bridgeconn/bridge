@@ -27,6 +27,33 @@ from __future__ import annotations
 
 from typing import Any, Collection, Iterable
 
+# #228: a verse whose remaining gaps are all closed, at least one of them by a
+# cross-verse link or a null decision rather than a translationCore group. It
+# is the fifth value of the per-verse alignment status, beside tC's own
+# untouched / partial / complete and Bridge's invalid. The verse ✓ accepts it;
+# `canComplete` and `completionState` do not change, because aligned USFM still
+# cannot express the link.
+STATUS_COMPLETE_CROSS_VERSE = "complete_cross_verse"
+
+
+def complete_via_cross_verse(
+    *,
+    source_available: bool,
+    remaining_sources: Collection[str],
+    remaining_targets: Collection[str],
+    closed_ids: Collection[str],
+) -> bool:
+    """Whether a verse that is not tC-complete has nothing left to do (#228).
+
+    `remaining_*` are `gap_ids`' answer, already net of active links and null
+    decisions; `closed_ids` are the positional ids those links and decisions
+    accounted for in this verse. Both have to hold: no gap left, and at least
+    one closed this way -- a verse with no gaps and nothing closed by a link
+    or a null is tC-complete already, and a verse with no source tokens has
+    nothing to be complete about.
+    """
+    return bool(source_available) and not remaining_sources and not remaining_targets and bool(closed_ids)
+
 
 def group_views(alignment: Any, inventory: Any) -> list[dict[str, Any]]:
     """The `{id, topIds, bottomIds}` view of each alignment group.

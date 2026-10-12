@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
   import { verseNums, verseTexts, verseDisplay, headingsByVerse, findingsByVerse, checkStatusByVerse, alignmentStatusByVerse, selectedVerse, selectedVerseSet, currentChapter, verseKey, nativeChecksByVerse, aiCheckReviewsByVerse, checkingProgress, languageQaFindingsByVerse, project, flagsByVerse, historyCountByVerse, activeLanguageQaFindingId } from "../stores";
+  import { alignmentStatusLabel, isAlignmentComplete } from "../alignmentStatus";
   import { rangeBetween } from "../crossVerseRange";
   import { unionInChapterOrder } from "../crossVerseSuggest";
   import { buildSegments } from "../utils/highlight";
@@ -954,8 +955,13 @@
     const missing = [];
     if (check !== "succeeded") missing.push("not checked yet");
     if (open) missing.push(`${open} open ${open === 1 ? "finding" : "findings"}`);
-    if (alignment !== "complete") missing.push(alignment === "untouched" ? "not aligned" : `alignment ${alignment}`);
-    return missing.length ? `Not clear: ${missing.join(", ")}` : "Checked: no open findings, alignment complete";
+    if (!isAlignmentComplete(alignment)) missing.push(alignment === "untouched" ? "not aligned" : `alignment ${alignment}`);
+    if (missing.length) return `Not clear: ${missing.join(", ")}`;
+    // #228: a verse aligned through a cross-verse link earns the tick too, and
+    // the title says which kind of complete it is.
+    return alignment === "complete_cross_verse"
+      ? "Checked: no open findings, alignment complete (cross-verse)"
+      : "Checked: no open findings, alignment complete";
   }
 
   function selectFromList(verse: string): void {
@@ -1053,7 +1059,7 @@
     {@const alignmentStatus = $alignmentStatusByVerse[key] ?? "untouched"}
     {@const langFindings = $languageQaFindingsByVerse[key] ?? []}
     {@const openCount = findings.filter((f) => f.status === "open").length + langFindings.length}
-    {@const clear = checkStatus === "succeeded" && openCount === 0 && alignmentStatus === "complete"}
+    {@const clear = checkStatus === "succeeded" && openCount === 0 && isAlignmentComplete(alignmentStatus)}
     {@const clearTitle = verseClearTitle(checkStatus, openCount, alignmentStatus)}
     {@const highlightFindings = findings.filter((f) => f.status !== "ignored" && f.status !== "accepted")}
     {@const display = shownDisplay(key, $rawView, $verseDisplay, $verseTexts)}
@@ -1169,8 +1175,8 @@
             disabled={$checkingProgress.running || $editSaving || Boolean($recheckingKey)}
             title={$checkingProgress.running || $editSaving || $recheckingKey
               ? "Wait for background checking to finish before aligning"
-              : `Alignment: ${alignmentStatus} — click to open Align Words`}
-            aria-label={`Alignment ${alignmentStatus} for verse ${v}. Open Align Words.`}
+              : `Alignment: ${alignmentStatusLabel(alignmentStatus)} — click to open Align Words`}
+            aria-label={`Alignment ${alignmentStatusLabel(alignmentStatus)} for verse ${v}. Open Align Words.`}
             on:click|stopPropagation={() => openAlignmentFromList(v)}
             on:dblclick|stopPropagation
           >⇄</button>
@@ -1372,6 +1378,7 @@
   .alignment-state:disabled, .edit-pencil:disabled { opacity: .55; cursor: not-allowed; }
   .edit-pencil:hover:not(:disabled), .edit-pencil:focus-visible { color: var(--accent); }
   .alignment-state.complete { color: var(--success); background: var(--success-bg); }
+  .alignment-state.complete_cross_verse { color: var(--success); background: var(--success-bg); box-shadow: inset 0 0 0 1px var(--success); }
   .alignment-state.partial { color: var(--warning); background: var(--warning-bg, #fff4dc); }
   .alignment-state.invalid { color: var(--danger); background: var(--danger-bg); font-weight: 800; }
   .verse.multi { box-shadow: inset 3px 0 0 var(--accent); background: var(--accent-bg); }

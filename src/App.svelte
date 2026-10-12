@@ -1118,7 +1118,7 @@
       counts[status] += 1;
       return counts;
     },
-    { complete: 0, partial: 0, untouched: 0, invalid: 0 },
+    { complete: 0, complete_cross_verse: 0, partial: 0, untouched: 0, invalid: 0 },
   );
 </script>
 
@@ -1316,7 +1316,7 @@
         <span>Chapter: <b>{$currentChapter}</b></span>
         <span style="color:var(--success);">✓ Approved: {$approvedCount}/{$verseNums.length}</span>
         <span title="Word-alignment status for this chapter">
-          Alignment: {alignmentChapterSummary.complete} complete · {alignmentChapterSummary.partial} partial
+          Alignment: {alignmentChapterSummary.complete} complete{#if alignmentChapterSummary.complete_cross_verse} · {alignmentChapterSummary.complete_cross_verse} via cross-verse{/if} · {alignmentChapterSummary.partial} partial
           {#if alignmentChapterSummary.invalid} · {alignmentChapterSummary.invalid} invalid{/if}
         </span>
         <span>{bookSummary.approvedChapters}/{bookSummary.totalChapters} chapters approved</span>
