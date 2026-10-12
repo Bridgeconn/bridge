@@ -18246,3 +18246,43 @@ Job threads keep their connection until the job's thread ends; a restore
 while a job holds the file now fails cleanly instead of racing it.
 
 **Verified.** Engine `pytest -n auto` with the product pragmas: 5200 passed, 3 xfailed, 1 failed in 7:20 (the suite took 11:00 under the old test patch); the failure was `test_save_semantic_location_run_is_atomic_if_the_alignment_edge_write_fails`, which swaps `sqlite3.connect` for a failing wrapper that a pooled connection never calls -- the test now releases the pool before and after the patch and its file passes (8); the suite was not rerun for that test-only edit. The Logos connector test passed in this run. `build-sidecars.ps1` then `smoke_sidecars.py` passed, with the frozen indic-qa stages faster (Hindi pack 4.6 s, was 7.3 s; ta-irv layer 6.7 s, was 12.5 s). Frontend and shell untouched.
+
+## 2026-10-12 — Tamil UI strings exported for native review, part 1 of 2 (#235)
+
+Requirement 3 asks a native speaker (Benz supplies the reviewer) to review
+the Tamil on screen. There is no i18n file, so nothing could be handed over.
+This commit adds the table; the corrections land in a second commit when the
+review comes back, and #235 stays open until then.
+
+**What is on screen, checked against the code.** The coverage statement
+(`language_qa.coverage()`: in-scope labels, out-of-scope labels and reasons,
+behind the panel's (i) since DECISIONS 2026-10-09), the two (i) headings in
+`LanguageQaPanel.svelte`, Settings placeholders and help text with Tamil
+examples, the ta-irv pack's finding messages, the தான் context message and
+the fix rationales (tooltips in the Review panel and the verse right-click
+menu), the indic-qa Tamil layer's rule labels (finding message and Checker
+settings switch) and detail phrases, and the sandhi grammar's 71 rule names
+(quoted as "rule <id>: <en> (<ta>)" in a sandhi finding's detail). The pack
+rules' `title.ta` (13) is loaded but no screen shows it; it is listed last
+so the reviewer can do it in the same pass. `plugins.py`'s Tamil is an AI
+prompt, not UI, and is left out.
+
+**What landed.** `scripts/export_tamil_ui_strings.py` writes
+`docs/TAMIL_UI_STRINGS.md` (138 rows: 22 coverage, 2 headings, 30 Tamil
+terms inside English text, 71 grammar names, 13 unshown titles) and, with
+`--csv`, a UTF-8-BOM sheet with two empty reviewer columns. Each row names
+its source. Kind *Tamil* is a rendering of the English beside it; kind
+*Term* is Tamil words inside an English sentence, review those words only.
+Messages shared by several rules appear once with every rule listed.
+`tests/language_packs/test_export_tamil_ui_strings.py` (`external`) fails
+when the committed table is stale, so a changed Tamil string cannot skip the
+next review round, and checks every coverage string is in it.
+
+**Open question for the review.** The grammar names are pack dictionary data
+(`ta-irv/dictionary/sandhi_rules.tsv`), which Bridge never writes; a
+correction there is an upstream indic-qa change re-synced with
+`scripts/sync_indic_qa.py`, not an edit here.
+
+**Verified.** `python scripts/export_tamil_ui_strings.py --check` exits 0;
+the three new tests pass. The full engine suite runs with the batch (#235,
+#234, #191).
