@@ -209,7 +209,7 @@ d` markers in the reader are expected until Phase 2 of #91. 20 tests in `tests/p
 | E03 | Footnotes/headings/poetry/milestones | No silent structural loss | PASS — source-template export; explicit fallback without source |
 | E04 | ESFM content | Supported markers preserved or limitation made explicit | PASS — custom markers retained by source-template export |
 | E05 | Windows bundle | Both helper executables are present and runnable | PASS — Beta 4 app and NSIS installer produced; both workers are version-checked, hash-matched across staging locations, and exercised by the enhanced frozen smoke |
-| E06 | macOS/Linux bundles | Build, permissions and runtime behavior verified | BLOCKED |
+| E06 | macOS/Linux bundles | Build, permissions and runtime behavior verified | PARTIAL — since 2026-10-12 (#250, selvabenz/Bridge) `release.yml` builds an arm64 DMG (ad-hoc signed, sidecar signatures checked), an AppImage and a deb, each gated by the frozen-sidecar smoke and `cargo test` on that OS; nobody has launched Bridge on a real macOS or Linux desktop, and #251–#253 record the known runtime gaps |
 | E07 | QA report CSV/TSV export | Filtered rows written with a UTF-8 BOM, RFC-4180 quoting, the reviewer's column labels | PASS — source tests |
 | E08 | QA report PDF (print) | Only the report prints, every filtered row, across pages | NOT RUN — print CSS compiles and `window.print()` is invoked (Vitest); WebView2 print preview not exercised |
 

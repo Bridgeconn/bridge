@@ -6,7 +6,11 @@ running the test suite. For *why* things are built this way, see
 For QA/release sign-off, see [`QA_TEST_MATRIX.md`](QA_TEST_MATRIX.md).
 
 Windows is the primary, maintained target (`x86_64-pc-windows-msvc`).
-macOS/Linux are planned but not the day-to-day dev environment yet.
+macOS/Linux are not the day-to-day dev environment yet. Since 2026-10-12
+`release.yml` also builds macOS (Apple Silicon) and Linux bundles in CI; the
+same `constraints-py312-windows.txt` serves them through `sys_platform`
+markers, and `build-sidecars.ps1` runs unchanged under pwsh 7 on either OS.
+Their desktop runtime is still unverified (`QA_TEST_MATRIX.md` E06).
 
 ## Prerequisites
 

@@ -1,8 +1,22 @@
-# Builds the Windows desktop installer and attaches it to the GitHub Release.
+# Builds the desktop bundles and attaches them to the GitHub Release.
 #
-# Windows (x86_64-pc-windows-msvc) is the only verified target — macOS/Linux
-# are planned but unverified, so this workflow deliberately builds one job on
-# windows-latest rather than a matrix that would produce untested artifacts.
+# Windows (x86_64-pc-windows-msvc) is still the only target whose desktop
+# runtime has been verified. Since 2026-10-12 (#250 on selvabenz/Bridge) the
+# matrix also builds macOS on Apple Silicon (aarch64-apple-darwin, a DMG) and
+# Linux x86_64 (an AppImage and a deb). Every leg runs the same frozen-sidecar
+# smoke and `cargo test`, so a green build means the sidecars were exercised
+# on that OS -- it does not mean the app has been launched on a real macOS or
+# Linux desktop (docs/QA_TEST_MATRIX.md E06 is PARTIAL, not PASS).
+#
+# The macOS leg is ad-hoc signed (APPLE_SIGNING_IDENTITY=-): there is no Apple
+# Developer certificate, and Apple Silicon refuses to run an unsigned arm64
+# binary at all. Gatekeeper therefore asks the user to right-click > Open the
+# first time, or to `xattr -d com.apple.quarantine Bridge.app`. Notarization
+# needs real signing secrets and is a separate step for a later day.
+#
+# No Intel macOS leg: GitHub's last x86_64 macOS image (macos-15-intel) is on
+# its way out and PyInstaller cannot cross-build the sidecar, so one would have
+# to be built natively. Add a matrix entry if an Intel build is ever wanted.
 #
 # Python is pinned to 3.12, NOT 3.13: real Wildebeest (wildebeest-nlp) cannot
 # compile under 3.13, and build-sidecars.ps1 refuses to run without it, so a
@@ -21,7 +35,7 @@ on:
   workflow_dispatch:
     inputs:
       upload_to_release:
-        description: "Tag of an existing release to attach the installer to (blank = artifact only)"
+        description: "Tag of an existing release to attach the bundles to (blank = artifacts only)"
         required: false
         default: ""
 
@@ -29,21 +43,93 @@ permissions:
   contents: write
 
 # Both triggers can fire for one tag (pushing v1.2.3, then publishing its
-# release). The job is idempotent -- uploads use --clobber -- so collapsing to
-# the newest run per tag just avoids paying for the build twice.
+# release). The jobs are idempotent -- uploads use --clobber -- so collapsing
+# to the newest run per tag just avoids paying for the build twice.
 concurrency:
   group: release-build-${{ github.event.release.tag_name || github.ref_name }}
   cancel-in-progress: true
 
 defaults:
   run:
+    # pwsh 7 ships on the Windows, macOS and Ubuntu runners alike, so the
+    # build steps are written once.
     shell: pwsh
 
+env:
+  # Tag source per event: the published release, the pushed tag, or the
+  # workflow_dispatch input (blank there means artifacts only, no upload).
+  RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || (github.event_name == 'push' && github.ref_name || inputs.upload_to_release) }}
+
 jobs:
-  windows:
-    name: Windows installer
-    runs-on: windows-latest
+  # Frontend checks once, not three times, and the release draft once --
+  # three legs racing `gh release create` for the same tag would have two of
+  # them fail on "already exists".
+  prepare:
+    name: Frontend checks and release draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Frontend checks
+        run: |
+          npm run check
+          if ($LASTEXITCODE -ne 0) { throw "svelte-check failed" }
+          npm run test
+          if ($LASTEXITCODE -ne 0) { throw "vitest failed" }
+
+      - name: Draft the release if the tag has none
+        if: env.RELEASE_TAG != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view $env:RELEASE_TAG --repo ${{ github.repository }} 2>$null | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            # A plain tag push has no release behind it. Draft one and attach
+            # to that -- going public stays a human decision, never a side
+            # effect of pushing a tag.
+            #
+            # Pre-release is taken from the tag's own shape rather than
+            # hardcoded: a semver pre-release identifier is the part after the
+            # hyphen, so v1.2.0-beta.3 is flagged and v1.2.0 ships stable.
+            $maturity = if ($env:RELEASE_TAG -match "-") { "--prerelease" } else { "--latest" }
+            gh release create $env:RELEASE_TAG --repo ${{ github.repository }} `
+              --draft $maturity --title "Bridge $env:RELEASE_TAG" --generate-notes
+            if ($LASTEXITCODE -ne 0) { throw "Could not draft a release for $env:RELEASE_TAG" }
+          }
+
+  build:
+    name: ${{ matrix.name }}
+    needs: prepare
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 90
+    strategy:
+      # One OS failing must not cancel the others: the Windows installer is
+      # still wanted when the Linux leg breaks on a new webkit package name.
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows installer
+            os: windows-latest
+            artifact: bridge-windows-x64
+            bundles: src-tauri/target/release/bundle/nsis/*-setup.exe
+          - name: macOS (Apple Silicon) disk image
+            os: macos-15
+            artifact: bridge-macos-arm64
+            bundles: src-tauri/target/release/bundle/dmg/*.dmg
+          - name: Linux AppImage and deb
+            os: ubuntu-22.04
+            artifact: bridge-linux-x64
+            bundles: src-tauri/target/release/bundle/appimage/*.AppImage src-tauri/target/release/bundle/deb/*.deb
 
     steps:
       - uses: actions/checkout@v4
@@ -63,9 +149,24 @@ jobs:
         with:
           workspaces: src-tauri
 
+      # Tauri 2's own Linux prerequisites (https://v2.tauri.app/distribute/pipelines/github).
+      # ubuntu-22.04 rather than -latest: the AppImage inherits the build
+      # host's glibc floor, so the older image runs on more desktops.
+      - name: Install Linux build prerequisites
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
+            build-essential curl wget file libxdo-dev libssl-dev
+
       - name: Install frontend dependencies
         run: npm ci
 
+      # The constraints file is named for the platform it was verified on; it
+      # carries sys_platform markers for PyInstaller's Windows-only and
+      # macOS-only transitive deps, so the same file serves every leg.
       - name: Install engine dependencies
         working-directory: engine
         run: |
@@ -89,15 +190,8 @@ jobs:
             --clobber
           if ($LASTEXITCODE -ne 0) { throw "Stage 3 DB download failed" }
 
-      - name: Frontend checks
-        run: |
-          npm run check
-          if ($LASTEXITCODE -ne 0) { throw "svelte-check failed" }
-          npm run test
-          if ($LASTEXITCODE -ne 0) { throw "vitest failed" }
-
       - name: Build sidecars
-        run: .\scripts\build-sidecars.ps1
+        run: ./scripts/build-sidecars.ps1
 
       # Verifies the frozen pair, not the source tree — the two have diverged
       # before (PyInstaller missing a dynamically-imported vendor tree).
@@ -109,7 +203,10 @@ jobs:
       # rebuilt frozen pair, and it is a hard gate again. A green release build
       # now does mean the sidecars were exercised.
       - name: Smoke-test frozen sidecars
-        run: python scripts/smoke_sidecars.py engine/dist/bridge-engine.exe
+        run: |
+          $engine = if ($IsWindows) { "engine/dist/bridge-engine.exe" } else { "engine/dist/bridge-engine" }
+          python scripts/smoke_sidecars.py $engine
+          if ($LASTEXITCODE -ne 0) { throw "Frozen sidecar smoke failed" }
 
       # After build-sidecars.ps1, not before: tauri-build resolves every
       # bundle.externalBin for the host target triple in its build script, so
@@ -119,50 +216,63 @@ jobs:
         run: cargo test
 
       - name: Build desktop app
+        env:
+          # Ad-hoc signature on macOS (see the header). The Windows and Linux
+          # bundlers never read this variable.
+          APPLE_SIGNING_IDENTITY: "-"
         run: npm run tauri build
 
-      - name: Locate installer
-        id: installer
+      # The bundler is expected to sign the externalBin sidecars along with the
+      # app. An unsigned arm64 sidecar would be killed at spawn and the app
+      # would report a sidecar timeout, so check here rather than on a user's
+      # machine. `codesign -dv` exits non-zero on an unsigned file.
+      - name: Verify the macOS signature covers the sidecars
+        if: runner.os == 'macOS'
+        shell: bash
         run: |
-          $exe = Get-ChildItem -Path src-tauri/target/release/bundle/nsis -Filter *-setup.exe |
-                 Select-Object -First 1
-          if (-not $exe) { throw "No NSIS installer produced" }
-          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $exe.FullName).Hash
-          "path=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          "name=$($exe.Name)"     | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          "sha256=$hash"          | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          "$($exe.Name)`nSHA-256: $hash" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          set -euo pipefail
+          app=$(ls -d src-tauri/target/release/bundle/macos/*.app | head -n 1)
+          codesign --verify --deep --strict --verbose=2 "$app"
+          for bin in "$app"/Contents/MacOS/bridge-engine* "$app"/Contents/MacOS/bridge-usfm-checker*; do
+            echo "== $bin"
+            codesign -dv "$bin"
+          done
 
-      - name: Upload build artifact
+      - name: Locate bundles
+        id: bundles
+        run: |
+          $found = @()
+          foreach ($glob in "${{ matrix.bundles }}".Split(" ", [StringSplitOptions]::RemoveEmptyEntries)) {
+            $items = @(Get-ChildItem -Path $glob -File -ErrorAction SilentlyContinue)
+            if ($items.Count -eq 0) { throw "No bundle matched $glob" }
+            $found += $items
+          }
+          $lines = @("paths<<BUNDLE_PATHS")
+          foreach ($item in $found) {
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $item.FullName).Hash
+            $lines += $item.FullName
+            "$($item.Name)`nSHA-256: $hash`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          }
+          $lines += "BUNDLE_PATHS"
+          $lines | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.installer.outputs.name }}
-          path: ${{ steps.installer.outputs.path }}
+          name: ${{ matrix.artifact }}
+          path: ${{ steps.bundles.outputs.paths }}
           if-no-files-found: error
           retention-days: 90
 
-      # Tag source per event: the published release, the pushed tag, or the
-      # workflow_dispatch input (blank there means artifact only, no upload).
-      - name: Attach installer to release
-        if: github.event_name != 'workflow_dispatch' || inputs.upload_to_release != ''
+      # Tauri's own file names carry the platform (Bridge_x.y.z_x64-setup.exe,
+      # _aarch64.dmg, _amd64.AppImage, _amd64.deb), so the three legs never
+      # clobber each other on one release.
+      - name: Attach bundles to release
+        if: env.RELEASE_TAG != ''
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || (github.event_name == 'push' && github.ref_name || inputs.upload_to_release) }}
+          BUNDLE_PATHS: ${{ steps.bundles.outputs.paths }}
         run: |
-          gh release view $env:TAG --repo ${{ github.repository }} 2>$null | Out-Null
-          if ($LASTEXITCODE -ne 0) {
-            # A plain tag push has no release behind it. Draft one and attach
-            # to that -- going public stays a human decision, never a side
-            # effect of pushing a tag.
-            #
-            # Pre-release is taken from the tag's own shape rather than
-            # hardcoded: a semver pre-release identifier is the part after the
-            # hyphen, so v1.2.0-beta.3 is flagged and v1.2.0 ships stable.
-            $maturity = if ($env:TAG -match "-") { "--prerelease" } else { "--latest" }
-            gh release create $env:TAG --repo ${{ github.repository }} `
-              --draft $maturity --title "Bridge $env:TAG" --generate-notes
-            if ($LASTEXITCODE -ne 0) { throw "Could not draft a release for $env:TAG" }
-          }
-          gh release upload $env:TAG "${{ steps.installer.outputs.path }}" `
-            --repo ${{ github.repository }} --clobber
+          $paths = $env:BUNDLE_PATHS -split "`r?`n" | Where-Object { $_.Trim() -ne "" }
+          gh release upload $env:RELEASE_TAG @paths --repo ${{ github.repository }} --clobber
           if ($LASTEXITCODE -ne 0) { throw "Release upload failed" }

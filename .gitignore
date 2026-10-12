@@ -32,6 +32,7 @@ src-tauri/gen/
 # commit these; they're large, binary, and go stale silently.
 src-tauri/binaries/*.exe
 src-tauri/binaries/bridge-engine-*
+src-tauri/binaries/bridge-usfm-checker-*
 !src-tauri/binaries/README.txt
 
 # Same reasoning: build-sidecars.ps1 copies engine/resources here so

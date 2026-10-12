@@ -17915,3 +17915,75 @@ hidden-not-removed), SideRail (toggles, Settings, badges), docked Language QA
 and its titles, the glyph class; npm run build ok. Not run: the desktop app.
 The layout change is the largest of the session, and nothing in jsdom shows
 how the columns sit at 1366×768.
+
+## 2026-10-12 — macOS (Apple Silicon) and Linux release bundles, on the fork (#250)
+
+Benz asked for macOS and Linux releases on selvabenz/Bridge, explicitly not on
+RevantCI yet. Decisions taken first (AskUserQuestion): a new pre-release tag on
+the fork; Apple Silicon only; pipeline-only scope with the runtime gaps filed,
+not fixed; ad-hoc signing, since there is no Apple Developer certificate.
+
+**What actually blocked it.** Less than the docs implied. `tauri.conf.json`
+already listed `dmg`, `appimage` and `deb`, `icon.icns` existed, `sidecar.rs`
+had its `cfg(not(windows))` branch, `smoke_sidecars.py` and `usfm_adapter.py`
+already chose the extension by platform, and the fork already carried the
+`stage3-semantic-db-v0.3` asset (same sha256 as RevantCI's). The real
+blockers, each found by reading rather than assumed:
+
+1. `release.yml` was one Windows job: a hardcoded `bridge-engine.exe` smoke
+   path, an NSIS-only locate step, and a draft-release step that three
+   parallel legs would race (`gh release create` fails on the second
+   "already exists").
+2. `build-sidecars.ps1` joined paths with backslash literals. pwsh on macOS
+   and Linux does not treat a backslash as a separator, so the script would
+   have created one directory literally named with the backslash in it.
+3. `constraints-py312-windows.txt` pinned `pefile` and `pywin32-ctypes`
+   unconditionally; both are PyInstaller's Windows-only transitive deps.
+4. `.gitignore` ignored `bridge-engine-*` and `*.exe` but not a
+   `bridge-usfm-checker-<triple>` with no extension.
+5. Apple Silicon refuses to run an unsigned arm64 binary at all, and Tauri's
+   bundler skips signing entirely when no identity is set.
+
+**What changed.** `release.yml` is now a `prepare` job (frontend checks once,
+the release draft once, on ubuntu) and a `build` matrix of three legs:
+`windows-latest` (NSIS, the steps unchanged), `macos-15` (arm64 DMG,
+`APPLE_SIGNING_IDENTITY=-`, then `codesign --verify --deep --strict` on the
+.app and `codesign -dv` on both sidecars inside `Contents/MacOS`, which exits
+non-zero on an unsigned file) and `ubuntu-22.04` (AppImage and deb, after
+Tauri 2's documented apt list). Every leg keeps the frozen-sidecar smoke and
+`cargo test` as hard gates; the smoke path picks the extension from
+`$IsWindows`. The locate step takes a space-separated list of globs from the
+matrix, throws when any matches nothing, and writes a multiline `paths`
+output that both the artifact upload and `gh release upload` consume. The
+tag expression moved to a workflow-level `RELEASE_TAG` so the draft and the
+upload read one definition. `build-sidecars.ps1` uses forward slashes
+(Windows PowerShell accepts them) and runs `chmod +x` on the two copies when
+there is no `.exe` extension. The constraints file keeps its name and gains
+`sys_platform` markers (`pefile`, `pywin32-ctypes` on win32; `macholib` on
+darwin). QA matrix E06 moves from BLOCKED to PARTIAL.
+
+**Runner choices.** `macos-13` was retired in December 2025 and `macos-14`
+retires on 2026-11-02 with brownouts through October, so `macos-15`. No Intel
+leg: `macos-15-intel` is the last x86_64 image and PyInstaller cannot
+cross-build the sidecar, so one would need its own native leg. `ubuntu-22.04`
+over `-latest` because the AppImage inherits the build host's glibc floor.
+
+**What a user sees.** The DMG is ad-hoc signed, not notarized: Gatekeeper asks
+for right-click > Open the first time, or `xattr -d com.apple.quarantine`.
+The AppImage needs FUSE 2 on older distributions; the deb declares its webkit
+dependency itself.
+
+**Filed, not fixed (fork issues).** #251: `secret_store.py` persists the API
+key and the Paratext code only behind `os.name == 'nt'`, so off Windows a
+saved key lasts the session and the Settings label still says "DPAPI on
+Windows". #252: `_default_app_root()` falls back to `~/Bridge/data` rather
+than the platform data folder. #253: the POSIX `kill_process_tree` sends
+SIGKILL, which PyInstaller's bootloader cannot forward to its Python child.
+
+**Verified.** On Windows: `pip install --dry-run` resolves the marker-bearing
+constraints file (the darwin pin is skipped on win32, the win32 pins still
+apply); the edited `build-sidecars.ps1` builds both exes into
+`src-tauri/binaries/` and the frozen smoke passes; the workflow YAML parses.
+On the fork: see the run links in the PR. Not verified anywhere: launching
+Bridge on a real macOS or Linux desktop. The first dispatch run of this
+workflow is the first time the Tauri crate has ever compiled on either OS.
