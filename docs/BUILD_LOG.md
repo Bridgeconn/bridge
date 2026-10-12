@@ -18323,3 +18323,15 @@ version is set to 1.3.0 with no entry (tried, then reverted).
 `benchmark/human/baseline.json` and `population.json` still carry the 1.1.0
 label in `packVersion`; neither the gate nor population staleness reads it
 (population is per-rule definition hashes), so they are not regenerated here.
+
+## 2026-10-12 — TA_DOUBLE_SPACE (#191): already resolved on 2026-10-08
+
+#191 (2026-09-30) asked to delete the dead `TA_DOUBLE_SPACE` check or run it on
+raw text. Option (a) landed on 2026-10-08 as `b919731` ("One owner for
+zero-width and double spaces", the fork's #234, entry above): `local_checks`
+no longer emits `{TA|LANG}_DOUBLE_SPACE` or `{TA|LANG}_HIDDEN_CHAR`, Language QA
+owns them as `spacing.extra` and `unicode.invisible` for every pack, and
+`tests/jobs/test_local_checks_ownership.py` asserts a real double space and a
+zero-width space give the Language QA findings and no local one. That commit
+never referenced #191, so the issue stayed open. Nothing to change; verified
+`b919731` is an ancestor of `origin/main` and the test passes on today's main.
