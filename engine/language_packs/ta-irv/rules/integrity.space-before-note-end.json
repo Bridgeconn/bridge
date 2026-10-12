@@ -6,7 +6,7 @@
  "confidence": "medium",
  "inline": false,
  "title": {
-  "ta": "குறிப்பு முடிவுக்கு முன் இடைவெளி (குறியீட்டு வடிவமைப்பு)",
+  "ta": "குறிப்பின் இறுதிக் குறிக்கு முன் இடைவெளி (குறியீட்டு வடிவமைப்பு)",
   "en": "Markup: space before a note's end marker"
  },
  "message": {

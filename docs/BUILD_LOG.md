@@ -18422,3 +18422,48 @@ as busy, the give-up bound, the wording. `npm run check` 0/0, `npm run test`
 56 files / 683 passed, `npm run build` ok. Engine suite not run (no engine
 change). Not run: the desktop repro (open an unopened book during a check and
 watch the label); the protocol repro on #210 is what showed the 63 s wait.
+
+## 2026-10-12 — Tamil UI strings, part 2: the native review applied (#235)
+
+The reviewer filled 36 of the 138 rows of `D:\Bridge_Tamil_UI_strings_review.csv`
+(the `--csv` sheet). Every correction was applied by row id from the sheet, each
+replacement asserting its old text, so no Tamil was retyped.
+
+- **Coverage statement** (`language_qa.py`, the panel's (i)), 6 strings: "or"
+  rather than "both" for joined/split words (சேர்ந்தோ பிரிந்தோ); proper names as
+  ஆள், இடப் பெயர்கள், not பெயர்ச்சொல் (any noun); பிரதிப்பெயர் for pronoun; a
+  noun phrase for missed/added source words; and the two reasons gain the
+  "(Stage 7/8 shows candidates)" the English had and the Tamil dropped.
+- **Pack rule titles**, 6 (builder and rule files; no screen shows them yet).
+- **The தான் context message** of the five வல்லினம் rules: இடைச்சொல் for the
+  clitic, the term every other string uses (was ஒட்டுச்சொல்).
+- **indic-qa sandhi grammar names**, 18: committed upstream as indic-qa
+  `282d033` (branch `tamil-review-235`, from the vendored `ab53636`; the main
+  clone's uncommitted work was left alone by using a separate worktree), then
+  synced with `scripts/sync_indic_qa.py`. Names only, so no rule `revision` was
+  bumped, as the sync's prompt allows when matching is unchanged.
+- Notes with no correction were left: `in.sandhi` ("also acceptable"), the
+  சரிபார்ப்பர் register, and `dem` / `dem_padi` (எந்த, எப்படி are interrogative;
+  acceptable since the rows cover all three).
+
+**No version bump.** Benz decided (DECISIONS 2026-10-12, the later entry) that a
+wording-only change gets a CHANGELOG line and keeps the version, so no ignore
+expires. ta-irv stays 1.2.0.
+
+**The IRV snapshot.** The changed `sandhi_rules.tsv` hash makes
+`test_the_snapshot_is_for_the_vendored_tamil_dictionary` require a rebuild of
+`irv_state.json.gz`. The rebuild also took in `44JHNIRVTam.SFM`, edited in
+`D:\Claude Lab\IRV Tamil` on 2026-10-10 18:10 after the 2026-10-07 snapshot (the
+other 65 books are byte-identical); Benz confirmed the edit is deliberate. Only
+`--irv-state ta` was run, not `--ta-layer`, which would regenerate the
+hand-reviewed `indic_qa_rules.json`.
+
+**The reviewer's "contradiction".** `no_clitic` and `particle_dbl` were read as
+contradicting on கூட / போல. They do not: `no_clitic` (`next:=கூட|=போல`) is about
+the word before them, `particle_dbl` about the word after. The follow-up rule
+change on கூட is its own commit.
+
+**Verified.** Language QA, pack, layer, report and export tests: 556 passed.
+Human gate pass, unchanged (`language-qa-7+ta-irv@1.2.0`, 818 rows).
+`sync_indic_qa.py --check` ok. indic-qa's Tamil tests on the branch: 21 passed,
+3 skipped. The full suite and the frozen smoke run with the next commit.

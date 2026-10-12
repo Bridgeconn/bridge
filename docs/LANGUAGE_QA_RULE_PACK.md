@@ -281,8 +281,9 @@ builder's `INLINE` table records the human number behind each inline rule.
 
 What changed in each version, and which ignores a bump expires, is in
 `engine/language_packs/ta-irv/CHANGELOG.md`. Every change to the pack's rules,
-inline flags or layers bumps `version` with an entry there (DECISIONS.md
-2026-10-12). The human column is combined precision over the 2026-09-28 and
+inline flags or layers bumps `version` with an entry there; a wording-only
+change (title, message, rationale, grammar rule name) gets an entry and no
+new version (DECISIONS.md 2026-10-12, both entries). The human column is combined precision over the 2026-09-28 and
 2026-09-29 rounds (`benchmark/human/baseline.json`); "population" is rule (b)'s
 whole-Bible coverage from `benchmark/human/population.json`.
 

@@ -945,3 +945,17 @@ rules and the 18 `indicqa.*` layer rules. The seven rules that carry `legacyVers
 **Supersedes:** the version line of 2026-10-07, "indic-qa's Tamil checker runs as a layer of ta-irv".
 **Rules out:** changing ta-irv's findings without a version bump and a changelog entry.
 **Revisit when:** per-rule revisions alone decide expiry (the 2026-09-24 entry's own revisit).
+
+## 2026-10-12 — A wording-only ta-irv change gets a changelog line, not a new version (#235)
+**Decision:** A change that only rewords text a rule shows (a title, a finding message, a
+fix rationale, an indic-qa grammar rule's name) is recorded in the pack's CHANGELOG.md and
+does not bump `pack.json` `version`. Anything that can change which findings appear, their
+confidence, or their inline flag still bumps it. Benz, 2026-10-12, on the #235 review.
+**Because:** a bump expires every reviewer ignore of 31 rules (the 1.2.0 entry above). For
+a reworded title that is a re-check of findings that did not change. The stamp
+(`ta-irv@<version>#<rule version>`) is about what a rule finds, not what it says.
+**Amends:** "Every ta-irv change ships as a new pack version with a changelog", above.
+**Rules out:** using a wording entry for anything that touches a match, abstain, context
+condition, fix, confidence or inline flag.
+**Revisit when:** a reviewer needs an old ignore to come back because a message changed.
+

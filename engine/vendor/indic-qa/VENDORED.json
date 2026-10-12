@@ -1,7 +1,7 @@
 {
  "upstream": "https://github.com/selvabenz/indic-qa",
- "commit": "ab53636ba0fa0fd2aa347f66b5241c8a0f340226",
- "fetched": "2026-10-07",
+ "commit": "282d0339b471c55c2c6880a3ace39584914b4a73",
+ "fetched": "2026-10-12",
  "files": {
   "engine/language_packs/hi-irv/dictionary/archaic.tsv": "05ff928746fc5eec21a43891afa025c9d08d2b2d59bc0e23f4d88a42329effb7",
   "engine/language_packs/hi-irv/dictionary/build_info.json": "9778ec2bf52ac491e799cc99f9ad1410f0e1223d8bc42920466cbf16369d0b55",
@@ -45,7 +45,7 @@
   "engine/language_packs/ta-irv/dictionary/extra_words.txt": "4786ea1f40efb8cd698cb92f14770e7ba01b891d0ba41df2752c3fcabf002d27",
   "engine/language_packs/ta-irv/dictionary/final_consonant_words.tsv": "9dffa15ab14ec9ea0a1a25e8b3555e9097550aca09946b2b88b959e62c47c350",
   "engine/language_packs/ta-irv/dictionary/sandhi_pairs.tsv": "635df318b00cb31648effada859b56462798e37568303ad24fe33aa4ce5ebee7",
-  "engine/language_packs/ta-irv/dictionary/sandhi_rules.tsv": "15dc744edbc6d9d5eb84d06d548928480dc3b50e0d4da7a2d14d8b9c89f0743b",
+  "engine/language_packs/ta-irv/dictionary/sandhi_rules.tsv": "6558ac06fe9c3f500349fe51b13e029d252ffaf0a546fc0ff2182ff80343c6f3",
   "engine/language_packs/ta-irv/dictionary/verses.tsv": "5ae284192c35bb6d437b7e18700b3444896a9bda71062969a3ada7496216a3de",
   "engine/language_packs/ta-irv/dictionary/wordlist.txt": "29213cb8f4a120b55d25cdc1a7d27161163c9670adee4ad5f8ca1b42d4af6ba8",
   "engine/language_packs/ta-irv/dictionary/wordlist_bare.txt": "bc7f0122cc668cdc86f22ce4eb6160b18bd23ce9ebd4c8500f24a8adabc8037b",
@@ -65,7 +65,7 @@
   "engine/vendor/indic-qa/qa_app/langs/pa_tables.py": "538aff39477e32d12a9ce7e10f5cccc339f989d0739faf57ff7e36269b180fb8",
   "engine/vendor/indic-qa/qa_app/langs/ta.py": "a50521c80f58b4b72b4eccb4b7f75df91d8f6ef1cc358d9e6d55e62358cc7dc5",
   "engine/vendor/indic-qa/qa_app/paths.py": "9505979a13746c0f62283a3eea67347639b100a2748a3bf56c6234824b9f66e9",
-  "engine/vendor/indic-qa/qa_app/tamil_grammar.py": "d19e65bd1af528affbf80285aea0a9c408a409eb03388bc555afceb2c5fcfc47",
+  "engine/vendor/indic-qa/qa_app/tamil_grammar.py": "a14ca733587d994974d968acead5cdfd271942b1799fad722324bb385950bd32",
   "engine/vendor/indic-qa/qa_app/usfm_doc.py": "9a6e4630e1d6ab29e8980eb979084cce93f91b1f7f3f18e54b219bc9036fa5e3",
   "engine/vendor/indic-qa/scripts/build_dictionary.py": "b36ada323f0de8e1299dbcb5c6b22ca7af32ba63c18dab51414942a27424da5f"
  }

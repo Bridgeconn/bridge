@@ -13,11 +13,26 @@ Bump a single rule's `version` when only that rule changed.
 
 Every change to the pack's rules, inline flags or layers ships as a new
 version with an entry here, in the same commit (DECISIONS 2026-10-12).
+A wording-only change (a title, a message, a rationale, a grammar rule's
+name) changes no finding and no stamp, so it gets an entry here and no new
+version (DECISIONS 2026-10-12, the later entry).
 
 ## 1.2.0 — 2026-10-12 (#234)
 
 Records everything that shipped under 1.1.0 after 2026-09-28. Nothing in the
 rules changes in this release; the version now names the rule set below.
+
+**Wording, 2026-10-12 (#235, no version change).** A native reviewer's
+corrections: six rule titles (`integrity.digits-in-text`,
+`integrity.space-before-note-end`, `sandhi.clitic.fused`,
+`sandhi.vallinam.manner-adverb`, `typo.divine-name.dative-stem`,
+`typo.participle.sentence-final`); the தான் context message of the five
+வல்லினம் rules now says இடைச்சொல் for the clitic, the term every other string
+uses, instead of ஒட்டுச்சொல்; and 18 names in the indic-qa sandhi grammar
+(`dictionary/sandhi_rules.tsv`, indic-qa 282d033: செயவெனெச்சம் as one word,
+இறந்தகாலப் / நிகழ்காலப் பெயரெச்சம்). No match, abstain, fix or inline flag
+changed. `irv_state.json.gz` was rebuilt for the new dictionary hash, from the
+IRV folder as it now is (JHN was edited there on 2026-10-10).
 
 **Inline promotions (2026-09-29, human labels over both review rounds).**
 - `sandhi.vallinam.demonstrative` (24/24), `sandhi.vallinam.manner-adverb`
