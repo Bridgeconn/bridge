@@ -68,9 +68,11 @@ resolve.
 
 `engine/tc_ai_bridge/workbench_repository.py`, `WorkbenchRepository`,
 `WORKBENCH_SCHEMA_VERSION` starting at 1 with its own `schema_migrations` ladder. Connection
-discipline copied from `FoundationRepository` (`passage_semantic_repository.py:1070-1086`):
-one fresh `sqlite3.connect` per call, `row_factory=Row`, `foreign_keys ON`, `busy_timeout
-5000`, `synchronous FULL`, `journal_mode WAL`, `query_only` when read-only; a
+discipline shared with `FoundationRepository` (`tc_ai_bridge/sqlite_pool.py`, #113,
+2026-10-12): one connection per thread per file, reused within a request and released
+after it, `row_factory=Row`, `foreign_keys ON`, `busy_timeout 5000`, `synchronous NORMAL`
+under `journal_mode WAL`, `query_only` when read-only (before #113: a fresh connection per
+call with `synchronous FULL`); a
 pre-migration backup before every version bump. Every version bump gets a
 `test_workbench_vN_to_vN+1_keeps_vN_rows_readable` test in the established style.
 

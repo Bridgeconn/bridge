@@ -188,6 +188,9 @@ def test_save_semantic_location_run_is_atomic_if_the_alignment_edge_write_fails(
     def patched_connect(*args, **kwargs):
         return _FailingExecuteManyConnection(real_connect(*args, **kwargs), "record_dependencies")
 
+    # #113: the repository reuses this thread's connection, so the failing
+    # wrapper only takes effect if the next acquire has to open one.
+    repository.release_connections()
     monkeypatch.setattr(sqlite3, "connect", patched_connect)
 
     doomed_run_id = "location-run-atomicity-probe"
@@ -202,6 +205,7 @@ def test_save_semantic_location_run_is_atomic_if_the_alignment_edge_write_fails(
         )
 
     monkeypatch.undo()  # restore the real sqlite3.connect before touching the DB again
+    repository.release_connections()  # and drop the pooled failing wrapper (#113)
     with repository._connect() as conn:
         row = conn.execute(
             "SELECT 1 FROM semantic_location_runs WHERE id=?", (doomed_run_id,),

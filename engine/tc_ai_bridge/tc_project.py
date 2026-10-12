@@ -667,6 +667,16 @@ class TranslationCoreProject:
             return 'partial'
         return 'complete'
 
+    def close(self) -> None:
+        """Let go of this project's database handles (#113): called when the
+        engine replaces or deletes the project. Reads and writes after it
+        simply reopen; nothing else is torn down."""
+        self.workbench.release_connections()
+
+    def release_thread_db_handles(self) -> None:
+        """The dispatcher's per-request release (#113)."""
+        self.workbench.release_thread_connections()
+
     def alignment_work_state(self, chapter: str | int, verse: str | int) -> str:
         return self._alignment_work_state(self.load_verse_alignment(chapter, verse))
 

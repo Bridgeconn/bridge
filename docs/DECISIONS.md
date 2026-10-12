@@ -901,3 +901,27 @@ field for identity. The engine's own AI and migration actors (`ActorType.AI`,
 **Revisit when:** a legitimate delegated write appears — one person recording a decision
 on another's behalf. That would be an explicit `onBehalfOf` field with its own audit
 column and its own `authorize()` action, not a return of `actorId`.
+
+## 2026-10-12 — Repositories reuse one SQLite connection per thread, `synchronous NORMAL` under WAL (#113)
+**Decision:** `FoundationRepository` (the semantic database) and `WorkbenchRepository`
+share one connection discipline (`tc_ai_bridge/sqlite_pool.py`): one connection per
+thread per file, opened on first use and reused; the dispatcher releases its thread's
+connections after every request, a finished job thread's are closed on the next
+acquire, and a project lets go of its files when it is replaced, deleted or restored.
+The pragmas are `foreign_keys ON`, `busy_timeout 5000`, `journal_mode WAL`,
+`synchronous NORMAL`. A block that ends without committing still discards its work.
+The test suite's `synchronous OFF` patch is removed; tests run the product pragmas.
+**Because:** measured on the profiled file (`test_qa_target_hash_contract_stage8_9b.py`,
+9 tests, serial, 2026-10-12): 95 s with a connection per call and FULL, 90 s with
+NORMAL and still a connection per call, 29 s with the old test patch, 10–11 s with
+one connection per thread. The cost was the open and close (each close checkpointed
+the WAL), not the fsync. NORMAL under WAL is durable across an application crash —
+every committed transaction is in the WAL — and loses at most the last transactions to
+a power cut or an OS crash; FULL only added an fsync per commit for that case.
+`WorkspaceRepository` (app level, a few calls) keeps its per-call FULL connections.
+**Rules out:** `synchronous OFF` anywhere in the product; sharing one connection between
+threads (`check_same_thread=False` exists so `release()` can *close* a dead thread's
+connection, never for two threads to use one); closing a live thread's connection from
+outside — a restore while a job holds the file fails cleanly instead.
+**Revisit when:** a team reports a lost decision after a power cut (then FULL for the
+workbench only, measured), or the hub (#80) needs a different durability contract.

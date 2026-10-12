@@ -775,6 +775,9 @@ class BridgeEngine:
             raise ProjectError(str(exc)) from exc
         timer.mark("register")
         self._language_qa.unbind()
+        # #113: the outgoing project lets go of its database files first.
+        if self.project is not candidate:
+            self._close_project_db_handles()
         self.project = candidate
         self.passage_semantic_runtime = None
         self._correction_application_service = None
@@ -948,6 +951,9 @@ class BridgeEngine:
             if sibling.get("path")
         ])
         if managed:
+            # #113: a pooled handle on the open project's databases would make
+            # the rmtree below fail on Windows; let go of them first.
+            self._close_project_db_handles()
             managed_root = self.project_registry.managed_root
             for sibling in self.project_registry.group_entries(project_id):
                 sibling_path = Path(str(sibling.get("path") or ""))
@@ -6520,6 +6526,30 @@ class BridgeEngine:
             elapsed = time.perf_counter() - started
             if elapsed >= 0.1:
                 _trace(f"rpc {request.method} took {elapsed * 1000:.0f}ms")
+            self._release_thread_db_handles()
+
+    def _release_thread_db_handles(self) -> None:
+        """#113: the dispatcher's connections are reused within a request and
+        released after it, so between requests nothing holds the database
+        files -- a backup restore or a project delete can replace them as it
+        always could. A job thread's connections are its own."""
+        for holder in (self.project, self.passage_semantic_runtime):
+            if holder is None:
+                continue
+            try:
+                holder.release_thread_db_handles()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _close_project_db_handles(self) -> None:
+        """Before the open project is replaced or its files deleted (#113)."""
+        for holder in (self.passage_semantic_runtime, self.project):
+            if holder is None:
+                continue
+            try:
+                holder.close()
+            except Exception:  # noqa: BLE001
+                pass
 
     def _handle_request(self, request: EngineRequest) -> EngineResponse:
         self._language_qa.touch()

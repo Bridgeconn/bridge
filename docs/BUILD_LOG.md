@@ -18193,3 +18193,56 @@ glyph title) and `alignmentStatus.test.ts`.
 dimension is #239's (next in the order), where this value joins `complete`.
 The desktop check of the tick on a real linked verse is M53 in the QA
 matrix, NOT RUN.
+
+## 2026-10-12 — One SQLite connection per thread, released per request (#113)
+
+**Measured first.** `tests/semantic/test_qa_target_hash_contract_stage8_9b.py`,
+9 tests, serial, the file the issue's profile came from, run under four
+settings by a pytest plugin that swapped `_connect` (conftest's own
+opt-out disabled with `BRIDGE_TEST_DURABLE_SQLITE=1`):
+
+| setting | wall |
+|---|---|
+| FULL, a connection per call (product) | 95.6 s, 95.3 s |
+| NORMAL, a connection per call | 121 s, 90 s |
+| NORMAL plus an idle anchor connection per file | 155 s |
+| OFF + memory journal (the old test patch) | 33 s, 29 s |
+| NORMAL, one connection per thread reused | 11.7 s, 10.9 s |
+
+So the fsync the issue blamed was not the cost; the open/close was (every
+close of the last connection checkpoints the WAL), and the anchor that
+stops the checkpoint did not help either. An in-engine run on a copy of IRV
+Tamil Genesis (open, gap scan, ten verse checks, ten link/unlink pairs) showed
+FULL, NORMAL and anchor within noise of each other for the same reason: those
+paths open few connections per call.
+
+**Change.** `tc_ai_bridge/sqlite_pool.py` `ConnectionPool`: one connection
+per (thread, read-only) per file, opened on first use with the product
+pragmas and `synchronous NORMAL`; `acquire()` yields it and rolls back on
+exit if the block left a transaction open (a per-call connection was closed
+there, which did the same); `release_thread()` closes the caller's and every
+dead thread's; `release()` is the same (a live thread's connection is never
+closed from outside). Both repositories' `_connect` delegate to it and gain
+`release_connections` / `release_thread_connections`; `TranslationCoreProject`
+and `PassageSemanticRuntime` gain `close()` and `release_thread_db_handles()`.
+`BridgeEngine.handle_request` releases the dispatcher thread's handles after
+every request, so between requests nothing holds the files, as before;
+`open_project` closes the outgoing project's handles before replacing it;
+`delete_project` closes them before `rmtree`; `FoundationRepository.restore`
+releases before it unlinks the live WAL (the two foundation tests that
+failed until it did were exactly that: `PermissionError` on
+`semantic.sqlite3-wal`). Backups were already WAL-safe (SQLite's backup API).
+The conftest opt-out (OFF + memory journal) is gone; tests run the product
+pragmas and the profiled file now takes 10 s, under the old patched 29 s.
+`workbench.connect` in check timing now counts real opens.
+
+**Audit before the change.** An AST walk of both repositories found no
+method that opens a connection inside another's connection block, and the
+only write paths without an explicit `commit()` are the migrations, which
+commit inside their own `executescript`.
+
+**Not changed.** `WorkspaceRepository` (per-call FULL, a handful of calls).
+Job threads keep their connection until the job's thread ends; a restore
+while a job holds the file now fails cleanly instead of racing it.
+
+**Verified.** Engine `pytest -n auto` with the product pragmas: 5200 passed, 3 xfailed, 1 failed in 7:20 (the suite took 11:00 under the old test patch); the failure was `test_save_semantic_location_run_is_atomic_if_the_alignment_edge_write_fails`, which swaps `sqlite3.connect` for a failing wrapper that a pooled connection never calls -- the test now releases the pool before and after the patch and its file passes (8); the suite was not rerun for that test-only edit. The Logos connector test passed in this run. `build-sidecars.ps1` then `smoke_sidecars.py` passed, with the frozen indic-qa stages faster (Hindi pack 4.6 s, was 7.3 s; ta-irv layer 6.7 s, was 12.5 s). Frontend and shell untouched.

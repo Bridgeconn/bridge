@@ -777,6 +777,14 @@ class PassageSemanticRuntime:
         self.synchronize_alignment_state()
         mark("alignment_scan")
 
+
+    def close(self) -> None:
+        """Let go of the semantic database's handles (#113); see
+        TranslationCoreProject.close."""
+        self.repository.release_connections()
+
+    def release_thread_db_handles(self) -> None:
+        self.repository.release_thread_connections()
     def init_timing_summary(self) -> str:
         return " ".join(f"{phase}={seconds:.2f}s" for phase, seconds in self.init_timings)
 

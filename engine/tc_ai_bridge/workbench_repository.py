@@ -30,6 +30,7 @@ import threading
 import uuid
 
 from . import check_timing
+from .sqlite_pool import ConnectionPool
 
 # Committed row writes per database file, in this process. A reader that keeps
 # rows across calls (a check job's gap prefetch, #241) compares it to know its
@@ -703,6 +704,9 @@ class WorkbenchRepository:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.read_only = False
         self._generation_key = str(self.path.resolve())
+        # #113: one connection per thread, reused; `workbench.connect` now
+        # times real opens only, so a check job's `calls` is how many it made.
+        self._pool = ConnectionPool(self.path, error=WorkbenchError, timing_step="workbench.connect")
         self._migrate()
 
     @property
@@ -716,28 +720,22 @@ class WorkbenchRepository:
         with _GENERATION_LOCK:
             _GENERATIONS[self._generation_key] = _GENERATIONS.get(self._generation_key, 0) + 1
 
-    # -- connection discipline, copied from FoundationRepository
-    # (passage_semantic_repository.py:1070-1086) --------------------------
+    # -- connection discipline, shared with FoundationRepository (#113:
+    # sqlite_pool.ConnectionPool) ------------------------------------------
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        # Timed (check_timing): `calls` on a check job is how many connections
-        # its verses opened, the cost a reused connection would remove.
-        with check_timing.current().step("workbench.connect"):
-            conn = sqlite3.connect(str(self.path), timeout=5.0)
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA foreign_keys = ON")
-            conn.execute("PRAGMA busy_timeout = 5000")
-            conn.execute("PRAGMA synchronous = FULL")
-            conn.execute("PRAGMA journal_mode = WAL")
-            if self.read_only:
-                conn.execute("PRAGMA query_only = ON")
-            if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
-                conn.close()
-                raise WorkbenchError("SQLite foreign-key enforcement could not be enabled")
-        try:
+        with self._pool.acquire(self.read_only) as conn:
             yield conn
-        finally:
-            conn.close()
+
+    def release_connections(self) -> None:
+        """Let go of the database file: the caller's connections and every
+        finished thread's. Called when a project is replaced or deleted."""
+        self._pool.release()
+
+    def release_thread_connections(self) -> None:
+        """The dispatcher's per-request release (#113): nothing is held open
+        between requests, so a restore or a delete can replace the file."""
+        self._pool.release_thread()
 
     def _migrate(self) -> None:
         with self._connect() as conn:
