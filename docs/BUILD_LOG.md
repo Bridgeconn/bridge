@@ -18070,3 +18070,71 @@ change for a follow-up, not this issue. Every request sent while the
 sidecar is down calls `start()` again (pre-existing), so a spawn failure
 logs once per queued request (four at Home); harmless, the loading screen
 shows one failure.
+
+## 2026-10-12 — Cross-verse verification, part 1: the gap list on the frozen 0.14.0 engine (#241)
+
+Requirement 9 asks for an end-to-end confirmation on the installed 0.14.0
+build, UI pointers, and the known gaps. Two things outside the repo block the
+installed-build half: there is **no v0.14.0 release** (the release workflow
+runs on a `v*` tag push; the last tag is v0.13.0, 2026-10-01, and the
+machine's installed Bridge is 0.13.0), and every AI-backed call answers
+**HTTP 429, "your organization has reached its configured enforced spend
+limit"**. What could be run was run on today's frozen `bridge-engine.exe`
+(built from `main` at d82597b; `engine.info` reports 0.14.0, schema 16), over
+the stdio protocol, with LOCALAPPDATA redirected to a scratch folder holding
+a copy of the real settings (the DPAPI key is bound to the account, not the
+path), on two throwaway projects: the #219 test fixture (Greek PHP 1:3–4,
+"I thank" rendered in v4) and a copy of the IRV Tamil Genesis project with
+its backups and transactions left out. The script and its full output are
+in the session scratchpad (`walk_241.py`, `walk_241.jsonl`).
+
+**Manual flow, observed.** `alignment.getRange` 1:3–4 gaps 3/1 and 1/3;
+`alignment.crossVerse.link` εὐχαριστῶ (1:3) → ஸ்தோத்திரிக்கிறேன் (1:4)
+annotated both verses (realized 1 / accounted 1, gaps net of the link), the
+tC file untouched, `canComplete` false on both; the duplicate was refused
+with "is already linked to"; `unlink` returned both to zero, a second unlink
+→ `alignment_error`; re-link; `verse.edit` on 1:4 reported
+`crossVerseLinksInvalidated`, after which both verses list the link as
+`invalid` and 1:4 reads `status: invalid`. `gapScan` listed every source and
+target gap with signatures. `verse.runChecks` local on the window gave
+`ALIGN_UNALIGNED_TOP/BOTTOM` only (no automatic pass had run). On the GEN
+copy: `project.open` 2.7 s, 50 chapters; `alignment.status` ch 1 complete 1
+/ untouched 30; `Suggest links` (offline corpus) 1 proposal in 2.5 s; the
+same call on the fresh fixture: 0 with `unavailable` (#208 explained: the
+corpus is the project's own completed verses).
+
+**Automatic flow, observed.** `alignment.autoAlign.estimate` GEN 1: 15
+windows, 30 calls, ~126k input tokens, USD 1.98 estimated, no provider
+call. `window.autoAlign`, `crossVerse.aiPropose` and the chapter job each
+reached the provider and came back `ai_error` with the 429 text after 5–8 s;
+nothing was written (`alignment.get` unchanged, verdict null), the job ended
+`failed` with "1 window(s) failed", `revert` on an untouched verse was
+refused with "No automatic alignment has run". The fail-closed path is
+verified; the agreement-gate hit rate, token spend and reasons wait for the
+spend limit.
+
+**Gap list, each checked in code today.**
+1. Export: `canComplete` (`bridge_service.py:1820`) needs an empty word bank
+   and every group two-sided; a linked word stays in its verse's bank, so a
+   linked verse never completes and the chapter stays `partial`
+   (`alignment_gaps.py` docstring, `cross_verse_links.py` docstring).
+2. Reports: no cross-verse reference in `qa_report.py`, `reporting.py`,
+   `report_jobs.py`, `collection_jobs.py`.
+3. Undo and history: a link change writes an `alignment_history` row
+   without `backupPath` on purpose, and `_alignment_history_entries`
+   (`tc_project.py:1557`) keeps only rows with one — so link events are
+   absent from the verse history list (`alignment.get` → `history: []`
+   after link, unlink and invalidation) and `alignment.restore` cannot
+   restore them. Undo is unlink; an invalidated link is kept as `invalid`.
+4. Cross-chapter: every range method takes one chapter and a verse list.
+5. #208 (offline suggestions need completed alignments), #188 (status
+   reflects tC groups only, so a linked verse still reads `untouched`).
+6. The 1366×768 visual check of the page is still owed.
+7. The verse ✓ dead end: #228.
+
+**Docs.** QA matrix: D14's status now records the 429 run; M49–M58 added
+for #134's list (protocol PASS where the run covered it, desktop NOT RUN).
+**Not done.** The on-screen walk of the installed app: no 0.14.0 installer
+exists, and the maintainer was using the desktop while this session ran,
+so no synthetic clicks were sent. The verse-list, modal and finding entry
+points are named from the code in the #241 comment for Benz.
