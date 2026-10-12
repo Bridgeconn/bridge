@@ -1,6 +1,6 @@
 {
  "pack": "ta-irv",
- "version": "1.2.0",
+ "version": "1.3.0",
  "language": "ta",
  "script": "Taml",
  "description": "Tamil IRV rule pack: sandhi (வல்லினம்) shape rules and known IRV defect shapes. Built by scripts/build_ta_irv_pack.py from the IRV corpus and the 2026-09-28 human review; see docs/LANGUAGE_QA_RULE_PACK.md.",

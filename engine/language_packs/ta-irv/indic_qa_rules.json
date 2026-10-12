@@ -67,7 +67,7 @@
    "inline": false
   },
   "indicqa.sandhi.missing": {
-   "revision": 1,
+   "revision": 2,
    "category": "sandhi",
    "layer": "pattern",
    "severity": "medium",
@@ -76,7 +76,7 @@
    "inline": false
   },
   "indicqa.sandhi.extra": {
-   "revision": 1,
+   "revision": 2,
    "category": "sandhi",
    "layer": "pattern",
    "severity": "medium",
@@ -103,7 +103,7 @@
    "inline": false
   },
   "indicqa.sandhi.conflict": {
-   "revision": 1,
+   "revision": 2,
    "category": "sandhi",
    "layer": "pattern",
    "severity": "low",

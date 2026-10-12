@@ -18467,3 +18467,54 @@ change on கூட is its own commit.
 Human gate pass, unchanged (`language-qa-7+ta-irv@1.2.0`, 818 rows).
 `sync_indic_qa.py --check` ok. indic-qa's Tamil tests on the branch: 21 passed,
 3 skipped. The full suite and the frozen smoke run with the next commit.
+
+## 2026-10-12 — ta-irv 1.3.0: no ஒற்று verdict after கூட, சொந்த, கள்ள (from the #235 review)
+
+The #235 reviewer flagged `no_clitic` and `particle_dbl` as contradicting on கூட /
+போல. Read against indic-qa's rule format they do not: `no_clitic`
+(`next:=கூட|=போல`) is about the word before them, `particle_dbl` about the word
+after. Benz first decided to take கூட and போல out of `particle_dbl` on the
+premise that the OV leaves the following word bare, with his own test: count the
+IRV; if more than a fifth is doubled, use an `amb_` row instead.
+
+**Measured** (IRV, 66 books; OV for comparison), the word after:
+- கூட: doubled 50 + fused 2 vs bare 31 (62%); OV 45/1.
+- போல: doubled 27 + fused 1 vs bare 1 (97%); OV 7/0.
+- Before கூட (no_clitic's boundary): mostly bare (9 doubled).
+Benz then chose: கூட → `amb_kooda`, போல stays.
+
+**The guard.** Without கூட, `particle_dbl` agreed with the OV 119/14 (89.5%) and
+failed indic-qa's `test_rules_agree_with_the_ov` (0.9). Per word: போல 7/0, மற்ற
+84/9, கிட்ட 8/1, சொந்த 15/3, கள்ள 5/1. Benz chose to move சொந்த and கள்ள to
+`amb_sontha_kalla` and keep the 0.9 floor (an earlier local attempt that lowered
+the floor to 0.8 was undone before anything was pushed). `particle_dbl` is now
+போல, மற்ற, கிட்ட (99/10, 90.8%); `test_order_pins` follows.
+
+**indic-qa.** Branch `tamil-review-235`: 282d033 (names, part 2 of #235) and
+2a36f19 (this rule). Its suite: 342 passed; two `BuildIsolationTest::
+test_tamil_input_writes_nothing` tests (ml, pa) fail, and fail identically on the
+untouched `ab53636`, so they were deselected, not fixed. `test_webapp`'s
+`test_csrf_header_required` failed once in a full run and passed 3 of 3 alone.
+
+**Effect, measured with the real layer** over every IRV chapter with these words
+before a க/ச/த/ப word: "missing ஒற்று" after கூட 32 → 7, after சொந்த 20 → 0,
+after கள்ள 0 → 0; no new finding. The 7 are before a ப-word: an `amb_` row only
+removes the grammar's vote, and the OV, which writes கூடப் nearly always, still
+leads there.
+
+**Versions.** Findings change, so ta-irv 1.3.0 (CHANGELOG, builder, two stamp
+tests) and `indicqa.sandhi.missing` / `.extra` / `.conflict` revision 2 (the
+sync's prompt). Every ignore of the 31 pack-stamped rules returns once as
+`previouslyIgnored`. `irv_state.json.gz` rebuilt for the new dictionary hash.
+The two new grammar names (amb_kooda, amb_sontha_kalla) are unreviewed Tamil;
+they are in `docs/TAMIL_UI_STRINGS.md` for the next round.
+
+**Verified.** Language QA, pack, layer, report and export tests: 556 passed.
+Human gate pass at `language-qa-7+ta-irv@1.3.0`, same 818 rows.
+`sync_indic_qa.py --check` ok.
+Full engine suite (`-n auto`): 5200 passed, 3 xfailed, 4 failed, and the 4
+passed when rerun alone (4 passed, 10.8 s): three Logos helper-process tests
+(the known parallel-load flake) and
+`test_passage_semantic_runtime.py::test_moved_project_retains_identity_but_live_copy_is_rejected`,
+new to this flake list. Frozen sidecars rebuilt; `smoke_sidecars.py` passed,
+including the ta-irv indic-qa layer.

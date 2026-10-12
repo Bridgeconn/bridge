@@ -959,3 +959,21 @@ a reworded title that is a re-check of findings that did not change. The stamp
 condition, fix, confidence or inline flag.
 **Revisit when:** a reviewer needs an old ignore to come back because a message changed.
 
+## 2026-10-12 — No ஒற்று verdict after கூட, சொந்த or கள்ள; போல still doubles (#235)
+**Decision:** In indic-qa's Tamil sandhi grammar (ta-irv's layer), கூட moves to a new
+`amb_kooda` row and சொந்த, கள்ள to `amb_sontha_kalla`: the grammar gives no verdict on the
+ஒற்று after them. `particle_dbl` keeps போல, மற்ற, கிட்ட. `no_clitic` (no ஒற்று before கூட /
+போல) is unchanged. ta-irv 1.3.0. Benz, 2026-10-12.
+**Because:** Benz's rule: house style wins over prescriptive grammar, and a word whose
+corpus departs from a verdict more than one time in five gets an `amb_` row ("look at",
+not "fix"). Measured in the IRV after கூட: 52 doubled or fused, 31 bare (both "with" and
+"even"). After போல: 28 of 29 doubled, so doubling is the house style and stays a verdict.
+Without கூட, `particle_dbl` fell to 89.5% OV agreement, under indic-qa's 90% test; Benz
+chose to move its two weakest words (சொந்த 15/3, கள்ள 5/1) out rather than lower the guard
+to four-fifths. The reviewer's "no_clitic contradicts particle_dbl" was a misreading: the
+two rows are about different boundaries.
+**Rules out:** an amb_ row read as "never flag": it only removes the grammar's vote, and
+the OV habit still leads where the OV is near-unanimous for a pair (7 கூடப் before ப).
+**Revisit when:** a review round labels the remaining கூட leads, or the IRV text after
+போல stops being doubled.
+

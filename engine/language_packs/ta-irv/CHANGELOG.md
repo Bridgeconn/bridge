@@ -17,6 +17,27 @@ A wording-only change (a title, a message, a rationale, a grammar rule's
 name) changes no finding and no stamp, so it gets an entry here and no new
 version (DECISIONS 2026-10-12, the later entry).
 
+## 1.3.0 — 2026-10-12 (from the #235 review)
+
+**No grammar verdict after கூட, சொந்த, கள்ள** (indic-qa 2a36f19, synced). The
+reviewer read `no_clitic` and `particle_dbl` as contradicting on கூட / போல; they do
+not (`no_clitic` is about the word before them, `particle_dbl` the word after).
+Measured in the IRV: after கூட the next word is doubled or fused 52 times and
+bare 31 times ("with" and "even" are both கூட), so it moves to a new `amb_kooda`
+row; after போல it is doubled 28 of 29, so போல stays a "double". Without கூட,
+`particle_dbl` agreed with the OV 119/14 (89.5%), under indic-qa's 90% guard, so
+its two weakest words, சொந்த (OV 15/3) and கள்ள (5/1), move to
+`amb_sontha_kalla`; `particle_dbl` is now போல, மற்ற, கிட்ட (99/10). `no_clitic` is
+unchanged.
+
+Effect on the IRV chapters with these words: "missing ஒற்று" findings after கூட
+32 → 7 (the 7 are before a ப-word, where the OV writes கூடப் nearly always and its
+habit still leads), after சொந்த 20 → 0, after கள்ள 0 → 0; nothing new is flagged.
+`indicqa.sandhi.missing`, `.extra` and `.conflict` go to revision 2.
+
+**Ignores.** A new pack version: every ignore of the 31 pack-stamped rules comes
+back once as `previouslyIgnored`.
+
 ## 1.2.0 — 2026-10-12 (#234)
 
 Records everything that shipped under 1.1.0 after 2026-09-28. Nothing in the

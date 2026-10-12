@@ -277,7 +277,7 @@ every வல்லினம் rule inline on AI-agreement numbers was supersede
 (DECISIONS.md), and a rule file carrying `inlineSignOff` no longer loads. The
 builder's `INLINE` table records the human number behind each inline rule.
 
-## `ta-irv@1.2.0`
+## `ta-irv@1.3.0`
 
 What changed in each version, and which ignores a bump expires, is in
 `engine/language_packs/ta-irv/CHANGELOG.md`. Every change to the pack's rules,
@@ -318,7 +318,8 @@ with the pack version:
 | `lexicon.rare-near-common` | disabled | a rare word close to a common one | 0/21 (2026-09-28) |
 
 The indic-qa layer (`pack.json` `indicQa`, `indic_qa_rules.json`) adds 18
-`indicqa.*` rules at revision 1, all panel-only and none high/high;
+`indicqa.*` rules, all panel-only and none high/high (revision 1; `sandhi.missing`,
+`sandhi.extra` and `sandhi.conflict` revision 2 since 1.3.0);
 `indicqa.lex.irv-consistent-slip` is disabled. They carry the pack's stamp,
 so a pack bump expires their ignores too. See `docs/LANGUAGE_QA_PACKS.md`.
 

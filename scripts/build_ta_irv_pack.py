@@ -53,7 +53,7 @@ PACK_DIR = REPO / "engine" / "language_packs" / "ta-irv"
 # data-driven kinds: lexicon-lookup, sign-sequence, ...) is not built here and
 # is kept as it is, after the built ones, in its existing order.
 BUILT_KINDS = {"token-context", "regex"}
-PACK_VERSION = "1.2.0"
+PACK_VERSION = "1.3.0"
 HUMAN_LABELS = REPO / "benchmark" / "human"  # every review round under it
 HARD = ["க", "ச", "த", "ப"]
 EXAMPLES = 12
