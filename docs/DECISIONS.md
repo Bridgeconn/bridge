@@ -403,6 +403,9 @@ that Bridge already checks; applying a fix to a heading; turning
 `indicqa.lex.unknown` on without counts; changing ta-irv's version for the layer.
 **Revisit when:** reviewer labels exist for an `indicqa.*` rule (inline gate), or
 a heading writer exists.
+**Superseded in part (2026-10-12):** the version line. ta-irv is 1.2.0, and the
+layer is one of the changes it records; see "Every ta-irv change ships as a new
+pack version with a changelog" below.
 
 ## 2026-10-07 — indic-qa findings are drawn in the text by default, behind the reviewer's own threshold
 **Decision:** Every enabled indic-qa rule (pa/ml/hi/or packs and ta-irv's
@@ -925,3 +928,20 @@ connection, never for two threads to use one); closing a live thread's connectio
 outside — a restore while a job holds the file fails cleanly instead.
 **Revisit when:** a team reports a lost decision after a power cut (then FULL for the
 workbench only, measured), or the hub (#80) needs a different durability contract.
+
+## 2026-10-12 — Every ta-irv change ships as a new pack version with a changelog (#234)
+**Decision:** ta-irv goes from 1.1.0 to 1.2.0, and `engine/language_packs/ta-irv/CHANGELOG.md`
+records 1.0.0, 1.1.0 and 1.2.0. From now on a change to the pack's rules, inline flags or
+layers bumps `pack.json` `version` (and the builder's `PACK_VERSION`) with a changelog entry
+in the same commit. Benz confirmed the bump on 2026-10-12, knowing what it expires.
+**Because:** Requirement 3 asks for it: since 1.1.0 (2026-09-28) the pack gained inline
+promotions, revision 3 with the தான் contexts, seven rules moved out of code, the indic-qa
+layer and a new rule, all under the same version, so "ta-irv@1.1.0" no longer names one
+rule set. The alternative, keeping 1.1.0 so no ignore expires, leaves the version meaningless.
+**Cost:** every reviewer ignore or rejection of a ta-irv rule stamped with the pack version
+comes back once as `previouslyIgnored` (2026-09-24, "An ignore expires…"): the 13 pack-native
+rules and the 18 `indicqa.*` layer rules. The seven rules that carry `legacyVersion`
+(`language-qa-7`) keep their stamp and their ignores.
+**Supersedes:** the version line of 2026-10-07, "indic-qa's Tamil checker runs as a layer of ta-irv".
+**Rules out:** changing ta-irv's findings without a version bump and a changelog entry.
+**Revisit when:** per-rule revisions alone decide expiry (the 2026-09-24 entry's own revisit).

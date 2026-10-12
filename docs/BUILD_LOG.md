@@ -18286,3 +18286,40 @@ correction there is an upstream indic-qa change re-synced with
 **Verified.** `python scripts/export_tamil_ui_strings.py --check` exits 0;
 the three new tests pass. The full engine suite runs with the batch (#235,
 #234, #191).
+
+## 2026-10-12 — ta-irv 1.2.0 and its changelog (#234)
+
+ta-irv had been 1.1.0 since 2026-09-28 while the inline promotions, rule
+revision 3 (the தான் contexts), seven rules moved out of code, the indic-qa
+layer, `typo.participle.sentence-final` and the general corpus all shipped
+under it. The 2026-10-07 layer decision kept 1.1.0 on purpose so no ignore
+would expire, and `test_indic_qa_tamil_layer.py` pinned it. Benz confirmed the
+bump on 2026-10-12 knowing that; DECISIONS.md records the reversal ("Every
+ta-irv change ships as a new pack version with a changelog") and marks the old
+line superseded.
+
+**What changed.** `pack.json` and `build_ta_irv_pack.py` `PACK_VERSION` are
+1.2.0. No rule changed. `engine/language_packs/ta-irv/CHANGELOG.md` records
+1.0.0, 1.1.0 and 1.2.0, rebuilt from the pack's commit history (per-commit rule
+version, inline and enabled state, read from git rather than the docs).
+`LANGUAGE_QA_RULE_PACK.md`'s version section is now `ta-irv@1.2.0`: all 13
+native rules at their current revisions, inline flags and combined human
+numbers, the seven code-origin rules, and the layer. The layer test's version
+pin is now a check that the changelog has an entry for the pack's version, so
+a bump without one fails; the two stamp tests expect `ta-irv@1.2.0`.
+
+**Existing ignores come back as `previouslyIgnored`.** Measured on the loaded
+pack: 31 rules stamp `ta-irv@1.2.0` (13 native, 18 `indicqa.*`), so every
+ignore or rejection of their findings recorded under 1.1.0 is shown again once
+for re-check. The 7 rules with `legacyVersion` stamp `language-qa-7` and keep
+their ignores. The fingerprint includes the pack version, so the Language QA
+chapter cache rescans once.
+
+**Verified.** Human gate (`scripts/language_qa_benchmark.py --human-labels
+benchmark/human --gate`): pass, pack version `language-qa-7+ta-irv@1.2.0`, 818
+label rows, the same per-rule numbers as at 1.1.0, nothing lost. The pack,
+layer, stamp and report tests: 117 passed. The changelog check fails when the
+version is set to 1.3.0 with no entry (tried, then reverted).
+`benchmark/human/baseline.json` and `population.json` still carry the 1.1.0
+label in `packVersion`; neither the gate nor population staleness reads it
+(population is per-rule definition hashes), so they are not regenerated here.

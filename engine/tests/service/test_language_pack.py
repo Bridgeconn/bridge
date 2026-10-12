@@ -51,7 +51,7 @@ def test_a_status_request_never_loads_the_pack_and_concurrent_first_loads_share_
 
 def test_the_bundled_pack_loads_and_every_example_passes():
     pack = load_pack("ta-irv")  # runs every example; raises on the first failure
-    assert pack.pack_version == "ta-irv@1.1.0"
+    assert pack.pack_version == "ta-irv@1.2.0"
     assert len({r.id for r in pack.rules}) == len(pack.rules)
 
 

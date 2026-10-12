@@ -44,7 +44,9 @@ def test_the_layer_joins_ta_irv_without_changing_its_own_rules():
     assert not [r.id for r in extra if (r.severity, r.confidence) == ("high", "high")]
     unknown = pack.by_id("indicqa.lex.unknown")
     assert (unknown.enabled, unknown.inline, unknown.confidence) == (True, False, "low"), "drawn under the slider"
-    assert pack.version == "1.1.0", "the layer must not expire the reviewers' ta-irv ignores"
+    # A version change expires reviewer ignores, so it ships with a changelog entry (DECISIONS 2026-10-12).
+    changelog = (packs_dir() / "ta-irv" / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert f"\n## {pack.version} " in changelog, "bump ta-irv with a CHANGELOG.md entry"
     assert indic_qa_adapter.runs_checker(pack) and not indic_qa_adapter.is_profile_pack(pack.meta)
 
 

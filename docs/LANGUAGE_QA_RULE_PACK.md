@@ -277,36 +277,59 @@ every வல்லினம் rule inline on AI-agreement numbers was supersede
 (DECISIONS.md), and a rule file carrying `inlineSignOff` no longer loads. The
 builder's `INLINE` table records the human number behind each inline rule.
 
-## `ta-irv@1.1.0`
+## `ta-irv@1.2.0`
 
-Built from `D:\Claude Lab\IRV Tamil` and the 2026-09-28 human review. The
-human column is precision against the reviewer's labels; inline needs ≥ 90% on
-≥ 20 of them.
+What changed in each version, and which ignores a bump expires, is in
+`engine/language_packs/ta-irv/CHANGELOG.md`. Every change to the pack's rules,
+inline flags or layers bumps `version` with an entry there (DECISIONS.md
+2026-10-12). The human column is combined precision over the 2026-09-28 and
+2026-09-29 rounds (`benchmark/human/baseline.json`); "population" is rule (b)'s
+whole-Bible coverage from `benchmark/human/population.json`.
 
-| Rule | v | Inline | Shape | Human precision (2026-09-28) |
+| Rule | v | Inline | Shape | Human precision |
 |---|---|---|---|---|
-| `sandhi.vallinam.dative` | 2 | **yes** | -க்கு / -ற்கு dative + bare; root nouns, house names, directions abstain | 100% (46/46) |
-| `sandhi.vallinam.accusative` | 2 | **yes** | -ஐ accusative + bare; root nouns and compound-final nouns abstain | 94.6% (35/37) |
-| `sandhi.vallinam.demonstrative` | 2 | no (7 labels) | அந்த/இந்த/எந்த + bare hard consonant | 100% (7/7) |
-| `sandhi.vallinam.manner-adverb` | 2 | no (1 label) | அப்படி/இப்படி/எப்படி + bare | 100% (1/1) |
-| `sandhi.vallinam.wrong-consonant` | 2 | no | linked with the wrong hard consonant | not labelled |
-| `sandhi.compound.direction` | 1 | no | கிழக்கு/மேற்கு/வடக்கு/தெற்கு + bare (compound doubling) | not labelled |
-| `sandhi.clitic.fused` | 2 | no | manner adverb, -ஐ, -க்கு or -ற்கு + தான் written apart | not labelled |
-| `typo.divine-name.vowel-drop` | 1 | no | யெகோவவ for யெகோவாவ | 100% (1/1) |
-| `typo.divine-name.dative-stem` | 1 | no | யெகோவாக்க (the dative is யெகோவாவுக்கு) | not labelled |
-| `typo.suffix.dropped-tha` | 1 | no | -வற்கு for -வதற்கு | not labelled |
+| `sandhi.vallinam.dative` | 3 | **yes** (a) | -க்கு / -ற்கு dative + bare; root nouns, house names, directions abstain | 100% (87/87) |
+| `sandhi.vallinam.accusative` | 3 | **yes** (a) | -ஐ accusative + bare; root nouns and compound-final nouns abstain | 97.4% (74/76) |
+| `sandhi.vallinam.demonstrative` | 3 | **yes** (a) | அந்த/இந்த/எந்த + bare hard consonant | 100% (24/24) |
+| `sandhi.vallinam.manner-adverb` | 3 | **yes** (a) | அப்படி/இப்படி/எப்படி + bare | 100% (21/21) |
+| `sandhi.vallinam.wrong-consonant` | 3 | **yes** (b) | linked with the wrong hard consonant | 100% (1/1; population 1 of 1) |
+| `sandhi.compound.direction` | 2 | **yes** (a) | கிழக்கு/மேற்கு/வடக்கு/தெற்கு + bare (compound doubling) | 100% (25/25) |
+| `sandhi.clitic.fused` | 3 | disabled | -ஐ, -க்கு or -ற்கு + தான் written apart; the வல்லினம் rules' தான் context replaces it | — |
+| `typo.divine-name.vowel-drop` | 1 | no | யெகோவவ for யெகோவாவ | 100% (5/5; population 5 of 11) |
+| `typo.divine-name.dative-stem` | 1 | no | யெகோவாக்க (the dative is யெகோவாவுக்கு) | 100% (4/4; population 4 of 13) |
+| `typo.suffix.dropped-tha` | 1 | **yes** (b) | -வற்கு for -வதற்கு | 100% (2/2; population 2 of 2) |
+| `typo.participle.sentence-final` | 1 | no | a -ந்து participle before `.` `!` `?`; fix -ந்தது | not labelled |
 | `integrity.space-before-note-end` | 2 | no | space before `\f*` / `\x*` (raw); category `usfm`, severity low | 0% as a text error (0/15): markup hygiene |
 | `integrity.digits-in-text` | 1 | disabled | digits in verse text: an IRV house form (Pass 3 §5) | — |
 
-Every வல்லினம் rule abstains before a clitic or quotative and before தேவ- (not
-தேவை). None abstains on a proper noun. The in-code rules changed too:
-`tamil.repeated-word` is disabled (0/20: Tamil அடுக்குத்தொடர்), and
-`lexicon.known-misspelling` is inline (43/43).
+The rules that moved out of the engine's code keep `legacyVersion:
+"language-qa-7"`, so their findings' stamp, and their ignores, do not change
+with the pack version:
+
+| Rule | Inline | Shape | Human precision |
+|---|---|---|---|
+| `lexicon.known-misspelling` | **yes** (a) | the lexicon's misspelling map; human pairs high, AI-review pairs medium and panel-only | 100% (47/47) |
+| `lexicon.known-split` | **yes** (b) | the lexicon's curated split pairs (சு வரை → சுவரை) | 100% (10/10; population 11 of 11) |
+| `tamil.dependent-sign` | no | a vowel sign or pulli with no base | not labelled |
+| `tamil.mixed-word` | no | Tamil and Latin letters in one word | not labelled |
+| `tamil.wordlist-variant` | no | a rare spelling variant within the book | not labelled |
+| `tamil.repeated-word` | disabled | a repeated word: Tamil அடுக்குத்தொடர் | 0/20 (2026-09-28) |
+| `lexicon.rare-near-common` | disabled | a rare word close to a common one | 0/21 (2026-09-28) |
+
+The indic-qa layer (`pack.json` `indicQa`, `indic_qa_rules.json`) adds 18
+`indicqa.*` rules at revision 1, all panel-only and none high/high;
+`indicqa.lex.irv-consistent-slip` is disabled. They carry the pack's stamp,
+so a pack bump expires their ignores too. See `docs/LANGUAGE_QA_PACKS.md`.
+
+Every வல்லினம் rule abstains before a spaced clitic or quotative (கூட,
+மட்டும், போல, என்று, என, எனும்) and before தேவ- (not தேவை). Before தான் it
+flags instead, with the pronoun and clitic fixes ranked (`contexts`). None
+abstains on a proper noun.
 
 B1 and B2 share `legacyId: "tamil.vallinam-missing"`. Their finding ids, and so
-their existing decisions, carry over. Their `ruleVersion` changed, though, so an
-existing ignore comes back once for re-check. That is intended (DECISIONS.md,
-"An ignore expires…").
+their existing decisions, carry over across versions; their `ruleVersion` does
+not, so an existing ignore comes back once for re-check after each bump. That is
+intended (DECISIONS.md, "An ignore expires…").
 
 ## Rebuilding `ta-irv`
 
