@@ -18385,3 +18385,17 @@ network call. The page's rendering of that message is pinned by
 "organization has reached its configured enforced spend limit", after 10.8 s.
 Nothing was written; the error reached the caller as `ai_error`. No retry was
 made. #188 stays open until the limit is raised and the window is run again.
+
+## 2026-10-12 — #188 re-tested with a real provider: the cold-start window aligns
+
+After the OpenAI spend limit was raised, the same single window ran (Benz's
+go-ahead): IRV 1 Co 7:1-3 on a fresh import, no completed alignments,
+`alignment.window.autoAlign` with `apply: true`, gpt-5.6. Two calls, 16,230
+tokens, $0.298 (estimate before: $0.12–0.51), 136.6 s, no failures. Agreed
+and written: v1 7 groups + 5 nulls, v2 10 groups + 4 nulls, v3 7 groups + 9
+nulls; verdicts NEEDS_REVIEW / ALIGNED_CLEAN / NEEDS_REVIEW; status
+`untouched` → `partial` / `complete_cross_verse` / `partial`. The two
+disagreements (v1 என்னவென்றால் grammatical vs explicitation; v3 δὲ link vs
+implicit) became suggestions, unwritten. First successful real-provider run
+of the #219 path. Desktop app not run. Observation for Benz: v2's
+`complete_cross_verse` came from null decisions alone, no link (#228's rule).
