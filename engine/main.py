@@ -10,8 +10,7 @@ startup and keeps it alive for the whole session (doc §4).
 import os
 import sys
 
-from bridge_service import BridgeEngine
-from greek_room_engine.transport.stdio_transport import run_stdio_loop
+from greek_room_engine.transport.stdio_transport import run_stdio_loop, send_stage
 
 
 def _apply_cli_overrides() -> None:
@@ -34,7 +33,23 @@ def _apply_cli_overrides() -> None:
                 os.environ[variable] = args[index + 1]
 
 
-if __name__ == "__main__":
+def _start() -> None:
+    """Boot in named stages so the shell's loading screen can say what is
+    slow (#233). Each stage line goes out *before* the work it names:
+    importing bridge_service pulls in tc_ai_bridge and the Greek Room
+    adapters (the bulk of a cold start after the onefile unpack),
+    BridgeEngine() opens the workspace, and run_stdio_loop sends the ready
+    line. That is why the import sits here rather than at the top of the
+    module: at the top it would run before anything could be reported, and
+    `import main` from a test would pay for it and print to stdout."""
     _apply_cli_overrides()
+    send_stage("modules", "Loading engine modules")
+    from bridge_service import BridgeEngine
+
+    send_stage("engine", "Starting the engine")
     engine = BridgeEngine()
     run_stdio_loop(engine, on_ready=engine.start_background_warmup)
+
+
+if __name__ == "__main__":
+    _start()

@@ -17987,3 +17987,86 @@ would build itself.
 
 **Verified.** Docs only; no code changed, no gates run. The file:line
 references above were read in the tree today.
+
+## 2026-10-12 — Startup loading screen: real stages, a 30 s failure view, Copy diagnostics (#233)
+
+Requirement 2 (P0). Before this the window was blank until the engine
+answered a ping: the Python ready handshake was dropped in `sidecar.rs`, a
+spawn failure went to `eprintln!` only, the version was shown nowhere at
+startup, and Diagnostics had no copy button.
+
+**Engine.** `stdio_transport.send_stage(stage, label)` writes one line in
+the response envelope under the reserved id `__stage__`, flushed, to the
+interpreter's own stdout, *before* the work it names. `main.py` now boots in
+`_start()`: `_apply_cli_overrides()`, `send_stage("modules", …)`, then
+`from bridge_service import BridgeEngine` (moved out of the module top so
+the stage precedes the import and `import main` from a test pays nothing),
+`send_stage("engine", …)`, `BridgeEngine()`, `run_stdio_loop`. The e2e
+`Sidecar` reader skips stage lines up to `__ready__` and asserts the order
+`["modules", "engine"]`; the frozen smoke already looped to ready.
+
+**Shell.** `sidecar.rs` classifies every stdout line (`classify_protocol_line`:
+Stage / Ready / Response / Noise) and keeps a `StartupStatus` (stages with a
+running `seq`, `ready`, `failed`). Stages: `spawning` and `spawned` from
+`start()`, the engine's `modules` and `engine`, `ready` on the handshake
+(also logged "Engine ready" and emitted as `engine-ready`), `failed` when the
+sidecar cannot be resolved or spawned (also an error in the log), `exited`
+when the process terminates before ready. Each is emitted as `engine-stage`.
+`engine_startup_state` returns the catch-up: stages so far, ready/failed,
+the version from `package_info()`, and the paths "Copy diagnostics" prints
+(engine-events.log, `%LOCALAPPDATA%\Bridge\data`, resource dir, exe).
+`main.rs` still echoes a start failure to the dev terminal.
+
+**Frontend.** `StartupScreen.svelte` is an overlay inside `.frame` while
+`startupDone` is false: an inline SVG wordmark (the bundled icon is a plain
+gradient tile, no logo exists), the version, a spinner with the latest
+stage's own label and an elapsed counter, and the stage list. On failure:
+"Bridge could not start its engine.", the stage's text, Retry (pings again,
+which respawns a dead sidecar), Show details (the engine log, newest first)
+and Copy diagnostics (`startup.ts` `buildDiagnosticsText`: version,
+platform, problem, paths, stages with times, the log tail; async clipboard
+with a selection-copy fallback, no plugin). `App.svelte` listens for
+`engine-stage` first, then fetches `engineStartupState()` and merges by
+`seq`; `connectEngine()` arms the 30 s timer, pings, and on success does
+what the old mount block did (navigation, settings, file drop). A `failed`
+or `exited` stage shows the failure at once. `startupDone` is set on the
+first successful ping only, so a mid-session respawn keeps its own notice.
+
+**Measured, dev build on this machine** (`target/debug`, frozen sidecar
+beside it, Vite dev server; not the installer): screenshot burst at 250 ms
+after launching the exe — 1.0 s blank webview (first paint pending), 1.3 s
+the card with "Engine process started, loading Python" and the stage list,
+1.6 s "Loading engine modules", 1.9 s "Engine ready", 2.2 s the Home screen
+with the projects list. `engine-events.log`: "Sidecar started" to "Engine
+ready" 1.65 s on the first launch of the day and 0.77 s on the second;
+`project.list` 618 ms / 445 ms. Failure path: the dev exe copied to a
+folder with no sidecar beside it showed the failure view 0.8 s after
+launch with "The engine process could not be started: The system cannot
+find the file specified. (os error 2)", Retry, Show details and Copy
+diagnostics; the log holds the same text as an error. The window closed
+cleanly in both runs (no orphaned bridge-engine.exe). The requirement's
+cold-start-under-5 s row needs the installed build on the reference
+machine (QA_TEST_MATRIX M48, not run).
+
+**Verified.** Engine `pytest -n auto`: 5189 passed, 3 xfailed, 1 failed —
+`test_logos_get_state_spawns_the_real_helper…` in
+`tests/connectors/test_desktop_connectors.py`, which passed when rerun
+alone (it spawns a PowerShell helper and ran while this session's own
+PowerShell screenshot loops were competing for the machine; unrelated to
+these files). New: `tests/service/test_startup_stages.py` (2) and the e2e
+stage-order test. Frontend: `npm run check` 0/0; `npm run test` 54 files,
+676 passed (new `startup.test.ts` 5, `StartupScreen.test.ts` 4); `npm run
+build` ok. Shell: `cargo check` clean, `cargo test` 13 passed (11 + the
+protocol-line and StartupStatus tests). Frozen: `build-sidecars.ps1`, then
+`smoke_sidecars.py` passed, "Frozen engine ready in 3.31s" with the stage
+lines on the wire. `src-tauri/language_packs/` had to be staged by hand
+(`build-sidecars.ps1` does it; `cargo check` fails without it — a fresh
+checkout gotcha to add to the memory note, not the repo).
+
+**Not done / noticed.** The blank-white second before the webview's first
+paint is WebView2 initialisation, before any HTML; a window
+`backgroundColor` matching `--bg` would soften it and is a one-line config
+change for a follow-up, not this issue. Every request sent while the
+sidecar is down calls `start()` again (pre-existing), so a spawn failure
+logs once per queued request (four at Home); harmless, the loading screen
+shows one failure.

@@ -29,6 +29,9 @@
   import ExportModal from "./lib/components/ExportModal.svelte";
   import ProjectDashboard from "./lib/components/ProjectDashboard.svelte";
   import DiagnosticsPanel from "./lib/components/DiagnosticsPanel.svelte";
+  import StartupScreen from "./lib/components/StartupScreen.svelte";
+  import { STARTUP_TIMEOUT_MS, mergeStage } from "./lib/startup";
+  import type { EngineStartupStage, EngineStartupState } from "./lib/api/bridgeClient";
   import ProjectReportScreen from "./lib/components/ProjectReportScreen.svelte";
   import type { AiCheckReview, AlignmentWorkStatus, BookProgressEntry, CheckJobSnapshot, ProjectReport, QaFinding, VerseDisplay, VerseHeading } from "./lib/types/finding";
   import type {
@@ -334,22 +337,107 @@
   }
   $: if (!$project || !opened) stopCollectionQa();
 
+  // Startup (#233). The loading screen covers the window until the engine
+  // answers its first ping; its status line is the latest stage the shell
+  // reported. Listen first, then fetch the stages that accumulated before
+  // this webview existed (the sidecar usually spawns before the page loads),
+  // merged by sequence number so a stage seen both ways counts once. A
+  // failure is shown the moment a "failed" or "exited" stage arrives, or
+  // after STARTUP_TIMEOUT_MS with no answer; Retry pings again, which
+  // respawns a dead sidecar (sidecar.rs send_request).
+  let startupState: EngineStartupState | null = null;
+  let startupStages: EngineStartupStage[] = [];
+  let startupFailure = "";
+  let startupDone = false;
+  let startupTimer: ReturnType<typeof setTimeout> | undefined;
+  let startupAttempt = 0;
+  let unlistenFileDrop: (() => void) | null = null;
+  let appDisposed = false;
+
+  function noteStartupStage(stage: EngineStartupStage): void {
+    startupStages = mergeStage(startupStages, stage);
+    if (startupDone) return;
+    if (stage.stage === "spawning") startupFailure = "";
+    else if (stage.stage === "failed" || stage.stage === "exited") startupFailure = stage.label;
+  }
+
+  function armStartupTimeout(attempt: number): void {
+    if (startupTimer) clearTimeout(startupTimer);
+    startupTimer = setTimeout(() => {
+      if (attempt !== startupAttempt || startupDone || appDisposed) return;
+      startupFailure = startupFailure || `The engine did not answer within ${STARTUP_TIMEOUT_MS / 1000} seconds.`;
+    }, STARTUP_TIMEOUT_MS);
+  }
+
+  async function connectEngine(): Promise<void> {
+    const attempt = ++startupAttempt;
+    engineStatus = "checking";
+    startupFailure = "";
+    armStartupTimeout(attempt);
+    try {
+      await bridge.ping();
+      if (appDisposed || attempt !== startupAttempt) return;
+      if (startupTimer) clearTimeout(startupTimer);
+      engineStatus = "ready";
+      startupDone = true;
+      await refreshNavigationStatus();
+      try {
+        const settings = await bridge.getSettings();
+        reviewerMode.set(settings.reviewerMode);
+        setPlaces(settings);
+        triageThreshold = settings.triageHideThreshold > 0 ? settings.triageHideThreshold : null;
+      } catch (error) {
+        console.error("Could not load reviewer mode", error);
+      }
+      if (!unlistenFileDrop) {
+        const stopListening = await bridge.onFileDrop(
+          (paths) => void handleDroppedPaths(paths),
+          (phase) => { draggingOver = phase === "over"; },
+        );
+        if (appDisposed) stopListening();
+        else unlistenFileDrop = stopListening;
+      }
+    } catch (error) {
+      if (attempt !== startupAttempt) return;
+      engineStatus = "error";
+      // A stage that already named the failure (spawn error, early exit) is
+      // the better text; the ping's own error is the fallback.
+      startupFailure = startupFailure
+        || `The engine did not answer: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+
   onMount(() => {
-    let unlisten: (() => void) | null = null;
     let unlistenLog: (() => void) | null = null;
     let unlistenRespawn: (() => void) | null = null;
-    let disposed = false;
+    let unlistenStage: (() => void) | null = null;
     const navigationTimer = window.setInterval(() => void pollNavigation(), 800);
     void (async () => {
       try {
+        const stopStage = await bridge.onEngineStage(noteStartupStage);
+        if (appDisposed) stopStage();
+        else unlistenStage = stopStage;
+      } catch (error) {
+        console.error("Could not subscribe to engine startup stages", error);
+      }
+      try {
+        const state = await bridge.engineStartupState();
+        if (!appDisposed) {
+          startupState = state;
+          for (const stage of state.stages) noteStartupStage(stage);
+        }
+      } catch (error) {
+        console.error("Could not read engine startup state", error);
+      }
+      try {
         const initialLog = await bridge.engineLogRecent(200);
-        if (!disposed) engineLog.set(initialLog);
+        if (!appDisposed) engineLog.set(initialLog);
       } catch (error) {
         console.error("Could not load engine diagnostics", error);
       }
       try {
         const stopLog = await bridge.onEngineLog(appendEngineLog);
-        if (disposed) stopLog();
+        if (appDisposed) stopLog();
         else unlistenLog = stopLog;
       } catch (error) {
         // Diagnostics are helpful but must never prevent the engine, settings,
@@ -358,39 +446,20 @@
       }
       try {
         const stopRespawn = await bridge.onEngineRespawned(() => void handleEngineRespawn());
-        if (disposed) stopRespawn();
+        if (appDisposed) stopRespawn();
         else unlistenRespawn = stopRespawn;
       } catch (error) {
         console.error("Could not subscribe to engine restart events", error);
       }
-
-      try {
-        await bridge.ping();
-        engineStatus = "ready";
-        await refreshNavigationStatus();
-        try {
-          const settings = await bridge.getSettings();
-          reviewerMode.set(settings.reviewerMode);
-          setPlaces(settings);
-          triageThreshold = settings.triageHideThreshold > 0 ? settings.triageHideThreshold : null;
-        } catch (error) {
-          console.error("Could not load reviewer mode", error);
-        }
-        const stopListening = await bridge.onFileDrop(
-          (paths) => void handleDroppedPaths(paths),
-          (phase) => { draggingOver = phase === "over"; },
-        );
-        if (disposed) stopListening();
-        else unlisten = stopListening;
-      } catch {
-        engineStatus = "error";
-      }
+      await connectEngine();
     })();
     return () => {
-      disposed = true;
-      unlisten?.();
+      appDisposed = true;
+      unlistenFileDrop?.();
       unlistenLog?.();
       unlistenRespawn?.();
+      unlistenStage?.();
+      if (startupTimer) clearTimeout(startupTimer);
       if (engineNoticeTimer) clearTimeout(engineNoticeTimer);
       if (navigationRetryTimer) clearTimeout(navigationRetryTimer);
       window.clearInterval(navigationTimer);
@@ -1054,6 +1123,18 @@
 </script>
 
 <div class="frame print-expand">
+  {#if !startupDone}
+    <StartupScreen
+      version={startupState?.version ?? ""}
+      stages={startupStages}
+      failure={startupFailure}
+      log={$engineLog}
+      paths={startupState
+        ? { logPath: startupState.logPath, dataDir: startupState.dataDir, resourceDir: startupState.resourceDir, exePath: startupState.exePath }
+        : null}
+      onRetry={() => void connectEngine()}
+    />
+  {/if}
   <TopBar
     {screen}
     {projectName}

@@ -189,6 +189,39 @@ async function onEngineRespawned(onRespawn: () => void): Promise<() => void> {
   return listen("engine-respawned", () => onRespawn());
 }
 
+/** One startup stage as sidecar.rs records it (#233): the shell's spawn
+ * steps, the engine's own `__stage__` lines, the ready handshake, or the
+ * failure that ended startup. `seq` is the shell's running number, so a
+ * stage received both from `engineStartupState()` and as an event is the
+ * same stage. */
+export interface EngineStartupStage {
+  seq: number;
+  stage: string;
+  label: string;
+  tsMs: number;
+}
+
+/** Everything the loading screen needs in one call: the stages that already
+ * happened (the sidecar usually spawns before this webview loads, so their
+ * events went to nobody), whether the engine is up or failed, the version,
+ * and the paths "Copy diagnostics" prints. */
+export interface EngineStartupState {
+  version: string;
+  ready: boolean;
+  failed: string | null;
+  stages: EngineStartupStage[];
+  logPath: string;
+  dataDir: string;
+  resourceDir: string;
+  exePath: string;
+}
+
+/** Live startup stages after the `engineStartupState()` catch-up. */
+async function onEngineStage(onStage: (stage: EngineStartupStage) => void): Promise<() => void> {
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<EngineStartupStage>("engine-stage", (event) => onStage(event.payload));
+}
+
 interface EngineEnvelope<T> {
   id: string;
   success: boolean;
@@ -550,6 +583,12 @@ export const bridge = {
   engineLogRecent(limit?: number): Promise<EngineLogEntry[]> {
     return invoke<EngineLogEntry[]>("engine_log_recent", { limit });
   },
+
+  engineStartupState(): Promise<EngineStartupState> {
+    return invoke<EngineStartupState>("engine_startup_state");
+  },
+
+  onEngineStage,
 
   async pickProjectFolder(): Promise<string | null> {
     return invoke<string | null>("pick_project_folder");

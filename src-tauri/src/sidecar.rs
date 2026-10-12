@@ -34,6 +34,117 @@ pub struct LogEntry {
 
 const LOG_CAPACITY: usize = 400;
 
+/// One startup stage as the loading screen shows it (#233): the shell's own
+/// spawn steps, the engine's `__stage__` lines, the ready handshake, or the
+/// failure that ended startup. `seq` is this shell's running number, so a
+/// stage the frontend receives both from `engine_startup_state` and as an
+/// `engine-stage` event is recognisably the same stage.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartupStage {
+    pub seq: u64,
+    pub stage: String,
+    pub label: String,
+    pub ts_ms: u64,
+}
+
+/// What the loading screen asks for once at mount. The webview usually
+/// loads after the sidecar has spawned, so the events for those first
+/// stages were emitted to nobody; this is the catch-up, plus what "Copy
+/// diagnostics" prints (version, where the log and data live).
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartupState {
+    pub version: String,
+    pub ready: bool,
+    pub failed: Option<String>,
+    pub stages: Vec<StartupStage>,
+    pub log_path: String,
+    pub data_dir: String,
+    pub resource_dir: String,
+    pub exe_path: String,
+}
+
+#[derive(Default)]
+struct StartupStatus {
+    ready: bool,
+    failed: Option<String>,
+    stages: Vec<StartupStage>,
+    next_seq: u64,
+}
+
+impl StartupStatus {
+    /// Record one stage. `ready` flips on the handshake and stays; an exit
+    /// or spawn failure is a startup failure only before that (a crash
+    /// mid-session is the respawn path's business, see `engine-respawned`);
+    /// a new spawn clears the failure, which is what Retry does.
+    fn push(&mut self, stage: &str, label: &str) -> StartupStage {
+        self.next_seq += 1;
+        let entry = StartupStage {
+            seq: self.next_seq,
+            stage: stage.to_string(),
+            label: label.to_string(),
+            ts_ms: now_ms(),
+        };
+        self.stages.push(entry.clone());
+        match stage {
+            "ready" => {
+                self.ready = true;
+                self.failed = None;
+            }
+            "spawning" => self.failed = None,
+            "failed" | "exited" if !self.ready => self.failed = Some(label.to_string()),
+            _ => {}
+        }
+        entry
+    }
+}
+
+/// What one JSON line on the sidecar's stdout is. The two reserved ids are
+/// protocol control lines from stdio_transport.py; everything else pairs
+/// with a pending request by id.
+#[derive(Debug, PartialEq)]
+enum ProtocolLine {
+    Stage { stage: String, label: String },
+    Ready,
+    Response(String),
+    Noise,
+}
+
+fn classify_protocol_line(value: &Value) -> ProtocolLine {
+    let Some(id) = value.get("id").and_then(|v| v.as_str()) else {
+        return ProtocolLine::Noise;
+    };
+    match id {
+        "__ready__" => ProtocolLine::Ready,
+        "__stage__" => {
+            let result = value.get("result");
+            let field = |name: &str| {
+                result
+                    .and_then(|r| r.get(name))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            };
+            match (field("stage"), field("label")) {
+                (Some(stage), Some(label)) => ProtocolLine::Stage { stage, label },
+                _ => ProtocolLine::Noise,
+            }
+        }
+        other => ProtocolLine::Response(other.to_string()),
+    }
+}
+
+/// Record a stage and tell the frontend. `engine-ready` is emitted as its
+/// own event too, so a listener that only cares about the handshake does
+/// not have to match stage names.
+async fn push_stage(startup: &Arc<Mutex<StartupStatus>>, app: &AppHandle, stage: &str, label: &str) {
+    let entry = startup.lock().await.push(stage, label);
+    let _ = app.emit("engine-stage", &entry);
+    if stage == "ready" {
+        let _ = app.emit("engine-ready", ());
+    }
+}
+
 /// How long the sidecar gets to notice its stdin closed and exit on its own
 /// before it is forced. It only reaches the `for line in sys.stdin` loop
 /// between requests, so this is deliberately short: the window is already
@@ -229,6 +340,8 @@ pub struct EngineSidecar {
     /// an expected exit from a crash. Without it every clean app close files
     /// an "error" in the diagnostics panel.
     shutting_down: Arc<AtomicBool>,
+    /// The startup stages and outcome, for the loading screen (#233).
+    startup: Arc<Mutex<StartupStatus>>,
 }
 
 impl EngineSidecar {
@@ -242,7 +355,45 @@ impl EngineSidecar {
             log: Arc::new(Mutex::new(VecDeque::new())),
             started_once: Arc::new(AtomicBool::new(false)),
             shutting_down: Arc::new(AtomicBool::new(false)),
+            startup: Arc::new(Mutex::new(StartupStatus::default())),
         }
+    }
+
+    /// Everything the loading screen needs in one call, see `StartupState`.
+    pub async fn startup_state(&self, app: &AppHandle) -> StartupState {
+        let status = self.startup.lock().await;
+        let path = app.path();
+        let shown = |dir: tauri::Result<std::path::PathBuf>| {
+            dir.map(|d| d.to_string_lossy().into_owned()).unwrap_or_default()
+        };
+        StartupState {
+            version: app.package_info().version.to_string(),
+            ready: status.ready,
+            failed: status.failed.clone(),
+            stages: status.stages.clone(),
+            log_path: path
+                .app_log_dir()
+                .map(|d| d.join("engine-events.log").to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            // The engine's own data root (workspace.sqlite3, settings.json),
+            // not Tauri's identifier-based app data dir: see
+            // tc_ai_bridge/secret_store.py for the resolution it mirrors.
+            data_dir: std::env::var("LOCALAPPDATA")
+                .map(|d| format!("{d}\\Bridge\\data"))
+                .unwrap_or_default(),
+            resource_dir: shown(path.resource_dir()),
+            exe_path: std::env::current_exe()
+                .map(|d| d.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        }
+    }
+
+    /// A startup failure goes to the loading screen (as the "failed" stage)
+    /// and to the diagnostics log, and comes back as the error to return.
+    async fn startup_failed(&self, app: &AppHandle, message: String) -> String {
+        record_log(&self.log, app, "error", message.clone()).await;
+        push_stage(&self.startup, app, "failed", &message).await;
+        message
     }
 
     /// Most recent diagnostics entries, oldest first, for the frontend's
@@ -302,10 +453,15 @@ impl EngineSidecar {
             return Ok(());
         }
 
-        let mut sidecar_command = app
-            .shell()
-            .sidecar("bridge-engine")
-            .map_err(|e| format!("failed to resolve sidecar: {e}"))?;
+        push_stage(&self.startup, app, "spawning", "Starting the engine process").await;
+        let mut sidecar_command = match app.shell().sidecar("bridge-engine") {
+            Ok(command) => command,
+            Err(e) => {
+                return Err(self
+                    .startup_failed(app, format!("The engine program could not be found: {e}"))
+                    .await);
+            }
+        };
 
         // The bundled tN/tW/tA/UHB/UGNT snapshot ships via bundle.resources
         // (tauri.conf.json) rather than inside bridge-engine.spec's onefile
@@ -333,11 +489,17 @@ impl EngineSidecar {
             ]);
         }
 
-        let (mut rx, child) = sidecar_command
-            .spawn()
-            .map_err(|e| format!("failed to spawn sidecar: {e}"))?;
+        let (mut rx, child) = match sidecar_command.spawn() {
+            Ok(spawned) => spawned,
+            Err(e) => {
+                return Err(self
+                    .startup_failed(app, format!("The engine process could not be started: {e}"))
+                    .await);
+            }
+        };
 
         *self.child.lock().await = Some(child);
+        push_stage(&self.startup, app, "spawned", "Engine process started, loading Python").await;
         let process_generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
 
         // A respawn (as opposed to the very first startup) means something
@@ -354,6 +516,7 @@ impl EngineSidecar {
         }
 
         let pending = self.pending.clone();
+        let startup = self.startup.clone();
         let child_slot = self.child.clone();
         let generation = self.generation.clone();
         let log = self.log.clone();
@@ -365,16 +528,26 @@ impl EngineSidecar {
                     CommandEvent::Stdout(line_bytes) => {
                         let line = String::from_utf8_lossy(&line_bytes);
                         if let Ok(value) = serde_json::from_str::<Value>(line.trim()) {
-                            if let Some(id) = value.get("id").and_then(|v| v.as_str()) {
-                                // "__ready__" is the startup handshake, not a
-                                // real request/response pairing — ignore it here.
-                                if id == "__ready__" {
-                                    continue;
+                            match classify_protocol_line(&value) {
+                                // The engine names what it is about to do
+                                // (stdio_transport.send_stage); the loading
+                                // screen shows the latest one (#233).
+                                ProtocolLine::Stage { stage, label } => {
+                                    push_stage(&startup, &app_for_reader, &stage, &label).await;
                                 }
-                                let mut map = pending.lock().await;
-                                if let Some(sender) = map.remove(id) {
-                                    let _ = sender.send(value);
+                                // The startup handshake, not a request/response
+                                // pairing: it used to be dropped here.
+                                ProtocolLine::Ready => {
+                                    record_log(&log, &app_for_reader, "info", "Engine ready".to_string()).await;
+                                    push_stage(&startup, &app_for_reader, "ready", "Engine ready").await;
                                 }
+                                ProtocolLine::Response(id) => {
+                                    let mut map = pending.lock().await;
+                                    if let Some(sender) = map.remove(&id) {
+                                        let _ = sender.send(value);
+                                    }
+                                }
+                                ProtocolLine::Noise => {}
                             }
                         }
                     }
@@ -413,6 +586,14 @@ impl EngineSidecar {
                                 format!("Sidecar process terminated: {:?}", payload)
                             },
                         ).await;
+                        // Before the handshake this is a startup failure the
+                        // loading screen must show now, not after its 30 s.
+                        if !expected && !startup.lock().await.ready {
+                            push_stage(
+                                &startup, &app_for_reader, "exited",
+                                &format!("The engine process exited during startup ({:?})", payload),
+                            ).await;
+                        }
                         break;
                     }
                     _ => {}
@@ -502,7 +683,7 @@ impl EngineSidecar {
 
 #[cfg(test)]
 mod tests {
-    use super::request_timeout_seconds;
+    use super::{classify_protocol_line, request_timeout_seconds, ProtocolLine, StartupStatus};
 
     /// The shutdown path's forced backstop, exercised against real processes.
     /// Only on Windows: it is the sole target this project has run on, and the
@@ -547,6 +728,47 @@ mod tests {
             let _ = child.wait();
             assert!(!kill_process_tree(pid), "a dead pid has nothing to kill");
         }
+    }
+
+    #[test]
+    fn protocol_lines_are_told_apart_by_their_reserved_ids() {
+        let stage = serde_json::json!({
+            "id": "__stage__", "success": true,
+            "result": {"stage": "modules", "label": "Loading engine modules"},
+        });
+        assert_eq!(
+            classify_protocol_line(&stage),
+            ProtocolLine::Stage { stage: "modules".into(), label: "Loading engine modules".into() },
+        );
+        let ready = serde_json::json!({"id": "__ready__", "success": true, "result": {"status": "ready"}});
+        assert_eq!(classify_protocol_line(&ready), ProtocolLine::Ready);
+        let response = serde_json::json!({"id": "req-1", "success": true});
+        assert_eq!(classify_protocol_line(&response), ProtocolLine::Response("req-1".into()));
+        assert_eq!(classify_protocol_line(&serde_json::json!({"no": "id"})), ProtocolLine::Noise);
+        // A stage line missing its fields is noise, never a crash of the reader.
+        assert_eq!(classify_protocol_line(&serde_json::json!({"id": "__stage__"})), ProtocolLine::Noise);
+    }
+
+    #[test]
+    fn startup_status_flips_ready_once_and_only_pre_ready_exits_are_failures() {
+        let mut status = StartupStatus::default();
+        status.push("spawning", "Starting the engine process");
+        status.push("exited", "The engine process exited during startup");
+        assert_eq!(status.failed.as_deref(), Some("The engine process exited during startup"));
+        assert!(!status.ready);
+        // Retry spawns again, which clears the failure.
+        status.push("spawning", "Starting the engine process");
+        assert_eq!(status.failed, None);
+        status.push("modules", "Loading engine modules");
+        let ready = status.push("ready", "Engine ready");
+        assert!(status.ready);
+        assert_eq!(ready.seq, 5);
+        // A crash after the handshake is the respawn path's, not a startup failure.
+        status.push("exited", "Sidecar process terminated");
+        assert_eq!(status.failed, None);
+        assert!(status.ready);
+        let seqs: Vec<u64> = status.stages.iter().map(|s| s.seq).collect();
+        assert_eq!(seqs, vec![1, 2, 3, 4, 5, 6]);
     }
 
     #[test]

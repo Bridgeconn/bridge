@@ -16,6 +16,9 @@ fn main() {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let sidecar = handle.state::<EngineSidecar>();
+                // start() has already recorded the failure as the "failed"
+                // startup stage and in the diagnostics log (#233); this is
+                // only the dev-terminal echo.
                 if let Err(e) = sidecar.start(&handle).await {
                     eprintln!("Failed to start GreekRoomEngine sidecar: {e}");
                 }
@@ -25,6 +28,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::engine_call,
             commands::engine_log_recent,
+            commands::engine_startup_state,
             commands::pick_project_folder,
             commands::pick_import_file,
             commands::pick_json_file,

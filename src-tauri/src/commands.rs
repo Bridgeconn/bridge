@@ -41,6 +41,17 @@ pub async fn engine_log_recent(
     Ok(sidecar.recent_log(limit.unwrap_or(200)).await)
 }
 
+/// The loading screen's one catch-up call (#233): stages that already
+/// happened, whether the engine is up or failed, the version and the paths
+/// "Copy diagnostics" prints. Live updates after it arrive as `engine-stage`.
+#[tauri::command]
+pub async fn engine_startup_state(
+    app: tauri::AppHandle,
+    sidecar: State<'_, EngineSidecar>,
+) -> Result<crate::sidecar::StartupState, String> {
+    Ok(sidecar.startup_state(&app).await)
+}
+
 #[tauri::command]
 pub async fn pick_project_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
     let (tx, rx) = tokio::sync::oneshot::channel();
