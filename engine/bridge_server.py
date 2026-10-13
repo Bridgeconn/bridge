@@ -83,6 +83,12 @@ CREATE TABLE IF NOT EXISTS events (
     event_json TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_events_project ON events(hub_project_id, hub_seq);
+CREATE TABLE IF NOT EXISTS progress (
+    hub_project_id TEXT PRIMARY KEY,
+    snapshot_json TEXT NOT NULL,
+    posted_by TEXT NOT NULL,
+    posted_at TEXT NOT NULL
+);
 """
 
 
@@ -128,7 +134,7 @@ class HubStore:
             conn.commit()
         return code
 
-    def join(self, code: str, display_name: str, device_id: str) -> dict[str, Any]:
+    def join(self, code: str, display_name: str, device_id: str, user_id: str = "") -> dict[str, Any]:
         name = str(display_name or "").strip()
         if not name:
             raise HTTPException(400, "A display name is needed to join.")
@@ -140,7 +146,11 @@ class HubStore:
             if row is None:
                 raise HTTPException(403, "That join code is not valid on this hub.")
             token = secrets.token_urlsafe(32)
-            user_id = str(uuid.uuid4())
+            # #81: a desktop joins under its own stable user id so the same
+            # person is the same id here and on the device ("My work"); a
+            # browser has none and gets a fresh one. The join code is the
+            # trust: it grants the role, whatever id the holder brings.
+            user_id = str(user_id or "").strip() or str(uuid.uuid4())
             conn.execute(
                 "INSERT INTO devices(token_hash, user_id, display_name, role, device_id, created_at) VALUES(?,?,?,?,?,?)",
                 (_hash(token), user_id, name, row["role"], str(device_id or ""), _now()),
@@ -160,6 +170,16 @@ class HubStore:
             conn.commit()
         return {"userId": row["user_id"], "displayName": row["display_name"], "role": row["role"],
                 "deviceId": row["device_id"], "lastSeenAt": row["last_seen_at"]}
+
+    def users(self) -> list[dict[str, Any]]:
+        """One row per person (a user id may hold several device tokens)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT user_id, display_name, role, MAX(last_seen_at) AS last_seen_at, COUNT(*) AS devices "
+                "FROM devices GROUP BY user_id ORDER BY display_name"
+            ).fetchall()
+        return [{"userId": r["user_id"], "displayName": r["display_name"], "role": r["role"],
+                 "lastSeenAt": r["last_seen_at"], "devices": int(r["devices"])} for r in rows]
 
     def presence(self) -> list[dict[str, Any]]:
         with self._connect() as conn:
@@ -193,6 +213,119 @@ class HubStore:
             )
             conn.commit()
         return {"hubProjectId": local_project_id, "created": True}
+
+    def post_progress(self, hub_project_id: str, snapshot: dict[str, Any], posted_by: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO progress(hub_project_id, snapshot_json, posted_by, posted_at) VALUES(?,?,?,?) "
+                "ON CONFLICT(hub_project_id) DO UPDATE SET snapshot_json=excluded.snapshot_json, "
+                "posted_by=excluded.posted_by, posted_at=excluded.posted_at",
+                (hub_project_id, json.dumps(snapshot, ensure_ascii=False), posted_by, _now()),
+            )
+            conn.commit()
+
+    def _assignment_rows(self, conn: sqlite3.Connection, hub_project_id: str) -> dict[str, dict[str, Any]]:
+        """row_key -> {revision, payload} folded from the event log in order."""
+        rows: dict[str, dict[str, Any]] = {}
+        for row in conn.execute(
+            "SELECT event_json FROM events WHERE hub_project_id=? ORDER BY hub_seq", (hub_project_id,),
+        ):
+            event = json.loads(row["event_json"])
+            if event.get("table_name") != "team_assignments":
+                continue
+            key = str(event.get("row_key") or "")
+            if event.get("op") == "delete":
+                rows.pop(key, None)
+                continue
+            if event.get("new_revision") is None:
+                continue
+            try:
+                payload = json.loads(event.get("payload_json") or "{}")
+            except ValueError:
+                payload = {}
+            rows[key] = {"revision": int(event["new_revision"]), "payload": payload}
+        return rows
+
+    def projects(self) -> list[dict[str, Any]]:
+        names = {u["userId"]: u["displayName"] for u in self.users()}
+        out = []
+        with self._connect() as conn:
+            for project in conn.execute("SELECT * FROM projects ORDER BY book_id").fetchall():
+                hub_id = project["hub_project_id"]
+                progress = conn.execute("SELECT * FROM progress WHERE hub_project_id=?", (hub_id,)).fetchone()
+                snapshot = json.loads(progress["snapshot_json"]) if progress is not None else {}
+                last = conn.execute(
+                    "SELECT MAX(received_at) AS at, COUNT(*) AS n FROM events WHERE hub_project_id=?", (hub_id,),
+                ).fetchone()
+                assignments = []
+                for item in self._assignment_rows(conn, hub_id).values():
+                    payload = item["payload"]
+                    assignee = str(payload.get("assigneeId") or "")
+                    assignments.append({
+                        "chapter": str(payload.get("chapter") or ""), "assigneeId": assignee,
+                        "assigneeName": names.get(assignee) or str(payload.get("assigneeName") or ""),
+                        "assignedBy": str(payload.get("assignedBy") or ""),
+                        "assignedAt": str(payload.get("assignedAt") or ""),
+                    })
+                assignments.sort(key=lambda a: (a["chapter"] != "", a["chapter"].zfill(4)))
+                out.append({
+                    "hubProjectId": hub_id, "bookId": project["book_id"],
+                    "bookName": str(snapshot.get("bookName") or project["book_id"].upper()),
+                    "projectName": str(snapshot.get("projectName") or ""),
+                    "chapters": list(snapshot.get("chapters") or []),
+                    "totals": dict(snapshot.get("totals") or {}),
+                    "progressPostedAt": progress["posted_at"] if progress is not None else None,
+                    "lastActivityAt": last["at"], "events": int(last["n"]),
+                    "assignments": assignments,
+                })
+        return out
+
+    def author_assignment(self, hub_project_id: str, chapter: str, assignee: dict[str, Any] | None,
+                          admin: dict[str, Any]) -> dict[str, Any]:
+        """A dashboard assignment is an ordinary `team_assignments` event the
+        hub writes on the admin's behalf; devices apply it through their own
+        revision check, like any pulled event. `assignee` None clears."""
+        from tc_ai_bridge.workbench_repository import natural_row_id
+
+        with self._connect() as conn:
+            project = conn.execute("SELECT * FROM projects WHERE hub_project_id=?", (hub_project_id,)).fetchone()
+            if project is None:
+                raise HTTPException(404, "That project is not linked on this hub.")
+            progress = conn.execute("SELECT snapshot_json FROM progress WHERE hub_project_id=?", (hub_project_id,)).fetchone()
+            chapters = list(json.loads(progress["snapshot_json"]).get("chapters") or []) if progress else []
+            chapter_key = str(chapter or "")
+            if chapter_key and chapters and chapter_key not in chapters:
+                raise HTTPException(400, f"Chapter {chapter_key} does not exist in this book.")
+            book_id = project["book_id"]
+            row_key = natural_row_id(hub_project_id, book_id, "assignment", chapter_key or "book")
+            current = self._assignment_rows(conn, hub_project_id).get(row_key)
+            now = _now()
+            event: dict[str, Any] = {
+                "event_id": str(uuid.uuid4()), "project_id": hub_project_id, "book_id": book_id,
+                "table_name": "team_assignments", "row_key": row_key,
+                "actor_id": admin["userId"], "device_id": "hub", "created_at": now, "journal_tx_id": None,
+            }
+            if assignee is None:
+                if current is None:
+                    return {"changed": False}
+                event.update(op="delete", base_revision=current["revision"], new_revision=None,
+                             payload_json=json.dumps(current["payload"], ensure_ascii=False), columns_json=None)
+            else:
+                payload = {"chapter": chapter_key, "assigneeId": assignee["userId"], "assignedBy": admin["userId"],
+                           "assignedAt": now, "assigneeName": assignee["displayName"]}
+                base = current["revision"] if current is not None else None
+                event.update(
+                    op="upsert", base_revision=base, new_revision=(base or 0) + 1,
+                    payload_json=json.dumps(payload, ensure_ascii=False),
+                    columns_json=json.dumps({"chapter": chapter_key, "assignee_id": assignee["userId"],
+                                             "assigned_by": admin["userId"], "assigned_at": now}),
+                )
+            conn.execute(
+                "INSERT INTO events(event_id, hub_project_id, pushed_by, received_at, event_json) VALUES(?,?,?,?,?)",
+                (event["event_id"], hub_project_id, admin["userId"], now, json.dumps(event, ensure_ascii=False)),
+            )
+            conn.commit()
+        return {"changed": True, "eventId": event["event_id"]}
 
     def project_exists(self, hub_project_id: str) -> bool:
         with self._connect() as conn:
@@ -241,7 +374,8 @@ def _token(request: Request) -> str:
     return header[7:].strip() if header.lower().startswith("bearer ") else ""
 
 
-def create_app(engine: BridgeEngine, store: HubStore | None = None) -> FastAPI:
+def create_app(engine: BridgeEngine, store: HubStore | None = None,
+               dashboard_dir: str | Path | None = None) -> FastAPI:
     app = FastAPI(title="Bridge hub", docs_url=None, redoc_url=None, openapi_url=None)
     lock = threading.Lock()
     hub = store
@@ -279,13 +413,59 @@ def create_app(engine: BridgeEngine, store: HubStore | None = None) -> FastAPI:
             raise HTTPException(503, "This server has no hub store.")
         body = await request.json()
         return hub.join(str(body.get("joinCode") or ""), str(body.get("displayName") or ""),
-                        str(body.get("deviceId") or ""))
+                        str(body.get("deviceId") or ""), str(body.get("userId") or ""))
+
+    # -- the dashboard's reads and writes (#81) --------------------------------
+
+    def require_admin(device: dict[str, Any], what: str) -> None:
+        if parse_role(device["role"]) is not Role.PROJECT_ADMIN:
+            raise HTTPException(403, f"{device['displayName']} is not a project admin and cannot {what}.")
+
+    @app.get("/hub/me")
+    def me(request: Request) -> dict[str, Any]:
+        device = device_for(request)
+        return {"userId": device["userId"], "displayName": device["displayName"], "role": device["role"]}
+
+    @app.get("/hub/projects")
+    def projects(request: Request) -> dict[str, Any]:
+        device_for(request)
+        return {"projects": hub.projects()}  # type: ignore[union-attr]
+
+    @app.post("/hub/progress")
+    async def progress(request: Request) -> dict[str, Any]:
+        device = device_for(request)
+        body = await request.json()
+        hub_project_id = str(body.get("hubProjectId") or "")
+        if not hub.project_exists(hub_project_id):  # type: ignore[union-attr]
+            raise HTTPException(404, "Link the project to this hub first.")
+        snapshot = {key: body.get(key) for key in ("bookId", "bookName", "projectName", "chapters", "totals")}
+        hub.post_progress(hub_project_id, snapshot, device["userId"])  # type: ignore[union-attr]
+        return {"ok": True}
+
+    @app.get("/hub/users")
+    def users(request: Request) -> dict[str, Any]:
+        device = device_for(request)
+        require_admin(device, "see the team's users")
+        return {"users": hub.users()}  # type: ignore[union-attr]
+
+    @app.post("/hub/assignments")
+    async def assign(request: Request) -> dict[str, Any]:
+        device = device_for(request)
+        require_admin(device, "assign work")
+        body = await request.json()
+        assignee_id = str(body.get("userId") or "")
+        assignee = None
+        if assignee_id:
+            assignee = next((u for u in hub.users() if u["userId"] == assignee_id), None)  # type: ignore[union-attr]
+            if assignee is None:
+                raise HTTPException(400, "Assign to someone who has joined this hub.")
+        return hub.author_assignment(str(body.get("hubProjectId") or ""), str(body.get("chapter") or ""),  # type: ignore[union-attr]
+                                     assignee, device)
 
     @app.post("/hub/join-codes")
     async def new_join_code(request: Request) -> dict[str, Any]:
         device = device_for(request)
-        if parse_role(device["role"]) is not Role.PROJECT_ADMIN:
-            raise HTTPException(403, f"{device['displayName']} is not a project admin and cannot invite.")
+        require_admin(device, "invite")
         body = await request.json()
         role = parse_role(body.get("role"), default=Role.EDITOR)
         return {"joinCode": hub.create_join_code(role.value, device["userId"]), "role": role.value}  # type: ignore[union-attr]
@@ -321,7 +501,19 @@ def create_app(engine: BridgeEngine, store: HubStore | None = None) -> FastAPI:
             raise HTTPException(404, "That project is not linked on this hub.")
         return hub.pull(hubProjectId, after)  # type: ignore[union-attr]
 
+    if dashboard_dir is not None and (Path(dashboard_dir) / "index.html").is_file():
+        from fastapi.staticfiles import StaticFiles
+
+        # Mounted last, at "/", so every API route above wins (#81).
+        app.mount("/", StaticFiles(directory=str(dashboard_dir), html=True), name="dashboard")
+
     return app
+
+
+def default_dashboard_dir() -> Path:
+    """The dashboard bundle `npm run build:dashboard` writes, beside the engine
+    in a source checkout."""
+    return Path(__file__).resolve().parent.parent / "dist-dashboard"
 
 
 def build_engine(data_dir: str | Path = "") -> BridgeEngine:
@@ -353,6 +545,6 @@ def serve(data_dir: str = "", host: str = "127.0.0.1", port: int = 8765) -> None
     import uvicorn
 
     root = Path(data_dir or Path.cwd() / "bridge-hub").resolve()
-    app = create_app(build_engine(root), build_store(root))
+    app = create_app(build_engine(root), build_store(root), dashboard_dir=default_dashboard_dir())
     print(f"Bridge hub on http://{host}:{port} -- data in {root}", flush=True)
     uvicorn.run(app, host=host, port=int(port), log_level="warning")

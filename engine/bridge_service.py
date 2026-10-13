@@ -853,7 +853,10 @@ class BridgeEngine:
         name = str(display_name or "").strip() or self.local_user()["displayName"]
         try:
             client = HubClient(url, transport=getattr(self, "_hub_transport", None))
-            joined = client.join(join_code, name, self.workspace.get_or_create_device_id())
+            # #81: the hub keeps this device's own stable user id, so an
+            # assignment made on the dashboard is "my work" here.
+            joined = client.join(join_code, name, self.workspace.get_or_create_device_id(),
+                                 user_id=self.local_user()["userId"])
         except HubError as exc:
             raise ProjectError(str(exc)) from exc
         self.settings.set_hub(url, str(joined.get("token") or ""), {
@@ -918,9 +921,31 @@ class BridgeEngine:
         if not link or not self.settings.hub_url:
             return {"skipped": "not linked"}
         try:
-            return sync_project(project.workbench, self._hub_client(), link)
+            client = self._hub_client()
+            result = sync_project(project.workbench, client, link)
         except HubError as exc:
             return {"error": str(exc)}
+        try:
+            # Pulled assignments change what "My work" shows (#240's cache).
+            project.sync_assignments_cache()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            # #81: the dashboard's progress line. Derived and display-only:
+            # it never travels back to a device.
+            rollup = project.load_progress_rollup()
+            # Recomputed rather than read: a book no check job has touched yet
+            # has no totals row, and the dashboard still needs its chapter
+            # and verse counts.
+            self._recompute_progress_totals(project, rollup)
+            client.post_progress(link, {
+                "bookId": project.book_id, "bookName": project.summary.book_name,
+                "projectName": str((project.manifest.get("bridge_project") or {}).get("name") or ""),
+                "chapters": list(project.chapters()), "totals": dict(rollup.get("totals") or {}),
+            })
+        except Exception as exc:  # noqa: BLE001 -- a snapshot failure never fails the sync
+            result["progressError"] = str(exc)
+        return result
 
     def hub_sync_now(self) -> dict[str, Any]:
         """Wake the sync thread; never waits on the network."""
@@ -977,7 +1002,8 @@ class BridgeEngine:
 
     def _assignment_view(self, assignment: dict[str, Any], names: dict[str, str]) -> dict[str, Any]:
         assignee = str(assignment.get("assigneeId") or "")
-        return {**assignment, "assigneeName": names.get(assignee, "") if assignee else ""}
+        known = names.get(assignee, "") if assignee else ""
+        return {**assignment, "assigneeName": known or str(assignment.get("assigneeName") or "")}
 
     def assignments_list(self) -> dict[str, Any]:
         self._require_project()
@@ -992,7 +1018,8 @@ class BridgeEngine:
         user = self.workspace.get_user(user_id)
         if user is None or not user["active"]:
             raise ProjectError("Choose an active user to assign to.")
-        self.project.set_assignment(chapter, user_id, assigned_by=self.current_actor_id())
+        self.project.set_assignment(chapter, user_id, assigned_by=self.current_actor_id(),
+                                    assignee_name=str(user.get("displayName") or ""))
         return self.assignments_list()
 
     def assignments_clear(self, chapter: str) -> dict[str, Any]:

@@ -19818,3 +19818,65 @@ requirement's budget is 30 s on a LAN).
 machines on a LAN; the 500-event figure over a real 100 Mbit link.
 
 Gates: pytest -n auto 5335 passed (the moved-project flake only); npm check 0/0, test 748, build; cargo test 15; frozen pair rebuilt and smoked.
+
+## 2026-10-14 — #81 the hub-served team dashboard
+
+Option A of 2026-10-12: a browser surface over the hub's own data, not a
+web workbench. The hub serves it at `/`.
+
+**Where the data comes from.** The hub holds no projects and no Scripture,
+so the dashboard reads the hub's endpoints rather than the engine protocol
+through an `httpTransport` swap of `bridgeClient.ts` (the issue's plan):
+engine methods such as `project.listBookProgress` have nothing to answer
+with on a hub. The five `bridgeClient` members the issue wanted hidden are
+therefore simply not in the web build. One correction to the #227 review:
+it said the hub would keep its own progress rollup "from the events it
+receives", but progress events never travel, so that could not work.
+Instead each device posts a small **progress snapshot** (book, project
+name, chapters, the #239 totals) to `POST /hub/progress` after every sync.
+It is derived and display-only, last writer wins, and never travels back
+to a device.
+
+**Hub endpoints added.** `GET /hub/me`; `GET /hub/projects` (each linked
+book with its snapshot, last activity, and assignments folded from the
+`team_assignments` events in order); `GET /hub/users` (admins; one row per
+person, device count, last seen); `POST /hub/assignments` (admins). A
+dashboard assignment is an ordinary `team_assignments` event the hub
+**authors** on the admin's behalf, with the device's natural row id, the
+current revision as base and the next as new, so devices apply it through
+their own revision check exactly like an event pushed by another device;
+clearing is a delete event. `POST /hub/join-codes` and the role checks
+are shared with #80.
+
+**Identity across hub and desktop.** A desktop now joins under its own
+stable user id (`hub.join` sends `local_user().userId`), so the person an
+admin assigns on the dashboard is the same id as that person's "My work"
+on their desktop. A browser has no local id and gets a fresh one. The join
+code remains the trust: it grants the role, whatever id the holder brings.
+An assignment carries the assignee's name, so a device that has never met
+that person still shows a name; a device that knows them shows its own.
+After every pull the device refreshes its assignments cache (#240), so
+"My work" follows without a reopen.
+
+**Dashboard** (`dashboard/index.html`, `src/dashboard/`, built by `npm run
+build` as a second Vite entry into `dist-dashboard/`, gitignored): sign in
+with a join code and a name (the token is kept in that browser for that
+hub); Projects with checked, reviewed and aligned progress, assignees and
+last activity; Export CSV for everyone signed in (reporters and up); for
+project admins, Assign… per book and chapter, and Users with role, devices
+and last seen, and Create join code. `bridge_server.default_dashboard_dir`
+finds the bundle beside the engine in a source checkout.
+
+Tests: `tests/service/test_hub_dashboard.py` (2): the issue's manual check
+in-process (a 3-book collection linked and synced from one desktop, every
+book on the dashboard with its chapters and totals, an assignment made on
+the dashboard reaching the desktop's `assignments.list` and the book list
+after one sync, clearing it there too, a chapter that does not exist
+refused, the bundle served at `/`); a reporter reading projects but refused
+users, assignments and invitations. `src/dashboard/__tests__/
+DashboardApp.test.ts` (4): sign-in and the projects table for a reporter
+(no Users, no Assign, Export present); assigning a chapter and creating a
+join code as an admin; the empty hub; the CSV. Not run: a real browser on a
+second machine against a hub on the LAN.
+
+Gates: pytest -n auto 5337 passed (the two known flakes only); npm check 0/0, test 758, build (both entries); frozen pair rebuilt and smoked. No Rust change.

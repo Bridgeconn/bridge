@@ -3659,11 +3659,15 @@ class TranslationCoreProject:
                 'assigneeId': str(payload.get('assigneeId') or ''),
                 'assignedBy': str(payload.get('assignedBy') or ''),
                 'assignedAt': str(payload.get('assignedAt') or ''),
+                # #81: an assignment made on the hub dashboard names someone
+                # this device may never have met; the name travels with it.
+                'assigneeName': str(payload.get('assigneeName') or ''),
             })
         out.sort(key=lambda a: (a['chapter'] != '', _chapter_sort_key(a['chapter'])))
         return out
 
-    def set_assignment(self, chapter: str | int, assignee_id: str, *, assigned_by: str) -> dict[str, Any]:
+    def set_assignment(self, chapter: str | int, assignee_id: str, *, assigned_by: str,
+                       assignee_name: str = '') -> dict[str, Any]:
         identity = self.workbench_identity
         chapter_key = str(chapter or '')
         if chapter_key and chapter_key not in self.chapters():
@@ -3671,7 +3675,7 @@ class TranslationCoreProject:
         iso = self._timestamp()[0]
         payload = {
             'chapter': chapter_key, 'assigneeId': str(assignee_id),
-            'assignedBy': str(assigned_by), 'assignedAt': iso,
+            'assignedBy': str(assigned_by), 'assignedAt': iso, 'assigneeName': str(assignee_name or ''),
         }
         receipt = self.workbench._write(
             'team_assignments', self._assignment_row_id(chapter_key),

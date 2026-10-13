@@ -103,10 +103,13 @@ class HubClient:
             raise HubError(str(message or f"The hub answered {status}."))
         return data if isinstance(data, dict) else {}
 
-    def join(self, join_code: str, display_name: str, device_id: str) -> dict[str, Any]:
+    def join(self, join_code: str, display_name: str, device_id: str, *, user_id: str = "") -> dict[str, Any]:
         return self._request("POST", "/hub/join", {
-            "joinCode": join_code, "displayName": display_name, "deviceId": device_id,
+            "joinCode": join_code, "displayName": display_name, "deviceId": device_id, "userId": user_id,
         })
+
+    def post_progress(self, hub_project_id: str, snapshot: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", "/hub/progress", {"hubProjectId": hub_project_id, **snapshot})
 
     def link(self, book_id: str, source_sha256: str, local_project_id: str) -> dict[str, Any]:
         return self._request("POST", "/hub/projects/link", {
