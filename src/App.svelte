@@ -15,6 +15,7 @@
   import { resetScopedApply, scopeDialog } from "./lib/scopedApply";
   import { startFlagLoader } from "./lib/flags";
   import ReferencePanel from "./lib/components/ReferencePanel.svelte";
+  import SourceTextPanel from "./lib/components/SourceTextPanel.svelte";
   import FindingContextMenu from "./lib/components/FindingContextMenu.svelte";
   import { TEXT_SCALES, bumpTextScale, rawView, sidePanels, textScale, toggleSidePanel } from "./lib/editorPrefs";
   import SidePanel from "./lib/components/SidePanel.svelte";
@@ -1450,6 +1451,9 @@
             <VerseList onSelect={selectVerse} onNavigate={navigateToReportRow} />
           </div>
           {#if $project}
+            <SidePanel id="source" label="Source text">
+              {#key $project.path}<SourceTextPanel onSelectVerse={selectVerse} />{/key}
+            </SidePanel>
             <SidePanel id="reference" label="Reference">
               {#key $project.path}
                 <ReferencePanel onOpenSettings={() => openSettings("languageQa")} onSelectVerse={selectVerse} />
