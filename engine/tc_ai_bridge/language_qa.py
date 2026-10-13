@@ -180,7 +180,7 @@ RULES: dict[str, RuleMeta] = {
     "unicode.private-use": RuleMeta("common", "integrity", "unicode", "medium"),
     "unicode.invisible": RuleMeta("common", "integrity", "unicode", "low", revision=2),  # 2: line breaks no longer reported
     "spacing.unusual": RuleMeta("common", "integrity", "spacing", "low", revision=2),    # same change
-    "spacing.extra": RuleMeta("common", "integrity", "spacing", "medium"),
+    "spacing.extra": RuleMeta("common", "integrity", "spacing", "medium", revision=2),   # 2: offers the fix (one space; remove an edge space)
     "punctuation.repeated": RuleMeta("common", "integrity", "punctuation", "medium"),
     "punctuation.space-before": RuleMeta("common", "integrity", "punctuation", "medium"),
     # The project's approved proper nouns (house style, Phase 6.2).
@@ -523,7 +523,14 @@ def scan_text(text: str, *, book: str, chapter: str, verse: str,
     char_scan.__exit__(None, None, None)
     with timings.step("rule.spacing.extra"):
         for match in regex.finditer(r" {2,}|^ +| +$", text):
-            add("spacing.extra", *match.span(), "Repeated or edge spaces; check the intended spacing.")
+            # The fix the reviewer asked for (DECISIONS 2026-10-13): repeated
+            # spaces become one; a space at the start or end of the verse is
+            # removed (a line break after it stays).
+            edge = match.start() == 0 or not text[match.end():].strip()
+            fix = suggestion("" if edge else " ", "rule",
+                             "Remove the space at the verse edge" if edge else "One space")
+            add("spacing.extra", *match.span(), "Repeated or edge spaces; check the intended spacing.",
+                suggestions=[fix])
     # Ellipsis and ?! are legitimate style choices, so do not flag them here.
     with timings.step("rule.punctuation.repeated"):
         for match in regex.finditer(r"([,;:!?])\1+", text):

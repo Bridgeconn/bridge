@@ -11,7 +11,7 @@ from tc_ai_bridge.secret_store import AppSettings
 from tests.support.indic_qa import wait, write_project
 from tests.support.projects import call
 
-CHAPTERS = {"1": {"1": "उसकी आयु सताईस वर्ष की थी।", "2": "वे सताईस  दिन रहे।"},
+CHAPTERS = {"1": {"1": "उसकी आयु सताईस वर्ष की थी।", "2": "वे सताईस  दिन रहे।", "3": "वे आए;; फिर गए।"},
             "2": {"1": "और सताईस लोग थे।"}}
 OLD, NEW = "सताईस", "सत्ताईस"
 RULE = "hi.lex.known-misspelling"
@@ -137,11 +137,12 @@ def test_ignore_a_chapter_decides_each_and_a_book_also_records_house_style(engin
 
 def test_a_finding_without_a_replacement_cannot_be_accepted_but_can_be_ignored(engine):
     bridge, project = engine
-    space = finding(bridge, project, "1", "2", rule="spacing.extra")
-    refused = call(bridge, "languageQa.scopeApply", {"projectPath": str(project), "chapter": "1", "verse": "2",
-                                                      "findingId": space["id"], "scope": "book", "action": "accept"})
+    # punctuation.repeated offers no fix (spacing.extra does since revision 2)
+    repeated = finding(bridge, project, "1", "3", rule="punctuation.repeated")
+    refused = call(bridge, "languageQa.scopeApply", {"projectPath": str(project), "chapter": "1", "verse": "3",
+                                                      "findingId": repeated["id"], "scope": "book", "action": "accept"})
     assert not refused["success"]
-    assert scoped(bridge, project, "languageQa.scopeApply", space, "book", action="ignore")["count"] == 1
+    assert scoped(bridge, project, "languageQa.scopeApply", repeated, "book", action="ignore")["count"] == 1
 
 
 def test_parameters_are_checked_and_a_stale_finding_is_refused(engine):

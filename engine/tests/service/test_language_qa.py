@@ -488,11 +488,12 @@ def test_vallinam_b1_b2_b3_regression_is_unaffected_by_b4():
 
 def test_other_scan_text_rules_default_suggested_replacement_to_none():
     # add()'s new parameter defaults to None for every rule that doesn't
-    # explicitly pass one -- only தமிழ்.vallinam-missing does today.
+    # explicitly pass one -- tamil.vallinam-missing, and spacing.extra since
+    # revision 2 (its fix: one space; tested in test_language_qa_spacing_extra).
     result = scan("மெல்ல மெல்ல தமிழ்a  ,,,")
     assert result["findings"]
     for finding in result["findings"]:
-        if finding["rule"] != "tamil.vallinam-missing":
+        if finding["rule"] not in {"tamil.vallinam-missing", "spacing.extra"}:
             assert finding["suggestedReplacement"] is None, finding
 
 
