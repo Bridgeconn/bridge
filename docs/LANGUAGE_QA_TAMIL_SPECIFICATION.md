@@ -86,7 +86,7 @@ A verse does not move on while obvious Tamil errors remain.
 
 | # | Item | What it covers | Status | Bridge rule / evidence | Owner |
 |---|---|---|---|---|---|
-| 20 | Biblical key terms | One rendering per key term, or deliberate variation. | Partial | `terminology.deprecated-form` (termbase v3: listed inflected forms, and case endings in prefix mode at medium confidence); tW resources shown | Consultant |
+| 20 | Biblical key terms | One rendering per key term, or deliberate variation. | Checked | `terminology.deprecated-form` against the project's termbase (termbase v3: listed inflected forms, and case endings in prefix mode at medium confidence); tW resources shown. It checks what the team has put in the termbase: an empty termbase checks nothing. Checked on Benz's decision of 2026-10-13 (#260); the gaps are named here | Consultant |
 | 21 | Proper names | Consistent spelling of names across books; names with suffixes. | Partial | `names.spelling_similarity` (names adapter); `project/name.minority-spelling` against the approved `housestyle.properNouns` list. The vallinam rules no longer abstain on it: after a case form a name needed doubling in 17 of 25 reviewed cases | Translator |
 | 22 | Parallel passages | Synoptic and quoted passages rendered consistently. | Not checked | | Consultant |
 | 23 | Textual-basis review | Which source text and which variants the translation follows. | Not checked | | Consultant |
