@@ -149,6 +149,21 @@
                         <span class="bar-label">Checked {book.progress.checkedChapterCount}/{book.progress.chapterCount} chapters</span>
                         <div class="track"><div class="fill checked" style="width:{percent(book.progress.checkedChapterCount, book.progress.chapterCount)}%" /></div>
                       </div>
+                      <!-- #239: the two further stages of requirement 5. Each is
+                           shown over what has been counted, never over the whole
+                           book, so an unvisited chapter is not read as unaligned. -->
+                      {#if (book.progress.alignedKnownVerseCount ?? 0) > 0}
+                        <div class="bar-row">
+                          <span class="bar-label">Aligned {book.progress.alignedVerseCount ?? 0}/{book.progress.alignedKnownVerseCount}</span>
+                          <div class="track"><div class="fill aligned" style="width:{percent(book.progress.alignedVerseCount ?? 0, book.progress.alignedKnownVerseCount ?? 0)}%" /></div>
+                        </div>
+                      {/if}
+                      {#if (book.progress.languageQaCheckedVerseCount ?? 0) > 0}
+                        <div class="bar-row">
+                          <span class="bar-label">Language QA clean {book.progress.languageQaCleanVerseCount ?? 0}/{book.progress.languageQaCheckedVerseCount}</span>
+                          <div class="track"><div class="fill language-qa" style="width:{percent(book.progress.languageQaCleanVerseCount ?? 0, book.progress.languageQaCheckedVerseCount ?? 0)}%" /></div>
+                        </div>
+                      {/if}
                     </div>
                     {#if book.progress.updatedAt}
                       <small>Updated {new Date(book.progress.updatedAt).toLocaleString()}</small>
@@ -391,6 +406,8 @@
   .track { width: 100%; height: 6px; background: #EEF0F3; border-radius: 4px; overflow: hidden; }
   .fill { height: 100%; background: var(--accent); }
   .fill.checked { background: var(--pass); }
+  .fill.aligned { background: var(--accent-2, #6b5bd2); }
+  .fill.language-qa { background: var(--warning); }
   .small-button { border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); color: var(--text); padding: 6px 10px; cursor: pointer; font-size: var(--fs-2xs); flex-shrink: 0; }
   .small-button.primary { border-color: var(--accent); color: var(--accent); }
   .small-button:disabled { opacity: .55; cursor: not-allowed; }

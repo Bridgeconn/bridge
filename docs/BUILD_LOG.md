@@ -18996,3 +18996,55 @@ The client seam test now pins `prepareInBackground: true` on `project.open`.
 Not run: the desktop repro Benz described (open a never-opened book during a
 check and watch the label switch and recover); it needs the 66-book project
 on a built app.
+
+## 2026-10-14 — #239 progress totals: the aligned and Language QA dimensions
+
+Requirement 5 wants progress per stage. The totals row held checked and
+reviewed; it now also holds **aligned** and **Language QA clean**, each over
+the verses that were actually counted, so an unvisited chapter is never read
+as unaligned or unclean:
+
+- `alignedVerseCount` / `alignedKnownVerseCount`: a verse counts when
+  `_alignment_verse_status` would show its ✓ (`complete`, or
+  `complete_cross_verse` through links and null decisions, #228). The count
+  lives on the chapter's `progress_chapters` row (`alignedVerseCount`) and is
+  written by two kinds of writer: a succeeded check job, for every chapter it
+  covered, and every alignment writer for its own chapter through
+  `_refresh_progress_alignment`: `_finish_alignment_mutation` (manual save,
+  auto-align, undo), `_cross_verse_result` (link and unlink, both chapters of
+  the link), `_null_result` (set and clear) and `edit_verse` (an edit can
+  invalidate the verse's alignment). `known` is the verse count of the
+  chapters that carry a count. A recount is one chapter's verses, and the
+  cross-verse touch index is cached per write generation, so a decision's
+  totals recompute stays a dict walk over the rollup.
+- `languageQaCleanVerseCount` / `languageQaCheckedVerseCount`: the check job's
+  completion hook records, per verse, the ids of the Language QA findings the
+  stage left (open or decided) as `languageQaFindingIds` on the chapter row,
+  and only when that stage ran. A verse with the key and no finding still
+  OPEN in the status map is clean. Decisions on those findings go through
+  `record_progress_decision` as any decision does, so ignoring one moves the
+  clean count up and reopening it moves it down. A live Language QA pass
+  outside a check job (after an edit) does not update the count until the next
+  check job or decision; that pass is Benz's manager and is not hooked here.
+
+`load_progress_rollup` reads both fields (absent on rows written before
+this, which total as unknown), `replace_progress_chapters` writes them, and
+`update_progress_chapter_alignment` rewrites just the aligned count on an
+existing row, creating an unchecked row when a writer touches a chapter no
+job has seen. Every write goes through `save_progress_totals`, so the
+workspace `project_progress_cache` entry is refreshed from the totals write's
+own `change_log.seq` and `sync_progress_cache` reports `fresh` afterwards.
+No schema change: the fields are payload JSON.
+
+Dashboard: two more bars per book, "Aligned x/known" and "Language QA clean
+x/checked", shown only once something has been counted. The projects list
+columns are #238. `BookProgressSummary` gains the four optional fields.
+
+Tests: `tests/service/test_progress_dimensions.py` (3): a chapter check job
+counts the aligned verses of its chapters only, an `alignment.save` in another
+chapter recounts it with the cache at the write's seq and `sync_progress_cache`
+fresh, an edit that invalidates takes the verse out again; the Language QA
+count from the hook's row shape, through an ignore and a reopen, and an
+old-shape rollup totalling as unknown; a job with the Language QA stage
+records ids for every verse and one without records none. The dashboard
+test's book carries the new fields.

@@ -2639,6 +2639,7 @@ class BridgeEngine:
         # stales downstream records exactly as a link change does.
         if self.passage_semantic_runtime is not None:
             self.passage_semantic_runtime.synchronize_alignment_state()
+        self._refresh_progress_alignment(str(decision["chapter"]))
         return {
             "decision": decision,
             "context": self._alignment_context(decision["chapter"], decision["verse"]),
@@ -2663,6 +2664,8 @@ class BridgeEngine:
         # a link change -- in this session, not only after a reopen.
         if self.passage_semantic_runtime is not None:
             self.passage_semantic_runtime.synchronize_alignment_state()
+        for chapter in {str(source["chapter"]), str(target["chapter"])}:
+            self._refresh_progress_alignment(chapter)
         return {
             "link": link,
             "source": self._alignment_context(source["chapter"], source["verse"]),
@@ -3629,6 +3632,7 @@ class BridgeEngine:
         # session, not only after a restart.
         if self.passage_semantic_runtime is not None:
             self.passage_semantic_runtime.synchronize_alignment_state()
+        self._refresh_progress_alignment(chapter)
         return context
 
     def _save_alignment(
@@ -5402,12 +5406,27 @@ class BridgeEngine:
                         *(language_qa.get("findings") or []), *(language_qa.get("hidden") or [])]
 
             now = project.timestamp_iso()
+            ran_language_qa = LANGUAGE_QA_CHECK in job.spec.checks
             project.replace_progress_chapters({
                 chapter: {
                     "verseCount": len(project.verses(chapter)),
                     "aiChecked": True,
                     "aiCheckedAt": now,
-                    "verses": {v: {"findings": f} for v, f in verses_map.items()},
+                    # #239: the chapter's aligned verses now, and each verse's
+                    # Language QA finding ids when that stage ran (an empty
+                    # list is a verse the stage found clean; no key means the
+                    # stage did not run, so nothing is claimed).
+                    "alignedVerseCount": self._aligned_verse_count(project, chapter),
+                    "verses": {
+                        v: {
+                            "findings": f,
+                            **({"languageQaFindingIds": [
+                                str(item["id"]) for item in language_qa_by_chapter.get(chapter, {}).get(v, [])
+                                if isinstance(item, dict) and item.get("id")
+                            ]} if ran_language_qa else {}),
+                        }
+                        for v, f in verses_map.items()
+                    },
                 }
                 for chapter, verses_map in by_chapter.items()
             })
@@ -5688,6 +5707,28 @@ class BridgeEngine:
                         approved_finding_count += 1
                 if verse_reviewed:
                     reviewed_verse_count += 1
+        # #239: two more dimensions, both from the chapter rows alone so a
+        # decision's recompute stays a dict walk. Aligned: the count each
+        # alignment writer and check job left on its chapter; a chapter no
+        # writer has touched contributes nothing and is not "known". Language
+        # QA: a verse the stage scanned with no finding still OPEN.
+        aligned_verse_count = 0
+        aligned_known_verse_count = 0
+        lqa_checked_verse_count = 0
+        lqa_clean_verse_count = 0
+        for chapter_entry in chapters_dict.values():
+            aligned = chapter_entry.get("alignedVerseCount")
+            if isinstance(aligned, (int, float)):
+                aligned_verse_count += int(aligned)
+                aligned_known_verse_count += int(chapter_entry.get("verseCount") or 0)
+            for verse_entry in chapter_entry.get("verses", {}).values():
+                ids = verse_entry.get("languageQaFindingIds")
+                if not isinstance(ids, list):
+                    continue
+                lqa_checked_verse_count += 1
+                statuses = verse_entry.get("findings", {})
+                if not any(statuses.get(str(i)) == FindingStatus.OPEN.value for i in ids):
+                    lqa_clean_verse_count += 1
         rollup["totals"] = {
             "chapterCount": len(all_chapters),
             "checkedChapterCount": checked_chapter_count,
@@ -5696,7 +5737,45 @@ class BridgeEngine:
             "reviewedVerseCount": reviewed_verse_count,
             "findingCount": finding_count,
             "approvedFindingCount": approved_finding_count,
+            "alignedVerseCount": aligned_verse_count,
+            "alignedKnownVerseCount": aligned_known_verse_count,
+            "languageQaCheckedVerseCount": lqa_checked_verse_count,
+            "languageQaCleanVerseCount": lqa_clean_verse_count,
         }
+
+    def _aligned_verse_count(self, project: TranslationCoreProject, chapter: str) -> int:
+        """#239: how many verses of `chapter` the ✓ would show for: tC-complete,
+        or complete through cross-verse links and null decisions (#228)."""
+        chapter_key = str(chapter)
+        return sum(
+            1 for verse in project.verses(chapter_key)
+            if str(verse) != "front"
+            and self._alignment_verse_status(project, chapter_key, str(verse)) in {"complete", "complete_cross_verse"}
+        )
+
+    def _refresh_progress_alignment(self, chapter: str) -> None:
+        """#239: an alignment writer (a tC save, auto-align, undo, a cross-verse
+        link or null decision, an edit that invalidates) changed what the
+        chapter's ✓ count would be. Recount that one chapter, write it to its
+        progress row and the totals, which also refreshes the workspace cache
+        the dashboard reads. Best-effort, as the decision path is: the
+        alignment itself is already written."""
+        project = self.project
+        if project is None:
+            return
+        try:
+            chapter_key = str(chapter)
+            if chapter_key not in project.chapters():
+                return
+            project.update_progress_chapter_alignment(
+                chapter_key, self._aligned_verse_count(project, chapter_key),
+                verse_count=len(project.verses(chapter_key)),
+            )
+            rollup = project.load_progress_rollup()
+            self._recompute_progress_totals(project, rollup)
+            project.save_progress_totals(rollup["totals"])
+        except Exception:  # noqa: BLE001 -- bookkeeping never fails the write
+            pass
 
     def edit_verse(self, chapter: str, verse: str, new_text: str, **strict_options: Any) -> dict[str, Any]:
         """Human-authorized scripture edit.
@@ -5743,6 +5822,8 @@ class BridgeEngine:
         )
         saved = str(result.get("newText", new_text))
         learned = self._learn_from_edit(chapter, verse, str(result.get("oldText") or ""), saved)
+        # #239: the edit may have invalidated the verse's alignment.
+        self._refresh_progress_alignment(chapter)
         self._language_qa.invalidate(chapter)
         self._consistency_findings_by_book.pop(str(self.project.path), None)
         resolutions = self.project.list_issue_resolutions(chapter, verse)

@@ -905,6 +905,15 @@ export interface BookProgressSummary {
   reviewedVerseCount: number;
   findingCount: number;
   approvedFindingCount: number;
+  /** #239: verses whose alignment ✓ would show (tC-complete or complete via
+   * cross-verse), over the verses of the chapters any writer has counted.
+   * Absent on a rollup written before 0.17. */
+  alignedVerseCount?: number;
+  alignedKnownVerseCount?: number;
+  /** #239: verses the Language QA stage scanned, and those of them with no
+   * finding still open. */
+  languageQaCheckedVerseCount?: number;
+  languageQaCleanVerseCount?: number;
   updatedAt: string | null;
 }
 

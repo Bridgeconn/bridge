@@ -3481,16 +3481,30 @@ class TranslationCoreProject:
             if not chapter:
                 continue
             listed = payload.get('checkedVerses')
+            # #239: the Language QA finding ids each verse had at its last
+            # pass (open or decided), so the totals can tell a Language QA
+            # finding from any other in the status map; and the chapter's
+            # aligned-verse count, refreshed by every alignment writer. Both
+            # absent on a row written before #239.
+            lqa_ids = payload.get('languageQaFindingIds')
+            lqa_ids = lqa_ids if isinstance(lqa_ids, dict) else {}
+            aligned = payload.get('alignedVerseCount')
             chapters[chapter] = {
                 'verseCount': int(payload.get('verseCount') or 0),
                 'aiChecked': bool(payload.get('aiChecked')),
                 'aiCheckedAt': payload.get('aiCheckedAt'),
+                'alignedVerseCount': int(aligned) if isinstance(aligned, (int, float)) else None,
                 # A verse the job checked and found nothing in has no finding
                 # row, but it was checked: the file kept an empty entry for it
                 # and the QA report's coverage counts it as PASS, so the
                 # chapter row lists it.
                 'verses': {
-                    str(v): {'findings': {}} for v in (listed if isinstance(listed, list) else [])
+                    str(v): {
+                        'findings': {},
+                        **({'languageQaFindingIds': [str(i) for i in lqa_ids[str(v)]]}
+                           if isinstance(lqa_ids.get(str(v)), list) else {}),
+                    }
+                    for v in (listed if isinstance(listed, list) else [])
                 },
             }
         for payload in self.workbench.payloads(
@@ -3502,7 +3516,7 @@ class TranslationCoreProject:
             if not (chapter and verse and finding_id):
                 continue
             entry = chapters.setdefault(chapter, {
-                'verseCount': 0, 'aiChecked': False, 'aiCheckedAt': None, 'verses': {},
+                'verseCount': 0, 'aiChecked': False, 'aiCheckedAt': None, 'alignedVerseCount': None, 'verses': {},
             })
             entry['verses'].setdefault(verse, {'findings': {}})['findings'][finding_id] = str(
                 payload.get('status') or ''
@@ -3535,6 +3549,7 @@ class TranslationCoreProject:
                     payload={
                         'chapter': chapter_key, 'verseCount': int(verse_count),
                         'aiChecked': False, 'aiCheckedAt': None, 'checkedVerses': [],
+                        'alignedVerseCount': None, 'languageQaFindingIds': {},
                     },
                     actor_id=identity.actor_id, device_id=identity.device_id,
                     extra_columns={'chapter': chapter_key},
@@ -3581,6 +3596,8 @@ class TranslationCoreProject:
             plan.append((chapter_key, entry, wanted, stale))
         with self.workbench.batch() as batch:
             for chapter_key, entry, wanted, stale in plan:
+                verses_entry = entry.get('verses') if isinstance(entry.get('verses'), dict) else {}
+                aligned = entry.get('alignedVerseCount')
                 batch.write(
                     'progress_chapters', self._progress_chapter_row_id(chapter_key),
                     project_id=identity.project_id, book_id=self.book_id,
@@ -3589,9 +3606,13 @@ class TranslationCoreProject:
                         'verseCount': int(entry.get('verseCount') or 0),
                         'aiChecked': bool(entry.get('aiChecked')),
                         'aiCheckedAt': entry.get('aiCheckedAt'),
-                        'checkedVerses': [str(v) for v in (
-                            entry.get('verses') if isinstance(entry.get('verses'), dict) else {}
-                        )],
+                        'checkedVerses': [str(v) for v in verses_entry],
+                        'alignedVerseCount': int(aligned) if isinstance(aligned, (int, float)) else None,
+                        'languageQaFindingIds': {
+                            str(v): [str(i) for i in verse_entry['languageQaFindingIds']]
+                            for v, verse_entry in verses_entry.items()
+                            if isinstance(verse_entry, dict) and isinstance(verse_entry.get('languageQaFindingIds'), list)
+                        },
                     },
                     actor_id=identity.actor_id, device_id=identity.device_id,
                     extra_columns={'chapter': chapter_key},
@@ -3613,6 +3634,36 @@ class TranslationCoreProject:
                         actor_id=identity.actor_id, device_id=identity.device_id,
                         extra_columns={'chapter': chapter_key},
                     )
+
+    def update_progress_chapter_alignment(self, chapter: str | int, aligned_verse_count: int, *,
+                                          verse_count: int) -> None:
+        """#239: one alignment writer refreshed its chapter's aligned-verse
+        count. The chapter row keeps everything else it had; a chapter no
+        check job has written yet gets a row that says so (`aiChecked`
+        False) so the count is not lost."""
+        identity = self.workbench_identity
+        chapter_key = str(chapter)
+        row_id = self._progress_chapter_row_id(chapter_key)
+        existing = self.workbench.get('progress_chapters', row_id)
+        payload: dict[str, Any] | None = None
+        if existing is not None:
+            try:
+                loaded = json.loads(str(existing.get('payload_json') or ''))
+                payload = dict(loaded) if isinstance(loaded, dict) else None
+            except ValueError:
+                payload = None
+        if payload is None:
+            payload = {
+                'chapter': chapter_key, 'verseCount': int(verse_count),
+                'aiChecked': False, 'aiCheckedAt': None, 'checkedVerses': [], 'languageQaFindingIds': {},
+            }
+        payload['alignedVerseCount'] = int(aligned_verse_count)
+        self.workbench._write(
+            'progress_chapters', row_id,
+            project_id=identity.project_id, book_id=self.book_id, payload=payload,
+            actor_id=identity.actor_id, device_id=identity.device_id,
+            expected_revision=None, extra_columns={'chapter': chapter_key},
+        )
 
     def save_progress_totals(self, totals: dict[str, Any]) -> dict[str, Any]:
         """Write the book's totals row and refresh the workspace cache from it.
