@@ -23,6 +23,7 @@ from .language_packs import indic_qa_adapter
 from .language_qa_drawn import InlinePolicy, drawn_rule_names, gated_rules, is_drawn, with_drawn
 from .language_qa_learned import learned_findings
 from .language_qa_headings import heading_findings
+from .language_qa_notes import caller_findings
 from .language_packs.indic import ConfusionSet
 from .language_packs.lexicon import lexicon_findings, lexicon_fingerprint
 from .language_packs.loader import apply_overrides
@@ -961,6 +962,7 @@ class LanguageQaManager:
         # place: chapter:verse -> [(start, end, category)] of every raw finding.
         book_headings: dict[str, dict[str, list[dict[str, Any]]]] = {}
         chapter_verses: dict[str, list[str]] = {}  # chapter -> verse keys, for heading.missing
+        chapter_texts: dict[str, dict[str, Any]] = {}  # chapter -> stored verses, for note.caller-mixed
         flagged: dict[str, list[tuple[int, int, str]]] = {}
         completed = 0
         for completed, path in enumerate(paths):
@@ -979,6 +981,7 @@ class LanguageQaManager:
                     if book_checker or learned:
                         book_text[chapter] = data
                     chapter_verses[chapter] = list(data)
+                    chapter_texts[chapter] = data  # for the book-level caller check (#246)
                     # Every pack reads the headings now: the heading rules
                     # (#244) run for all; the layer reads them too.
                     headings = _read_headings(path.with_name(f"{chapter}.headings.json"), chapter_limitations)
@@ -1123,6 +1126,8 @@ class LanguageQaManager:
                         timings.add("lqa.book.layer_dropped_as_duplicate", 0.0)
             with timings.step("lqa.book.headings"):
                 audit += heading_findings(book, book_headings, chapter_verses, proceed=proceed)
+            with timings.step("lqa.book.note_callers"):
+                audit += caller_findings(book, chapter_texts, proceed=proceed)
             with timings.step("lqa.book.learned"):
                 audit += learned_findings(book, book_text, learned, fixes=learned_fixes, max_verse_chars=MAX_VERSE_CHARS,
                                           finding_id=stable_finding_id, rule_fields=rule_fields, suggestion=suggestion,

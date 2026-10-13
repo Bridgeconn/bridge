@@ -122,10 +122,12 @@ Bridge has no typesetting engine. Every item in this gate is proofed on the PDF.
 | 41 | Hyphenation | Tamil hyphenation policy. | Not checked | Typesetter |
 | 42 | Page-level composition | Widows, orphans, column balance, spacing. | Not checked | Typesetter |
 | 43 | Running heads and page numbers | Correct book/chapter heads. | Not checked | Typesetter |
-| 44 | Footnote composition | Note placement and callers. | Not checked | Typesetter |
+| 44 | Footnote composition | Note placement and callers. | Checked | Typesetter |
 | 45 | Cross-column reading order | Text flows in the right order across columns. | Not checked | Typesetter |
 | 46 | Maps, captions and illustrations | Tamil labels, name spellings consistent with the text. | Not checked | Typesetter |
 | 47 | Front and back matter | Title page, contents, glossary, maps index. | Not checked | Publisher |
+
+Item 44 is checked in the USFM, before typesetting: `common/note.caller-mixed` flags a `\f`/`\x` caller unlike the book's others (IRV: `\x -` at JOL 2:28 and RUT 2:1, 2 of 2 confirmed 2026-10-13) and `common/note.space-before-caller` a space between a word and its note's caller (53 footnotes; Benz, 2026-10-13), each with its fix (#246). Where the note text falls on the page is still proofed on the PDF.
 
 ## Gate 6: Final publication acceptance
 

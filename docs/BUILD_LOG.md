@@ -18841,3 +18841,39 @@ identity_but_live_copy_is_rejected` moves the project folder right after an
 open while the Language QA worker still holds `bridge-workbench.sqlite3`
 (`WinError 32`), and `test_continuous_foreground_polling_does_not_starve_worker`
 in `test_language_qa.py` under `-n auto` load. Proposed as issues, not filed.
+
+
+## 2026-10-13 — Note callers; framework item 44 is Checked (#246, #230)
+
+**What.** Two common Language QA rules, panel only, each with its fix:
+- `common/note.caller-mixed` (`language_qa_notes.py`, the pass's book step): a `\f`,
+  `\fe` or `\x` whose caller differs from the book's usual caller for that kind. The
+  finding spans the opener and caller (`\x -`) and offers `\x +`. Because the span and the
+  fix are the same text everywhere, a book-wide apply is safe.
+- `common/note.space-before-caller` (`scan_text`): a space between a word and a mid-verse
+  note, so the caller prints apart from its word. The fix removes the space. A marker's
+  own syntax space (`\q1 \x`, `\wj \x`) is skipped, and so is the verse end, which
+  `spacing.extra` already flags (ACT 12:25).
+
+Row 44 (Gate 5) moves to Checked, with a note under the table: these checks run on the
+USFM, before typesetting; where the note text falls on the page is still proofed on the PDF.
+
+**Why.** Requirement 3 (#230). The 2026-10-13 review confirmed both `\x -` callers ("every
+other note is +; make them consistent"). Benz decided on 2026-10-13 that a space before a
+caller is flagged with a fix that removes it; those 53 rows are not labelled.
+
+**Measured on the IRV** (the reviewer's copy, as an import stores it): callers are
+1,419 `\f +`, 3,412 `\x +` and 2 `\x -`. The rules produce 2 caller findings (JOL 2:28,
+RUT 2:1) and 53 space-before-caller findings, all footnotes. `spacing.extra` stays at 86,
+so nothing is flagged twice. Footnotes sit directly after a word 1,108 times and after
+punctuation 249 times; cross-references stand at the start of the verse (1,821). That is
+house style, not flagged.
+
+**Gates.**
+- `tests/jobs/test_language_qa_note_callers.py`: 5 passed.
+- Full engine suite: 5,239 passed, 3 xfailed, 1 failed. The failure is the same
+  `test_moved_project_retains_identity_but_live_copy_is_rejected` file-lock race as under #244
+  (WinError 32/5, `-n auto`); it passes alone. It has now failed in 2 of 3 full runs today, so it is
+  flaky under load, not occasional. Proposed for Revant, not fixed here.
+- Human gate: pass. `build-sidecars.ps1`, then `smoke_sidecars.py`: passed.
+- Frontend and src-tauri untouched; their gates were not run.

@@ -183,6 +183,9 @@ RULES: dict[str, RuleMeta] = {
     "spacing.extra": RuleMeta("common", "integrity", "spacing", "medium", revision=2),   # 2: offers the fix (one space; remove an edge space)
     "punctuation.repeated": RuleMeta("common", "integrity", "punctuation", "medium"),
     "punctuation.space-before": RuleMeta("common", "integrity", "punctuation", "medium"),
+    # Note callers (framework item 44, #246; caller-mixed is a book step in language_qa_notes.py).
+    "note.caller-mixed": RuleMeta("common", "integrity", "usfm", "high"),
+    "note.space-before-caller": RuleMeta("common", "integrity", "spacing", "high"),
     # Footnote markup (framework item 27, #245).
     "footnote.missing-ft": RuleMeta("common", "integrity", "usfm", "high"),
     # Section headings (language_qa_headings.py, framework item 31, #244).
@@ -391,6 +394,11 @@ _FOOTNOTE = regex.compile(r"\\f\s+\S\s+(?P<body>.*?)\\f\*", regex.DOTALL)
 _NOTE_PARAGRAPH = regex.compile(r"\\(?:ft|fq|fqa|fk|fl|fw|fp|fdc)(?![a-z0-9])")
 _NOTE_REFERENCE = regex.compile(r"\s*\\fr\s+\S+\s*")
 _NOTE_MARKUP = regex.compile(r"\\\+?[a-z0-9]+\*?")
+# Note callers in raw verse text (note.space-before-caller).
+_NOTE_OPENER = regex.compile(r"\\(?P<kind>f|fe|x)\s+\S(?=\s)")
+_OPEN_MARKER_BEFORE = regex.compile(r"\\[a-z]+\d*$")       # "\q1 \x ...": the space is the marker's
+_ANY_NOTE = regex.compile(r"\\(f|fe|x)\s.*?\\\1\*", regex.DOTALL)
+_ONLY_CLOSERS = regex.compile(r"(?:\s|\\[a-z]+\d*\*)*")
 
 
 @dataclass(frozen=True)
@@ -550,6 +558,24 @@ def scan_text(text: str, *, book: str, chapter: str, verse: str,
     with timings.step("rule.punctuation.space-before"):
         for match in regex.finditer(r" +(?:[,;:!?]|\.(?!\.))", text):
             add("punctuation.space-before", *match.span(), "Space before punctuation; check project style.")
+    with timings.step("rule.note.space-before-caller"):
+        # Framework item 44 (#246): a space between a word and the note that
+        # annotates it, mid-verse (Benz, 2026-10-13: flag it, offer to remove
+        # it). A marker's own syntax space (\q1 \x) is not one; a space at the
+        # verse end is spacing.extra's.
+        for opener in _NOTE_OPENER.finditer(raw):
+            at = start = opener.start()
+            while start > 0 and raw[start - 1] in " \t":
+                start -= 1
+            if start == at or start == 0 or _OPEN_MARKER_BEFORE.search(raw, 0, start):
+                continue
+            close = raw.find(f"\\{opener.group('kind')}*", at)
+            rest = _ANY_NOTE.sub("", raw[close + len(opener.group("kind")) + 2:]) if close >= 0 else ""
+            if close < 0 or _ONLY_CLOSERS.fullmatch(rest):
+                continue
+            add("note.space-before-caller", start, at,
+                "Space before a note caller: the caller prints apart from its word.", "low",
+                [suggestion("", "rule", "Remove the space before the caller")], raw_offsets=True)
     with timings.step("rule.footnote.missing-ft"):
         # Framework item 27 (#245): footnote text with no \ft (or other
         # paragraph marker) after the \fr reference. The fix inserts \ft there,
