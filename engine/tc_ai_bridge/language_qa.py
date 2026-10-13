@@ -184,6 +184,11 @@ RULES: dict[str, RuleMeta] = {
     "spacing.extra": RuleMeta("common", "integrity", "spacing", "medium", revision=2),   # 2: offers the fix (one space; remove an edge space)
     "punctuation.repeated": RuleMeta("common", "integrity", "punctuation", "medium"),
     "punctuation.space-before": RuleMeta("common", "integrity", "punctuation", "medium"),
+    # Paired punctuation (framework item 9, #264) and poetry indentation (item 33, #265);
+    # the chapter-level ones are in language_qa_structure.py.
+    "punctuation.unbalanced-pair": RuleMeta("common", "integrity", "punctuation", "high"),
+    "punctuation.unbalanced-quote": RuleMeta("common", "integrity", "punctuation", "medium"),
+    "poetry.q2-without-q1": RuleMeta("common", "integrity", "usfm", "medium"),
     # Book header and introduction (framework item 47, #253; language_qa_header.py).
     "header.missing": RuleMeta("common", "integrity", "usfm", "high"),
     "header.running-head": RuleMeta("common", "integrity", "consistency", "high"),  # item 43, #254
@@ -401,6 +406,9 @@ CROSSING_LIMITATION = "candidate(s) spanning inline USFM markup omitted."
 # as any whitespace does. Reporting it flooded IRV Psalms with 2,977 false
 # findings that filled the book cap by chapter 87.
 USFM_LINE_BREAKS = frozenset("\n\r")
+# Brackets that must pair inside one verse (punctuation.unbalanced-pair).
+_BRACKETS = {"(": ")", "[": "]"}
+_BRACKET_CLOSERS = {close: open_ for open_, close in _BRACKETS.items()}
 # Footnote paragraph markers (footnote.missing-ft): a note with none of these
 # has its text loose after the \fr reference.
 _NOTE_PARAGRAPH = frozenset({"ft", "fq", "fqa", "fk", "fl", "fw", "fp", "fdc"})
@@ -641,6 +649,23 @@ def scan_text(text: str, *, book: str, chapter: str, verse: str,
                 add("wj.outside-speech", opener, closer + 4,
                     "\\wj (words of Jesus) where Jesus is not speaking.", "medium",
                     [suggestion(inner, "rule", "Remove the \\wj markers")], raw_offsets=True)
+    with timings.step("rule.punctuation.unbalanced-pair"):
+        # Framework item 9 (#264): brackets pair inside a verse (notes are
+        # not in the visible text). Quotation marks may run over verses and
+        # are paired per chapter (language_qa_structure.py).
+        stack: list[tuple[str, int]] = []
+        for at, char in enumerate(text):
+            if char in _BRACKETS:
+                stack.append((char, at))
+            elif char in _BRACKET_CLOSERS:
+                if stack and stack[-1][0] == _BRACKET_CLOSERS[char]:
+                    stack.pop()
+                else:
+                    add("punctuation.unbalanced-pair", at, at + 1,
+                        f"Closing {char} with no opening {_BRACKET_CLOSERS[char]} before it in this verse.", "medium")
+        for char, at in stack:
+            add("punctuation.unbalanced-pair", at, at + 1,
+                f"Opening {char} with no closing {_BRACKETS[char]} after it in this verse.", "medium")
     with timings.step("rule.footnote.missing-ft"):
         # Framework item 27 (#245): footnote text with no \ft (or other
         # paragraph marker) after the \fr reference. The fix inserts \ft there,

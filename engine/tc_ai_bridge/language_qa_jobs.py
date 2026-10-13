@@ -24,6 +24,7 @@ from .language_qa_drawn import InlinePolicy, drawn_rule_names, gated_rules, is_d
 from .language_qa_learned import learned_findings
 from .language_qa_headings import heading_findings
 from .language_qa_notes import caller_findings
+from .language_qa_structure import structure_findings
 from .language_qa_header import book_source_text, header_findings
 from .language_qa_xrefs import collection_names, xref_findings
 from .language_packs.indic import ConfusionSet
@@ -1128,6 +1129,8 @@ class LanguageQaManager:
                         timings.add("lqa.book.layer_dropped_as_duplicate", 0.0)
             with timings.step("lqa.book.headings"):
                 audit += heading_findings(book, book_headings, chapter_verses, proceed=proceed)
+            with timings.step("lqa.book.structure"):
+                audit += structure_findings(book, chapter_texts, book_headings, proceed=proceed)
             with timings.step("lqa.book.note_callers"):
                 audit += caller_findings(book, chapter_texts, proceed=proceed)
             names: dict[str, str] = {}
