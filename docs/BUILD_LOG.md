@@ -19607,3 +19607,39 @@ words in order to show aligned and unaligned words together.
 `SourceTextPanel.test.ts` 6, `sourcePanelPrefs.test.ts` 3); `npm run build` ok. The engine is
 untouched, so the engine suite was not run. Not yet seen in the installed desktop app (WebView2);
 the harness used Chrome, the same engine family.
+
+## 2026-10-13 — Large-book first open, verified on the installed v0.15.0 (#181)
+
+**What.** The two checks #99 left for an installed build. Both pass.
+
+**How.** The installed `%LOCALAPPDATA%\Bridge\bridge-engine.exe` (v0.15.0, `engine.info`
+`bridgeVersion` 0.15.0), launched with the `--resources-dir` / `--language-packs-dir` arguments
+`sidecar.rs` passes, driven over stdio with v0.15.0's own client calls (`project.import`
+synchronous, then `project.open {path}`), `LOCALAPPDATA` pointed at a scratch folder so no real
+data was read or written by the engine. Not through the app window: the Rust relay and WebView are
+not in these numbers.
+
+| Open | `project.open` | of which `materialize_lazy` | `semantic_runtime` (`current_text`) |
+|---|---|---|---|
+| hin-irv import, 66 books, Genesis opened inside it | import 14.95 s; GEN 1.29 s | 0 | 0.63 s (0.03 s) |
+| EXO, first open, lazy | **4.81 s** | 3.70 s | 0.59 s (0.02 s) |
+| PSA, first open, lazy | **12.65 s** | 11.23 s | 0.68 s (0.06 s) |
+| ta-irv JER, first editor open (already normalized by a Collection QA run, no semantic store) | **3.15 s** | 0 | 1.83 s (0.29 s) |
+
+The runtime was READY when `project.open` returned in every case. The Language QA pass runs after
+the reply, in the background (JER 12.3 s).
+
+**The 43 s.** It sat between the registry touch and the scan, i.e. in `semantic_runtime`'s
+`current_text` phase: one commit per verse in `synchronize_current_text`, found and batched on
+2026-09-29 (20.8 s for Genesis from source then). In the release it is 0.02–0.29 s. Nothing else
+in the trace is above 1.1 s except the lazy normalization itself.
+
+**Headroom.** Psalms is the worst case at 12.7 s, almost all of it normalizing 150 chapters; a
+machine 2.4× slower than this laptop would cross 30 s. Worth one re-run on the field-spec machine
+(available 15 October). v0.15.0's own `project.open` timeout is 180 s, so that would be slow, not
+a failure.
+
+**Found on the way, not part of #181.** This machine's real `workspace.sqlite3` is already at
+workspace schema v5 (#238/#236/#240, after v0.16.0), from a source build. The installed v0.15.0
+engine, and v0.16.0, are v2 and refuse it at startup: `Workspace schema 5 is newer than supported
+v2`. Raised with Benz, not changed.
