@@ -91,9 +91,12 @@ def header_findings(book: str, source_text: str | None, chapter_verses: dict[str
             "context": "introduction", "contextText": context_text, **rule_fields(rule, []),
         })
 
-    for tag in REQUIRED:
-        if not first.get(tag):
-            add("header.missing", "", 0, 0, f"No \\{tag} in the book header.")
+    missing = [tag for tag in REQUIRED if not first.get(tag)]
+    if missing:
+        # One finding per book, naming every absent marker: a draft with a bare
+        # \id would otherwise list five.
+        add("header.missing", "", 0, 0,
+            "No " + ", ".join(f"\\{tag}" for tag in missing) + " in the book header.")
 
     if first.get("h") and first.get("mt") and not _same(first["h"], first["mt"]):
         add("header.running-head", first["h"], 0, len(first["h"]),

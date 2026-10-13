@@ -209,7 +209,9 @@ def test_a_high_high_language_qa_finding_blocks_the_gate_and_joins_the_exception
     assert gate["languageQaBlocking"] == 1 and gate["readyForHumanPublicationSignoff"] is False
     assert report["languageQa"]["blockingFindings"][0]["originalText"] == "தேவன்"
     [row] = [r for r in exception_first_queue(engine.project) if (r["chapter"], r["verse"]) == ("1", "1")]
-    assert row["languageQa"] == 1 and row["languageQaFindings"][0]["ruleId"].endswith("terminology.deprecated-form")
+    # the bare fixture USFM has no book header: header.missing (#253) sits at the first verse too
+    verse_rules = [f["ruleId"] for f in row["languageQaFindings"] if not f["ruleId"].startswith("common/header.")]
+    assert len(verse_rules) == 1 and verse_rules[0].endswith("terminology.deprecated-form")
 
 
 def test_many_open_medium_findings_add_an_advisory_line_that_never_blocks():

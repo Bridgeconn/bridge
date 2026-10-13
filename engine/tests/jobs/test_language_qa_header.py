@@ -36,9 +36,9 @@ def test_an_outline_reference_to_a_chapter_that_does_not_exist():
 
 def test_a_missing_title_or_contents_marker():
     text = HEADER.format(extra="").replace("\\toc3 மத்\n", "").replace("\\mt மத்தேயு\n", "\\mt \n")
-    assert rules(header_findings("mat", text, VERSES, NAMES)) == [("header.missing", ""), ("header.missing", "")]
+    assert rules(header_findings("mat", text, VERSES, NAMES)) == [("header.missing", "")]
     assert [f["message"] for f in header_findings("mat", text, VERSES, NAMES)] == \
-        ["No \\toc3 in the book header.", "No \\mt in the book header."]
+        ["No \\toc3, \\mt in the book header."]
 
 
 def test_no_source_no_findings():

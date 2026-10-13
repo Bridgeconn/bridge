@@ -759,8 +759,8 @@ def test_results_persist_across_reopen_and_a_live_edit_rescans_only_that_verse(f
         assert _r["success"], _r
         edited = wait(engine._language_qa)
         assert edited["scannedVerses"] == 1 and edited["reusedChapters"] == 1
-        assert [f["rule"] for f in edited["findings"] if (f["chapter"], f["verse"]) == ("1", "1")] == [
-            "tamil.vallinam-missing"]
+        assert [f["rule"] for f in edited["findings"] if (f["chapter"], f["verse"]) == ("1", "1")
+                and f.get("context") != "introduction"] == ["tamil.vallinam-missing"]  # the bare fixture USFM has no book header: header.missing (#253) is set aside
     finally:
         engine._language_qa.unbind()
 
@@ -1507,9 +1507,11 @@ def test_real_dispatcher_auto_open_edit_and_project_guard(fixture_project):
         assert not wrong["success"]
         _r = call(engine, "verse.edit", {"chapter": "1", "verse": "1", "newText": "தமிழ் �"})
         assert _r["success"], _r
-        assert wait(engine._language_qa)["totalFindings"] == 1
+        verse_findings = [f for f in wait(engine._language_qa)["findings"] if f.get("context") != "introduction"]
+        assert len(verse_findings) == 1  # the bare fixture USFM has no book header: header.missing (#253) is set aside
         response = call(engine, "languageQa.status", {"projectPath": str(fixture_project), "limit": 10})
-        assert response["result"]["findings"][0]["rule"] == "unicode.corruption"
+        assert [f for f in response["result"]["findings"]
+                if f.get("context") != "introduction"][0]["rule"] == "unicode.corruption"
         _r = call(engine, "ping")
         assert _r["success"], _r
     finally:
