@@ -363,6 +363,11 @@ class Methods:
     PROJECT_LIST_BOOK_PROGRESS = "project.listBookProgress"
     PROJECT_FORGET = "project.forget"
     PROJECT_DELETE = "project.delete"
+    # #238: the projects list's management. A display name and an archive
+    # flag in the registry only; nothing on disk changes.
+    PROJECT_RENAME = "project.rename"
+    PROJECT_ARCHIVE = "project.archive"
+    PROJECT_UNARCHIVE = "project.unarchive"
     PROJECT_SCAN = "project.scan"
     PROJECT_REPORT = "project.report"
     PROJECT_COLLECTION_REPORT = "project.collectionReport"
@@ -835,7 +840,9 @@ class BridgeEngine:
                         "The selected folder has a different target language from the missing project."
                     )
         try:
-            registered = self.project_registry.register(path, touch=True, project_id=project_id)
+            registered = self.project_registry.register(
+                path, touch=True, project_id=project_id, opened_by=self.current_actor_id(),
+            )
         except ProjectIdentityError as exc:
             raise ProjectError(str(exc)) from exc
         timer.mark("register")
@@ -977,8 +984,71 @@ class BridgeEngine:
             candidate.attach_passage_semantic_runtime(runtime)
             self._semantic_build_done.set()
 
+    # The totals the list sums per collection (#238): the shape
+    # `_recompute_progress_totals` writes, less the finding counts.
+    _LIST_PROGRESS_KEYS = (
+        "chapterCount", "checkedChapterCount", "verseCount", "checkedVerseCount", "reviewedVerseCount",
+        "alignedVerseCount", "alignedKnownVerseCount", "languageQaCheckedVerseCount", "languageQaCleanVerseCount",
+    )
+
     def list_projects(self) -> dict[str, Any]:
-        return {"projects": self.project_registry.list_projects(collapse_collections=True)}
+        """project.list: one row per project or collection, with the cached
+        progress summed over the collection's books (#238) and who opened it
+        last, from the workspace alone -- no project database is opened."""
+        rows = self.project_registry.list_projects(collapse_collections=True)
+        all_entries = self.project_registry.list_projects(refresh_managed=False)
+        by_collection: dict[str, list[dict[str, Any]]] = {}
+        for entry in all_entries:
+            collection_id = str(entry.get("collectionId") or "")
+            if collection_id:
+                by_collection.setdefault(collection_id, []).append(entry)
+        keys = [str(entry.get("pathKey") or "") for entry in all_entries if entry.get("pathKey")]
+        cached = self.workspace.progress_cache_by_keys(keys) if keys else {}
+        names = self.workspace.user_display_names()
+        for row in rows:
+            collection_id = str(row.get("collectionId") or "")
+            members = by_collection.get(collection_id) or [row]
+            totals = {key: 0 for key in self._LIST_PROGRESS_KEYS}
+            counted = 0
+            for member in members:
+                hit = cached.get(str(member.get("pathKey") or ""))
+                if not hit:
+                    continue
+                counted += 1
+                member_totals = hit.get("totals") if isinstance(hit.get("totals"), dict) else {}
+                for key in self._LIST_PROGRESS_KEYS:
+                    value = member_totals.get(key)
+                    if isinstance(value, (int, float)):
+                        totals[key] += int(value)
+            row["progress"] = {**totals, "booksWithProgress": counted} if counted else None
+            # The collection's latest open, whoever did it, so a sibling opened
+            # yesterday is not hidden behind a representative opened last month.
+            latest = max(
+                (m for m in members if m.get("lastOpenedAt")),
+                key=lambda m: str(m.get("lastOpenedAt") or ""), default=None,
+            )
+            if latest is not None:
+                row["lastOpenedAt"] = latest.get("lastOpenedAt")
+                row["lastOpenedBy"] = latest.get("lastOpenedBy") or ""
+            opened_by = str(row.get("lastOpenedBy") or "")
+            row["lastOpenedByName"] = names.get(opened_by, "") if opened_by else ""
+        return {"projects": rows}
+
+    def rename_project(self, project_id: str, name: str) -> dict[str, Any]:
+        if not project_id:
+            raise ProjectError("projectId is required")
+        if self.project_registry.get(project_id) is None:
+            raise ProjectError("Project not found")
+        changed = self.project_registry.rename(project_id, name)
+        return {"projectId": project_id, "displayName": str(name or "").strip(), "books": len(changed)}
+
+    def set_project_archived(self, project_id: str, archived: bool) -> dict[str, Any]:
+        if not project_id:
+            raise ProjectError("projectId is required")
+        if self.project_registry.get(project_id) is None:
+            raise ProjectError("Project not found")
+        changed = self.project_registry.set_archived(project_id, archived)
+        return {"projectId": project_id, "archived": archived, "books": len(changed)}
 
     def list_book_progress(self) -> dict[str, Any]:
         """Progress rollups for every book in the currently open collection,
@@ -6965,6 +7035,14 @@ class BridgeEngine:
                 return EngineResponse.ok(request.id, result=self.list_book_progress())
             if m == Methods.PROJECT_FORGET:
                 return EngineResponse.ok(request.id, result=self.forget_project(p.get("projectId", "")))
+            if m == Methods.PROJECT_RENAME:
+                return EngineResponse.ok(request.id, result=self.rename_project(
+                    p.get("projectId", ""), str(p.get("name") or ""),
+                ))
+            if m == Methods.PROJECT_ARCHIVE:
+                return EngineResponse.ok(request.id, result=self.set_project_archived(p.get("projectId", ""), True))
+            if m == Methods.PROJECT_UNARCHIVE:
+                return EngineResponse.ok(request.id, result=self.set_project_archived(p.get("projectId", ""), False))
             if m == Methods.PROJECT_DELETE:
                 return EngineResponse.ok(request.id, result=self.delete_project(p.get("projectId", "")))
             if m == Methods.PROJECT_SCAN:

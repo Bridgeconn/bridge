@@ -350,6 +350,9 @@ export type EngineMethod =
   | "project.import.cancel"
   | "project.import.start"
   | "project.import.status"
+  | "project.rename"
+  | "project.archive"
+  | "project.unarchive"
   | "project.inspectImport"
   | "project.list"
   | "project.listBookProgress"
@@ -665,6 +668,20 @@ export const bridge = {
     const opened = await call<ProjectInfo | PreparingResult>("project.open", { path, projectId, prepareInBackground: true });
     if (isPreparing(opened)) throw new Error("The book is still being prepared.");
     return opened;
+  },
+
+  /** #238: a display name in the registry only; the folder is untouched. An
+   *  empty name clears it. */
+  renameProject(projectId: string, name: string): Promise<{ projectId: string; displayName: string; books: number }> {
+    return call("project.rename", { projectId, name });
+  },
+
+  archiveProject(projectId: string): Promise<{ projectId: string; archived: boolean; books: number }> {
+    return call("project.archive", { projectId });
+  },
+
+  unarchiveProject(projectId: string): Promise<{ projectId: string; archived: boolean; books: number }> {
+    return call("project.unarchive", { projectId });
   },
 
   listProjects(): Promise<{ projects: RegisteredProject[] }> {

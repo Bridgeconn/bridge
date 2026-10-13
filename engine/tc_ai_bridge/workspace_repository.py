@@ -50,7 +50,7 @@ import os
 import uuid
 
 
-WORKSPACE_SCHEMA_VERSION = 2
+WORKSPACE_SCHEMA_VERSION = 3
 WORKSPACE_SCHEMA_ID = "bridge-workspace"
 
 # v1: exactly the two tables the unversioned first cut of this module created.
@@ -113,9 +113,19 @@ CREATE TABLE project_progress_cache(
 );
 """
 
+# v3 (#238): the projects list's archive flag and who opened a project last.
+# Both are lifted from `entry_json` (`archivedAt`, `lastOpenedBy`) the way
+# `last_opened_at` is, so a list can filter and sort without parsing JSON;
+# the entry stays the record. Additive: nothing is rebuilt.
+_MIGRATION_V3 = r"""
+ALTER TABLE projects ADD COLUMN archived_at TEXT;
+ALTER TABLE projects ADD COLUMN last_opened_by TEXT;
+"""
+
 _MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, _MIGRATION_V1),
     (2, _MIGRATION_V2),
+    (3, _MIGRATION_V3),
 )
 
 
@@ -258,6 +268,13 @@ class WorkspaceRepository:
             )
             conn.commit()
             return device_id
+
+    def user_display_names(self) -> dict[str, str]:
+        """user_id -> display name for every user this installation knows
+        (#238: the projects list's "last opened by")."""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT user_id, display_name FROM users").fetchall()
+        return {str(row["user_id"]): str(row["display_name"]) for row in rows}
 
     def get_or_create_local_user(self, display_name: str) -> dict[str, str]:
         """Return this installation's local user, minting one on first call.
@@ -440,13 +457,16 @@ class WorkspaceRepository:
                     continue
                 conn.execute(
                     "INSERT INTO projects(project_id, collection_id, path, path_key, managed, missing, "
-                    "last_opened_at, position, entry_json) VALUES(?,?,?,?,?,?,?,?,?)",
+                    "last_opened_at, position, entry_json, archived_at, last_opened_by) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         str(entry.get("projectId") or ""), str(entry.get("collectionId") or "") or None,
                         str(entry.get("path") or ""), str(entry.get("pathKey") or ""),
                         1 if entry.get("managed") else 0, 1 if entry.get("missing") else 0,
                         str(entry.get("lastOpenedAt") or "") or None, position,
                         json.dumps(entry, ensure_ascii=False),
+                        str(entry.get("archivedAt") or "") or None,
+                        str(entry.get("lastOpenedBy") or "") or None,
                     ),
                 )
             conn.commit()

@@ -32,15 +32,15 @@ def _table_names(path) -> set[str]:
 
 def test_a_fresh_workspace_is_built_by_running_the_whole_ladder(tmp_path):
     repo = WorkspaceRepository(tmp_path / "workspace.sqlite3")
-    assert repo.schema_version() == WORKSPACE_SCHEMA_VERSION == 2
+    assert repo.schema_version() == WORKSPACE_SCHEMA_VERSION == 3
     names = _table_names(repo.path)
     for table in ("devices", "users", "projects", "settings_kv", "project_progress_cache", "schema_migrations"):
         assert table in names, table
     conn = sqlite3.connect(str(repo.path))
     try:
         versions = [row[0] for row in conn.execute("SELECT version FROM schema_migrations ORDER BY version")]
-        assert versions == [1, 2], "every block is recorded, in order, even on a fresh database"
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert versions == [1, 2, 3], "every block is recorded, in order, even on a fresh database"
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
     finally:
         conn.close()
 
@@ -94,12 +94,12 @@ def test_upgrading_an_existing_workspace_leaves_an_inspectable_backup(tmp_path):
     WorkspaceRepository(path)
 
     backups = sorted((tmp_path / "backups").glob("pre-workspace-v*"))
-    # v1 adopts, v2 adds tables: one backup per block applied to a database
-    # that already held something.
-    assert [b.name.split("-")[2] for b in backups] == ["v1", "v2"]
+    # v1 adopts, v2 adds tables, v3 adds columns (#238): one backup per block
+    # applied to a database that already held something.
+    assert [b.name.split("-")[2] for b in backups] == ["v1", "v2", "v3"]
     manifest = json.loads((backups[-1] / "backup-manifest.json").read_text(encoding="utf-8"))
-    assert manifest["targetSchemaVersion"] == 2
-    assert manifest["schemaVersion"] == 1
+    assert manifest["targetSchemaVersion"] == 3
+    assert manifest["schemaVersion"] == 2
     copied = backups[-1] / "workspace.sqlite3"
     conn = sqlite3.connect(str(copied))
     try:

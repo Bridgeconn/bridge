@@ -305,6 +305,7 @@ class ProjectRegistry:
         project_id: str = "",
         collection_id: str = "",
         save: bool = True,
+        opened_by: str = "",
     ) -> dict[str, Any]:
         project_path = Path(path).resolve(strict=False)
         managed = self._is_managed(project_path)
@@ -373,6 +374,8 @@ class ProjectRegistry:
         })
         if touch:
             entry["lastOpenedAt"] = _utc_now()
+            if opened_by:
+                entry["lastOpenedBy"] = str(opened_by)
         if is_new or entry != snapshot:
             self._dirty = True
         if save:
@@ -448,6 +451,55 @@ class ProjectRegistry:
         for collection_id, index in representative_index.items():
             result[index]["bookCount"] = counts[collection_id]
         return result
+
+    @_locked
+    def rename(self, project_id: str, display_name: str) -> list[dict[str, Any]]:
+        """#238: the name the list shows, on every book of the project's
+        collection. A display name only: the folder, the manifest and the
+        collection file are untouched, and `projectName` (what the import
+        said) is kept beside it so the rename can be undone by clearing it."""
+        name = str(display_name or "").strip()
+        changed = []
+        for entry in self._group(project_id):
+            if name:
+                entry["displayName"] = name
+            else:
+                entry.pop("displayName", None)
+            changed.append(dict(entry))
+        if changed:
+            self._dirty = True
+            self._save()
+        return changed
+
+    @_locked
+    def set_archived(self, project_id: str, archived: bool) -> list[dict[str, Any]]:
+        """#238: archive or unarchive the project's whole collection. Nothing
+        on disk changes; the list hides archived rows behind a filter."""
+        changed = []
+        stamp = _utc_now()
+        for entry in self._group(project_id):
+            if archived:
+                entry["archivedAt"] = stamp
+            else:
+                entry.pop("archivedAt", None)
+            changed.append(dict(entry))
+        if changed:
+            self._dirty = True
+            self._save()
+        return changed
+
+    def _group(self, project_id: str) -> list[dict[str, Any]]:
+        """The live entries (not copies) of the project and its collection siblings."""
+        target = self._find(project_id=project_id)
+        if target is None:
+            return []
+        collection_id = str(target.get("collectionId") or "")
+        if not collection_id:
+            return [target]
+        return [
+            entry for entry in self._data["projects"]
+            if isinstance(entry, dict) and entry.get("collectionId") == collection_id
+        ]
 
     @_locked
     def group_entries(self, project_id: str) -> list[dict[str, Any]]:

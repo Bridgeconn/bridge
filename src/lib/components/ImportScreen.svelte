@@ -79,6 +79,69 @@
   $: visibleMatchedGroups = matchedGroups.slice(0, 5);
   $: hiddenMatchedGroupCount = Math.max(0, matchedGroups.length - visibleMatchedGroups.length);
   let confirmingId = "";
+  // #238: the list's management. Archived rows stay behind a filter; a
+  // rename is a display name in the registry, never the folder.
+  let showArchived = false;
+  let renamingId = "";
+  let renameDraft = "";
+  $: activeProjects = projects.filter((item) => !item.archivedAt);
+  $: archivedProjects = projects.filter((item) => Boolean(item.archivedAt));
+  $: visibleProjects = showArchived ? [...activeProjects, ...archivedProjects] : activeProjects;
+
+  function displayName(item: RegisteredProject): string {
+    return item.displayName || item.projectName || item.bookName || "Unnamed project";
+  }
+
+  function startRename(item: RegisteredProject) {
+    renamingId = item.projectId;
+    renameDraft = displayName(item);
+  }
+
+  async function commitRename(item: RegisteredProject) {
+    const name = renameDraft.trim();
+    renamingId = "";
+    if (!name || name === displayName(item)) return;
+    loading = true;
+    error = null;
+    try {
+      await bridge.renameProject(item.projectId, name);
+      await loadProjects();
+    } catch (value) {
+      error = message(value);
+    } finally {
+      loading = false;
+    }
+  }
+
+  async function setArchived(item: RegisteredProject, archived: boolean) {
+    loading = true;
+    error = null;
+    try {
+      if (archived) await bridge.archiveProject(item.projectId);
+      else await bridge.unarchiveProject(item.projectId);
+      await loadProjects();
+    } catch (value) {
+      error = message(value);
+    } finally {
+      loading = false;
+    }
+  }
+
+  function lastOpened(item: RegisteredProject): string {
+    if (!item.lastOpenedAt) return "never opened";
+    const when = new Date(item.lastOpenedAt);
+    const stamp = Number.isNaN(when.getTime()) ? item.lastOpenedAt : when.toLocaleString();
+    return item.lastOpenedByName ? `opened ${stamp} by ${item.lastOpenedByName}` : `opened ${stamp}`;
+  }
+
+  function progressLine(item: RegisteredProject): string {
+    const p = item.progress;
+    if (!p) return "no progress recorded yet";
+    const parts = [`checked ${p.checkedChapterCount}/${p.chapterCount} ch`, `reviewed ${p.reviewedVerseCount}/${p.verseCount}`];
+    if ((p.alignedKnownVerseCount ?? 0) > 0) parts.push(`aligned ${p.alignedVerseCount ?? 0}/${p.alignedKnownVerseCount}`);
+    if ((p.languageQaCheckedVerseCount ?? 0) > 0) parts.push(`LQA clean ${p.languageQaCleanVerseCount ?? 0}/${p.languageQaCheckedVerseCount}`);
+    return parts.join(" · ");
+  }
 
   function message(value: unknown): string {
     return value instanceof Error ? value.message : String(value);
@@ -337,13 +400,27 @@
             : "Scanning for projects…"}
         </p>
       {:else if projects.length > 0}
+        {#if archivedProjects.length > 0}
+          <label class="archived-filter">
+            <input type="checkbox" bind:checked={showArchived} />
+            Show archived ({archivedProjects.length})
+          </label>
+        {/if}
         <section class="projects" aria-label="Known projects">
-          {#each projects as item}
-            <article class:missing={item.missing} class="project-row">
+          {#each visibleProjects as item (item.projectId)}
+            <article class:missing={item.missing} class:archived={Boolean(item.archivedAt)} class="project-row">
               <div class="book-badge">{item.bookId?.toUpperCase() || "?"}</div>
               <div class="project-copy">
-                <strong>{item.projectName || item.bookName || "Unnamed project"}</strong>
+                {#if renamingId === item.projectId}
+                  <input class="rename-input" aria-label="Project name" bind:value={renameDraft}
+                    on:keydown={(event) => { if (event.key === "Enter") void commitRename(item); if (event.key === "Escape") renamingId = ""; }}
+                    on:blur={() => void commitRename(item)} />
+                {:else}
+                  <strong>{displayName(item)}{item.archivedAt ? " (archived)" : ""}</strong>
+                {/if}
                 <span>{item.collectionId ? `${item.bookCount ?? 1}-book collection` : item.bookName}{item.bibleName ? ` · ${item.bibleName}` : ""}{item.targetLanguage ? ` · ${item.targetLanguage}` : ""}</span>
+                <span class="progress-line">{progressLine(item)}</span>
+                <small>{lastOpened(item)}</small>
                 <small title={item.path}>{item.missing ? "Project folder is missing" : item.path}</small>
               </div>
               {#if item.missing}
@@ -355,6 +432,12 @@
                 <button class="small-button" on:click={() => (confirmingId = "")} disabled={loading}>Cancel</button>
               {:else}
                 <button class="small-button primary" on:click={() => openPath(item.path, item.projectId)} disabled={loading}>Open</button>
+                <button class="small-button" on:click={() => startRename(item)} disabled={loading}>Rename</button>
+                {#if item.archivedAt}
+                  <button class="small-button" on:click={() => setArchived(item, false)} disabled={loading}>Unarchive</button>
+                {:else}
+                  <button class="small-button" on:click={() => setArchived(item, true)} disabled={loading}>Archive</button>
+                {/if}
                 {#if item.managed}
                   <button class="small-button danger" on:click={() => (confirmingId = item.projectId)} disabled={loading}>Delete</button>
                 {/if}
@@ -506,6 +589,10 @@
   .project-copy { display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 2px; }
   .project-copy strong { font-size: var(--fs-sm); color: var(--text); }
   .project-copy span, .project-copy small { color: var(--text-2); font-size: var(--fs-2xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .archived-filter { display: flex; align-items: center; gap: 6px; font-size: var(--fs-2xs); color: var(--text-2); margin: 0 0 8px; }
+  .project-row.archived { opacity: .7; }
+  .progress-line { font-size: var(--fs-2xs); color: var(--text-2); }
+  .rename-input { font: inherit; font-weight: 700; padding: 2px 6px; border: 1px solid var(--accent); border-radius: 4px; background: var(--surface); color: var(--text); width: 100%; box-sizing: border-box; }
   .small-button { border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); color: var(--text); padding: 6px 10px; cursor: pointer; font-size: var(--fs-2xs); }
   .small-button.primary { border-color: var(--accent); color: var(--accent); }
   .small-button.danger { color: var(--danger); }

@@ -19111,3 +19111,51 @@ reviewer's fix. `\wj` verses: MAT 645, MRK 289, LUK 588, JHN 431, ACT 31, REV 65
 - Full engine suite: 5,257 passed, 3 xfailed, none failed.
 - Human gate: pass. `build-sidecars.ps1`, then `smoke_sidecars.py`: passed.
 - Frontend and src-tauri untouched; their gates were not run.
+
+## 2026-10-14 — #238 projects list: progress columns, last opened by, rename, archive
+
+**Workspace schema v3.** `projects.archived_at` and `projects.last_opened_by`,
+lifted from `entry_json` (`archivedAt`, `lastOpenedBy`) the way
+`last_opened_at` is, so the list can filter and sort without parsing JSON;
+the entry stays the record. Additive (`ALTER TABLE ... ADD COLUMN`), no
+rebuild, no data-preservation test beyond the ladder test now asserting
+`[1, 2, 3]` (the pre-release amendment in CLAUDE.md). `WORKSPACE_SCHEMA_VERSION`
+is 3; the workbench (v7) and semantic (v16) ladders are untouched.
+
+**Registry.** `register(touch=True, opened_by=user_id)` stamps who opened;
+`project.open` passes `current_actor_id()`, the stable user id from #183,
+never the display name. `rename(project_id, name)` sets `displayName` on
+every book of the collection (an empty name clears it); `set_archived`
+sets or clears `archivedAt` on the same set. Both are registry fields only:
+the folder, the manifest and `.bridge/collection.json` are byte-identical
+afterwards, and a re-register on open keeps them (the metadata refresh
+writes `projectName`, not `displayName`).
+
+**project.list** now sums the cached totals over a collection's books from
+`project_progress_cache` in one query (`progress`, with `booksWithProgress`;
+null until any book has a rollup), reports the collection's latest open
+across its books with `lastOpenedBy` and the display name the workspace
+knows for it (`lastOpenedByName`), and carries `displayName` and
+`archivedAt`. No project database is opened for the list; the "66 books
+under 1 s" rule holds. New RPCs `project.rename`, `project.archive`,
+`project.unarchive`, interactive (default 30 s). `project.forget` and
+`project.delete` are unchanged, and Delete keeps its on-screen confirmation.
+
+**Project Home.** Each row shows the display name (or the import's name),
+language, book count, the four stages in one line ("checked 3/50 ch ·
+reviewed 40/1533 · aligned 20/90 · LQA clean 70/90", the last two only once
+counted), when and by whom it was last opened, and Rename / Archive (or
+Unarchive) beside Open and Delete. Rename is an inline field (Enter commits,
+Escape cancels, blur commits). Archived rows are hidden behind "Show
+archived (n)" and marked "(archived)" when shown. "Create" from the
+requirement is the existing Import; nothing new was added for it.
+
+Tests: `tests/service/test_projects_list_management.py` (3): the summed
+progress and the latest open with its user, across a check job and a sibling
+open; rename on every book with the folder, manifest and collection file
+byte-identical, surviving a reopen, cleared by an empty name, refused for an
+unknown id; archive and unarchive on the whole collection, lifted into the
+columns and seen by a fresh engine on the same workspace. `ImportScreenList
+.test.ts` (5): the columns, the empty states, rename through the engine,
+archive behind the filter and unarchive from it, Delete still behind its
+confirmation. The workspace ladder test moves to v3.

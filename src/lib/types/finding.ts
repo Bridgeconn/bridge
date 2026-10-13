@@ -882,6 +882,18 @@ export interface RegisteredProject {
   bibleName?: string;
   lastOpenedAt?: string;
   bookCount?: number;
+  /** #238: the name the reviewer gave the project in the list (the import's
+   * `projectName` stays beside it); set when archived; who opened it last,
+   * as the stable user id and as the display name the workspace knows. */
+  displayName?: string;
+  archivedAt?: string;
+  lastOpenedBy?: string;
+  lastOpenedByName?: string;
+  /** #238: the cached totals summed over the collection's books, or null
+   * when no book has a rollup yet. */
+  progress?: (Omit<BookProgressSummary, "findingCount" | "approvedFindingCount" | "updatedAt"> & {
+    booksWithProgress: number;
+  }) | null;
 }
 
 export interface ImportedProject {
