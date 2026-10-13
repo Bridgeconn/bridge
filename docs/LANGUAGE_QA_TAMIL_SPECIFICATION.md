@@ -148,7 +148,7 @@ Item 40 is checked in the text: a line break or a space inside a Tamil grapheme 
 | 52 | Final blind proofread | A fresh reader who has not seen earlier rounds. | Not checked | | Proofreader |
 | 53 | Final consultant sign-off | The consultant's approval. | Not checked | | Consultant |
 | 54 | Final community read-through | A community reading before release. | Not checked | | Translator |
-| 55 | Regression check after every late correction | A late fix introduces no new error. | Partial | Language QA re-checks an edited verse at once. Stage 9B.3 re-runs affected analysis after a correction. The exception queue lists open high findings, and the export ledger lists every Language QA change. | Publisher |
+| 55 | Regression check after every late correction | A late fix introduces no new error. | Checked | Language QA re-checks an edited verse at once. Stage 9B.3 re-runs affected analysis after a correction. The exception queue lists open high findings, and the export ledger lists every Language QA change. Checked on Benz's decision of 2026-10-13 (#263); the gaps are named here | Publisher |
 | 56 | Source and version provenance | Which source files and which version were published. | Checked | `.bridge/import.json` SHA-256 provenance; `ruleVersion`/`packVersion` on every finding; the export ledger (`<book>.language-qa-changes.csv`) | Publisher |
 
 ## Finding fields
