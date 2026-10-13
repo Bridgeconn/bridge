@@ -119,7 +119,7 @@ Bridge has no typesetting engine. Every item in this gate is proofed on the PDF.
 |---|---|---|---|---|
 | 39 | Tamil font rendering | Conjuncts, vowel signs and pulli render correctly in the chosen font. | Not checked | Typesetter |
 | 40 | Line breaking | No breaks inside a grapheme cluster; acceptable break points. | Partial | Typesetter |
-| 41 | Hyphenation | Tamil hyphenation policy. | Not checked | Typesetter |
+| 41 | Hyphenation | Tamil hyphenation policy. | Partial | Typesetter |
 | 42 | Page-level composition | Widows, orphans, column balance, spacing. | Not checked | Typesetter |
 | 43 | Running heads and page numbers | Correct book/chapter heads. | Checked | Typesetter |
 | 44 | Footnote composition | Note placement and callers. | Checked | Typesetter |
@@ -132,6 +132,8 @@ Item 44 is checked in the USFM, before typesetting: `common/note.caller-mixed` f
 Item 47 is checked in the book header and introduction (context `introduction`, #253): `common/header.missing` (no or empty `\toc1`, `\toc2`, `\toc3` or `\mt`: the title page and the contents), `common/intro.ior-space` (a space inside `\ior … \ior*`; MAT, 3 of 3 confirmed 2026-10-13) and `common/intro.ior-target` (an outline reference to a chapter that does not exist). The glossary and the maps index are separate books the IRV does not have, and are **not checked**.
 
 Item 43 is checked in the USFM: `common/header.running-head` flags a running head `\h` that differs from the book title `\mt` (Benz, 2026-10-13: the running head repeats the title; in the IRV, LAM and ACT), and `common/header.missing` a missing `\h` (#254). Chapter heads come from `\c`; page numbers are proofed on the PDF.
+
+Item 41 is checked in the text: a soft hyphen (U+00AD) typed into a word is reported by `common/unicode.invisible` (#257). The hyphenation policy itself is the Typesetter's, proofed on the PDF.
 
 Item 40 is checked in the text: a line break or a space inside a Tamil grapheme cluster leaves a vowel sign or pulli with no base, and `ta-irv/tamil.dependent-sign` reports it (#256). Where lines break on the page is proofed on the PDF.
 
