@@ -664,9 +664,10 @@ Bridge is a Windows desktop application built from:
   The frontend records each Tier A and B action's click-to-paint and
   click-to-complete times (`src/lib/perf.ts`) in the diagnostics log;
   `scripts/perf_table.py` prints the p95 table that every release's notes
-  carry. Field hardware: to be recorded with the first measurement
-  (2026-10-15, the 1366x768 reference machine); until then the table names
-  the machine it was taken on.
+  carry. Reference hardware (assumed 2026-10-14, until a field machine is
+  measured): Intel Core i3 8th generation, 8 GB RAM, 512 GB HDD, 15-inch
+  1366x768 display, Windows 10 or 11. Every table names the machine it was
+  taken on.
 - `NFR-PERF-002 P1` Expensive work shall expose progress and cancellation and
   shall not block the UI for its full duration.
 - `NFR-PERF-003 P1` Large collection discovery/import shall avoid eager
