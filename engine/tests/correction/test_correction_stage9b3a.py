@@ -605,7 +605,9 @@ def test_startup_recovers_tc_journal_before_semantic_runtime(tmp_path: Path, mon
         def __init__(self, candidate, project_id):
             observed.append(candidate.target_verse_text("1", "6")); super().__init__(candidate, project_id)
     monkeypatch.setattr(bridge_service, "PassageSemanticRuntime", ObservingRuntime)
-    opened = _call(BridgeEngine(settings=AppSettings(path=tmp_path / "settings.json")), "project.open", {"path": str(root)})
+    # awaitSemantic: the runtime is built on a worker (#112 step two); the
+    # order this test pins -- journal recovery, then the runtime -- is unchanged.
+    opened = _call(BridgeEngine(settings=AppSettings(path=tmp_path / "settings.json")), "project.open", {"path": str(root), "awaitSemantic": True})
     assert opened["success"] is True
     assert observed == [BEFORE]
 

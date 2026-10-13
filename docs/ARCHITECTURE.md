@@ -74,8 +74,9 @@ stages. See `SIMPLIFICATION_AUDIT_2026-09.md`.
 **Per-method timeouts** live in `sidecar.rs` (`request_timeout_seconds`): 30 s default;
 `project.import` 300; `project.open`, `project.inspectImport`, `project.list`, `report.get`,
 `report.export`, `triage.results`, `correction.applyProposal` 180; `verse.runChecks` 150;
-model calls 260 to 300. `project.open` joined the 180 class in #112 (step one); step two,
-building `PassageSemanticRuntime` lazily, is still open.
+model calls 260 to 300. `project.open` joined the 180 class in #112 (step one); since step
+two (2026-10-14) the call returns before `PassageSemanticRuntime` is built, so the 180 s now
+covers the translationCore load, registration and recovery alone.
 
 ### 2.1 Why these choices
 
@@ -139,13 +140,20 @@ a project carrying any of them refuses to open and is re-imported (no migration,
 **What opens a project** (`BridgeEngine.open_project`, phase-timed as `[trace] project.open`
 on stderr): materialize a lazy import, ensure the original-language packs, construct
 `TranslationCoreProject` (which opens and migrates the workbench DB), register the project,
-recover incomplete journal transactions, sync the dashboard progress cache, construct
+recover incomplete journal transactions, sync the dashboard progress cache, and return
+with `passageSemantic.state == "BUILDING"`. A worker thread then constructs
 `PassageSemanticRuntime` (opens and migrates the semantic DB, replays pending invalidations,
-establishes current text revisions, syncs the source lock and alignment state), then build
-the correction services. After #99 (2026-09-16) a first open of Genesis from source measures
-about 1 s and a lazy sibling's first open about 4 s; before it, per-verse fsyncs made the
-same step take minutes. Any runtime failure degrades the open to `RECOVERY_REQUIRED` rather
-than failing it.
+establishes current text revisions, syncs the source lock and alignment state) and the
+correction services (#112 step two, 2026-10-14). `passage_semantic_runtime` is a property on
+both `BridgeEngine` and `TranslationCoreProject` that waits for that build, so a Scripture
+edit, an alignment write or a semantic RPC issued meanwhile waits for the runtime rather
+than racing it or going without its semantic intent; a read that never touches the runtime
+never waits, and `passageSemantic.status` reports `BUILDING` without waiting. A caller that
+needs the old all-done-on-return behaviour (scripts, tests, the sync `project.import`)
+passes `awaitSemantic: true`. After #99 (2026-09-16) a first open of Genesis from source
+measures about 1 s and a lazy sibling's first open about 4 s, of which the runtime was
+0.3 to 1 s; before #99, per-verse fsyncs made the same step take minutes. Any runtime
+failure degrades the status to `RECOVERY_REQUIRED` rather than failing the open.
 
 ### 3.1 Vendored source and bundled data
 

@@ -592,7 +592,16 @@ class BridgeEngine:
         self._logos_client: Optional[LogosConnectorClient] = None
         self.greek_room = GreekRoomEngine()
         self.project: Optional[TranslationCoreProject] = None
-        self.passage_semantic_runtime: PassageSemanticRuntime | None = None
+        # #112 step two: project.open returns before the PassageSemanticRuntime
+        # exists and a worker builds it. `passage_semantic_runtime` is a
+        # property that waits for that build, so every path that needs the
+        # runtime (a Scripture edit, an alignment write, a semantic RPC) still
+        # sees it, and a read that never touches it never waits. The event is
+        # set whenever no build is in flight.
+        self._passage_semantic_runtime_value: PassageSemanticRuntime | None = None
+        self._semantic_build_done = threading.Event()
+        self._semantic_build_done.set()
+        self._semantic_build_thread: threading.Thread | None = None
         self._passage_semantic_status: dict[str, Any] = {
             "available": False, "readOnly": True, "state": "NO_PROJECT",
         }
@@ -751,7 +760,36 @@ class BridgeEngine:
         with nothing else answered (#242)."""
         self.greek_room.preload_async()
 
-    def open_project(self, path: str, project_id: str = "") -> dict[str, Any]:
+    @property
+    def passage_semantic_runtime(self) -> PassageSemanticRuntime | None:
+        self._await_semantic_runtime()
+        return self._passage_semantic_runtime_value
+
+    @passage_semantic_runtime.setter
+    def passage_semantic_runtime(self, runtime: PassageSemanticRuntime | None) -> None:
+        self._passage_semantic_runtime_value = runtime
+
+    def _await_semantic_runtime(self, timeout: float | None = None) -> bool:
+        """Block until the in-flight runtime build (if any) has ended. The
+        build thread itself never waits: the runtime's constructor reads the
+        project, whose own property calls back here."""
+        if threading.current_thread() is self._semantic_build_thread:
+            return True
+        return self._semantic_build_done.wait(timeout)
+
+    def semantic_runtime_pending(self) -> bool:
+        return not self._semantic_build_done.is_set()
+
+    def open_project(self, path: str, project_id: str = "", *, await_semantic: bool = False) -> dict[str, Any]:
+        """project.open. Returns once the translationCore project is loaded and
+        registered; the PassageSemanticRuntime is built on a worker afterwards
+        (#112 step two) and `passageSemantic` on the result says `BUILDING`.
+        `awaitSemantic` (scripts, tests) waits for that build before returning,
+        which is what every open did before.
+        """
+        # A build still running for the outgoing project must end before that
+        # project is replaced, or it would attach to the wrong one.
+        self._await_semantic_runtime()
         self._usfm_findings_by_book.clear()
         self._usfm_errors_by_book.clear()
         self._names_findings_by_book.clear()
@@ -840,33 +878,19 @@ class BridgeEngine:
             self._language_qa.bind(candidate, blocked_reason="Project recovery requires attention.")
             return info
         self._passage_semantic_status = {
-            "available": False, "readOnly": True, "state": "UNAVAILABLE",
+            "available": False, "readOnly": True, "state": "BUILDING",
         }
-        try:
-            runtime = PassageSemanticRuntime(candidate, str(registered["projectId"]))
-            candidate.attach_passage_semantic_runtime(runtime)
-            self.passage_semantic_runtime = runtime
-            self._correction_application_service = CorrectionApplicationService(runtime, self.edit_verse)
-            self._analysis_jobs.bind_runtime(runtime)
-            self._correction_affected_analysis_service = CorrectionAffectedAnalysisService(
-                runtime, self._analysis_jobs,
-            )
-            self._correction_verification_service = CorrectionVerificationService(
-                runtime, self._analysis_jobs,
-            )
-            self._passage_semantic_status = {
-                "state": "READY", **runtime.status(),
-                "translationCoreRecovery": tc_recovery,
-            }
-        except Exception as exc:
-            # Scripture/tC access remains fully usable. Semantic APIs expose the
-            # recovery diagnostic rather than making project.open fail.
-            candidate.attach_passage_semantic_runtime(None)
-            self._passage_semantic_status = {
-                "available": False, "readOnly": True,
-                "state": "RECOVERY_REQUIRED", "error": str(exc),
-            }
-        timer.mark("semantic_runtime")
+        candidate.expect_passage_semantic_runtime(self._await_semantic_runtime)
+        self._semantic_build_done.clear()
+        self._semantic_build_thread = threading.Thread(
+            target=self._build_semantic_runtime,
+            args=(candidate, str(registered["projectId"]), tc_recovery),
+            name=f"bridge-semantic-{candidate.book_id}", daemon=True,
+        )
+        self._semantic_build_thread.start()
+        if await_semantic:
+            self._await_semantic_runtime()
+            timer.mark("semantic_runtime")
         info = self._project_info()
         siblings = collection_projects(path)
         if siblings:
@@ -879,16 +903,66 @@ class BridgeEngine:
             "progressCache": progress_cache,
         })
         timer.mark("project_info")
-        runtime_phases = (
-            f" semantic_runtime[{self.passage_semantic_runtime.init_timing_summary()}]"
-            if self.passage_semantic_runtime is not None else ""
-        )
-        _trace(f"project.open {candidate.book_id} {timer.summary()}{runtime_phases}")
+        _trace(f"project.open {candidate.book_id} {timer.summary()}")
         self._language_qa.bind(candidate)
         # Rebuilt from the book's decisions on first use: anything recorded
         # while the book was closed (an import, another device) is picked up.
         self._housestyle_learner.forget(str(candidate.path))
         return info
+
+    def _build_semantic_runtime(self, candidate: TranslationCoreProject, project_id: str,
+                                tc_recovery: list[dict[str, Any]]) -> None:
+        """The worker half of project.open (#112 step two). Same outcome as
+        the old inline build: READY with the runtime attached, or
+        RECOVERY_REQUIRED with the diagnostic and Scripture/tC access intact.
+        Attaches to `candidate` only; open_project waits for this thread
+        before it replaces the project, so there is no other project to
+        attach to by mistake."""
+        started = time.perf_counter()
+        try:
+            runtime = PassageSemanticRuntime(candidate, project_id)
+            self._passage_semantic_runtime_value = runtime
+            self._correction_application_service = CorrectionApplicationService(runtime, self.edit_verse)
+            self._analysis_jobs.bind_runtime(runtime)
+            self._correction_affected_analysis_service = CorrectionAffectedAnalysisService(
+                runtime, self._analysis_jobs,
+            )
+            self._correction_verification_service = CorrectionVerificationService(
+                runtime, self._analysis_jobs,
+            )
+            self._passage_semantic_status = {
+                "state": "READY", **runtime.status(),
+                "translationCoreRecovery": tc_recovery,
+            }
+            _trace(
+                f"project.open {candidate.book_id} semantic_runtime total={time.perf_counter() - started:.2f}s"
+                f" [{runtime.init_timing_summary()}]"
+            )
+        except Exception as exc:  # noqa: BLE001 -- the diagnostic is the result
+            # Scripture/tC access remains fully usable. Semantic APIs expose the
+            # recovery diagnostic rather than making project.open fail.
+            runtime = None
+            self._passage_semantic_runtime_value = None
+            self._passage_semantic_status = {
+                "available": False, "readOnly": True,
+                "state": "RECOVERY_REQUIRED", "error": str(exc),
+            }
+            _trace(f"project.open {candidate.book_id} semantic_runtime FAILED {exc}")
+        finally:
+            # This thread is done with both databases: let go of its pooled
+            # connections now (#113), not when the pool next notices a dead
+            # thread -- on Windows an open handle blocks a move or delete of
+            # the project folder that a caller may do right after the open.
+            for holder in (runtime, candidate):
+                try:
+                    if holder is not None:
+                        holder.release_thread_db_handles()
+                except Exception:  # noqa: BLE001
+                    pass
+            # Attach before releasing the waiters: a reader that wakes must
+            # see the final value, never the pre-build None.
+            candidate.attach_passage_semantic_runtime(runtime)
+            self._semantic_build_done.set()
 
     def list_projects(self) -> dict[str, Any]:
         return {"projects": self.project_registry.list_projects(collapse_collections=True)}
@@ -1041,7 +1115,10 @@ class BridgeEngine:
         finally:
             self._import_lock.release()
         timer = _PhaseTimer()
-        info = self.open_project(result["primaryProjectPath"])
+        # The sync RPC means "everything is done when this returns", scripts
+        # and tests rely on that, so it also waits for the semantic runtime
+        # (#112 step two); the import job leaves the open to the client.
+        info = self.open_project(result["primaryProjectPath"], await_semantic=True)
         timer.mark("open_primary")
         info["import"] = result
         info["importedProjects"] = result["projects"]
@@ -3970,10 +4047,12 @@ class BridgeEngine:
     # -- passage-semantic runtime foundation -----------------------------
 
     def passage_semantic_status(self) -> dict[str, Any]:
-        if self.passage_semantic_runtime is None:
+        # Never waits: while the build is in flight this reports BUILDING, so
+        # a poll stays interactive (#112 step two).
+        if self.semantic_runtime_pending() or self._passage_semantic_runtime_value is None:
             return dict(self._passage_semantic_status)
         self._passage_semantic_status = {
-            "state": "READY", **self.passage_semantic_runtime.status(),
+            "state": "READY", **self._passage_semantic_runtime_value.status(),
         }
         return dict(self._passage_semantic_status)
 
@@ -6628,7 +6707,10 @@ class BridgeEngine:
         released after it, so between requests nothing holds the database
         files -- a backup restore or a project delete can replace them as it
         always could. A job thread's connections are its own."""
-        for holder in (self.project, self.passage_semantic_runtime):
+        # The non-blocking value: while the build is in flight (#112 step two)
+        # this thread holds nothing of the runtime's, and waiting here would
+        # make every read wait for the build.
+        for holder in (self.project, self._passage_semantic_runtime_value):
             if holder is None:
                 continue
             try:
@@ -6755,6 +6837,7 @@ class BridgeEngine:
             if m == Methods.PROJECT_OPEN:
                 return EngineResponse.ok(request.id, result=self.open_project(
                     p["path"], p.get("projectId", ""),
+                    await_semantic=bool(p.get("awaitSemantic", False)),
                 ))
             if m == Methods.PROJECT_LIST:
                 return EngineResponse.ok(request.id, result=self.list_projects())

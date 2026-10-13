@@ -767,7 +767,8 @@ export interface ProjectInfo {
   };
   importedProjects?: ImportedProject[];
   passageSemantic?: {
-    state: "NO_PROJECT" | "READY" | "UNAVAILABLE" | "RECOVERY_REQUIRED";
+    /** BUILDING: the runtime is being built on a worker after project.open returned (#112). */
+    state: "NO_PROJECT" | "BUILDING" | "READY" | "UNAVAILABLE" | "RECOVERY_REQUIRED";
     available: boolean;
     readOnly: boolean;
     error?: string;

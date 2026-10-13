@@ -28,7 +28,10 @@ def test_opening_another_project_lets_the_previous_files_go(fixture_project, tmp
     second = tmp_path / "rut-second"
     shutil.copytree(fixture_project, second)
     engine = BridgeEngine()
-    assert call(engine, "project.open", {"path": str(fixture_project)})["success"] is True
+    # awaitSemantic: the runtime build runs on a worker since #112 step two and
+    # holds its own workbench connection until it ends; this test counts the
+    # dispatcher's.
+    assert call(engine, "project.open", {"path": str(fixture_project), "awaitSemantic": True})["success"] is True
     first = engine.project
     with first.workbench._connect() as conn:
         conn.execute("SELECT 1").fetchone()

@@ -18786,3 +18786,58 @@ exactly those three, each fix the reviewer's (1,419 `\fr` against 1,416 `\ft`).
 - Human gate: pass.
 - `build-sidecars.ps1`, then `smoke_sidecars.py`: passed.
 - Frontend and src-tauri untouched; their gates were not run.
+
+## 2026-10-14 — #112 step two: project.open returns before the semantic runtime is built
+
+`project.open` now returns once the translationCore project is loaded,
+registered and recovered, with `passageSemantic.state == "BUILDING"`; a
+daemon thread (`BridgeEngine._build_semantic_runtime`) then constructs
+`PassageSemanticRuntime` and the three correction services exactly as the
+inline code did, ending in `READY` or `RECOVERY_REQUIRED`. Measured in the
+issue: the runtime was 0.31 s of a 0.65 s cold open on the test fixture and
+1.04 s of 2.7 s on IRV Tamil Genesis, so the editor's first paint moves
+earlier by that much; `original_language` (1.48 s on Genesis) stays on the
+open path, it is a Scripture-adjacent backfill and out of this issue's scope.
+
+**The gate is the attribute itself.** `passage_semantic_runtime` is a
+property on both `BridgeEngine` and `TranslationCoreProject`
+(`expect_passage_semantic_runtime(waiter)` while a build is in flight,
+`attach_passage_semantic_runtime(runtime)` when it ends). Every reader waits
+for the build: `apply_scripture_edit` (which reads the runtime before its
+journal transaction, for the semantic intent), the alignment writers' `
+synchronize_alignment_state`, `_require_passage_semantic_runtime` for the
+semantic and correction RPCs, `_close_project_db_handles`. No call site
+changed. The build thread itself never waits (the runtime's constructor reads
+the project, whose property calls back into the waiter). Two readers were
+made deliberately non-blocking: `passageSemantic.status`, which reports
+`BUILDING`, and the dispatcher's per-request `_release_thread_db_handles`,
+which would otherwise have made every `verse.get` wait for the build -- the
+first run of the new test found exactly that.
+
+Opening another project while a build is in flight waits for it first, so a
+build never attaches to the wrong project. The build thread releases its
+pooled SQLite connections when it ends (#113's pool closes a dead thread's
+connection only when it next looks), because on Windows an open handle blocks
+a move or delete of the folder right after the open. `awaitSemantic: true`
+on `project.open` restores the old all-done-on-return behaviour; the sync
+`project.import` passes it, and the twenty-one test opens that assert on the
+runtime right after opening now pass it (`test_passage_semantic_runtime.py`,
+`test_correction_stage9b3a.py`'s journal-before-runtime order test, and
+`test_dispatcher_releases_db_handles.py`, which counts the dispatcher's pooled
+connections right after an open and saw the worker's as well under load).
+
+Tests: `tests/service/test_project_open_semantic_lazy.py` (4): the open
+returns `BUILDING` while the constructor is held open, `verse.get` and the
+status poll answer meanwhile, a `verse.edit` from another thread blocks until
+the build is released and then lands with the runtime attached; `awaitSemantic`
+returns `READY`; a constructor that raises degrades to `RECOVERY_REQUIRED`
+with `verse.edit` still working and the semantic RPC refusing cleanly; a
+second open waits for the first build and each project keeps its own runtime.
+Frontend: nothing reads `passageSemantic` today; the type gains `BUILDING`.
+
+**Pre-existing flakes seen while gating, not caused by this change** (both
+reproduced on main without it, same parallel run): `test_moved_project_retains_
+identity_but_live_copy_is_rejected` moves the project folder right after an
+open while the Language QA worker still holds `bridge-workbench.sqlite3`
+(`WinError 32`), and `test_continuous_foreground_polling_does_not_starve_worker`
+in `test_language_qa.py` under `-n auto` load. Proposed as issues, not filed.

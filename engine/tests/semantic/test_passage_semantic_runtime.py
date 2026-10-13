@@ -123,14 +123,17 @@ def test_first_open_initializes_companion_and_second_open_is_idempotent(
     tmp_path: Path, stage4_project: Path,
 ) -> None:
     engine = _engine(tmp_path)
-    first = _call(engine, "project.open", {"path": str(stage4_project)})
+    # awaitSemantic: the runtime is built on a worker since #112 step two;
+    # without it the open result says BUILDING and passageSemantic.status
+    # reports READY once the build ends.
+    first = _call(engine, "project.open", {"path": str(stage4_project), "awaitSemantic": True})
     assert first["success"] is True
     assert first["result"]["passageSemantic"]["state"] == "READY"
     database = stage4_project / ".apps" / "translationCoreAI" / "passageSemantic" / "bridge-semantic.sqlite3"
     assert database.is_file()
     project_id = first["result"]["projectId"]
 
-    second = _call(engine, "project.open", {"path": str(stage4_project)})
+    second = _call(engine, "project.open", {"path": str(stage4_project), "awaitSemantic": True})
     assert second["success"] is True
     assert second["result"]["projectId"] == project_id
     assert second["result"]["passageSemantic"]["recovery"]["ok"] is True
@@ -147,7 +150,7 @@ def test_moved_project_retains_identity_but_live_copy_is_rejected(
     tmp_path: Path, stage4_project: Path,
 ) -> None:
     engine = _engine(tmp_path)
-    opened = _call(engine, "project.open", {"path": str(stage4_project)})
+    opened = _call(engine, "project.open", {"path": str(stage4_project), "awaitSemantic": True})
     project_id = opened["result"]["projectId"]
 
     copy = tmp_path / "live-copy"
@@ -159,7 +162,7 @@ def test_moved_project_retains_identity_but_live_copy_is_rejected(
     shutil.rmtree(copy)
     moved = tmp_path / "moved-project"
     shutil.move(str(stage4_project), moved)
-    reopened = _call(engine, "project.open", {"path": str(moved)})
+    reopened = _call(engine, "project.open", {"path": str(moved), "awaitSemantic": True})
     assert reopened["success"] is True
     assert reopened["result"]["projectId"] == project_id
 
@@ -173,7 +176,7 @@ def test_companion_failure_does_not_block_scripture_access(
 
     monkeypatch.setattr(bridge_service, "PassageSemanticRuntime", BrokenRuntime)
     engine = _engine(tmp_path)
-    opened = _call(engine, "project.open", {"path": str(stage4_project)})
+    opened = _call(engine, "project.open", {"path": str(stage4_project), "awaitSemantic": True})
     assert opened["success"] is True
     assert opened["result"]["passageSemantic"]["state"] == "RECOVERY_REQUIRED"
     verse = _call(engine, "verse.get", {"chapter": "1", "verse": "1"})
@@ -185,7 +188,7 @@ def test_real_bridge_edit_is_authoritative_and_old_usfm_words_never_return(
     tmp_path: Path, stage4_project: Path,
 ) -> None:
     engine = _engine(tmp_path)
-    _call(engine, "project.open", {"path": str(stage4_project)})
+    _call(engine, "project.open", {"path": str(stage4_project), "awaitSemantic": True})
     edited = "திருத்தப்பட்ட தற்போதைய வசனம்."
     result = _call(engine, "verse.edit", {
         "chapter": "1", "verse": "1", "newText": edited,
@@ -242,7 +245,7 @@ def test_human_review_is_preserved_when_dependent_record_becomes_stale(
     tmp_path: Path, stage4_project: Path,
 ) -> None:
     engine = _engine(tmp_path)
-    _call(engine, "project.open", {"path": str(stage4_project)})
+    _call(engine, "project.open", {"path": str(stage4_project), "awaitSemantic": True})
     runtime = engine.passage_semantic_runtime
     runtime.repository.create_qa_finding("qa-direct", runtime.project_id)
     runtime.repository.update_qa_disposition(
@@ -263,7 +266,7 @@ def test_invalidation_is_dependency_bounded(
     tmp_path: Path, stage4_project: Path,
 ) -> None:
     engine = _engine(tmp_path)
-    _call(engine, "project.open", {"path": str(stage4_project)})
+    _call(engine, "project.open", {"path": str(stage4_project), "awaitSemantic": True})
     runtime = engine.passage_semantic_runtime
     for finding_id, reference in (("qa-searched", "RUT 1:1"), ("qa-unrelated", "RUT 2:1")):
         runtime.repository.create_qa_finding(finding_id, runtime.project_id)
@@ -283,7 +286,7 @@ def test_invalidation_propagates_through_passage_dependency(
     tmp_path: Path, stage4_project: Path,
 ) -> None:
     engine = _engine(tmp_path)
-    _call(engine, "project.open", {"path": str(stage4_project)})
+    _call(engine, "project.open", {"path": str(stage4_project), "awaitSemantic": True})
     runtime = engine.passage_semantic_runtime
     passage = runtime.rebuild_current_passage("1", "1")
     runtime.repository.create_qa_finding("qa-via-passage", runtime.project_id)
@@ -301,7 +304,7 @@ def test_interrupted_invalidation_replays_on_restart(
     tmp_path: Path, stage4_project: Path,
 ) -> None:
     engine = _engine(tmp_path)
-    opened = _call(engine, "project.open", {"path": str(stage4_project)})
+    opened = _call(engine, "project.open", {"path": str(stage4_project), "awaitSemantic": True})
     runtime = engine.passage_semantic_runtime
     runtime.repository.create_qa_finding("qa-replay", runtime.project_id)
     runtime.repository.add_record_dependency(
@@ -328,7 +331,7 @@ def test_open_edit_rebuild_reopen_smoke_preserves_stale_review_state(
     tmp_path: Path, stage4_project: Path,
 ) -> None:
     engine = _engine(tmp_path)
-    opened = _call(engine, "project.open", {"path": str(stage4_project)})
+    opened = _call(engine, "project.open", {"path": str(stage4_project), "awaitSemantic": True})
     runtime = engine.passage_semantic_runtime
     before = runtime.rebuild_current_passage("1", "1")
     runtime.repository.create_qa_finding("qa-smoke", runtime.project_id)
@@ -362,7 +365,7 @@ def test_target_edits_create_new_instances_and_only_lineage_candidates(
     tmp_path: Path, stage4_project: Path,
 ) -> None:
     engine = _engine(tmp_path)
-    _call(engine, "project.open", {"path": str(stage4_project)})
+    _call(engine, "project.open", {"path": str(stage4_project), "awaitSemantic": True})
     runtime = engine.passage_semantic_runtime
     before = runtime.rebuild_current_passage("1", "1")
     before_ids = set(before["targetTokenInstanceIds"])
@@ -432,7 +435,7 @@ def test_open_and_passage_rebuild_do_not_mutate_scripture_or_native_alignment(
         stage4_project / ".apps" / "translationCore" / "alignmentData" / "rut" / "1.json"
     ).read_bytes()
     engine = _engine(tmp_path)
-    _call(engine, "project.open", {"path": str(stage4_project)})
+    _call(engine, "project.open", {"path": str(stage4_project), "awaitSemantic": True})
     engine.passage_semantic_runtime.rebuild_current_passage("1", "1")
     assert (stage4_project / "rut" / "1.json").read_bytes() == scripture
     assert (
@@ -461,7 +464,7 @@ def test_native_alignment_ambiguities_are_quarantined_without_rewrite(
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     original = path.read_bytes()
     engine = _engine(tmp_path)
-    _call(engine, "project.open", {"path": str(stage4_project)})
+    _call(engine, "project.open", {"path": str(stage4_project), "awaitSemantic": True})
     report = engine.passage_semantic_runtime.migration_report()
     assert report["quarantineByReason"]["DUPLICATE_ACTIVE_TOKEN_MEMBERSHIP"] == 1
     assert report["quarantineByReason"]["LEGACY_EMPTY_BOTTOM_WORDS_AMBIGUOUS"] == 1
@@ -492,7 +495,7 @@ def test_raw_import_stubs_are_skipped_but_real_empty_bottoms_are_not(
     original = path.read_bytes()
 
     engine = _engine(tmp_path)
-    _call(engine, "project.open", {"path": str(stage4_project)})
+    _call(engine, "project.open", {"path": str(stage4_project), "awaitSemantic": True})
     report = engine.passage_semantic_runtime.migration_report()
 
     assert report["quarantineByReason"].get("LEGACY_EMPTY_BOTTOM_WORDS_AMBIGUOUS", 0) == 1
@@ -525,7 +528,7 @@ def test_first_open_establishes_every_verse_revision_in_one_batch(
         lambda self, *a, **k: pytest.fail("synchronize_current_text must not read one verse at a time"),
     )
     engine = _engine(tmp_path)
-    _call(engine, "project.open", {"path": str(stage4_project)})
+    _call(engine, "project.open", {"path": str(stage4_project), "awaitSemantic": True})
     project = TranslationCoreProject(str(stage4_project))
     verses = len(psr.current_target_text(project))
     assert verses > 0
@@ -535,7 +538,7 @@ def test_first_open_establishes_every_verse_revision_in_one_batch(
     )
     assert len(stored) == verses
     batches.clear()
-    _call(engine, "project.open", {"path": str(stage4_project)})
+    _call(engine, "project.open", {"path": str(stage4_project), "awaitSemantic": True})
     assert [n for n in batches if n] == []
 
 
@@ -574,14 +577,14 @@ def test_alignment_compatibility_scan_quarantines_in_one_batch(
         lambda self, **kwargs: pytest.fail("scan must not quarantine one record at a time"),
     )
     engine = _engine(tmp_path)
-    _call(engine, "project.open", {"path": str(stage4_project)})
+    _call(engine, "project.open", {"path": str(stage4_project), "awaitSemantic": True})
     report = engine.passage_semantic_runtime.migration_report()
     assert report["quarantineByReason"]["LEGACY_EMPTY_BOTTOM_WORDS_AMBIGUOUS"] == 120
     assert batches == [120]
     assert _scan_report(report)["quarantined"] == 120
     # Memoized against the alignment folder's content digest: a second open
     # does not scan again, so it writes nothing.
-    _call(engine, "project.open", {"path": str(stage4_project)})
+    _call(engine, "project.open", {"path": str(stage4_project), "awaitSemantic": True})
     assert batches == [120]
 
 
@@ -601,7 +604,7 @@ def test_an_alignment_change_rescans_only_its_chapter_and_records_nothing_twice(
     ], "bottomWords": []})
     (align_dir / "1.json").write_text(json.dumps(legacy, ensure_ascii=False), encoding="utf-8")
     engine = _engine(tmp_path)
-    _call(engine, "project.open", {"path": str(stage4_project)})
+    _call(engine, "project.open", {"path": str(stage4_project), "awaitSemantic": True})
     runtime = engine.passage_semantic_runtime
     first = _scan_report(runtime.migration_report())
     assert (first["filesScanned"], first["filesUnchanged"]) == (2, 0)
@@ -621,7 +624,7 @@ def test_a_changed_chapter_with_a_legacy_issue_is_scanned_again(tmp_path: Path, 
     """Scanning per file must not skip a chapter whose content did change."""
     align_dir = stage4_project / ".apps" / "translationCore" / "alignmentData" / "rut"
     engine = _engine(tmp_path)
-    _call(engine, "project.open", {"path": str(stage4_project)})
+    _call(engine, "project.open", {"path": str(stage4_project), "awaitSemantic": True})
     runtime = engine.passage_semantic_runtime
     assert "LEGACY_EMPTY_BOTTOM_WORDS_AMBIGUOUS" not in runtime.migration_report()["quarantineByReason"]
     (align_dir / "2.json").write_text(json.dumps({"1": {"alignments": [{"topWords": [

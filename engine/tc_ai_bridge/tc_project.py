@@ -212,7 +212,12 @@ class TranslationCoreProject:
         self._workspace: WorkspaceRepository | None = workspace
         # Stage 4 attaches an advisory companion runtime after project identity
         # is resolved. Direct TranslationCoreProject users remain unchanged.
-        self.passage_semantic_runtime: Any | None = None
+        # #112 step two: the runtime is built on a worker after project.open
+        # returns, so until it is attached every reader of the attribute waits
+        # through `_passage_semantic_waiter` (a write must not race the build
+        # and must not slip past it without its semantic intent).
+        self._passage_semantic_runtime_value: Any | None = None
+        self._passage_semantic_waiter: Any | None = None
 
     def _refuse_pre_cutover_project(self) -> None:
         """Refuse to open a project whose records predate the #76 cutover.
@@ -245,8 +250,29 @@ class TranslationCoreProject:
             + str(self.path) + '.'
         )
 
+    @property
+    def passage_semantic_runtime(self) -> Any | None:
+        waiter = self._passage_semantic_waiter
+        if waiter is not None:
+            waiter()
+        return self._passage_semantic_runtime_value
+
+    @passage_semantic_runtime.setter
+    def passage_semantic_runtime(self, runtime: Any | None) -> None:
+        self.attach_passage_semantic_runtime(runtime)
+
     def attach_passage_semantic_runtime(self, runtime: Any | None) -> None:
-        self.passage_semantic_runtime = runtime
+        """The build is over (it produced `runtime`, or None when it failed):
+        readers stop waiting."""
+        self._passage_semantic_runtime_value = runtime
+        self._passage_semantic_waiter = None
+
+    def expect_passage_semantic_runtime(self, waiter: Any) -> None:
+        """A build is in flight (#112): `waiter()` blocks until it has ended,
+        and is called by every reader of `passage_semantic_runtime` until
+        `attach_passage_semantic_runtime` clears it."""
+        self._passage_semantic_runtime_value = None
+        self._passage_semantic_waiter = waiter
 
     @property
     def workspace(self) -> WorkspaceRepository:
