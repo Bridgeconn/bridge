@@ -868,6 +868,26 @@ export interface DuplicateAssessment {
   collectionFingerprint: string;
 }
 
+/** #236/#237: the three roles of requirement 4. */
+export type UserRole = "project_admin" | "editor" | "reporter";
+
+/** One row of the workspace's users table (#237). `current` marks the user
+ * this installation is signed in as. */
+export interface WorkspaceUser {
+  userId: string;
+  displayName: string;
+  role: UserRole;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+  current: boolean;
+}
+
+export interface UsersList {
+  users: WorkspaceUser[];
+  currentUserId: string;
+}
+
 export interface RegisteredProject {
   projectId: string;
   collectionId?: string;
@@ -1321,6 +1341,10 @@ export interface SettingsData {
    *  rename re-labels the rows you already wrote instead of splitting your
    *  history between two apparent actors. */
   localUserId: string;
+  /** #236: the signed-in user's role; #237: true when the startup picker
+   *  must be shown (several active users and none chosen yet). */
+  localUserRole?: UserRole;
+  needsUserChoice?: boolean;
   reviewerMode: "basic" | "advanced";
   paratextUsername: string;
   paratextNavigation: boolean;

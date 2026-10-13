@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 
-const { getSettings, getNavigationStatus, setSettings, engineInfo, terminologyList, terminologyRecord, housestyleList, housestyleRecord, housestyleSetState, housestyleNameSuggestions, languageQaStatus, languageQaSetPack, pickFolder, checkerGet, checkerSet, wordsList } = vi.hoisted(() => ({
+const { getSettings, getNavigationStatus, setSettings, engineInfo, terminologyList, terminologyRecord, housestyleList, housestyleRecord, housestyleSetState, housestyleNameSuggestions, languageQaStatus, languageQaSetPack, pickFolder, checkerGet, checkerSet, wordsList, usersList } = vi.hoisted(() => ({
+  usersList: vi.fn(),
   checkerGet: vi.fn(),
   checkerSet: vi.fn(),
   wordsList: vi.fn(),
@@ -38,6 +39,7 @@ vi.mock("../../api/bridgeClient", () => ({
     languageQaCheckerSettingsSet: checkerSet,
     languageQaWordsList: wordsList,
     pickFolder,
+    usersList,
   },
 }));
 
@@ -596,5 +598,29 @@ describe("SettingsModal terminology (#171)", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     await waitFor(() => expect(setSettings).toHaveBeenCalledWith(expect.objectContaining({
       languageQaReferenceDirs: { "hi-irv": "D:/OV Hindi" }, languageQaRelatedWords: true })));
+  });
+});
+
+describe("Users pane (#237)", () => {
+  it("opens the Users pane from the nav and lists the users with the signed-in one marked", async () => {
+    getSettings.mockResolvedValue({
+      provider: "openai", apiBaseUrl: "", model: "gpt-test", hasApiKey: false, reviewerMode: "basic",
+      paratextNavigation: false, logosNavigation: false, reviewerName: "Revant", reviewerNameUpdatedAt: "",
+      localUserId: "u-1", localUserRole: "project_admin", languageQaReferenceDirs: {}, bookmarks: [], recentChapters: [],
+    });
+    getNavigationStatus.mockResolvedValue(navigationState());
+    engineInfo.mockResolvedValue({ bridgeVersion: "0.16.0", companionSchemaVersion: 16 });
+    usersList.mockResolvedValue({
+      users: [
+        { userId: "u-1", displayName: "Revant", role: "project_admin", active: true, createdAt: "", updatedAt: "", current: true },
+        { userId: "u-2", displayName: "Rina", role: "reporter", active: true, createdAt: "", updatedAt: "", current: false },
+      ],
+      currentUserId: "u-1",
+    });
+    render(SettingsModal, { props: { onClose: vi.fn(), initialPane: "ai" } });
+    await fireEvent.click(await screen.findByRole("button", { name: "Users" }));
+    await screen.findByText("Rina");
+    expect(screen.getByText("(you)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add" })).toBeInTheDocument();
   });
 });

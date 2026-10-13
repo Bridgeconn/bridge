@@ -19261,3 +19261,45 @@ a reporter refused on `verse.decide`, `verse.edit`, `checks.start` and
 an editor refused on `project.rename`, `archive` and `import.start` and
 allowed to edit and run checks; the admin default; a request naming its actor
 refused for each of the three keys with nothing written).
+
+## 2026-10-15 — #237 Users screen, the startup display-name picker, legacy:human
+
+**Engine.** Six RPCs on the workspace users table: `users.list` and
+`users.setCurrent` are anyone's (the picker must let a reporter sign in),
+`users.create`, `users.rename`, `users.deactivate` and `users.setRole` are a
+project_admin's (`authorization.METHOD_ACTIONS`, `manage_users`). The chosen
+user is `settings_kv["workspace.currentUserId"]`; `get_or_create_local_user`
+prefers it when it is still active and falls back to the oldest active row,
+which is what every installation did before. `settings.get` reports
+`needsUserChoice`: true when more than one active user exists and none has
+been chosen, which is when the picker comes before Home; a first install has
+one admin and never sees it. Choosing a user sets the Settings "Reviewer name"
+to that user's name, and renaming the current user through either path keeps
+the other in step. A rename never changes the id: `test_rename_keeps_the_id
+_so_history_does_not_split` writes an edit, renames, and reads the change_log
+rows back under the same actor id. Deactivation keeps the row and every
+record under its name; you cannot deactivate yourself, and the last active
+project_admin can be neither deactivated nor demoted.
+
+**Frontend.** `UserPicker.svelte` (list of active users with their role,
+"New name" with a role, shown over Home while `needsUserChoice`; a lone user
+is chosen silently), `UsersPane.svelte` in Settings > Users (add, rename
+inline, role select, deactivate; read-only with the reason for anyone who is
+not a project_admin; deactivated users behind "Show deactivated (n)").
+Client wrappers `usersList/Create/Rename/Deactivate/SetRole/SetCurrent`.
+
+**legacy:human.** A row written before identity existed carries the actor id
+`"human"`. `actorDisplayId` (`reviewLabels.ts`) and `display_actor_id`
+(`authorization.py`) show it as `legacy:human`; `actorLabel` and the
+evidence inspector's history use it. Nothing rewrites the row (#78: no
+backfill, the author is genuinely unknown).
+
+Tests: `tests/service/test_users_rpcs.py` (the first install; an admin adds
+a reporter, the picker is needed until a choice is made, the choice survives
+a restart, a reporter is refused on create but may switch; rename keeps the
+id and the change_log rows; deactivation keeps the rows, protects yourself
+and the last admin, refuses a deactivated choice, an unknown user and a bad
+role; legacy rendering). `UserPicker.test.ts` (4), `UsersPane.test.ts` (4),
+`reviewLabels.test.ts` (2), and the Settings modal test gains the Users pane.
+Not run on the desktop: the picker on a real second launch after a user has
+been added.

@@ -61,6 +61,9 @@ import type {
   NavigationSyncState,
   ProjectInfo,
   RegisteredProject,
+  UserRole,
+  UsersList,
+  WorkspaceUser,
   VerseAlignment,
   VerseData,
   VerseHeading,
@@ -374,6 +377,12 @@ export type EngineMethod =
   | "terminology.list"
   | "terminology.record"
   | "triage.cancel"
+  | "users.create"
+  | "users.deactivate"
+  | "users.list"
+  | "users.rename"
+  | "users.setCurrent"
+  | "users.setRole"
   | "triage.override"
   | "triage.results"
   | "triage.run"
@@ -682,6 +691,32 @@ export const bridge = {
 
   unarchiveProject(projectId: string): Promise<{ projectId: string; archived: boolean; books: number }> {
     return call("project.unarchive", { projectId });
+  },
+
+  // -- users (#237). list and setCurrent are anyone's; the rest is a
+  // project_admin's, refused with "forbidden" otherwise.
+  usersList(): Promise<UsersList> {
+    return call("users.list");
+  },
+
+  usersCreate(displayName: string, role: UserRole): Promise<WorkspaceUser> {
+    return call("users.create", { displayName, role });
+  },
+
+  usersRename(userId: string, displayName: string): Promise<WorkspaceUser> {
+    return call("users.rename", { userId, displayName });
+  },
+
+  usersDeactivate(userId: string): Promise<WorkspaceUser> {
+    return call("users.deactivate", { userId });
+  },
+
+  usersSetRole(userId: string, role: UserRole): Promise<WorkspaceUser> {
+    return call("users.setRole", { userId, role });
+  },
+
+  usersSetCurrent(userId: string): Promise<{ currentUserId: string; displayName: string; role: UserRole }> {
+    return call("users.setCurrent", { userId });
   },
 
   listProjects(): Promise<{ projects: RegisteredProject[] }> {

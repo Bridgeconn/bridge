@@ -34,6 +34,7 @@
   import ProjectDashboard from "./lib/components/ProjectDashboard.svelte";
   import DiagnosticsPanel from "./lib/components/DiagnosticsPanel.svelte";
   import StartupScreen from "./lib/components/StartupScreen.svelte";
+  import UserPicker from "./lib/components/UserPicker.svelte";
   import { STARTUP_TIMEOUT_MS, mergeStage } from "./lib/startup";
   import type { EngineStartupStage, EngineStartupState } from "./lib/api/bridgeClient";
   import ProjectReportScreen from "./lib/components/ProjectReportScreen.svelte";
@@ -400,6 +401,8 @@
   let startupStages: EngineStartupStage[] = [];
   let startupFailure = "";
   let startupDone = false;
+  // #237: several users and none chosen yet: the picker comes before Home.
+  let needsUserChoice = false;
   let startupTimer: ReturnType<typeof setTimeout> | undefined;
   let startupAttempt = 0;
   let unlistenFileDrop: (() => void) | null = null;
@@ -435,6 +438,7 @@
       try {
         const settings = await bridge.getSettings();
         reviewerMode.set(settings.reviewerMode);
+        needsUserChoice = Boolean(settings.needsUserChoice);
         setPlaces(settings);
         triageThreshold = settings.triageHideThreshold > 0 ? settings.triageHideThreshold : null;
       } catch (error) {
@@ -1212,6 +1216,9 @@
 </script>
 
 <div class="frame print-expand">
+  {#if startupDone && needsUserChoice}
+    <UserPicker onDone={() => { needsUserChoice = false; }} />
+  {/if}
   {#if !startupDone}
     <StartupScreen
       version={startupState?.version ?? ""}

@@ -1,14 +1,15 @@
 <script lang="ts">
+  import UsersPane from "./UsersPane.svelte";
   import { onMount } from "svelte";
   import { bridge, type EngineInfo } from "../api/bridgeClient";
   import { nudgeLanguageQa } from "../languageQaInline";
   import { manualOverrideMode, navigationStatus, project, reviewerMode } from "../stores";
-  import type { InlineConfidence, NavigationSyncState, SettingsData, TerminologyRule } from "../types/finding";
+  import type { InlineConfidence, NavigationSyncState, SettingsData, TerminologyRule, UserRole } from "../types/finding";
   import type { HouseStyleEntry, HouseStyleListResponse, HouseStyleProposal } from "../types/houseStyle";
   import type { CheckerSettings } from "../types/languageQa";
   import CheckerSettingsDialog from "./CheckerSettingsDialog.svelte";
 
-  type Pane = "ai" | "quality" | "connections" | "resources" | "terminology" | "languageQa" | "security";
+  type Pane = "ai" | "quality" | "connections" | "resources" | "terminology" | "languageQa" | "security" | "users";
 
   export let onClose: () => void;
   export let initialPane: Pane = "ai";
@@ -28,6 +29,7 @@
   let logosNavigation = false;
   let reviewerName = "";
   let reviewerNameUpdatedAt = "";
+  let localUserRole: UserRole = "project_admin";
   let engineInfo: EngineInfo | null = null;
   // Settings > Language QA: which indic-qa findings are drawn in the text.
   // App-level (a reviewer's tolerance), applied by the engine per request.
@@ -105,6 +107,7 @@
       logosNavigation = s.logosNavigation;
       reviewerName = s.reviewerName || "";
       reviewerNameUpdatedAt = s.reviewerNameUpdatedAt || "";
+      localUserRole = s.localUserRole ?? "project_admin";
       inlinePrecision = s.languageQaInlinePrecision ?? 0;
       inlineConfidence = s.languageQaInlineConfidence ?? "low";
       learnedFixes = s.languageQaLearnedFixes ?? true;
@@ -448,6 +451,7 @@
       <button class="nav-item" class:active={activePane === "terminology"} on:click={() => (activePane = "terminology")}>Terminology</button>
       <button class="nav-item" class:active={activePane === "languageQa"} on:click={() => (activePane = "languageQa")}>Language QA</button>
       <button class="nav-item" class:active={activePane === "security"} on:click={() => (activePane = "security")}>Security</button>
+      <button class="nav-item" class:active={activePane === "users"} on:click={() => (activePane = "users")}>Users</button>
       {#if engineInfo}
         <div class="about-version" title="What this window is actually running, not what Windows says was installed">
           Bridge {engineInfo.bridgeVersion} · Schema v{engineInfo.companionSchemaVersion}
@@ -792,6 +796,8 @@
             {#if houseStyleMessage}<span class="save-msg">{houseStyleMessage}</span>{/if}
           </div>
         {/if}
+      {:else if activePane === "users"}
+        <UsersPane myRole={localUserRole} />
       {:else if activePane === "security"}
         <h3>Security & privacy</h3>
         <p class="desc">Project data and Greek Room findings never leave this machine unless you explicitly use AI explain.</p>

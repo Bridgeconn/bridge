@@ -389,6 +389,19 @@ class AppSettings:
         self.save_sanitized()
 
     @property
+    def current_user_id(self) -> str:
+        """#237: the user this installation is signed in as (the startup
+        picker's choice); '' until someone has chosen. Kept here, beside
+        reviewer_name, because AppSettings replaces the whole settings_kv map
+        on every save and a key it did not know would be lost."""
+        return str(self.data.get('current_user_id') or '').strip()
+
+    @current_user_id.setter
+    def current_user_id(self, value: str) -> None:
+        self.data['current_user_id'] = str(value or '').strip()
+        self.save_sanitized()
+
+    @property
     def reviewer_name_updated_at(self) -> str:
         """UTC ISO-8601 timestamp of the last Settings-initiated rename, or
         '' if the reviewer name has never been explicitly changed (the

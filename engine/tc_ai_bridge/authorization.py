@@ -149,6 +149,7 @@ _READ = (
     "analysisJob.status", "analysisJob.getRecent", "analysisJob.getScopeStatus",
     "paratext.getState", "issueResolution.list", "logos.getState",
     "navigation.status", "navigation.poll", "navigation.bridgeChanged", "navigation.resolve",
+    "users.list", "users.setCurrent",
 )
 
 _RUN_CHECKS = (
@@ -188,7 +189,11 @@ _MANAGE_PROJECTS = (
     "project.forget", "project.delete", "project.rename", "project.archive", "project.unarchive",
 )
 
-_MANAGE_USERS: tuple[str, ...] = ()  # users.* arrive with #237
+# #237: anyone may see who exists and sign in as themselves at startup; only
+# a project_admin changes the list.
+_MANAGE_USERS: tuple[str, ...] = (
+    "users.create", "users.rename", "users.deactivate", "users.setRole",
+)
 
 METHOD_ACTIONS: dict[str, Action] = {
     **{m: Action.READ for m in _READ},
@@ -201,6 +206,18 @@ METHOD_ACTIONS: dict[str, Action] = {
 # The request keys a caller may not use to name its own actor (#183, DECISIONS
 # 2026-10-12): the engine attributes every write itself.
 ACTOR_WIRE_KEYS: tuple[str, ...] = ("actorId", "actor", "requestedBy")
+
+
+LEGACY_HUMAN_ACTOR = "human"
+LEGACY_HUMAN_LABEL = "legacy:human"
+
+
+def display_actor_id(actor_id: Any) -> str:
+    """#237: a row written before identity existed (#78) carries the literal
+    actor id "human". Readers show it as `legacy:human` and never rewrite or
+    reassign it: that row genuinely has no known author."""
+    value = str(actor_id or "").strip()
+    return LEGACY_HUMAN_LABEL if value == LEGACY_HUMAN_ACTOR else value
 
 
 def refuse_named_actor(params: Mapping[str, Any] | None) -> None:

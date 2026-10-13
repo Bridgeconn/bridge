@@ -116,7 +116,7 @@ from tc_ai_bridge.logos_connector import LogosConnectorClient, LogosConnectorErr
 from tc_ai_bridge.navigation import NavigationSyncCoordinator
 from tc_ai_bridge.models import QAIssue, TokenRef, VerseAlignment
 from tc_ai_bridge.secret_store import AppSettings
-from tc_ai_bridge.workspace_repository import WorkspaceRepository, project_path_key
+from tc_ai_bridge.workspace_repository import WorkspaceRepository, project_path_key, WorkspaceError
 from tc_ai_bridge.resource_materializer import materialize_book_checks
 from tc_ai_bridge.usfm import strip_usfm, whitespace_tokens
 from tc_ai_bridge.usfm_verse import WHITESPACE_TOKEN_TRIM_CHARS, lift_verse
@@ -369,6 +369,14 @@ class Methods:
     # #238: the projects list's management. A display name and an archive
     # flag in the registry only; nothing on disk changes.
     PROJECT_RENAME = "project.rename"
+    # #237: the Users screen and the startup picker. list and setCurrent are
+    # anyone's; the rest is a project_admin's (authorization.py).
+    USERS_LIST = "users.list"
+    USERS_CREATE = "users.create"
+    USERS_RENAME = "users.rename"
+    USERS_DEACTIVATE = "users.deactivate"
+    USERS_SET_ROLE = "users.setRole"
+    USERS_SET_CURRENT = "users.setCurrent"
     PROJECT_ARCHIVE = "project.archive"
     PROJECT_UNARCHIVE = "project.unarchive"
     PROJECT_SCAN = "project.scan"
@@ -731,10 +739,73 @@ class BridgeEngine:
         """
         if self._local_user is None:
             self._local_user = self.workspace.get_or_create_local_user(
-                self.settings.reviewer_name
+                self.settings.reviewer_name, current_user_id=self.settings.current_user_id,
             )
             self._local_user.setdefault("role", Role.PROJECT_ADMIN.value)
         return self._local_user
+
+    # -- users (#237) ------------------------------------------------------
+
+    def users_list(self) -> dict[str, Any]:
+        current = self.local_user()["userId"]
+        users = [{**user, "current": user["userId"] == current} for user in self.workspace.list_users()]
+        return {"users": users, "currentUserId": current}
+
+    def users_create(self, display_name: str, role: str) -> dict[str, Any]:
+        parsed = Role(str(role or "").strip() or Role.EDITOR.value)
+        return self.workspace.create_user(display_name, parsed.value)
+
+    def users_rename(self, user_id: str, display_name: str) -> dict[str, Any]:
+        user = self.workspace.rename_user(user_id, display_name)
+        if user["userId"] == self.local_user()["userId"]:
+            # The Settings "Reviewer name" is this user's name: keep them in step.
+            self.settings.reviewer_name = user["displayName"]
+            self.refresh_local_user()
+        return user
+
+    def users_deactivate(self, user_id: str) -> dict[str, Any]:
+        if user_id == self.local_user()["userId"]:
+            raise ProjectError("You cannot deactivate yourself; sign in as someone else first.")
+        admins = [
+            u for u in self.workspace.list_users()
+            if u["active"] and u["role"] == Role.PROJECT_ADMIN.value and u["userId"] != user_id
+        ]
+        target = self.workspace.get_user(user_id)
+        if target is None:
+            raise ProjectError("Unknown user.")
+        if target["role"] == Role.PROJECT_ADMIN.value and not admins:
+            raise ProjectError("The last project admin cannot be deactivated.")
+        return self.workspace.set_user_active(user_id, False)
+
+    def users_set_role(self, user_id: str, role: str) -> dict[str, Any]:
+        parsed = Role(str(role or "").strip())
+        target = self.workspace.get_user(user_id)
+        if target is None:
+            raise ProjectError("Unknown user.")
+        if (
+            target["role"] == Role.PROJECT_ADMIN.value and parsed is not Role.PROJECT_ADMIN
+            and not [u for u in self.workspace.list_users()
+                     if u["active"] and u["role"] == Role.PROJECT_ADMIN.value and u["userId"] != user_id]
+        ):
+            raise ProjectError("The last project admin must keep that role.")
+        self.workspace.set_user_role(user_id, parsed.value)
+        if user_id == self.local_user()["userId"]:
+            self.refresh_local_user()
+        return self.workspace.get_user(user_id) or {}
+
+    def users_set_current(self, user_id: str) -> dict[str, Any]:
+        """The startup picker's choice (#237). Local mode: a name, no password."""
+        target = self.workspace.get_user(user_id)
+        if target is None or not target["active"]:
+            raise ProjectError(f"{target['displayName'] if target else 'That user'} is deactivated." if target else "Unknown user.")
+        self.settings.current_user_id = user_id
+        self.settings.reviewer_name = target["displayName"]
+        user = self.refresh_local_user()
+        return {"currentUserId": user["userId"], "displayName": user["displayName"], "role": user.get("role")}
+
+    def _needs_user_choice(self) -> bool:
+        active = [u for u in self.workspace.list_users() if u["active"]]
+        return len(active) > 1 and not self.settings.current_user_id
 
     def refresh_local_user(self) -> dict[str, str]:
         """Re-read the local user (a role change, #236; a rename or a switch,
@@ -6737,6 +6808,7 @@ class BridgeEngine:
             # falls back to the same value when it is absent.
             "localUserId": self.current_actor_id(),
             "localUserRole": str(self.local_user().get("role") or Role.PROJECT_ADMIN.value),
+            "needsUserChoice": self._needs_user_choice(),
             "reviewerMode": self.settings.reviewer_mode,
             "paratextUsername": self.settings.paratext_username,
             "paratextNavigation": self.settings.paratext_navigation,
@@ -7059,6 +7131,24 @@ class BridgeEngine:
                 return EngineResponse.ok(request.id, result=self.list_book_progress())
             if m == Methods.PROJECT_FORGET:
                 return EngineResponse.ok(request.id, result=self.forget_project(p.get("projectId", "")))
+            if m == Methods.USERS_LIST:
+                return EngineResponse.ok(request.id, result=self.users_list())
+            if m == Methods.USERS_CREATE:
+                return EngineResponse.ok(request.id, result=self.users_create(
+                    str(p.get("displayName") or ""), str(p.get("role") or ""),
+                ))
+            if m == Methods.USERS_RENAME:
+                return EngineResponse.ok(request.id, result=self.users_rename(
+                    str(p.get("userId") or ""), str(p.get("displayName") or ""),
+                ))
+            if m == Methods.USERS_DEACTIVATE:
+                return EngineResponse.ok(request.id, result=self.users_deactivate(str(p.get("userId") or "")))
+            if m == Methods.USERS_SET_ROLE:
+                return EngineResponse.ok(request.id, result=self.users_set_role(
+                    str(p.get("userId") or ""), str(p.get("role") or ""),
+                ))
+            if m == Methods.USERS_SET_CURRENT:
+                return EngineResponse.ok(request.id, result=self.users_set_current(str(p.get("userId") or "")))
             if m == Methods.PROJECT_RENAME:
                 return EngineResponse.ok(request.id, result=self.rename_project(
                     p.get("projectId", ""), str(p.get("name") or ""),
@@ -7725,6 +7815,8 @@ class BridgeEngine:
             return EngineResponse.fail(request.id, "unknown_method", f"No handler for '{m}'")
         except AuthorizationError as exc:
             return EngineResponse.fail(request.id, "forbidden", str(exc))
+        except WorkspaceError as exc:
+            return EngineResponse.fail(request.id, "project_error", str(exc))
         except ProjectError as exc:
             return EngineResponse.fail(request.id, "project_error", str(exc))
         except AlignmentError as exc:

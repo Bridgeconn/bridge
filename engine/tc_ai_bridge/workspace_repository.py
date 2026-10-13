@@ -284,7 +284,7 @@ class WorkspaceRepository:
             rows = conn.execute("SELECT user_id, display_name FROM users").fetchall()
         return {str(row["user_id"]): str(row["display_name"]) for row in rows}
 
-    def get_or_create_local_user(self, display_name: str) -> dict[str, str]:
+    def get_or_create_local_user(self, display_name: str, current_user_id: str = "") -> dict[str, str]:
         """Return this installation's local user, minting one on first call.
 
         The ``user_id`` is stable for the life of the workspace database and
@@ -299,11 +299,20 @@ class WorkspaceRepository:
         """
         name = str(display_name or "").strip() or "Unnamed Reviewer"
         now = self._now()
+        chosen = str(current_user_id or "").strip()
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute(
-                "SELECT user_id, display_name, role FROM users WHERE active=1 ORDER BY created_at LIMIT 1"
-            ).fetchone()
+            row = None
+            if chosen:
+                # #237: the user chosen at startup or on the Users screen, if
+                # still active; otherwise the oldest active row as before.
+                row = conn.execute(
+                    "SELECT user_id, display_name, role FROM users WHERE user_id=? AND active=1", (chosen,)
+                ).fetchone()
+            if row is None:
+                row = conn.execute(
+                    "SELECT user_id, display_name, role FROM users WHERE active=1 ORDER BY created_at LIMIT 1"
+                ).fetchone()
             if row is not None:
                 user_id = str(row["user_id"])
                 if str(row["display_name"]) != name:
@@ -321,6 +330,68 @@ class WorkspaceRepository:
             )
             conn.commit()
             return {"userId": user_id, "displayName": name, "role": "project_admin"}
+
+    def list_users(self) -> list[dict[str, Any]]:
+        """Every user this installation knows, active or not, oldest first."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT user_id, display_name, role, active, created_at, updated_at FROM users ORDER BY created_at, user_id"
+            ).fetchall()
+        return [self._user_row(row) for row in rows]
+
+    def get_user(self, user_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT user_id, display_name, role, active, created_at, updated_at FROM users WHERE user_id=?",
+                (str(user_id),),
+            ).fetchone()
+        return self._user_row(row) if row is not None else None
+
+    @staticmethod
+    def _user_row(row: Any) -> dict[str, Any]:
+        return {
+            "userId": str(row["user_id"]), "displayName": str(row["display_name"]),
+            "role": str(row["role"] or "project_admin"), "active": bool(row["active"]),
+            "createdAt": str(row["created_at"]), "updatedAt": str(row["updated_at"]),
+        }
+
+    def create_user(self, display_name: str, role: str) -> dict[str, Any]:
+        name = str(display_name or "").strip()
+        if not name:
+            raise WorkspaceError("A user needs a display name.")
+        now = self._now()
+        user_id = str(uuid.uuid4())
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO users(user_id, display_name, created_at, updated_at, active, role) VALUES(?,?,?,?,1,?)",
+                (user_id, name, now, now, str(role)),
+            )
+            conn.commit()
+        return self.get_user(user_id) or {}
+
+    def rename_user(self, user_id: str, display_name: str) -> dict[str, Any]:
+        """The id never changes: every row this person wrote re-labels."""
+        name = str(display_name or "").strip()
+        if not name:
+            raise WorkspaceError("A user needs a display name.")
+        with self._connect() as conn:
+            changed = conn.execute(
+                "UPDATE users SET display_name=?, updated_at=? WHERE user_id=?", (name, self._now(), str(user_id)),
+            ).rowcount
+            conn.commit()
+        if not changed:
+            raise WorkspaceError("Unknown user.")
+        return self.get_user(user_id) or {}
+
+    def set_user_active(self, user_id: str, active: bool) -> dict[str, Any]:
+        with self._connect() as conn:
+            changed = conn.execute(
+                "UPDATE users SET active=?, updated_at=? WHERE user_id=?", (1 if active else 0, self._now(), str(user_id)),
+            ).rowcount
+            conn.commit()
+        if not changed:
+            raise WorkspaceError("Unknown user.")
+        return self.get_user(user_id) or {}
 
     def set_user_role(self, user_id: str, role: str) -> None:
         """#236: give a user one of the three roles. The caller has checked
