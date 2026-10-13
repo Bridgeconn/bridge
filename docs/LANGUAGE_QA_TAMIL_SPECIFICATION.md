@@ -138,7 +138,7 @@ Item 43 is checked in the USFM: `common/header.running-head` flags a running hea
 | # | Item | What it covers | Status | Bridge rule / evidence | Owner |
 |---|---|---|---|---|---|
 | 48 | Run every automated check | All checks run and clean, or every finding decided. | Planned (P4) | Language QA as a check-framework stage, the collection runner and the publication gate | Publisher |
-| 49 | Whole-Bible wordlist audit | Every word form reviewed across the Bible. | Not checked | `ta-irv/lexicon.rare-near-common`, which compared each book against the whole-corpus lexicon, is disabled (2026-09-28 review, 0 of 21). It needs a morphology filter first | Proofreader |
+| 49 | Whole-Bible wordlist audit | Every word form reviewed across the Bible. | Assisted | The Language QA panel's **Book words** tab (`languageQa.bookWords`): every word of the book outside the pack's dictionary, most frequent first, with its count in the book, in the whole IRV and in the OV, its status and its first place; the reviewer adds a word to the project's dictionary there. A person reviews it book by book. `ta-irv/lexicon.rare-near-common`, the automatic version, stays disabled (2026-09-28 review, 0 of 21) (#255) | Proofreader |
 | 50 | Whole-Bible glossary audit | Glossary terms used consistently. | Partial | Termbase v3; the collection QA run's termbase coverage report (approved renderings never used, rejected ones still present, per book) | Consultant |
 | 51 | Whole-Bible proper-name audit | One spelling per name across all books. | Partial | `names.spelling_similarity`; the collection run's cross-book names stage; `project/name.minority-spelling` | Translator |
 | 52 | Final blind proofread | A fresh reader who has not seen earlier rounds. | Not checked | | Proofreader |
