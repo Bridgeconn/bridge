@@ -19714,3 +19714,37 @@ engine suite was not re-run for this one-file test change. It last ran at b136bb
 
 **Not changed, worth knowing.** A translator's machine as loaded as this one would also see the
 first Logos request time out at 10 s. It is retried on the next call, and nothing is lost.
+
+## 2026-10-14 — Cross-Verse "Align automatically": the pass from the job, a plain timeout message (#243)
+
+**What.** The button's "Aligning… pass 1 of 2 / pass 2 of 2" was a 20 s `setTimeout`. A provider
+timeout showed the socket's "The read operation timed out" (#241 on the installed 0.14.0). Since
+#242 the window is a job whose status carries `currentPass`.
+
+**How.**
+- `CrossVerseAlignmentModal` passes `onProgress` to `bridge.autoAlignWindow` (#242's hook, so
+  `bridgeClient.ts` is untouched) and labels each status with `autoAlign.passLabel`: "Starting…",
+  "Aligning… pass N of 2", "Comparing the two passes…", "Writing what both passes agree on…". The
+  timer is gone.
+- On failure the raw text is the failed window's own `results[...].error` from the last status.
+  The job's `error` there is only "1 window(s) failed.", and that is what the client throws.
+  `autoAlign.providerProblem` maps three cases to a plain sentence that says nothing was changed:
+  - a timeout: "The AI provider did not answer within 4 minutes; nothing was changed.";
+  - HTTP 429;
+  - an unreachable provider (URLError, refused, getaddrinfo).
+
+  The raw text is under a native `<details>` "Show details". Any other error is shown as it is.
+- The window job writes only after both passes and reconcile, so "nothing was changed" holds for
+  every provider failure.
+
+**The 240 s ceiling: kept.** It is `ai_client.OpenAIResponsesClient`'s one timeout for every AI
+call, not only this window. A normal window measured 26.7 s for both calls (#241, PHP 1:3–4), so
+240 s is about 18 times one call. With the dispatcher no longer held (#242), a slow call costs only
+the reviewer's wait, and Cancel is honoured before any write. Lowering it would risk cutting off
+the longer review calls that share it. Scaling it by window size buys nothing at ≤ 5 verses.
+
+**Gates.** `npm run check` 0 errors, 0 warnings; `npm run test` 751 passed (new: `passLabel`,
+`windowJobError` and `providerProblem` in `autoAlign.test.ts`; pass text following the status, the
+timeout message with its details and a usable page, and a raw error with no details, in
+`CrossVerseAlignmentModal.test.ts`); `npm run build` ok. Frontend-only, so the engine suite was not
+run. Not yet seen on the installed app against a real provider.
