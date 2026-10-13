@@ -29,10 +29,10 @@ class GatedRuntime(PassageSemanticRuntime):
     gate = threading.Event()
     entered = threading.Event()
 
-    def __init__(self, project, project_id):
+    def __init__(self, project, project_id, **kwargs):
         GatedRuntime.entered.set()
         assert GatedRuntime.gate.wait(job_timeout(10.0)), "the test never released the build"
-        super().__init__(project, project_id)
+        super().__init__(project, project_id, **kwargs)
 
 
 @pytest.fixture
@@ -105,7 +105,7 @@ def test_await_semantic_returns_ready_like_the_old_open(tmp_path, fixture_projec
 
 def test_a_failed_build_degrades_to_recovery_required_with_scripture_usable(tmp_path, fixture_project, monkeypatch):
     class Broken(PassageSemanticRuntime):
-        def __init__(self, project, project_id):
+        def __init__(self, project, project_id, **kwargs):
             raise RuntimeError("companion database is locked")
 
     monkeypatch.setattr(bridge_service, "PassageSemanticRuntime", Broken)

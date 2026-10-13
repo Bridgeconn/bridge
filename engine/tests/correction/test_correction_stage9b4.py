@@ -1289,7 +1289,7 @@ def test_verification_and_corrected_persist_across_a_runtime_restart(
     from tc_ai_bridge.tc_project import TranslationCoreProject
 
     reopened_project = TranslationCoreProject(runtime.project.path)
-    reopened = PassageSemanticRuntime(reopened_project, runtime.project_id)
+    reopened = PassageSemanticRuntime(reopened_project, runtime.project_id, actor_id="Reviewer")
     reopened_project.attach_passage_semantic_runtime(reopened)
     restarted = CorrectionVerificationService(reopened, _Jobs(reopened.repository))
 

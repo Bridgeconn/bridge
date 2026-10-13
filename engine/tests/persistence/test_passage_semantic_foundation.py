@@ -438,11 +438,11 @@ def test_correction_application_requires_human_and_stales_dependencies(tmp_path:
     with pytest.raises(FoundationValidationError, match="explicit human action"):
         repo.record_correction_applied(
             "proposal-1", actor_type="SYSTEM", applied_target_revision="rev-2", expected_revision=1
-        )
+        , actor_id="Reviewer")
     before = repo.qa_finding("qa-1")
     repo.record_correction_applied(
         "proposal-1", actor_type="HUMAN", applied_target_revision="rev-2", expected_revision=1
-    )
+    , actor_id="Reviewer")
     assert repo.correction_proposal("proposal-1")["appliedTargetRevision"] == "rev-2"
     assert repo.lexical_solution("solution-dependent")["lifecycleStatus"] == "STALE"
 

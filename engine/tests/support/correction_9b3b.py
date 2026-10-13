@@ -59,7 +59,7 @@ def _fixture(
     }), encoding="utf-8")
     (root / "php.usfm").write_text("\\id PHP\n\\c 1\n\\v 3 IMPORTED THREE\n\\v 6 IMPORTED SIX\n", encoding="utf-8")
     project = TranslationCoreProject(root)
-    runtime = PassageSemanticRuntime(project, project_id)
+    runtime = PassageSemanticRuntime(project, project_id, actor_id="Reviewer")
     project.attach_passage_semantic_runtime(runtime)
     repo = runtime.repository
     source_unit_id = "source-unit-php-1-3"

@@ -151,7 +151,7 @@ def project_identity(root: Path) -> str:
 
 def seed(root: Path) -> dict[str, object]:
     """Run Stages 5-8 through Stage 9A.4 orchestration and persist results."""
-    runtime = PassageSemanticRuntime(TranslationCoreProject(root), project_identity(root))
+    runtime = PassageSemanticRuntime(TranslationCoreProject(root), project_identity(root), actor_id="seed")
     provider = FixtureEmbeddingProvider(paired_vectors(PHP_PAIRS))
     runtime.semantic_location = SemanticLocationEngine(runtime, provider)
     manager = AnalysisJobManager(allow_fixture_provider=True)

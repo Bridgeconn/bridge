@@ -3842,7 +3842,7 @@ class FoundationRepository:
 
     def record_human_review(
         self, entity_type: str, entity_id: str, *, review_status: ReviewStatus,
-        expected_revision: int, actor_id: str = "human", note: str = "",
+        expected_revision: int, actor_id: str, note: str = "",
         lifecycle_status: LifecycleStatus | None = None,
         payload_updates: dict[str, Any] | None = None,
         invalidate_dependents: bool = False,
@@ -4483,7 +4483,7 @@ class FoundationRepository:
 
     def record_correction_application_metadata(
         self, proposal_id: str, *, actor_type: str | ActorType, applied_target_revision: str,
-        expected_revision: int, actor_id: str = "human",
+        expected_revision: int, actor_id: str,
     ) -> None:
         """Record that a proposal's text was written. Bookkeeping only.
 
@@ -4546,7 +4546,7 @@ class FoundationRepository:
             )
             conn.commit()
 
-    def record_correction_applied(self, proposal_id: str, *, actor_type: str | ActorType, applied_target_revision: str, expected_revision: int, actor_id: str = "human") -> None:
+    def record_correction_applied(self, proposal_id: str, *, actor_type: str | ActorType, applied_target_revision: str, expected_revision: int, actor_id: str) -> None:
         """Deprecated Stage 9A name. Retained so existing callers keep working.
 
         Kept as a thin alias rather than deleted: the old name reads like the

@@ -287,7 +287,7 @@ def _runtime_with_completed_alignment(tmp_path: Path) -> PassageSemanticRuntime:
         encoding="utf-8",
     )
     (root / "php.usfm").write_text("\\id PHP\n\\c 1\n\\p\n\\v 3 OLD IMPORTED\n", encoding="utf-8")
-    return PassageSemanticRuntime(TranslationCoreProject(root), f"alignment-evidence-{tmp_path.name}")
+    return PassageSemanticRuntime(TranslationCoreProject(root), f"alignment-evidence-{tmp_path.name}", actor_id="Reviewer")
 
 
 def test_alignment_precedents_for_range_resolves_a_completed_group(tmp_path: Path) -> None:
@@ -417,7 +417,7 @@ def _runtime_with_completed_bridge_alignment(tmp_path: Path) -> PassageSemanticR
         encoding="utf-8",
     )
     (root / "php.usfm").write_text("\\id PHP\n\\c 1\n\\p\n\\v 2-3 OLD BRIDGE WORDING\n", encoding="utf-8")
-    return PassageSemanticRuntime(TranslationCoreProject(root), f"bridge-evidence-{tmp_path.name}")
+    return PassageSemanticRuntime(TranslationCoreProject(root), f"bridge-evidence-{tmp_path.name}", actor_id="Reviewer")
 
 
 def test_alignment_precedents_for_range_skips_a_verse_bridge_reference(
@@ -500,7 +500,7 @@ def _runtime_with_cross_verse_link(tmp_path: Path) -> PassageSemanticRuntime:
         "1", "4", TokenRef("δεήσει", 1, 1, strong="G11620", lemma="δέησις", morph="Gr,N,,,,,DFS,"),
         "1", "3", TokenRef("God", 1, 1),
     )
-    return PassageSemanticRuntime(project, f"cross-verse-evidence-{tmp_path.name}")
+    return PassageSemanticRuntime(project, f"cross-verse-evidence-{tmp_path.name}", actor_id="Reviewer")
 
 
 def _expected_pair(runtime: PassageSemanticRuntime) -> tuple[str, str]:

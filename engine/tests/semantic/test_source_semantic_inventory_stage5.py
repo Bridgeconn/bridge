@@ -36,7 +36,7 @@ def _project(root: Path, book: str, language: str = "tam") -> TranslationCorePro
 
 def _inventory(tmp_path: Path, book: str, language: str = "tam") -> SourceSemanticInventory:
     project = _project(tmp_path / f"{book}-{language}", book, language)
-    runtime = PassageSemanticRuntime(project, f"project-{book}-{language}")
+    runtime = PassageSemanticRuntime(project, f"project-{book}-{language}", actor_id="Reviewer")
     return SourceSemanticInventory(runtime)
 
 

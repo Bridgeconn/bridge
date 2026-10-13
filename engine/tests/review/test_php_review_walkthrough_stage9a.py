@@ -51,7 +51,7 @@ def runtime(seeded: tuple[Path, dict]) -> PassageSemanticRuntime:
     # The seeder registers the fixture exactly as the desktop app does. Reopen
     # it with that persisted identity; a hardcoded id correctly trips the
     # companion database's cross-project merge protection.
-    return PassageSemanticRuntime(TranslationCoreProject(root), summary["projectId"])
+    return PassageSemanticRuntime(TranslationCoreProject(root), summary["projectId"], actor_id="Reviewer")
 
 
 # --- The fixture itself -----------------------------------------------------

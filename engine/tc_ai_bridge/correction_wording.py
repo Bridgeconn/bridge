@@ -587,7 +587,7 @@ class CorrectionWordingService:
     def create_proposal(
         self, *, finding_id: str, intent: CorrectionIntent,
         human_proposed_text: str = "", explanation: str = "",
-        request_suggestion: bool = False, actor_id: str = "human",
+        request_suggestion: bool = False, actor_id: str,
     ) -> dict[str, Any]:
         self._require_eligible(self.eligibility.evaluate(finding_id))
         context = self._validate_intent(finding_id, intent)
@@ -605,7 +605,7 @@ class CorrectionWordingService:
 
     def edit_proposal(
         self, proposal_id: str, *, proposed_text: str, expected_revision: int,
-        actor_id: str = "human", explanation: str = "",
+        actor_id: str, explanation: str = "",
     ) -> dict[str, Any]:
         if not proposed_text:
             raise FoundationValidationError("Correction proposal wording must not be empty")
@@ -636,7 +636,7 @@ class CorrectionWordingService:
 
     def reject_proposal(
         self, proposal_id: str, *, expected_revision: int,
-        actor_id: str = "human", reason: str = "",
+        actor_id: str, reason: str = "",
     ) -> dict[str, Any]:
         return self.repository.reject_correction_proposal(
             proposal_id, expected_revision=expected_revision,
@@ -645,7 +645,7 @@ class CorrectionWordingService:
 
     def regenerate_proposal(
         self, proposal_id: str, *, expected_revision: int,
-        actor_id: str = "human",
+        actor_id: str,
     ) -> dict[str, Any]:
         current = self.repository.correction_proposal(proposal_id)
         finding_id = str(current["qaFindingId"])

@@ -1033,7 +1033,7 @@ class BridgeEngine:
         attach to by mistake."""
         started = time.perf_counter()
         try:
-            runtime = PassageSemanticRuntime(candidate, project_id)
+            runtime = PassageSemanticRuntime(candidate, project_id, actor_id=self.current_actor_id())
             self._passage_semantic_runtime_value = runtime
             self._correction_application_service = CorrectionApplicationService(runtime, self.edit_verse)
             self._analysis_jobs.bind_runtime(runtime)

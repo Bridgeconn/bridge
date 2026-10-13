@@ -724,9 +724,12 @@ def tokenize_target_text(text: str, profile: str = DEFAULT_TOKENIZER) -> list[di
 
 
 class PassageSemanticRuntime:
-    def __init__(self, project: Any, project_id: str):
+    def __init__(self, project: Any, project_id: str, *, actor_id: str):
+        """`actor_id` is the signed-in user every review decision this runtime
+        records is attributed to (#182); the engine passes current_actor_id()."""
         self.project = project
         self.project_id = project_id
+        self.actor_id = str(actor_id)
         self.book = str(project.book_id).upper()
         self.path = project.companion_dir() / "passageSemantic" / "bridge-semantic.sqlite3"
         # Wall-clock seconds per constructor phase, in order, for the
@@ -759,7 +762,7 @@ class PassageSemanticRuntime:
         self.semantic_location = SemanticLocationEngine(self)
         self.meaning_analysis = MeaningAnalysisEngine(self)
         self.qa_audit = QaAuditEngine(self)
-        self.qa_review = QaReviewService(self)
+        self.qa_review = QaReviewService(self, actor_id=self.actor_id)
         self.correction_eligibility = CorrectionEligibilityService(self)
         self.correction_wording = CorrectionWordingService(self)
         self.correction_application_recovery = CorrectionApplicationRecoveryCoordinator(self)

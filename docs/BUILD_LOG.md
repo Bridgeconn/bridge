@@ -19303,3 +19303,34 @@ role; legacy rendering). `UserPicker.test.ts` (4), `UsersPane.test.ts` (4),
 `reviewLabels.test.ts` (2), and the Settings modal test gains the Users pane.
 Not run on the desktop: the picker on a real second launch after a user has
 been added.
+
+## 2026-10-15 — #182 actor_id is required; the review service gets the signed-in user
+
+The seven `actor_id="human"` defaults are gone: `create_proposal`,
+`edit_proposal`, `reject_proposal`, `regenerate_proposal`
+(`correction_wording.py`), `record_human_review`,
+`record_correction_application_metadata`, `record_correction_applied`
+(`passage_semantic_repository.py`) and `QaReviewService.__init__`
+(`qa_review.py`) now require it, so a new caller cannot write an
+unattributed row by forgetting the argument.
+
+**One behaviour change found by doing it.** `QaReviewService` is built by
+`PassageSemanticRuntime` with no actor, and the dispatcher's
+`qaReview.decideFinding` / `addNote` never passed one, so every Stage 9A
+review decision and note was recorded with the literal `"human"` even after
+#78 gave every other write the stable user id. `PassageSemanticRuntime`
+now takes `actor_id` (required) and hands it to the review service; the
+engine passes `current_actor_id()` when it builds the runtime (#112's
+worker). From this commit a review decision is attributed like a verse
+decision. Rows already written as `"human"` stay as they are and show as
+`legacy:human` (#237); #78's no-backfill rule holds.
+
+Call sites: 29 in tests and test support, found by a balanced-paren scan
+and given `actor_id="Reviewer"`; two in the engine. No row changes for the
+desktop: the dispatcher already passed `current_actor_id()` on every
+correction path, and #183 removed the last way a request could name one.
+
+Tests: `tests/service/test_users_rpcs.py::test_review_decisions_carry_the_
+signed_in_user` (a qaReview decision through the dispatcher records the
+engine's user id, not "human"); the existing correction and review suites
+pass with the required argument.

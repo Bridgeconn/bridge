@@ -102,3 +102,16 @@ def test_deactivation_keeps_the_rows_and_protects_the_last_admin_and_yourself(tm
 @pytest.mark.parametrize("actor_id,shown", [("human", "legacy:human"), ("9143bbc0", "9143bbc0"), ("", "")])
 def test_legacy_human_is_shown_as_legacy_and_never_rewritten(actor_id, shown):
     assert display_actor_id(actor_id) == shown
+
+
+def test_review_decisions_carry_the_signed_in_user(tmp_path, fixture_project):
+    """#182: the Stage 9A review service used to be built with no actor and
+    recorded every decision as "human"; the runtime now carries the engine's
+    user id to it."""
+    engine = _engine(tmp_path)
+    assert call(engine, "project.open", {"path": str(fixture_project), "awaitSemantic": True})["success"] is True
+    runtime = engine.passage_semantic_runtime
+    assert runtime is not None
+    assert runtime.actor_id == engine.current_actor_id()
+    assert runtime.qa_review.actor_id == engine.current_actor_id()
+    assert runtime.qa_review.actor_id != "human"

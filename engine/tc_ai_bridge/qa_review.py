@@ -63,7 +63,7 @@ _DECIDABLE = {
 class QaReviewService:
     """Read the analysis, record the human decision. Never the reverse."""
 
-    def __init__(self, runtime: Any, actor_id: str = "human"):
+    def __init__(self, runtime: Any, actor_id: str):
         self.runtime = runtime
         self.repository = runtime.repository
         self.project_id = runtime.project_id
