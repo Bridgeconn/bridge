@@ -144,3 +144,12 @@ const isStringArray = (value: unknown): value is string[] =>
 /** Which sections of the Checker settings dialog are open, by section id. As
  * in the indic-qa web app, every section starts closed and stays as left. */
 export const checkerSettingsOpen = persisted<string[]>("bridge.checkerSettings.open.v1", [], isStringArray);
+
+/** The elective checks (#251): which boxes are ticked, by box id
+ * (checkSelection.ts). The editor's runs share one selection; Collection QA
+ * keeps its own, with Greek Room in it, as it is the unattended whole-Bible
+ * pass (#252). A saved selection with no known box falls back to the default. */
+export const editorChecks = persisted<string[]>("bridge.editor.checks.v1",
+  ["tN", "tW", "alignment", "text", "languageQa"], isStringArray);
+export const collectionChecks = persisted<string[]>("bridge.dashboard.collectionChecks.v1",
+  ["tN", "tW", "alignment", "text", "languageQa", "greekroom"], isStringArray);

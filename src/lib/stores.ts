@@ -28,6 +28,10 @@ export const headingsByVerse = writable<Record<string, VerseHeading[]>>({});
 export const findingsByVerse = writable<Record<string, QaFinding[]>>({});
 export type CheckStatus = "pending" | "succeeded" | "failed" | "cancelled";
 export const checkStatusByVerse = writable<Record<string, CheckStatus>>({});
+/** The finding groups that have run on each verse since it was opened or last
+ *  edited (#251): what the verse-number title lists, and whether the ✓ can
+ *  show (checkSelection.coversSelection). */
+export const checkGroupsByVerse = writable<Record<string, string[]>>({});
 export const alignmentStatusByVerse = writable<Record<string, AlignmentWorkStatus>>({});
 export const nativeChecksByVerse = writable<Record<string, NativeCheckReview[]>>({});
 export const aiCheckReviewsByVerse = writable<Record<string, AiCheckReview[]>>({});
@@ -108,6 +112,7 @@ export function resetBookState(): void {
   headingsByVerse.set({});
   findingsByVerse.set({});
   checkStatusByVerse.set({});
+  checkGroupsByVerse.set({});
   alignmentStatusByVerse.set({});
   nativeChecksByVerse.set({});
   aiCheckReviewsByVerse.set({});

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
-  import { verseNums, verseTexts, verseDisplay, headingsByVerse, findingsByVerse, checkStatusByVerse, alignmentStatusByVerse, selectedVerse, selectedVerseSet, currentChapter, verseKey, nativeChecksByVerse, aiCheckReviewsByVerse, checkingProgress, languageQaFindingsByVerse, project, flagsByVerse, historyCountByVerse, activeLanguageQaFindingId } from "../stores";
+  import { verseNums, verseTexts, verseDisplay, headingsByVerse, findingsByVerse, checkStatusByVerse, alignmentStatusByVerse, selectedVerse, selectedVerseSet, currentChapter, verseKey, nativeChecksByVerse, aiCheckReviewsByVerse, checkingProgress, languageQaFindingsByVerse, project, flagsByVerse, historyCountByVerse, activeLanguageQaFindingId, checkGroupsByVerse } from "../stores";
+  import { checksRunNote } from "../checkSelection";
   import { alignmentStatusLabel, isAlignmentComplete } from "../alignmentStatus";
   import { rangeBetween } from "../crossVerseRange";
   import { unionInChapterOrder } from "../crossVerseSuggest";
@@ -1066,7 +1067,7 @@
     {@const langFindings = $languageQaFindingsByVerse[key] ?? []}
     {@const openCount = findings.filter((f) => f.status === "open").length + langFindings.length}
     {@const clear = checkStatus === "succeeded" && openCount === 0 && isAlignmentComplete(alignmentStatus)}
-    {@const clearTitle = verseClearTitle(checkStatus, openCount, alignmentStatus)}
+    {@const clearTitle = verseClearTitle(checkStatus, openCount, alignmentStatus) + checksRunNote($checkGroupsByVerse[key])}
     {@const highlightFindings = findings.filter((f) => f.status !== "ignored" && f.status !== "accepted")}
     {@const display = shownDisplay(key, $rawView, $verseDisplay, $verseTexts)}
     {@const remapped = remapFindings(highlightFindings, display)}

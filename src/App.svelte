@@ -40,7 +40,7 @@
   import { STARTUP_TIMEOUT_MS, mergeStage } from "./lib/startup";
   import type { EngineStartupStage, EngineStartupState } from "./lib/api/bridgeClient";
   import ProjectReportScreen from "./lib/components/ProjectReportScreen.svelte";
-  import type { AiCheckReview, AlignmentWorkStatus, BookProgressEntry, CheckJobSnapshot, ProjectReport, QaFinding, UserRole, VerseDisplay, VerseHeading, WorkspaceUser } from "./lib/types/finding";
+  import type { AiCheckReview, AlignmentWorkStatus, BookProgressEntry, CheckJobSnapshot, ProjectReport, UserRole, VerseDisplay, VerseHeading, WorkspaceUser } from "./lib/types/finding";
   import type {
     QaReport, ReportJobSnapshot, TriageJobSnapshot, TriageRecord,
   } from "./lib/types/report";
@@ -51,8 +51,12 @@
     checkStatusByVerse, alignmentStatusByVerse, loadedChapters, selectedVerse, selectedVerseSet, checkingProgress, approvedCount, verseNums,
     verseKey, settingsOpen, exportOpen, bookApprovedSummary, resetBookState, reviewerMode,
     aiCheckReviewsByVerse, diagnosticsOpen, engineLog, appendEngineLog, navigationStatus,
-    bookAssignments, localUserId,
+    bookAssignments, localUserId, checkGroupsByVerse, type CheckStatus,
   } from "./lib/stores";
+  import { get } from "svelte/store";
+  import { checkListLabel, coversSelection, editorCheckList, groupsOf, mergeFindings, selectedEditorChecks } from "./lib/checkSelection";
+  import { runVerseGreekRoom } from "./lib/verseChecks";
+  import CheckMenu from "./lib/components/CheckMenu.svelte";
   import { editingChapter, editingVerse, editSaving } from "./lib/verseEditor";
   import { languageQaChannel, nudgeLanguageQa, startLanguageQaInline } from "./lib/languageQaInline";
   import { toggleLanguageQaPanel } from "./lib/languageQaPanelUi";
@@ -977,15 +981,30 @@
   ): void {
     chapterVerseNums.update((existing) => ({ ...existing, ...snapshot.chapterVerses }));
 
-    const findingUpdates: Record<string, QaFinding[]> = {};
-    const statusUpdates: Record<string, "succeeded" | "failed"> = {};
-    for (const [key, result] of Object.entries(snapshot.results)) {
-      findingUpdates[key] = result.findings;
-      statusUpdates[key] = result.status;
-      seen[key] = result.status;
-    }
-    if (Object.keys(findingUpdates).length > 0) {
-      findingsByVerse.update((existing) => ({ ...existing, ...findingUpdates }));
+    // #251: the job ran some checks. Each verse keeps its findings of the
+    // others, remembers what has run, and earns its ✓ only once every check
+    // in the reviewer's selection has run on it.
+    const groups = snapshot.checkGroups ?? groupsOf(snapshot.checks);
+    const selection = editorCheckList();
+    const results = Object.entries(snapshot.results);
+    for (const [key, result] of results) seen[key] = result.status;
+    if (results.length > 0) {
+      const ranByVerse = get(checkGroupsByVerse);
+      const groupUpdates: Record<string, string[]> = {};
+      const statusUpdates: Record<string, CheckStatus> = {};
+      for (const [key, result] of results) {
+        const ran = result.status === "succeeded"
+          ? [...new Set([...(ranByVerse[key] ?? []), ...groups])] : (ranByVerse[key] ?? []);
+        groupUpdates[key] = ran;
+        statusUpdates[key] = result.status === "failed" ? "failed"
+          : coversSelection(ran, selection) ? "succeeded" : "pending";
+      }
+      findingsByVerse.update((existing) => {
+        const next = { ...existing };
+        for (const [key, result] of results) next[key] = mergeFindings(existing[key], result.findings, groups);
+        return next;
+      });
+      checkGroupsByVerse.update((existing) => ({ ...existing, ...groupUpdates }));
       checkStatusByVerse.update((existing) => ({ ...existing, ...statusUpdates }));
     }
 
@@ -1018,10 +1037,14 @@
     const reference = snapshot.currentChapter
       ? ` · ${snapshot.currentChapter}${snapshot.currentVerse ? `:${snapshot.currentVerse}` : ""}`
       : "";
+    // The stage names the checks running; at the end, say which ran (#251).
+    const label = snapshot.state === "succeeded"
+      ? `Checked: ${checkListLabel(snapshot.checks)}`
+      : `${snapshot.currentStage}${reference}`;
     checkingProgress.set({
       running: !terminal,
       percent: snapshot.percent,
-      label: `${snapshot.currentStage}${reference}`,
+      label,
       jobId: snapshot.jobId,
       state: snapshot.state,
       error: snapshot.error ?? "",
@@ -1079,11 +1102,15 @@
     });
   }
 
-  async function beginChecks(scope: "chapter" | "book", chapters: string[]): Promise<void> {
-    if (activeJobId) return;
-    // Language QA is a stage of the same job (layered-rules Phase 4.1): its
-    // pass is the authoritative one and shares the live-edit path's cache.
-    const snapshot = await bridge.startChecks(scope, chapters, ["local", "greekroom", "languageQa"]);
+  /** `checks`: the reviewer's selection (#251), or ["greekroom"] for Run Greek
+   *  Room (#252). Language QA is a stage of the same job (layered-rules Phase
+   *  4.1): its pass is the authoritative one and shares the live-edit cache.
+   *  Nothing starts while Collection QA runs; the engine would refuse it. */
+  async function beginChecks(
+    scope: "chapter" | "book", chapters: string[], checks: string[] = editorCheckList(),
+  ): Promise<void> {
+    if (activeJobId || $collectionQaRunning) return;
+    const snapshot = await bridge.startChecks(scope, chapters, checks);
     activeJobId = snapshot.jobId;
     const generation = ++monitorGeneration;
     markJobPending(snapshot);
@@ -1174,6 +1201,20 @@
   async function runWholeBook() {
     const chapters = $project?.chapters ?? [];
     await beginChecks("book", chapters);
+  }
+
+  async function runChapterChecks() {
+    await beginChecks("chapter", [$currentChapter]);
+  }
+
+  /** Run Greek Room (#252), on demand and last: the verse in place, the
+   *  chapter or the book as a job with the usual progress and cancel. */
+  async function runGreekRoom(scope: "verse" | "chapter" | "book") {
+    if (scope === "verse") {
+      if ($selectedVerse) await runVerseGreekRoom($currentChapter, $selectedVerse);
+      return;
+    }
+    await beginChecks(scope, scope === "book" ? ($project?.chapters ?? []) : [$currentChapter], ["greekroom"]);
   }
 
   // #118: a finding may name verses of another chapter. Switch first (the
@@ -1403,9 +1444,18 @@
       <div class="work-col" style:--verse-scale={$textScale}>
         <div class="editor-toolbar">
           <span>Chapter {$currentChapter} of {$project?.chapters.length ?? "?"}</span>
-          <button class="whole-book-btn" on:click={runWholeBook} disabled={Boolean(activeJobId)}>
+          <button class="whole-book-btn" on:click={runWholeBook} disabled={Boolean(activeJobId)}
+            title={`Run ${checkListLabel($selectedEditorChecks)} on every chapter`}>
             {$checkingProgress.scope === "book" && $checkingProgress.running ? "Running…" : "Run whole book"}
           </button>
+          <CheckMenu
+            disabled={Boolean(activeJobId) || $checkingProgress.running}
+            verse={$selectedVerse ? `${$currentChapter}:${$selectedVerse}` : ""}
+            chapter={$currentChapter}
+            onRunChapter={runChapterChecks}
+            onRunBook={runWholeBook}
+            onRunGreekRoom={runGreekRoom}
+          />
           <button class="whole-book-btn" on:click={() => (showingAlignmentReview = true)}>
             Alignment Review
           </button>

@@ -96,7 +96,8 @@ def test_check_job_leaves_a_finding_snapshot_the_report_reads(fixture_project, m
         )]
 
     monkeypatch.setattr(engine, "_run_verse_checks_for_project", fake_checks)
-    started = call(engine, "checks.start", {"scope": "chapter", "chapters": ["1"], "checks": ["greekroom"]})["result"]
+    # Wildebeest alone: "greekroom" also runs the book USFM and names scans (#252).
+    started = call(engine, "checks.start", {"scope": "chapter", "chapters": ["1"], "checks": ["wildebeest"]})["result"]
     assert wait_for_job(engine, started["jobId"])["state"] == "succeeded"
 
     snapshot = engine.project.load_check_findings_snapshot("1")

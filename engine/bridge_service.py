@@ -150,7 +150,15 @@ from check_jobs import (
     CheckJobManager,
     CheckJobNotFound,
     CheckJobSpec,
+    CHECK_NAMES,
+    FINDING_GROUPS,
+    GREEK_ROOM_CHECK,
     LANGUAGE_QA_CHECK,
+    LOCAL_GROUPS,
+    expand_checks,
+    finding_check,
+    finding_dict_check,
+    groups_ran,
 )
 import alignment_auto_align_jobs as auto_align_jobs
 from tc_ai_bridge.model_router import estimate_cost
@@ -655,8 +663,8 @@ class BridgeEngine:
         self._names_findings_by_book: dict[str, list[QaFinding]] = {}
         self._names_errors_by_book: dict[str, str] = {}
         # Wildebeest findings have no whole-book cache: they're computed
-        # live, per-verse, only when a user opens that verse in the editor
-        # (ReviewPanel.svelte's runVerseChecks(["greekroom"]) on selection).
+        # per verse when Greek Room is run, from the Run Greek Room action or
+        # an elective check job (#252; until then live on verse selection).
         # A whole-book Wildebeest cache was tried for the project report's
         # exception queue (issue #24) and reverted the same day — see
         # build_project_report's docstring for why computing it inline
@@ -5043,6 +5051,18 @@ class BridgeEngine:
             context=context,
         )
 
+    def _forget_greek_room_book_caches(self, project: TranslationCoreProject) -> None:
+        """Drop the book's in-memory USFM and names results, and a remembered
+        checker failure, before a chapter or book Greek Room job (#252). Both
+        are otherwise kept until the book is reopened, so findings an edit made
+        stale came back from memory. The persisted sections are keyed on a
+        content hash and refresh themselves. Only ever from a job start: the
+        rescan then runs in the job's preflight, never on the dispatcher."""
+        book_key = str(project.path)
+        for cache in (self._usfm_findings_by_book, self._usfm_errors_by_book,
+                      self._names_findings_by_book, self._names_errors_by_book):
+            cache.pop(book_key, None)
+
     def _usfm_findings_for_book(
         self, project: Optional[TranslationCoreProject] = None,
         cancel_event: Optional[threading.Event] = None,
@@ -5314,20 +5334,26 @@ class BridgeEngine:
         # time out too.  Greek Room reads only the captured project/verse and
         # its own adapter; it does not touch tC selection/index state and does
         # not need the checker lock.
-        needs_checker_lock = any(
-            name in {"local", "tN", "tW", "alignment", "usfm", "names", "consistency"}
-            for name in checks
-        )
+        groups = expand_checks(checks)
+        # A verse's Greek Room run (#252) takes the book USFM and names results
+        # from memory only, never scanning: this runs on the dispatcher, and a
+        # scan is the checker subprocess plus a whole-book names pass (see
+        # edit_verse), behind _checker_lock that a preparing job may hold. The
+        # chapter and book Greek Room runs scan, in the job, from fresh caches.
+        cached_book_scans = GREEK_ROOM_CHECK in checks
+        locked_groups = groups - ({"wildebeest", "usfm", "names"} if cached_book_scans else {"wildebeest"})
         timings = check_timing.Timings()
         with check_timing.activate(timings):
-            if not needs_checker_lock:
-                findings = self._run_verse_checks_for_project(project, chapter, verse, checks)
+            if not locked_groups:
+                findings = self._run_verse_checks_for_project(
+                    project, chapter, verse, checks, cached_book_scans=cached_book_scans)
             else:
                 with self._checker_lock:
-                    if any(name in checks for name in ("local", "tN", "tW")):
+                    if groups & {"tN", "tW"}:
                         with timings.step("preflight.resource_indexes"):
                             self._ensure_resource_indexes(project)
-                    findings = self._run_verse_checks_for_project(project, chapter, verse, checks)
+                    findings = self._run_verse_checks_for_project(
+                        project, chapter, verse, checks, cached_book_scans=cached_book_scans)
         # Every verse selection runs this: trace only a slow one, as for RPCs,
         # so the diagnostics log is not one line per click.
         if timings.elapsed() >= 0.1:
@@ -5342,10 +5368,13 @@ class BridgeEngine:
         checks: list[str],
         reads: Optional[dict[str, Any]] = None,
         job_reads: Optional[dict[str, Any]] = None,
+        cached_book_scans: bool = False,
     ) -> list[QaFinding]:
         """`reads`: a check job's memo for this one verse, shared by its
         stages so the verse's text and decisions are read once, not once per
-        stage (#231). Each read costs a workbench connection."""
+        stage (#231). Each read costs a workbench connection.
+        `cached_book_scans`: the book USFM and names findings come from memory
+        or not at all, never from a scan (a verse's Greek Room run, #252)."""
         findings: list[QaFinding] = []
         project_id = str(project.summary.path)
         book = project.summary.book_id
@@ -5357,11 +5386,13 @@ class BridgeEngine:
                 reads["text"] = project.target_verse_text(chapter, verse)
         target_text = reads["text"]
 
-        if "local" in checks or "tN" in checks or "tW" in checks or "alignment" in checks:
+        groups = expand_checks(checks)
+        local_groups = groups.intersection(LOCAL_GROUPS)
+        if local_groups:
             with timings.step("local.alignment_load"):
                 alignment = project.load_verse_alignment(chapter, verse)
-            issues = run_local_qa(project, chapter, verse, alignment)
-            if "local" in checks or "alignment" in checks:
+            issues = run_local_qa(project, chapter, verse, alignment, local_groups)
+            if "alignment" in groups:
                 # #220: what the automatic pass could not place, as findings the
                 # editor shows. Quiet on a verse no pass has run on; a live gap
                 # only, so a reviewer's link or decision silences it at once.
@@ -5383,7 +5414,7 @@ class BridgeEngine:
                     resource_versions=resource_versions,
                 ))
 
-        if "local" in checks or "usfm" in checks:
+        if "usfm" in groups:
             # Whole-book findings that fall on this chapter; a finding with
             # no existing verse slot (e.g. "chapter is missing verse 4")
             # surfaces on the chapter's first verse rather than nowhere,
@@ -5392,7 +5423,8 @@ class BridgeEngine:
             existing_verses = {str(value) for value in book_verses}
             first_verse = book_verses[0] if book_verses else None
             with timings.step("usfm.book"):
-                usfm_findings = self._usfm_findings_for_book(project)
+                usfm_findings = (self._usfm_findings_by_book.get(str(project.path), [])
+                                 if cached_book_scans else self._usfm_findings_for_book(project))
             for f in usfm_findings:
                 if str(f.chapter) != str(chapter):
                     continue
@@ -5405,19 +5437,20 @@ class BridgeEngine:
                 ):
                     findings.append(f)
 
-        if "local" in checks or "names" in checks:
+        if "names" in groups:
             # Unlike USFM findings, every names/spelling finding is anchored
             # at a real occurrence's own verse (the minority spelling's
             # first location — see NamesAdapter._build_finding), never a
             # placeholder chapter-level slot, so no first-verse fallback is
             # needed here.
             with timings.step("names.book"):
-                names_findings = self._names_findings_for_book(project)
+                names_findings = (self._names_findings_by_book.get(str(project.path), [])
+                                  if cached_book_scans else self._names_findings_for_book(project))
             for f in names_findings:
                 if str(f.chapter) == str(chapter) and str(f.verse) == str(verse):
                     findings.append(f)
 
-        if "consistency" in checks:
+        if "consistency" in groups:
             # Opt-in, not bundled into "local" — a corpus-frequency
             # heuristic (see _consistency_findings_for_book) that would
             # otherwise silently change the finding volume for every
@@ -5441,7 +5474,7 @@ class BridgeEngine:
                 ):
                     findings.append(f)
 
-        if "greekroom" in checks or "wildebeest" in checks:
+        if "wildebeest" in groups:
             target_language = project.manifest.get("target_language", {})
             language_id = str(target_language.get("id") or "") if isinstance(target_language, dict) else ""
             with timings.step("greekroom.wildebeest"):
@@ -5471,6 +5504,9 @@ class BridgeEngine:
                 reads["decisions"] = project.qa_decisions_for_verse(chapter, verse)
         prior_decisions = reads["decisions"]
         for finding in findings:
+            # #251: which elective check this came from. Set on every run, on
+            # cached book findings too (the same value each time).
+            finding.check = finding_check(finding.engine, finding.category, finding.check_type)
             record = prior_decisions.get(finding.id)
             if record:
                 try:
@@ -5505,8 +5541,7 @@ class BridgeEngine:
             raise CheckJobError(f"Unknown chapter(s): {', '.join(unknown)}")
 
         selected_checks = tuple(dict.fromkeys(checks or ["local", "greekroom"]))
-        supported = {"local", "tN", "tW", "alignment", "usfm", "greekroom", "wildebeest", LANGUAGE_QA_CHECK}
-        invalid = [name for name in selected_checks if name not in supported]
+        invalid = [name for name in selected_checks if name not in CHECK_NAMES | {LANGUAGE_QA_CHECK}]
         if invalid:
             raise CheckJobError(f"Unknown check type(s): {', '.join(invalid)}")
 
@@ -5553,8 +5588,15 @@ class BridgeEngine:
                     )
                 ]
 
+        groups = expand_checks(spec.checks)
+        if GREEK_ROOM_CHECK in spec.checks:
+            # An explicit Greek Room run (#252): the book's USFM and names scans
+            # start fresh, so findings made stale by an edit since the book was
+            # opened are not handed back from memory.
+            self._forget_greek_room_book_caches(project)
+
         preflight = None
-        if any(name in spec.checks for name in ("local", "tN", "tW", "usfm", "names", LANGUAGE_QA_CHECK)):
+        if groups & {"tN", "tW", "usfm", "names", LANGUAGE_QA_CHECK}:
             def run_preflight(cancel_event: threading.Event) -> None:
                 if LANGUAGE_QA_CHECK in spec.checks:
                     # The authoritative Language QA pass: the same scan and cache
@@ -5571,17 +5613,17 @@ class BridgeEngine:
                     if cancel_event.is_set():
                         return
                 with self._checker_lock:
-                    if any(name in spec.checks for name in ("local", "tN", "tW")):
+                    if groups & {"tN", "tW"}:
                         with check_timing.current().step("preflight.resource_indexes"):
                             self._ensure_resource_indexes(project)
                     if cancel_event.is_set():
                         return
-                    if any(name in spec.checks for name in ("local", "usfm")):
+                    if "usfm" in groups:
                         with check_timing.current().step("preflight.usfm"):
                             self._usfm_findings_for_book(project, cancel_event=cancel_event)
                     if cancel_event.is_set():
                         return
-                    if any(name in spec.checks for name in ("local", "names")):
+                    if "names" in groups:
                         # Unlike USFM's subprocess, this is in-process pure
                         # Python with no mid-flight cancellation support yet
                         # — it either hasn't started (skipped by the check
@@ -5610,8 +5652,7 @@ class BridgeEngine:
         if self._check_jobs.active():
             raise CheckJobConflict("Wait for the running check to finish.")
         selected = tuple(dict.fromkeys(checks or ["local", "greekroom", LANGUAGE_QA_CHECK]))
-        supported = {"local", "tN", "tW", "alignment", "usfm", "greekroom", "wildebeest", LANGUAGE_QA_CHECK}
-        invalid = [name for name in selected if name not in supported]
+        invalid = [name for name in selected if name not in CHECK_NAMES | {LANGUAGE_QA_CHECK}]
         if invalid:
             raise CheckJobError(f"Unknown check type(s): {', '.join(invalid)}")
         collection_path = str(self.project.path)
@@ -5779,7 +5820,42 @@ class BridgeEngine:
         if (getattr(job, "outcome", None) or job.state) != "succeeded":
             return
         try:
+            ran_language_qa = LANGUAGE_QA_CHECK in job.spec.checks
+            # #251: a job runs some checks. Each verse keeps its stored findings
+            # of the others (with their status now) and of a skipped Language QA
+            # stage; only what ran is replaced.
+            ran = groups_ran(job.spec.checks)
+            partial = not ran.issuperset(FINDING_GROUPS) or not ran_language_qa
+            prior_rollup = project.load_progress_rollup().get("chapters", {}) if partial else {}
+            prior_snapshots: dict[str, dict[str, list[dict[str, Any]]]] = {}
+
+            def carried(chapter: str, verse: str) -> tuple[list[dict[str, Any]], dict[str, str], Optional[list[str]]]:
+                """The verse's stored findings of checks this job did not run,
+                its stored Language QA statuses, and its Language QA ids."""
+                if not partial:
+                    return [], {}, None
+                if chapter not in prior_snapshots:
+                    prior_snapshots[chapter] = project.load_check_findings_snapshot(chapter)
+                verse_entry = (prior_rollup.get(chapter) or {}).get("verses", {}).get(verse) or {}
+                statuses = verse_entry.get("findings") or {}
+                kept = []
+                for finding in prior_snapshots[chapter].get(verse, []):
+                    if not finding.get("id") or finding_dict_check(finding) in ran:
+                        continue
+                    finding = dict(finding)
+                    if statuses.get(str(finding["id"])):
+                        finding["status"] = statuses[str(finding["id"])]
+                    kept.append(finding)
+                if ran_language_qa:
+                    return kept, {}, None
+                lqa_ids = verse_entry.get("languageQaFindingIds")
+                lqa_ids = [str(i) for i in lqa_ids] if isinstance(lqa_ids, list) else None
+                lqa_statuses = {i: str(statuses[i]) for i in lqa_ids or [] if i in statuses}
+                return kept, lqa_statuses, lqa_ids
+
             by_chapter: dict[str, dict[str, dict[str, str]]] = {}
+            # Language QA ids per verse kept from the last run that had the stage.
+            kept_lqa_ids: dict[str, dict[str, list[str]]] = {}
             # The same findings twice over: id -> status for the rollup the
             # dashboard reads, and the findings themselves for the project QA
             # report (qa_report.py), which has nothing else to read them from.
@@ -5795,9 +5871,16 @@ class BridgeEngine:
                 findings = [
                     f for f in (result.get("findings") or []) if isinstance(f, dict) and f.get("id")
                 ]
+                kept, kept_lqa_statuses, lqa_ids = carried(str(chapter), str(verse))
+                if kept:
+                    fresh = {str(f["id"]) for f in findings}
+                    findings = [*(f for f in kept if str(f["id"]) not in fresh), *findings]
+                if lqa_ids is not None:
+                    kept_lqa_ids.setdefault(str(chapter), {})[str(verse)] = lqa_ids
                 statuses = {
                     str(f["id"]): str(f.get("status", FindingStatus.OPEN.value)) for f in findings
                 }
+                statuses.update(kept_lqa_statuses)
                 # Language QA (Phase 4.1): an open finding counts as open; one a
                 # decision hides counts with that decision, so ignoring it moves
                 # the verse's open count down like any other decision.
@@ -5814,7 +5897,6 @@ class BridgeEngine:
                         *(language_qa.get("findings") or []), *(language_qa.get("hidden") or [])]
 
             now = project.timestamp_iso()
-            ran_language_qa = LANGUAGE_QA_CHECK in job.spec.checks
             project.replace_progress_chapters({
                 chapter: {
                     "verseCount": len(project.verses(chapter)),
@@ -5831,7 +5913,9 @@ class BridgeEngine:
                             **({"languageQaFindingIds": [
                                 str(item["id"]) for item in language_qa_by_chapter.get(chapter, {}).get(v, [])
                                 if isinstance(item, dict) and item.get("id")
-                            ]} if ran_language_qa else {}),
+                            ]} if ran_language_qa else (
+                                {"languageQaFindingIds": kept_lqa_ids[chapter][v]}
+                                if v in kept_lqa_ids.get(chapter, {}) else {})),
                         }
                         for v, f in verses_map.items()
                     },
@@ -6208,8 +6292,8 @@ class BridgeEngine:
         finding whose text this edit just fixed (e.g. a
         names.spelling_similarity correction) will keep reappearing until
         the project is reopened. Tried clearing them here too and reverted
-        it the same session: saveVerseEdit's post-save runVerseChecks(
-        ["local", "greekroom"]) calls straight into
+        it the same session: saveVerseEdit's post-save runVerseChecks
+        (then ["local", "greekroom"]) calls straight into
         _usfm_findings_for_book/_names_findings_for_book on every edit
         (see run_verse_checks), and those functions' own docstrings say
         why they're never invalidated by verse.edit — a real rescan means
@@ -7620,6 +7704,8 @@ class BridgeEngine:
             if m == Methods.VERSE_GET:
                 return EngineResponse.ok(request.id, result=self.get_verse(p["chapter"], p["verse"]))
             if m == Methods.VERSE_RUN_CHECKS:
+                if GREEK_ROOM_CHECK in (p.get("checks") or []) and self._collection_jobs.active():
+                    raise CheckJobConflict("A collection QA run is in progress; wait for it or cancel it.")
                 findings = self.run_verse_checks(p["chapter"], p["verse"], p.get("checks", ["local", "greekroom"]))
                 return EngineResponse.ok(request.id, findings=findings)
             if m == Methods.VERSE_DECIDE:

@@ -15,7 +15,7 @@ vi.mock("../../api/bridgeClient", () => ({
 
 import VerseList from "../VerseList.svelte";
 import {
-  aiCheckReviewsByVerse, alignmentStatusByVerse, chapterVerseNums, checkStatusByVerse, checkingProgress,
+  aiCheckReviewsByVerse, alignmentStatusByVerse, chapterVerseNums, checkStatusByVerse, checkGroupsByVerse, checkingProgress,
   currentChapter, findingsByVerse, nativeChecksByVerse, selectedVerse, selectedVerseSet, verseKey, verseTexts,
 } from "../../stores";
 
@@ -30,6 +30,7 @@ function seed(): void {
   verseTexts.set(Object.fromEntries(VERSES.map((v) => [verseKey("1", v), `text ${v}`])));
   findingsByVerse.set({});
   checkStatusByVerse.set({});
+  checkGroupsByVerse.set({});
   alignmentStatusByVerse.set({});
   nativeChecksByVerse.set({});
   aiCheckReviewsByVerse.set({});

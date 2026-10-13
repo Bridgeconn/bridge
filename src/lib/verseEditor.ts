@@ -9,11 +9,13 @@ import { get, writable } from "svelte/store";
 import { bridge } from "./api/bridgeClient";
 import { decideLanguageQaFinding } from "./findingActions";
 import { nudgeLanguageQa } from "./languageQaInline";
+import { editorCheckList } from "./checkSelection";
+import { recheckVerse } from "./verseChecks";
 import type { QaFinding, VerseDisplay } from "./types/finding";
 import type { LanguageQaFinding, LanguageQaSuggestion } from "./types/languageQa";
 import type { CorrectionApplicationIntent } from "./types/correctionReview";
 import {
-  alignmentStatusByVerse, checkStatusByVerse, checkingProgress, findingsByVerse, historyCountByVerse,
+  alignmentStatusByVerse, checkStatusByVerse, checkingProgress, historyCountByVerse,
   nativeChecksByVerse, aiCheckReviewsByVerse, languageQaFindingsByVerse, verseDisplay, verseKey, verseTexts,
 } from "./stores";
 
@@ -241,9 +243,10 @@ export async function saveVerseEdit({ optimistic = false }: { optimistic?: boole
     recheckingKey.set(key);
     recheckedKey.set("");
     checkStatusByVerse.update((map) => ({ ...map, [key]: "pending" }));
-    const findings = await bridge.runVerseChecks(chapter, verse, ["local", "greekroom"]);
-    findingsByVerse.update((map) => ({ ...map, [key]: findings }));
-    checkStatusByVerse.update((map) => ({ ...map, [key]: "succeeded" }));
+    // The reviewer's selected checks (#251); Greek Room only if ticked (#252).
+    // Every earlier finding was about the old text, so the run replaces them
+    // all; Language QA re-runs through its own pass (nudged above).
+    await recheckVerse(chapter, verse, editorCheckList(), { replace: true });
     recheckingKey.set("");
     recheckedKey.set(key);
     onSaved?.({

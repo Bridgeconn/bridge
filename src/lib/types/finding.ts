@@ -53,6 +53,10 @@ export interface QaFinding {
   original_text: string;
   engine: string;
   check_type: string;
+  /** The elective check that produced it (#251): "tN", "tW", "tc",
+   *  "alignment", "text", "usfm", "names" or "wildebeest". A run of some
+   *  checks replaces only those checks' findings (checkSelection.ts). */
+  check?: string;
   category: FindingCategory;
   severity: Severity;
   confidence: number;
@@ -1293,6 +1297,9 @@ export interface CheckJobSnapshot {
   projectPath: string;
   state: CheckJobState;
   checks: string[];
+  /** The finding groups this job refreshes (#251), "languageQa" included when
+   *  it ran; a verse's findings of any other group are kept. */
+  checkGroups?: string[];
   chapters: string[];
   chapterVerses: Record<string, string[]>;
   totalVerses: number;

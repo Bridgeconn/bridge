@@ -32,7 +32,7 @@ import {
   verseTexts,
   verseDisplay,
   findingsByVerse,
-  checkStatusByVerse,
+  checkStatusByVerse, checkGroupsByVerse,
   checkingProgress,
   alignmentStatusByVerse,
   nativeChecksByVerse,
@@ -95,6 +95,7 @@ function seed(text: string, findings: QaFinding[] = []): void {
   headingsByVerse.set({});
   findingsByVerse.set({ [verseKey("1", "6")]: findings });
   checkStatusByVerse.set({});
+  checkGroupsByVerse.set({});
   alignmentStatusByVerse.set({});
   nativeChecksByVerse.set({});
   aiCheckReviewsByVerse.set({});
@@ -554,7 +555,7 @@ describe("VerseList footnote handling", () => {
       .toHaveAttribute("title", expect.stringContaining("proposed correction"));
     await fireEvent.click(screen.getByRole("menuitem", { name: "Accept finding" }));
     expect(editVerse).toHaveBeenCalledWith("1", "6", "omega beta");
-    expect(runVerseChecks).toHaveBeenCalledWith("1", "6", ["local", "greekroom"]);
+    expect(runVerseChecks).toHaveBeenCalledWith("1", "6", ["tN", "tW", "alignment", "text"]);
   });
 
   it("does not accept a correction that could not be applied", async () => {

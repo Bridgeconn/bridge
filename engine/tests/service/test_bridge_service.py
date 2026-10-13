@@ -580,8 +580,8 @@ def test_live_greek_room_and_status_stay_responsive_during_check_preparation(
 ):
     """A first-time raw-book preflight holds the tN/tW checker lock.
 
-    ReviewPanel immediately asks for a Greek-Room-only live check.  That request
-    must not queue behind resource/USFM/names preparation on the synchronous
+    A verse's Run Greek Room (#252; until then a live check on selection) must
+    not queue behind resource/USFM/names preparation on the synchronous
     stdio dispatcher, otherwise checks.status and check.listForVerse behind it
     both hit their 30-second desktop timeout.
     """

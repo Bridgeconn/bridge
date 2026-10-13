@@ -73,6 +73,11 @@ class QaFinding:
     category: FindingCategory = FindingCategory.CONSISTENCY
     severity: Severity = Severity.MEDIUM
     confidence: float = 0.0     # 0.0 - 1.0
+    # Which elective check produced it (#251): "tN", "tW", "tc", "alignment",
+    # "text", "usfm", "names", "wildebeest" -- check_jobs.finding_check. A run
+    # of some checks replaces only those checks' findings. Empty on a finding
+    # stored before the field existed; the same function derives it.
+    check: str = ""
 
     # Content
     suggested_replacement: Optional[str] = None

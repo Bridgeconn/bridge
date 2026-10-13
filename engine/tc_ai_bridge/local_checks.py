@@ -60,15 +60,27 @@ def target_editorial_checks(text: str, language: ProjectLanguageContext | None =
     return issues
 
 
-def translationcore_check_issues(project: TranslationCoreProject, chapter: str, verse: str) -> list[QAIssue]:
+_TOOL_GROUP = {'translationNotes': 'tN', 'translationWords': 'tW'}
+
+
+def translationcore_check_issues(project: TranslationCoreProject, chapter: str, verse: str,
+                                 groups: frozenset[str] = frozenset({'tN', 'tW', 'alignment'})) -> list[QAIssue]:
+    """`groups` (#251): tN and tW pick their own tool's items; any other tool's
+    items, comments and edit history come with either; Word Alignment's
+    invalid state is the alignment group's."""
     issues: list[QAIssue] = []
-    checks = project.checks_for_verse(chapter, verse)
+    tc = bool(groups & {'tN', 'tW'})
+    if not tc and 'alignment' not in groups:
+        return issues
+    checks = project.checks_for_verse(chapter, verse) if tc else []
     # The verse's selections, invalidations, comments and verse edits, read
     # once: every check's staleness is answered from them (#240).
-    states = project.check_state_for_verse(chapter, verse)
+    states = project.check_state_for_verse(chapter, verse) if tc else {}
     for entry in checks:
         ctx = entry.get('contextId', {})
         tool = str(ctx.get('tool', 'translationCore'))
+        if _TOOL_GROUP.get(tool, 'tc') not in groups | {'tc'}:
+            continue
         group = str(ctx.get('groupId', ''))
         check_id = str(ctx.get('checkId', ''))
         selection = entry.get('selections', False)
@@ -82,8 +94,7 @@ def translationcore_check_issues(project: TranslationCoreProject, chapter: str, 
             sev = 'medium' if tool == 'translationNotes' else 'high'
             note = str(ctx.get('occurrenceNote', '') or '')
             issues.append(QAIssue('TC_PENDING', sev, f'{tool}: unchecked item', note or f'{group} / {check_id} has no selection yet.', 'translationCore', check_id, group))
-    wa_state = project.word_alignment_state(chapter, verse)
-    if wa_state == 'invalid':
+    if 'alignment' in groups and project.word_alignment_state(chapter, verse) == 'invalid':
         issues.append(QAIssue('WA_INVALID', 'high', 'Word Alignment recheck required', 'translationCore marks Word Alignment invalid after a target-text edit.', 'translationCore'))
     if states.get('comments'):
         issues.append(QAIssue('TC_COMMENTS', 'info', 'Reviewer comments present', f'{len(states["comments"])} translationCore comment(s) exist for this verse.', 'translationCore'))
@@ -114,20 +125,33 @@ def usfm_checks(project: TranslationCoreProject, chapter: str, verse: str) -> li
     return issues
 
 
-def run_local_qa(project: TranslationCoreProject, chapter: str, verse: str, alignment: VerseAlignment) -> list[QAIssue]:
+LOCAL_QA_GROUPS = frozenset({'tN', 'tW', 'alignment', 'text'})
+
+
+def run_local_qa(project: TranslationCoreProject, chapter: str, verse: str, alignment: VerseAlignment,
+                 groups: frozenset[str] | set[str] | None = None) -> list[QAIssue]:
+    """The verse's Bridge-side checks, only the `groups` asked for (#251):
+    tN, tW (translationCore items), alignment (integrity and Word Alignment
+    state) and text (USFM markers, repeated words). None runs all four."""
+    groups = LOCAL_QA_GROUPS if groups is None else frozenset(groups) & LOCAL_QA_GROUPS
     timings = check_timing.current()
     with timings.step("local.read_text"):
         text = project.target_verse_text(chapter, verse)
-    with timings.step("local.detect_language"):
-        language = PluginRegistry().detect_project(project, alignment, text)
     issues = []
-    with timings.step("local.alignment_integrity"):
-        issues += alignment_integrity_checks(alignment, text, language.target_name, language.source_name)
-    with timings.step("local.tc_checks"):
-        issues += translationcore_check_issues(project, chapter, verse)
-    with timings.step("local.editorial"):
-        issues += target_editorial_checks(text, language)
-    with timings.step("local.usfm"):
-        issues += usfm_checks(project, chapter, verse)
+    language = None
+    if groups & {'alignment', 'text'}:
+        with timings.step("local.detect_language"):
+            language = PluginRegistry().detect_project(project, alignment, text)
+    if 'alignment' in groups:
+        with timings.step("local.alignment_integrity"):
+            issues += alignment_integrity_checks(alignment, text, language.target_name, language.source_name)
+    if groups & {'tN', 'tW', 'alignment'}:
+        with timings.step("local.tc_checks"):
+            issues += translationcore_check_issues(project, chapter, verse, groups)
+    if 'text' in groups:
+        with timings.step("local.editorial"):
+            issues += target_editorial_checks(text, language)
+        with timings.step("local.usfm"):
+            issues += usfm_checks(project, chapter, verse)
     order = {'critical': 0, 'high': 1, 'medium': 2, 'editorial': 3, 'info': 4}
     return sorted(issues, key=lambda x: (order.get(x.severity, 9), x.title))

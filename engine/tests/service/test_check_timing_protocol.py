@@ -22,7 +22,8 @@ def test_check_job_snapshot_carries_stage_and_engine_timings(fixture_project, mo
 
     assert finished["state"] == "succeeded"
     timings = finished["timings"]
-    for name in ("preflight", "preflight.language_qa", "stage:tN · tW · Alignment", "stage:QA",
+    # Stage labels name the checks that ran (#251, #252).
+    for name in ("preflight", "preflight.language_qa", "stage:tN · tW · Alignment · Text", "stage:Greek Room",
                  "stage:Language QA", "greekroom.wildebeest", "local.editorial", "decisions.reapply"):
         assert name in timings, name
         assert timings[name]["calls"] >= 1

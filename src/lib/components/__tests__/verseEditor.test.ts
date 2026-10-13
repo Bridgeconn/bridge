@@ -57,7 +57,7 @@ describe("applySuggestedFindingFix", () => {
     const result = await applySuggestedFindingFix(finding());
     expect(result.ok).toBe(true);
     expect(editVerse).toHaveBeenCalledWith("1", "6", "omega beta");
-    expect(runVerseChecks).toHaveBeenCalledWith("1", "6", ["local", "greekroom"]);
+    expect(runVerseChecks).toHaveBeenCalledWith("1", "6", ["tN", "tW", "alignment", "text"]);
     expect(get(verseTexts)[verseKey("1", "6")]).toBe("omega beta");
   });
 
@@ -122,7 +122,7 @@ describe("applyLanguageQaSuggestedFix", () => {
     const result = await applyLanguageQaSuggestedFix(languageQaFinding());
     expect(result.ok).toBe(true);
     expect(editVerse).toHaveBeenCalledWith("1", "6", "omega beta");
-    expect(runVerseChecks).toHaveBeenCalledWith("1", "6", ["local", "greekroom"]);
+    expect(runVerseChecks).toHaveBeenCalledWith("1", "6", ["tN", "tW", "alignment", "text"]);
     // The issue marks it as Language QA, so the engine keeps it out of the
     // review-progress rollup, and records what the reviewer saw.
     expect(decideVerse).toHaveBeenCalledWith("1", "6", "term-1", "accepted", undefined, {

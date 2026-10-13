@@ -5,8 +5,9 @@
 //
 // It polls only while a run is active, every POLL_MS, and not at all
 // otherwise: the performance contract's "zero pollers awake when idle".
-import { writable } from "svelte/store";
+import { get, writable } from "svelte/store";
 import { bridge } from "./api/bridgeClient";
+import { selectedCollectionChecks } from "./checkSelection";
 import type { CollectionQaSnapshot } from "./types/collectionQa";
 
 export const POLL_MS = 1000;
@@ -47,10 +48,12 @@ export async function refreshCollectionQa(): Promise<void> {
   if (publish(snapshot) && snapshot.jobId) timer = setTimeout(() => void poll(snapshot.jobId, ticket), POLL_MS);
 }
 
-export async function startCollectionQa(force = false): Promise<void> {
+/** `checks`: the panel's own selection (#251); Greek Room is in it by default,
+ *  as this is the unattended whole-Bible pass (#252). */
+export async function startCollectionQa(force = false, checks: readonly string[] = get(selectedCollectionChecks)): Promise<void> {
   const ticket = ++sequence;
   if (timer) clearTimeout(timer);
-  const snapshot = await bridge.collectionRunChecks(["local", "greekroom", "languageQa"], force);
+  const snapshot = await bridge.collectionRunChecks([...checks], force);
   if (ticket !== sequence) return;
   if (publish(snapshot)) timer = setTimeout(() => void poll(snapshot.jobId, ticket), POLL_MS);
 }

@@ -10,8 +10,9 @@
   // in its own verse's word bank; only the annotations change.
   import { onMount } from "svelte";
   import { bridge } from "../api/bridgeClient";
+  import { recheckVerse } from "../verseChecks";
   import {
-    alignmentStatusByVerse, checkStatusByVerse, currentChapter, findingsByVerse, verseKey, verseNums,
+    alignmentStatusByVerse, checkStatusByVerse, currentChapter, verseKey, verseNums,
   } from "../stores";
   import { alignmentStatusLabel } from "../alignmentStatus";
   import type {
@@ -521,15 +522,13 @@
     alignmentStatusByVerse.update((values) => ({ ...values, [key]: updated.status }));
     checkStatusByVerse.update((values) => ({ ...values, [key]: "pending" }));
     try {
-      // `alignment` runs the verse-local QA set without the slow whole-book
-      // USFM preflight -- exactly what AlignmentModal does after a save.
-      const findings = await bridge.runVerseChecks(chapter, v, ["alignment", "greekroom"]);
-      findingsByVerse.update((values) => ({ ...values, [key]: findings }));
-      checkStatusByVerse.update((values) => ({ ...values, [key]: "succeeded" }));
+      // Only the alignment checks, as AlignmentModal does after a save: the
+      // verse's other findings are kept (#251), Greek Room is on demand (#252).
+      await recheckVerse(chapter, v, ["alignment"]);
       // `message` is empty when the caller reports its own aggregate result
       // (the AI auto-link batch, #146), so join rather than interpolate --
       // otherwise every notice starts with a stray space.
-      notice = [message, `Local and Greek Room checks for ${chapter}:${v} are current.`]
+      notice = [message, `The alignment checks for ${chapter}:${v} are current.`]
         .filter(Boolean).join(" ");
     } catch (value) {
       checkStatusByVerse.update((values) => ({ ...values, [key]: "failed" }));

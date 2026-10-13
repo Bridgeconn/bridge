@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { bridge } from "../api/bridgeClient";
+  import { recheckVerse } from "../verseChecks";
   import {
-    alignmentStatusByVerse, checkStatusByVerse, findingsByVerse, project,
+    alignmentStatusByVerse, checkStatusByVerse, project,
     verseKey,
   } from "../stores";
   import { alignmentStatusLabel } from "../alignmentStatus";
@@ -146,13 +147,10 @@
     alignmentStatusByVerse.update((values) => ({ ...values, [key]: updated.status }));
     checkStatusByVerse.update((values) => ({ ...values, [key]: "pending" }));
     try {
-      // `alignment` runs the verse-local QA set without starting the much
-      // slower whole-book USFM preflight. The background job remains the
-      // source of book-structural findings.
-      const findings = await bridge.runVerseChecks(chapter, verse, ["alignment", "greekroom"]);
-      findingsByVerse.update((values) => ({ ...values, [key]: findings }));
-      checkStatusByVerse.update((values) => ({ ...values, [key]: "succeeded" }));
-      notice = `${message} Local and Greek Room checks are current.`;
+      // Only the alignment checks: the verse's other findings are kept, and
+      // Greek Room runs on demand (#251, #252).
+      await recheckVerse(chapter, verse, ["alignment"]);
+      notice = `${message} The alignment checks are current.`;
     } catch (value) {
       checkStatusByVerse.update((values) => ({ ...values, [key]: "failed" }));
       error = `${message} The save succeeded, but rechecking failed: ${value instanceof Error ? value.message : String(value)}`;

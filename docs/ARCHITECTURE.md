@@ -205,7 +205,7 @@ documented alongside the resources and reproducible via
 
 ```mermaid
 flowchart LR
-  subgraph GRq["Greek Room and local checks (per verse, offline, auto-started on first chapter entry)"]
+  subgraph GRq["Greek Room and local checks (per verse, offline; the selected checks on chapter entry, Greek Room on demand: #251, #252)"]
     W["Wildebeest"] --> F
     U["USFM structural checker"] --> F
     N["Names (Uroman, smart edit distance)"] --> F

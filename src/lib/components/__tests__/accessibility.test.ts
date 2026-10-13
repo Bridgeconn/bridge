@@ -7,7 +7,7 @@ import QaFindingList from "../QaFindingList.svelte";
 import ReviewStatusBadge from "../ReviewStatusBadge.svelte";
 import VerseList from "../VerseList.svelte";
 import {
-  aiCheckReviewsByVerse, alignmentStatusByVerse, chapterVerseNums, checkStatusByVerse,
+  aiCheckReviewsByVerse, alignmentStatusByVerse, chapterVerseNums, checkStatusByVerse, checkGroupsByVerse,
   currentChapter, findingsByVerse, nativeChecksByVerse, selectedVerse, verseKey, verseTexts,
 } from "../../stores";
 import type { QaFinding } from "../../types/finding";
@@ -96,6 +96,7 @@ describe("accessibility", () => {
     verseTexts.set({ [verseKey("1", "6")]: "alpha beta" });
     findingsByVerse.set({ [verseKey("1", "6")]: [spanned] });
     checkStatusByVerse.set({});
+    checkGroupsByVerse.set({});
     alignmentStatusByVerse.set({});
     nativeChecksByVerse.set({});
     aiCheckReviewsByVerse.set({});

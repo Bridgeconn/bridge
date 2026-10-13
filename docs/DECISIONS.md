@@ -1097,3 +1097,23 @@ indic-qa-only scope of 2026-10-07 "indic-qa findings are drawn in the text by de
 grammar lead is drawn under the slider, and it still never carries the reviewed `inline` flag.
 **Revisit when:** reviewers find the default too noisy (raise the default floor), or the hub
 (#46) shares one threshold across a team.
+
+## 2026-10-13 — Greek Room runs on demand, last; it no longer re-checks live on verse focus (#252)
+
+**Decision:** Greek Room (Wildebeest, the USFM structural checker and names spelling: the three
+engines the Review panel's Greek Room tab shows) runs only when asked: Run Greek Room on the
+verse (Review panel, Checks menu), the chapter or the book (Checks menu, a job with progress and
+cancel), or as a ticked elective check (#251). It is off by default in the editor's selection,
+on by default in Collection QA, and refused while Collection QA runs. A chapter or book run
+clears the book's in-memory USFM and names results first, so findings an edit made stale come
+back fresh; a verse run reads them from memory and never scans on the dispatcher.
+**Because:** Rina and Benz both asked for it on 2026-10-13. Greek Room was 58–68 % of a
+whole-book job, ran on every chapter open, after every edit and on every verse selection, and
+the selection run had no debounce. The alternative, keeping it live and making it cheaper, still
+spends the reviewer's machine on a check they reach for last.
+**Rules out:** Greek Room on chapter open, after an edit or on verse selection unless the
+reviewer ticks it; a verse being shown as fully checked before its selected checks have run
+(the ✓ means every selected check ran clean; the verse-number title says "Greek Room not run").
+**Supersedes:** the "approved design" in which Greek Room was the one engine that re-checked
+live on focus (stated in `ReviewPanel.svelte`'s comment, never entered here).
+**Revisit when:** Greek Room gets a cache that makes a chapter run cheap enough to be automatic.

@@ -3,7 +3,7 @@ import { render, screen, fireEvent, waitFor, within } from "@testing-library/sve
 import { get } from "svelte/store";
 import CrossVerseAlignmentModal from "../CrossVerseAlignmentModal.svelte";
 import {
-  alignmentStatusByVerse, chapterVerseNums, checkStatusByVerse, currentChapter, findingsByVerse,
+  alignmentStatusByVerse, chapterVerseNums, checkStatusByVerse, checkGroupsByVerse, currentChapter, findingsByVerse,
 } from "../../stores";
 import type {
   AlignmentContext, AlignmentRange, AlignmentToken, AutoAlignJobStatus, AutoAlignWindowResult, CrossVerseLink, CrossVerseLinkResult,
@@ -129,6 +129,7 @@ function seed() {
   currentChapter.set("1");
   alignmentStatusByVerse.set({});
   checkStatusByVerse.set({});
+  checkGroupsByVerse.set({});
   findingsByVerse.set({});
 }
 
@@ -221,13 +222,16 @@ describe("CrossVerseAlignmentModal", () => {
 
   it("a same-verse drop realigns through alignment.realign, resending the column's existing words, then reruns local checks", async () => {
     realignWords.mockResolvedValue({ ...V2, status: "complete", gaps: { sourceUnmatched: 0, targetUnmatched: 0 } });
+    // Every selected check has run on the verse (#251): re-running only the
+    // alignment checks keeps its ✓.
+    checkGroupsByVerse.set({ "1:2": ["tN", "tW", "tc", "alignment", "text", "languageQa"] });
     await renderPage("2");
     // Click-to-pick-up is the same one-step drop the pointer drag delivers.
     await pickUp("was", "2");
     await fireEvent.click(screen.getByLabelText(/Align picked-up word to λόγος in verse 2/));
     await waitFor(() => expect(realignWords).toHaveBeenCalledTimes(1));
     expect(realignWords).toHaveBeenCalledWith("1", "2", ["H001"], ["T001", "T002"], V2.alignment);
-    await waitFor(() => expect(runVerseChecks).toHaveBeenCalledWith("1", "2", ["alignment", "greekroom"]));
+    await waitFor(() => expect(runVerseChecks).toHaveBeenCalledWith("1", "2", ["alignment"]));
     expect(get(alignmentStatusByVerse)["1:2"]).toBe("complete");
     expect(get(checkStatusByVerse)["1:2"]).toBe("succeeded");
     expect(get(findingsByVerse)["1:2"]).toEqual([{ id: "f1" }]);
@@ -247,8 +251,8 @@ describe("CrossVerseAlignmentModal", () => {
       { chapter: "1", verse: "2", bottomId: "T002" },
     );
     expect(realignWords).not.toHaveBeenCalled();
-    await waitFor(() => expect(runVerseChecks).toHaveBeenCalledWith("1", "3-4", ["alignment", "greekroom"]));
-    await waitFor(() => expect(runVerseChecks).toHaveBeenCalledWith("1", "2", ["alignment", "greekroom"]));
+    await waitFor(() => expect(runVerseChecks).toHaveBeenCalledWith("1", "3-4", ["alignment"]));
+    await waitFor(() => expect(runVerseChecks).toHaveBeenCalledWith("1", "2", ["alignment"]));
     expect(await screen.findByText(/Cross-verse link saved/)).toBeInTheDocument();
 
     // The source row shows where the token is realized ...
@@ -305,7 +309,7 @@ describe("CrossVerseAlignmentModal", () => {
     await renderPage("2");
     await fireEvent.click(screen.getByRole("button", { name: "Unalign God from θεός" }));
     await waitFor(() => expect(unalignWords).toHaveBeenCalledWith("1", "1", ["T001"], V1.alignment));
-    await waitFor(() => expect(runVerseChecks).toHaveBeenCalledWith("1", "1", ["alignment", "greekroom"]));
+    await waitFor(() => expect(runVerseChecks).toHaveBeenCalledWith("1", "1", ["alignment"]));
   });
 
   it("clicking a verse in the verdict strip filters both columns to that verse's gaps", async () => {
@@ -411,7 +415,7 @@ describe("CrossVerseAlignmentModal", () => {
         { chapter: "1", verse: "3-4", topId: "H001" },
         { chapter: "1", verse: "2", bottomId: "T002" },
       ));
-      await waitFor(() => expect(runVerseChecks).toHaveBeenCalledWith("1", "3-4", ["alignment", "greekroom"]));
+      await waitFor(() => expect(runVerseChecks).toHaveBeenCalledWith("1", "3-4", ["alignment"]));
     });
 
     it("an ambiguous proposal has no one-click accept", async () => {
@@ -527,7 +531,7 @@ describe("CrossVerseAlignmentModal", () => {
       expect(screen.getAllByText("ai").length).toBeGreaterThan(0);
       expect(screen.getByText(/Last run: 2 requests · 41,280 tokens/)).toBeInTheDocument();
       // Every verse was rechecked so the editor's findings are current.
-      await waitFor(() => expect(runVerseChecks).toHaveBeenCalledWith("1", "2", ["alignment", "greekroom"]));
+      await waitFor(() => expect(runVerseChecks).toHaveBeenCalledWith("1", "2", ["alignment"]));
     });
 
     it("is disabled with the reason when no key is configured, and for a range it cannot take", async () => {
