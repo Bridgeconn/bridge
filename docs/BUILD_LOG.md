@@ -19159,3 +19159,50 @@ columns and seen by a fresh engine on the same workspace. `ImportScreenList
 .test.ts` (5): the columns, the empty states, rename through the engine,
 archive behind the filter and unarchive from it, Delete still behind its
 confirmation. The workspace ladder test moves to v3.
+
+
+## 2026-10-13 — Cross-reference targets and origins; framework item 28 is Checked (#249, #230)
+
+**What.** `engine/tc_ai_bridge/language_qa_xrefs.py`, two common rules in the pass's
+book step, panel only:
+- `common/xref.target-missing`: a reference in a cross-reference's `\xt` whose chapter or
+  verse exists in none of the six standard versifications (the vendored `versification`
+  data, merged maximum per chapter, loaded once, 0.44 s), so a different numbering is never
+  an error (PSA 151 exists in the LXX, MAL 4 in the English). Book names resolve against
+  every book of the collection: `\toc3`, `\toc2` and `\h`, read with
+  `usfm_parser.identify_usfm` from each book's preserved source (`<book>.usfm`, or the copy
+  in `.bridge/lazy-import.json` while the book is lazy), cached until a source changes;
+  0.40 s for 66 books, 126 names. An unknown name is flagged only when the collection
+  holds all 66 books. Text that does not read as a reference is skipped, never flagged.
+  No fix is offered.
+- `common/xref.origin-mismatch`: an `\xo` whose chapter:verse is not the verse the note
+  sits in (a range or a verse bridge that covers it is fine). The fix is the verse's own
+  reference.
+
+Notes come from `lift_verse` (gotcha 14); only the reference text inside `\xt` is read here,
+as plain text. Reading a sibling's files can never fail the pass: an error becomes a
+limitation. Row 28 moves to Checked.
+
+**Why.** Requirement 3 (#230): the specification listed target validity as not checked.
+
+**Measured on the IRV** (66 books, the reviewer's copy): 5,973 references checked, 0
+findings, 1 skipped (HEB 11:32 `1சாமு 16:1-2சாமு 2:11`, a range across books, which is
+valid). Every `\xo` matches its verse. Cross-chapter ranges (`யாத் 7:8-12:13`), whole
+chapters (`சங் 59`) and a bare chapter after the previous book (`142`) are all read. The
+rule is a safeguard here: the IRV's cross-references are clean.
+
+**Seen, not changed.** Footnotes that embed `\xt` (MAT 22:44 …) are not checked for
+targets; this rule reads cross-reference notes only.
+
+**Gates.**
+- `tests/jobs/test_language_qa_xrefs.py`: 7 passed (existing and missing targets, LXX and
+  English numbering, an unknown name in a partial versus a whole Bible, a cross-book range
+  skipped, origin mismatch, range and bridge origins, a two-book collection with one lazy
+  book, and one pass through LanguageQaManager).
+- Full engine suite: 5,267 passed, 3 xfailed, none failed.
+- Human gate: pass.
+- Latency gate (`benchmark_language_qa.py --gate --cores 2`, the 50 ms default): pass. p95 during a scan:
+  Language QA verse.decide 34.7 ms, verse.get 23.4, languageQa.inline 24.0, languageQa.status 7.3,
+  ping 8.0. The ungated write paths (verse.edit 1,175 ms, project.open 830) are not a Language QA cost.
+- `build-sidecars.ps1`, then `smoke_sidecars.py`: passed.
+- Frontend and src-tauri untouched; their gates were not run.

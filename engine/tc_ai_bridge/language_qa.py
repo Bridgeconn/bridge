@@ -184,6 +184,9 @@ RULES: dict[str, RuleMeta] = {
     "spacing.extra": RuleMeta("common", "integrity", "spacing", "medium", revision=2),   # 2: offers the fix (one space; remove an edge space)
     "punctuation.repeated": RuleMeta("common", "integrity", "punctuation", "medium"),
     "punctuation.space-before": RuleMeta("common", "integrity", "punctuation", "medium"),
+    # Cross-references (framework item 28, #249; book step, language_qa_xrefs.py).
+    "xref.target-missing": RuleMeta("common", "integrity", "usfm", "high"),
+    "xref.origin-mismatch": RuleMeta("common", "integrity", "usfm", "high"),
     # Words of Jesus (framework item 29, #248).
     "wj.glued": RuleMeta("common", "integrity", "word-joining", "high"),
     "wj.space-inside": RuleMeta("common", "integrity", "usfm", "high"),
