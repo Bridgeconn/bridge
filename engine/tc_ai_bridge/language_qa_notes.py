@@ -17,49 +17,59 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any, Callable
 
-import regex
-
-from .language_qa import RULE_VERSION, rule_fields, stable_finding_id, suggestion, text_hash
-
-NOTE_OPEN = regex.compile(r"\\(?P<kind>f|fe|x)\s+(?P<caller>\S)(?=\s)")
+from .language_qa import (RULE_VERSION, lift_inline_usfm, note_extent, rule_fields, stable_finding_id,
+                          suggestion, text_hash)
 
 
 def _chapter_order(chapter: str) -> int:
     return int(chapter) if chapter.isdigit() else 0
 
 
+def _opener(raw: str, note: Any) -> tuple[str, str, int, int]:
+    """(marker, caller, start, end) of the note's opener and caller, `\\x -`, from the
+    parser's note (lift_verse): the marker is the word after the backslash."""
+    start, _ = note_extent(raw, note)
+    marker = raw[start + 1:].split(None, 1)[0]
+    caller = note.caller.split()[0]  # a marker-less note reads as one long caller in lift_verse
+    end = raw.index(caller, start + 1 + len(marker)) + len(caller)
+    return marker, caller, start, end
+
+
 def caller_findings(book: str, chapter_texts: dict[str, dict[str, Any]], *,
                     proceed: Callable[[], bool] = lambda: True) -> list[dict[str, Any]]:
     """`chapter_texts`: chapter -> verse -> stored (raw) verse text."""
     callers: dict[str, Counter] = {}
-    places: list[tuple[str, str, str, Any]] = []
+    places: list[tuple[str, str, str, str, str, int, int]] = []
     for chapter in sorted(chapter_texts, key=_chapter_order):
         for verse, raw in chapter_texts[chapter].items():
-            if not isinstance(raw, str):
+            if not isinstance(raw, str) or ("\\f" not in raw and "\\x" not in raw):
                 continue
-            for match in NOTE_OPEN.finditer(raw):
-                callers.setdefault(match.group("kind"), Counter())[match.group("caller")] += 1
-                places.append((chapter, verse, raw, match))
-    usual = {kind: counts.most_common(1)[0] for kind, counts in callers.items() if len(counts) > 1}
+            lifted, _ = lift_inline_usfm(raw)
+            if lifted is None:
+                continue  # its markup is reported as a limitation by the verse scan
+            for note in lifted.notes:
+                marker, caller, start, end = _opener(raw, note)
+                callers.setdefault(marker, Counter())[caller] += 1
+                places.append((chapter, verse, raw, marker, caller, start, end))
+    usual = {marker: counts.most_common(1)[0] for marker, counts in callers.items() if len(counts) > 1}
     findings: list[dict[str, Any]] = []
     occurrences: Counter = Counter()
-    for chapter, verse, raw, match in places:
+    for chapter, verse, raw, marker, caller, start, end in places:
         if not proceed():
             break
-        kind, caller = match.group("kind"), match.group("caller")
-        if kind not in usual or caller == usual[kind][0]:
+        if marker not in usual or caller == usual[marker][0]:
             continue
-        expected, count = usual[kind]
-        original = match.group()
-        fixed = f"\\{kind} {expected}"
+        expected, count = usual[marker]
+        original = raw[start:end]
         occurrences[(chapter, verse, original)] += 1
         findings.append({
             "id": stable_finding_id(book, chapter, verse, "note.caller-mixed", original,
                                     occurrences[(chapter, verse, original)]),
             "book": book, "chapter": chapter, "verse": verse, "rule": "note.caller-mixed",
-            "severity": "low", "start": match.start(), "end": match.end(), "originalText": original,
-            "message": f"Caller \"{caller}\" here; this book's other \\{kind} notes use \"{expected}\" ({count}).",
+            "severity": "low", "start": start, "end": end, "originalText": original,
+            "message": f"Caller \"{caller}\" here; this book's other \\{marker} notes use \"{expected}\" ({count}).",
             "textHash": text_hash(raw), "ruleVersion": RULE_VERSION, "status": "review-needed",
-            **rule_fields("note.caller-mixed", [suggestion(fixed, "rule", f"Use the book's caller \"{expected}\"")]),
+            **rule_fields("note.caller-mixed", [suggestion(f"\\{marker} {expected}", "rule",
+                                                           f"Use the book's caller \"{expected}\"")]),
         })
     return findings

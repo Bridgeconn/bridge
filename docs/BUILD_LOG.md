@@ -19048,3 +19048,34 @@ count from the hook's row shape, through an ignore and a reopen, and an
 old-shape rollup totalling as unknown; a job with the Language QA stage
 records ids for every verse and one without records none. The dashboard
 test's book carries the new fields.
+
+
+## 2026-10-13 — The footnote and caller rules read lift_verse's notes, not a pattern (#245, #246; gotcha 14)
+
+**What was wrong.** `footnote.missing-ft` (#245, 6dad936), `note.space-before-caller` and
+`note.caller-mixed` (#246, 774ef6f) found notes and their callers with their own regular
+expressions over the raw verse. CLAUDE.md gotcha 14: USFM is read by `usfm_parser.py` and
+`usfm_verse.py` only, and nothing else may regex-parse it. `lift_verse` already returns
+every note (kind, caller, reference, parts, raw range) and every character-style span.
+I noticed it while starting item 28, which also needs the notes.
+
+**What changed.** Language QA's `LiftedVerse` now carries the parser's `notes` and
+`styles` (passed through by `lift_inline_usfm`, no second lift). The rules read them:
+- the note's own span comes from its raw range (`note_extent`), minus the one space the
+  parser may swallow;
+- `note.space-before-caller` asks whether the space before a note is visible text, so a
+  marker's syntax space (`\q1 \x`) is not one, and whether any text follows the note;
+- `footnote.missing-ft` reads the parts. The parser keeps only markers that have text, so
+  an empty `\ft` straight before `\xt` (the reviewer's own fix) is also looked for among
+  the note's tokens. With tokens alone, `\fr 28:22\ft …` (no space, 5 notes in the IRV)
+  read as missing `\ft`; with parts and tokens, neither form is missed. The rule is
+  limited to the reviewed shape, a `\fr` reference followed by text;
+- `note.caller-mixed` uses the first token of the parser's caller.
+
+**Found, not fixed.** For a footnote with no marker at all (`\f + text\f*`), `lift_verse`
+reads `+ text` as the caller. Gotcha 14 says such an edge case is fixed in the parser, with
+a parity test, not worked around in a rule. There are none in the IRV. Proposed, not filed.
+
+**Measured on the IRV:** the same findings as the pattern versions: 3 missing-ft, 53
+space-before-caller, 2 caller-mixed, `spacing.extra` 86. `scan_text` over every verse of
+the Bible takes 8.3 s in one process.

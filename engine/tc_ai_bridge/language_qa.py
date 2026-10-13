@@ -5,6 +5,7 @@ Unicode Tamil §12.6 permits decomposed two-part vowels and Grantha conjuncts.
 """
 from __future__ import annotations
 
+import bisect
 import hashlib
 import json
 import unicodedata
@@ -388,17 +389,21 @@ CROSSING_LIMITATION = "candidate(s) spanning inline USFM markup omitted."
 # as any whitespace does. Reporting it flooded IRV Psalms with 2,977 false
 # findings that filled the book cap by chapter 87.
 USFM_LINE_BREAKS = frozenset("\n\r")
-# Footnotes in raw verse text (footnote.missing-ft): a note, its paragraph
-# markers, its \fr reference token, and any marker at all.
-_FOOTNOTE = regex.compile(r"\\f\s+\S\s+(?P<body>.*?)\\f\*", regex.DOTALL)
-_NOTE_PARAGRAPH = regex.compile(r"\\(?:ft|fq|fqa|fk|fl|fw|fp|fdc)(?![a-z0-9])")
-_NOTE_REFERENCE = regex.compile(r"\s*\\fr\s+\S+\s*")
-_NOTE_MARKUP = regex.compile(r"\\\+?[a-z0-9]+\*?")
-# Note callers in raw verse text (note.space-before-caller).
-_NOTE_OPENER = regex.compile(r"\\(?P<kind>f|fe|x)\s+\S(?=\s)")
-_OPEN_MARKER_BEFORE = regex.compile(r"\\[a-z]+\d*$")       # "\q1 \x ...": the space is the marker's
-_ANY_NOTE = regex.compile(r"\\(f|fe|x)\s.*?\\\1\*", regex.DOTALL)
-_ONLY_CLOSERS = regex.compile(r"(?:\s|\\[a-z]+\d*\*)*")
+# Footnote paragraph markers (footnote.missing-ft): a note with none of these
+# has its text loose after the \fr reference.
+_NOTE_PARAGRAPH = frozenset({"ft", "fq", "fqa", "fk", "fl", "fw", "fp", "fdc"})
+
+
+
+def note_extent(raw: str, note: Any) -> tuple[int, int]:
+    """The raw span of the note itself, opener to closer, inside the range
+    lift_verse removed (which may also hold one swallowed space)."""
+    start = raw.index("\\", note.raw_start)
+    end = raw.rindex("*", start, note.raw_end) + 1
+    return start, end
+
+
+
 
 
 @dataclass(frozen=True)
@@ -409,6 +414,11 @@ class LiftedVerse:
     markup is byte-identical to the raw span it maps to."""
     visible: str
     raw_index: tuple[int, ...]  # raw_index[i] is the raw offset of visible[i]
+    # The parser's notes and character-style spans (usfm_verse.lift_verse),
+    # for the markup rules (footnote.*, note.*, wj.*): gotcha 14, no second
+    # USFM reader.
+    notes: tuple[Any, ...] = ()
+    styles: tuple[Any, ...] = ()
 
     def raw_span(self, start: int, end: int) -> tuple[int, int] | None:
         """Raw half-open span for visible[start:end], or None when that span
@@ -437,7 +447,7 @@ def lift_inline_usfm(raw: str) -> tuple[LiftedVerse | None, str]:
         unbalanced = [w for w in lifted.warnings if w.startswith("Unbalanced ")]
         reason = "; ".join(unbalanced) if unbalanced else lifted.warnings[0]
         return None, f"{reason}; verse not checked."
-    return LiftedVerse(lifted.plain, lifted.raw_index), ""
+    return LiftedVerse(lifted.plain, lifted.raw_index, lifted.notes, lifted.styles), ""
 
 
 def scan_text(text: str, *, book: str, chapter: str, verse: str,
@@ -558,20 +568,24 @@ def scan_text(text: str, *, book: str, chapter: str, verse: str,
     with timings.step("rule.punctuation.space-before"):
         for match in regex.finditer(r" +(?:[,;:!?]|\.(?!\.))", text):
             add("punctuation.space-before", *match.span(), "Space before punctuation; check project style.")
+    # The markup rules below read the parser's notes and \wj spans
+    # (lift_verse via `lifted`), never the raw USFM by pattern (gotcha 14).
+    def kept(offset: int) -> bool:
+        """Whether a raw code point is visible text (not marker syntax)."""
+        at = bisect.bisect_left(lifted.raw_index, offset)
+        return at < len(lifted.raw_index) and lifted.raw_index[at] == offset
+
     with timings.step("rule.note.space-before-caller"):
         # Framework item 44 (#246): a space between a word and the note that
         # annotates it, mid-verse (Benz, 2026-10-13: flag it, offer to remove
-        # it). A marker's own syntax space (\q1 \x) is not one; a space at the
-        # verse end is spacing.extra's.
-        for opener in _NOTE_OPENER.finditer(raw):
-            at = start = opener.start()
-            while start > 0 and raw[start - 1] in " \t":
+        # it). A marker's own syntax space (\q1 \x) is not visible text; a
+        # space at the verse end is spacing.extra's.
+        for note in lifted.notes:
+            at, _ = note_extent(raw, note)
+            start = at
+            while start > 0 and raw[start - 1] in " \t" and kept(start - 1):
                 start -= 1
-            if start == at or start == 0 or _OPEN_MARKER_BEFORE.search(raw, 0, start):
-                continue
-            close = raw.find(f"\\{opener.group('kind')}*", at)
-            rest = _ANY_NOTE.sub("", raw[close + len(opener.group("kind")) + 2:]) if close >= 0 else ""
-            if close < 0 or _ONLY_CLOSERS.fullmatch(rest):
+            if start == at or start == 0 or not text[note.position:].strip():
                 continue
             add("note.space-before-caller", start, at,
                 "Space before a note caller: the caller prints apart from its word.", "low",
@@ -579,21 +593,30 @@ def scan_text(text: str, *, book: str, chapter: str, verse: str,
     with timings.step("rule.footnote.missing-ft"):
         # Framework item 27 (#245): footnote text with no \ft (or other
         # paragraph marker) after the \fr reference. The fix inserts \ft there,
-        # as the reviewer asked (2026-10-13, 3 of 3). Raw offsets: notes are
-        # not in the visible text.
-        for note in _FOOTNOTE.finditer(raw):
-            body = note.group("body")
-            if _NOTE_PARAGRAPH.search(body):
+        # as the reviewer asked (2026-10-13, 3 of 3).
+        for note in lifted.notes:
+            # The reviewed shape: a \fr reference, then text. (A note with no
+            # marker at all reads, in lift_verse, as one long caller; not here.)
+            if note.kind != "footnote" or not note.reference or not note.text.strip():
                 continue
-            if not _NOTE_MARKUP.sub("", _NOTE_REFERENCE.sub("", body, count=1)).strip():
-                continue  # a reference and nothing else: no text to mark
-            ref = _NOTE_REFERENCE.match(body)
-            at = note.start("body") + (ref.end() if ref else 0) - note.start()
-            fixed = note.group()[:at] + "\\ft " + note.group()[at:]
+            start, end = note_extent(raw, note)
+            body = raw[start:end]
+            # The parser's parts, plus the note's own tokens: the parser keeps
+            # only markers with text, so an empty "\ft " right before "\xt"
+            # (the reviewer's fix) is found among the tokens; "\fr 28:22\ft …"
+            # (no space) only among the parts.
+            markers = {marker for marker, _ in note.parts}
+            markers |= {token[1:] for token in body.split() if token.startswith("\\")}
+            if markers & _NOTE_PARAGRAPH:
+                continue
+            at = body.index(note.reference, body.index("\\fr")) + len(note.reference)
+            while at < len(body) and body[at] in " \t":
+                at += 1
             before = len(findings)
-            add("footnote.missing-ft", note.start(), note.end(),
+            add("footnote.missing-ft", start, end,
                 "Footnote text has no \\ft marker after the reference.", "medium",
-                [suggestion(fixed, "rule", "Insert \\ft after the footnote reference")], raw_offsets=True)
+                [suggestion(body[:at] + "\\ft " + body[at:], "rule", "Insert \\ft after the footnote reference")],
+                raw_offsets=True)
             if len(findings) > before:
                 # Offsets index the stored verse, so Use applies as usual; a
                 # scoped (book-wide) apply leaves footnotes alone.

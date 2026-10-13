@@ -39,6 +39,6 @@ def test_a_reference_alone_is_not_text_to_mark():
     assert notes("வசனம்\\f + \\fr 1:1 \\f* முடிவு.") == []
 
 
-def test_without_fr_the_ft_goes_after_the_caller():
-    [finding] = notes("வசனம்\\f + சில பிரதிகளில்\\f* முடிவு.")
-    assert finding["suggestions"][0]["text"] == "\\f + \\ft சில பிரதிகளில்\\f*"
+def test_a_note_with_no_marker_at_all_is_left_to_the_parser():
+    # lift_verse reads "+ சில பிரதிகளில்" as the caller: not the reviewed shape.
+    assert notes("வசனம்\\f + சில பிரதிகளில்\\f* முடிவு.") == []
