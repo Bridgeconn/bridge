@@ -189,6 +189,7 @@ RULES: dict[str, RuleMeta] = {
     "punctuation.unbalanced-pair": RuleMeta("common", "integrity", "punctuation", "high"),
     "punctuation.unbalanced-quote": RuleMeta("common", "integrity", "punctuation", "medium"),
     "poetry.q2-without-q1": RuleMeta("common", "integrity", "usfm", "medium"),
+    "acrostic.stanzas": RuleMeta("common", "integrity", "usfm", "high"),  # item 34, #270
     # Book header and introduction (framework item 47, #253; language_qa_header.py).
     "header.missing": RuleMeta("common", "integrity", "usfm", "high"),
     "header.running-head": RuleMeta("common", "integrity", "consistency", "high"),  # item 43, #254

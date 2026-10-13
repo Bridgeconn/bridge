@@ -1,5 +1,5 @@
-"""Chapter-level structure checks: quotation marks (framework item 9, #264) and
-poetry indentation (item 33, #265).
+"""Chapter-level structure checks: quotation marks (framework item 9, #264),
+poetry indentation (item 33, #265) and Psalm 119's acrostic stanzas (item 34, #270).
 
 Both read each verse's stored string through `usfm_verse` (gotcha 14): the
 visible text from `lift_inline_usfm`, the paragraph markers in order from
@@ -14,6 +14,11 @@ pass stays inside the Tier A budget (parsing Psalms takes 3 s).
   in the IRV: the quotation of Psalm 91 opens at `\\q2`). The marker between
   `\\c` and the first verse, and between a heading and its verse, is in no stored
   verse string, so a poem opening at `\\q2` right there is not caught.
+- `acrostic.stanzas`: Psalm 119's 22 stanzas should each carry their letter
+  (`\\qa`). The `\\qa` before verse 1 is in no stored verse string, so 21 or more
+  counts as complete. One finding per chapter, at verse 1, in the chapter's
+  heading context; no fix. The other alphabet poems (LAM 1-4, PSA 9-10, 25, 34,
+  37, 111, 112, 145, PRO 31) are not marked by convention and are not checked.
 """
 from __future__ import annotations
 
@@ -22,6 +27,8 @@ from typing import Any, Callable
 from .language_qa import RULE_VERSION, lift_inline_usfm, rule_fields, stable_finding_id, text_hash
 from .usfm_verse import marker_names
 
+# Acrostic chapters whose stanzas are marked with their letter (\qa): book -> chapter -> stanzas.
+ACROSTICS = {"psa": {"119": 22}}
 QUOTES = {"“": "”", "‘": "’"}
 CLOSERS = {close: open_ for open_, close in QUOTES.items()}
 FIRST_LEVEL = frozenset({"q", "q1"})
@@ -109,6 +116,25 @@ def structure_findings(book: str, chapter_texts: dict[str, dict[str, Any]],
                     if name in INDENTED and not first_level and at >= 0:
                         add("poetry.q2-without-q1", chapter, verse, raw, at, at + len(name) + 1,
                             f"\\{name} with no \\q1 before it in this stanza: the first line of a poem is \\q1.")
+        stanzas = ACROSTICS.get(book.lower(), {}).get(chapter)
+        if stanzas:
+            letters = sum(1 for raw in chapter_texts[chapter].values() if isinstance(raw, str)
+                          for name in marker_names(raw) if name == "qa")
+            if letters < stanzas - 1:
+                first = min(chapter_texts[chapter], key=_verse_order)
+                titles = [h.get("text", "") for items in headings.get(chapter, {}).values() for h in items]
+                title = titles[0] if titles else ""
+                findings.append({
+                    "id": stable_finding_id(book, chapter, first, "acrostic.stanzas@heading0", title, 1),
+                    "book": book, "chapter": chapter, "verse": first, "rule": "acrostic.stanzas",
+                    "severity": "low", "start": 0, "end": 0, "originalText": "",
+                    "message": (f"Psalm {chapter} is an acrostic of {stanzas} stanzas; "
+                                + ("none carries its stanza letter (\\qa)." if not letters else
+                                   f"only {letters} of the {stanzas - 1} after the first carry their stanza "
+                                   f"letter (\\qa).")),
+                    "textHash": text_hash(title), "ruleVersion": RULE_VERSION, "status": "review-needed",
+                    "context": "heading", "contextText": title, **rule_fields("acrostic.stanzas", []),
+                })
         for mark, verse, raw, offset in open_quotes:
             add("punctuation.unbalanced-quote", chapter, verse, raw, offset, offset + 1,
                 f"Opening {mark} with no closing {QUOTES[mark]} after it in chapter {chapter}.")
