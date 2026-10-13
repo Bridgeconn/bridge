@@ -16,6 +16,7 @@
     { id: "review", label: "Review", title: "Review the selected verse" },
     { id: "languageQa", label: "Language QA", title: "Language QA for the book" },
     { id: "reference", label: "Reference", title: "A reference Bible beside the text" },
+    { id: "source", label: "Source", title: "The Hebrew, Aramaic or Greek source beside the text" },
   ];
 </script>
 
