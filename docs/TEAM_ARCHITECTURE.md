@@ -265,6 +265,12 @@ events. `sync_conflicts` as a table, and any UI, remain ss7's.
   `project_admin` of one's own projects. One `authorize(user, project, action)` helper is
   used by the engine dispatcher so the hub and the desktop share the rules.
 
+> Sections 6 to 8 were reviewed against the v8 workbench on 2026-10-15 (#227,
+> `HUB_ARCHITECTURE_REVIEW_2026-10-15.md`). The review is the current word where the
+> two differ: the table list that syncs, the hub-project-id linking rule, the conflict
+> semantics for links and batches, and packaging as a pip `[server]` extra behind
+> Task Scheduler.
+
 ## 6. Engine process model (prerequisite for the hub)
 
 - `BridgeEngine` state (`bridge_service.py:429-536`) splits into `Workspace` (settings,

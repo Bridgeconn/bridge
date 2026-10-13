@@ -19378,3 +19378,59 @@ able to read. `AssignmentsDialog.test.ts` (3), `ProjectDashboardAssignments
 store function's rule. The ladders' tests move to workbench v8 and
 workspace v5. Not run on the desktop: assigning from the dashboard and
 seeing ● in the chapter list.
+
+## 2026-10-15 — #227 hub and dashboard architecture review
+
+The review SRS §14 requires before `FUTURE-002`/`FUTURE-003` are built, done
+as a dated note, `docs/HUB_ARCHITECTURE_REVIEW_2026-10-15.md`, against the
+code on `main` today (workbench v8, workspace v5, `authorize()` in place)
+rather than the v2 workbench `TEAM_ARCHITECTURE.md` §6 to §8 were written
+against. What the review settled, each also a DECISIONS entry of this date:
+
+- **Twelve tables sync, fourteen never do.** Every one of the 26
+  `MUTABLE_TABLES` is classified: the human-owned rows (decisions, issue
+  resolutions, cross-verse links, null decisions, alignment history,
+  assignments and members, Language QA batches, flags and learned fixes,
+  project state, AI review results) travel; progress, check snapshots and
+  cache, triage, metrics, the backups index, semantic mappings and runs,
+  alignment diagnostics and verdicts and the Language QA scan cache are
+  derived or device-local and are rebuilt by each device. The hub keeps its
+  own progress rollup from the events it receives. A learned fix carries a
+  token's wording, not verse text, so "Scripture never travels" holds.
+  `overrides.json` and the reference cache stay on disk; mirroring
+  `overrides.json` into `project_state` is the second slice. #80 adds a
+  frozen `SYNCED_TABLES` tuple pinned against `MUTABLE_TABLES` by a test,
+  the way `METHOD_ACTIONS` is pinned against `Methods`.
+- **Linking is by a hub project id per book, matched on natural keys.** Two
+  devices importing the same folder mint different ids, and the same source
+  imported twice must stay two projects, so neither the id nor the sha256
+  links alone. Rows keep each device's local `projectId`; the hub maps per
+  device at push time and matches rows by the lifted columns v3 to v8 gave
+  every table. `natural_row_id` takes the hub id once set (#80).
+- **Conflicts.** tC alignment groups do not sync (tC-owned, Scripture-
+  adjacent); links and null decisions are one row per token signature, so
+  two users linking the same token to different targets make two rows and a
+  verse that shows as needing review, not a merge problem. A batch row
+  travels as a record; its verse edits do not, and a receiving device never
+  replays them (no second Scripture writer). Decisions conflict on revision
+  exactly as `import_events` already reports.
+- **`authorize()`** runs on the hub where it runs on the desktop: the HTTP
+  transport binds the device token's user to the session and hands the
+  request to `handle_request`. Roles stay per installation until
+  `team_members.role` arrives after #81.
+- **Packaging:** a pip `[server]` extra behind Task Scheduler with a nightly
+  `sqlite3 .backup`, not a second PyInstaller exe and not NSSM; the hub
+  machine is the requirement's 2-core, 4 GB, fixed-hostname LAN host with no
+  internet.
+- **Acceptance restated as #80's tests:** 500 events under 30 s over
+  loopback and a 100 Mbit link; the existing divergent-row test lifted to
+  the protocol; the offline smoke as the never-blocks gate.
+- **Order confirmed:** #79 → #80 → #81, Option A only. Nothing widens the
+  stop-and-ask list.
+
+`ARCHITECTURE.md` §9 lists the note; `TEAM_ARCHITECTURE.md` §6 points to it
+as the current word where the two differ. Three follow-ups proposed, not
+filed: `overrides.json` as a `project_state` row; `natural_row_id` taking
+the hub project id; `team_members.role`. Ran: nothing (docs only); the
+table count and the sync code (`unsynced`, `mark_synced`, `import_events`,
+`record_domain_event`) were read from today's tree, not from the design.

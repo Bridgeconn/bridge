@@ -1014,3 +1014,50 @@ to the new roles (there is no data to map; the mapping in TEAM_ARCHITECTURE.md �
 historical); a per-project `team.json`.
 **Revisit when:** the hub (#80) needs per-project roles; then `team_members` gains the
 role column, and `authorize()`'s `project` argument starts to matter.
+
+## 2026-10-15 — The hub syncs twelve workbench tables; derived and device-local ones never travel (#227)
+**Decision:** The first hub slice (#80) carries `human_decisions`, `issue_resolutions`,
+`alignment_cross_verse_links`, `alignment_null_decisions`, `alignment_history`,
+`team_assignments`, `team_members`, `language_qa_batches`, `language_qa_flags`,
+`language_qa_learned_fixes`, `project_state` and `ai_review_results`. The other fourteen
+`MUTABLE_TABLES` entries (progress, check findings and cache, triage verdicts, metrics,
+the backups index, semantic mappings and validation runs, alignment diagnostics and
+verdicts, the Language QA scan cache) never sync; the hub keeps its own progress rollup
+from the events it receives. `language-packs/<pack>/overrides.json` and the reference
+cache stay on disk. A frozen `SYNCED_TABLES` tuple, pinned against `MUTABLE_TABLES` by a
+test, is the record.
+**Because:** the human-owned rows are the product and are small; the derived ones are
+large, reproducible on every device from its own checks, and a copy of them would be
+stale the moment a check ran. A learned fix carries a token's old and new wording, not
+verse text, so "Scripture text never travels" (2026-09-11) holds.
+**Rules out:** syncing check snapshots to spare a device a check run; carrying
+`overrides.json` through the log in this slice.
+**Revisit when:** the second slice mirrors `overrides.json` into `project_state`.
+
+## 2026-10-15 — A hub project is linked by a hub project id per book, matched on natural keys (#227)
+**Decision:** The hub assigns a project id when the first device registers a book; a
+second device links its own import of the same book by choosing it on the hub, with the
+book id and the source sha256 as the check. Change-log rows keep each device's local
+`projectId`; the hub maps local id to hub id per device at push time and matches rows by
+the lifted natural-key columns. `natural_row_id` takes the hub project id once one is
+set (#80), so a project linked from the start gets identical row ids everywhere.
+**Because:** two devices importing the same Paratext folder mint different local ids and
+collection ids, and the same source imported twice on one device must stay two projects
+(#91's duplicate rule), so neither the id nor the sha256 alone can link. Lifting the
+natural keys into columns (v3 to v8) was what made natural-key matching possible.
+**Rules out:** rewriting existing change-log rows or row ids on link; linking at the
+collection level (a device may hold a subset of books, and a lazy sibling has no workbench).
+**Revisit when:** a team needs to merge two projects that were worked on unlinked.
+
+## 2026-10-15 — The hub is a pip `[server]` extra behind Task Scheduler, not a second exe (#227)
+**Decision:** `bridge-engine --serve --data-dir <hub>` installs from the `[server]` extra
+(FastAPI, uvicorn), excluded from `bridge-engine.spec`; it runs as a Windows Task
+Scheduler task that starts at boot and restarts on failure, written by
+`scripts/install-hub-task.ps1`; a nightly `sqlite3 .backup` keeps seven days. The hub
+machine is the requirement's: one LAN host, 2 cores, 4 GB, a fixed hostname, one open
+port, no internet.
+**Because:** one administrator installs the hub once; a frozen hub exe would double the
+release gate for one install, and NSSM would be a download the field machine cannot make.
+A lost hub costs a re-sync, not data, because every device holds its own copy.
+**Rules out:** the hub in the desktop sidecar (2026-09-11 stands); any hosted hub.
+**Revisit when:** a team without a Windows machine wants to host the hub.
