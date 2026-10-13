@@ -19526,3 +19526,47 @@ Rows: 47 Partial (the glossary and maps index are separate books the IRV does no
 - Human gate: pass. Latency gate (50 ms default): pass; ping max 96 ms. One earlier run in the same batch hit a single
   404 ms ping (max must stay under 250) while the machine was loaded; two reruns gave 162 and 102 ms, and this one 96.
 - `build-sidecars.ps1`, then `smoke_sidecars.py`: passed. src-tauri untouched.
+
+
+## 2026-10-13 — Requirement 3 coverage target met: 20 Checked, 20 Not checked (#230)
+
+**What.** The framework table in LANGUAGE_QA_TAMIL_SPECIFICATION.md went from 7 Checked / 33 Not
+checked (the morning) to 20 / 20, one sub-issue per item. The earlier entries today cover items 31,
+27, 44, 29, 28, 47 and 43. This entry covers the rest.
+
+| Item | Status | Sub-issue | How |
+|---|---|---|---|
+| 49 wordlist audit | Assisted | #255 | the panel's Book words tab (`languageQa.bookWords`); run on IRV Ruth: 167 words |
+| 40 line breaking | Partial | #256 | `tamil.dependent-sign` already reports a break or space inside a cluster; test added |
+| 41 hyphenation | Partial | #257 | `unicode.invisible` already reports a soft hyphen; test added |
+| 1, 4, 20, 50, 51, 55 | Checked | #258–#263 | Benz's decision on the existing rules, gaps named in each row |
+| 9 punctuation | Checked | #264 | new `punctuation.unbalanced-pair` (brackets, per verse) and `.unbalanced-quote` (per chapter) |
+| 33 poetry | Checked | #265 | new `poetry.q2-without-q1`; IRV: exactly MAT 4:6 |
+| 13, 14, 15, 16 | Assisted | #266–#269 | Benz's decision: the tN check presents 4,741 / 4,590 / 23,477 / 12,822 notes on these topics (56 books; NUM, 1CH, 2CH, ECC, ISA, JER, EZK, DAN, AMO, ZEC have none) |
+| 34 special structures | Partial | #270 | new `acrostic.stanzas`: Psalm 119's `\qa` letters; IRV: flagged once |
+| 21 proper names | stays Partial | – | names with suffixes are compared as whole words; Benz kept it Partial after I corrected my claim |
+
+Also #134 closed: M49–M58 covered six of its eight asks; M59 (same-verse drag) and M60 (a
+workbench newer than the build is refused) added, both NOT RUN.
+
+**How the new rules read the text.** `language_qa_structure.py` reads each verse's stored string
+through `usfm_verse` only (`lift_inline_usfm`, `marker_names`) and never parses the book: parsing
+Psalms takes 3.1 s of pure Python, which would hold the GIL inside a pass. The whole-Bible
+structure step takes 4.0 s, spread over each book's pass.
+
+**Two things learned on the IRV.**
+- A paragraph marker between `\c` or a heading and the next verse (`\s …`, `\q1`, `\v 2` at JOL
+  1:2) is in no stored verse string. The poetry rule's first version reset the stanza at a heading
+  and flagged 11 false alarms in Joel and Obadiah. It now treats the level there as unknown and
+  gives it the benefit of the doubt.
+- Not every row claim held up. Item 21's "names with suffixes" is not handled (both name checks
+  compare whole words), and I said so before Benz decided. The consultant items were moved on tN
+  evidence, not on Stage 7: its participant list is six words.
+
+**Unlabelled findings for the next review round:** MAT 4:6 (poetry), PSA 119 (acrostic letters),
+and the 53 space-before-caller findings (#246).
+
+**Gates** (items 9, 33): full engine suite 5,323 passed, none failed; human gate pass; latency
+gate pass (ping max 122 ms); sidecar build and smoke passed. Item 34: full engine suite 5,327 passed, none failed; human gate pass; latency gate pass (ping max 102 ms); sidecar build and smoke passed. Docs-only moves
+(49, 1, 4, 20, 50, 51, 55, 13–16) were verified against the rule files, the code and the bundled
+tN, not by a gate run. 40 and 41 added tests only: 5 passed.
