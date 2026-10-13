@@ -19480,3 +19480,49 @@ with the stdio envelope and a bad body with `bad_request`.
 `test_stdio_e2e.py` unchanged and green.
 
 Gates: pytest -n auto 5298 passed (the two known timing/flake tests only); frozen pair rebuilt without the server and `smoke_sidecars.py` passed. No frontend or Rust change.
+
+
+## 2026-10-13 — Book header and introduction: items 47 (Partial) and 43 (Checked) (#253, #254, #230)
+
+**What.** `engine/tc_ai_bridge/language_qa_header.py`: Language QA reads a book's header and
+introduction for the first time. They come from the preserved source (`<book>.usfm`, or the
+lazy copy), read with `usfm_parser.identify_usfm` (the preamble) and `usfm_verse.lift_verse`
+(the `\ior` spans), cached until the source changes. Rules, all panel only:
+- item 47 (#253): `common/header.missing` (no or empty `\toc1`, `\toc2`, `\toc3`, `\mt`);
+  `common/intro.ior-space` (a space inside `\ior … \ior*`); `common/intro.ior-target` (an
+  outline reference to a chapter or verse that does not exist, read as
+  `xref.target-missing` reads `\xt`).
+- item 43 (#254): `common/header.running-head` (`\h` differs from `\mt`); `header.missing`
+  also covers `\h`.
+
+A new finding context, `"introduction"`: anchored at the book's first verse; start/end index
+`contextText` (the header line as shown); no fix applied, because Bridge does not edit the
+header (a suggested form is in the message). Frontend: the type, "Book introduction: …" in
+LanguageQaPanel and the badge title in ReviewPanel, with a Vitest case. A failure reading the
+source becomes a limitation, never a failed pass.
+
+**Why.** Requirement 3 (#230). The 2026-10-13 review confirmed 3 of 3 `\ior` spaces. Benz
+decided on 2026-10-13 that the running head must equal the title `\mt` (of the three options:
+`\mt`, `\toc2`, or only a missing `\h`).
+
+**Measured on the IRV** (66 books): `\ior` spaces at MAT 8, 21 and 28 (the 3 confirmed);
+running head LAM (`புலம்பல்கள்` / `புலம்பல்`) and ACT (`அப்போஸ்தலருடைய` /
+`அப்போஸ்தலர்களுடைய நடபடிகள்`); PSA's `\h` equals its `\mt`, so it is not flagged. No missing
+marker; no bad outline target in 291 `\io1` lines.
+
+Rows: 47 Partial (the glossary and maps index are separate books the IRV does not have),
+43 Checked (page numbers are proofed on the PDF). Coverage: 12 Checked, 28 Not checked.
+
+**Gates.**
+- `header.missing` is one finding per book naming every absent marker: the test fixtures' bare `\id` source listed
+  five. Four pass-level tests over that fixture (persisted results, the real dispatcher, the indic-qa drawn flags,
+  the QA report's exception row) assert other rules' exact findings and now set the introduction finding aside;
+  the fixtures are unchanged. A header finding also counts in verse 1:1's exception-queue row, where it is anchored.
+- `tests/jobs/test_language_qa_header.py`: 9 passed. LanguageQaPanel Vitest: 30 passed.
+- Frontend: `npm run check` 0 errors, `npm run test` 726 passed, `npm run build` ok.
+- Full engine suite (rebased on #79): 5,307 passed, 1 skipped, 3 xfailed, 1 failed, the flaky
+  `test_moved_project_retains_identity_but_live_copy_is_rejected` (WinError 32/5 under `-n auto`; its third failure
+  today, it passes alone; Revant's area, proposed not fixed).
+- Human gate: pass. Latency gate (50 ms default): pass; ping max 96 ms. One earlier run in the same batch hit a single
+  404 ms ping (max must stay under 250) while the machine was loaded; two reruns gave 162 and 102 ms, and this one 96.
+- `build-sidecars.ps1`, then `smoke_sidecars.py`: passed. src-tauri untouched.
