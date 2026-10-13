@@ -18565,3 +18565,82 @@ path, so status polls keep answering. (2) The modal's pass label should come
 from the engine, and the failure text should be plain ("The AI provider did
 not answer within 4 minutes") rather than the socket's. QA matrix: M48, D14,
 M49, M50, M53, M56, M58 updated.
+
+
+## 2026-10-13 — Language QA human review, round 3: the indic-qa layer's first labels; spacing.extra offers its fix (#230)
+
+**The data.** Yesu Selva Benz labelled 361 items on 2026-10-13, all answered, none
+"unsure", with a note on 232; plus a word list of 15. Committed as data in
+`benchmark/human/2026-10-13/` (`human_labels.jsonl` 376 rows, `verses.jsonl` 313 verses
+from `D:\Claude Lab\IRV Tamil`, `lexicon_curated.csv`, `summary.json`, `pack_changes.md`,
+and the converter). The workbook (`ta-irv_reviewer_workbook_round3.xlsx`, its sampler and
+builder) is in `D:\Claude Lab\Claude outputs\ta-irv\round3\`.
+
+**Sample.** A full scan of the 66 books on main (ta-irv 1.3.0), verses of rounds 1-2
+excluded, at most three rows per first word:
+- the indic-qa layer, never labelled before: `sandhi.extra` 50 (the மிகா இடம் half of
+  framework item 3, on its own sheet), `.missing` 30, `.conflict` 20, `.dangling` and
+  `.wrong-class` (whole populations), `lex.near-miss` 40, `lex.unknown` 25,
+  `lex.compound` 25, the `shape.*` and `punct.*` populations;
+- round 2's next sample: the rest of both divine-name populations (6 + 9), 30 of the 107
+  AI-review misspelling pairs;
+- top-ups for inline rules under 50 labels (demonstrative 20, direction 15, spacing 15);
+- 40 structure candidates for items with no rule yet (`kind: "candidate"`, not scored):
+  heading trailing punctuation 25, `\s`/`\s1` 4, footnote with no `\ft` 3, `\ior` space 3,
+  `\x -` caller 2, `\wj` 3. All 40 confirmed.
+
+Six indic-qa rules fire nowhere in the IRV (`lex.near-miss` was thought to, it does: 94);
+the IRV has no quotation marks at all and balanced parentheses (587/587); all 5,879
+parseable cross-reference targets exist. Those structure items can be built without labels.
+
+**Headline (benchmark, combined).**
+
+| Rule | Labelled | Precision | |
+|---|---|---|---|
+| `indicqa.sandhi.missing` | 27 | 100% (23/23, 4 house) | inline candidate at 20+ |
+| `indicqa.sandhi.extra` | 40 | **27.3%** (9/33, 7 house) | the மிகா half of item 3 is not usable as it stands |
+| `indicqa.sandhi.conflict` | 19 | 79% | |
+| `indicqa.lex.near-miss` | 38 | **21.1%** | names and real words |
+| `indicqa.lex.unknown` | 42 | 21.4% | |
+| `indicqa.lex.compound` | 26 | 46.2% | |
+| `indicqa.shape.unusual-initial` | 7 | 0% | every one a loanword (டன், டிசம்பர்) |
+| `indicqa.shape.malformed` | 9 | 100% | whole population |
+| `typo.divine-name.vowel-drop` / `.dative-stem` | 11 / 13 | 100% | whole populations now labelled: rule (b) holds |
+| `lexicon.known-misspelling` | 79 | 91.1% | the AI-review pairs 25/32 |
+| `sandhi.vallinam.demonstrative`, `compound.direction` | 44, 40 | 100% | |
+
+**The conflict, and the decision.** `common/spacing.extra` (inline) came back 8/15: all
+seven "wrong" were a single verse-final space. Rounds 1-2 had confirmed 18 of 18 of the
+same shape. Benz ruled (DECISIONS 2026-10-13): keep flagging, and offer the fix. Rule
+revision 2: repeated spaces become one, an edge space is removed (a line break after it
+stays); before, the rule offered no fix at all. The seven round-3 labels are listed in
+`benchmark/human/superseded.json`, which `load_human_rounds` reads: the label stays in its
+round unedited, the benchmark lists it under "Labels superseded" and does not score it.
+spacing.extra is 31/31.
+
+A first attempt skipped verse-final spaces instead; it lost 18 confirmed round-1/2
+findings (hidden at first by a visible text that ends in `\n` after `\qs*`), which is how
+the 18-to-7 conflict surfaced.
+
+**Also changed.** `human_label_verses` skips `candidate` and `wordlist` rows (a candidate
+may sit on a heading). Baseline rewritten with round 3; rounds 1-2 unchanged.
+
+**Word list.** 15 rows: 2 already shipped (தண்ணீனால், உடன்பட்டிக்கை), 6 new misspellings,
+7 joined words (`சொல்லுகிறேன்என்றார்` …) that the curated-pair builder cannot take (it
+needs one word for one word): known-join candidates for item 4. `lexicon_curated.csv`
+carries 39 new pairs (the 6, plus 33 confirmed on sheet 2); not yet built into the lexicon.
+
+**Observed, not fixed.** The scorer credits a label to whichever finding sits first at its
+exact span, so where two rules flag the same word (`lexicon.known-misspelling` and
+`indicqa.lex.unknown` on பதிணெட்டாயிரம்) the counts move between rules (`lex.unknown`
+shows 42 labelled from 25 sampled). The per-rule table for those rules is approximate.
+Root-noun abstain class: "correct skip, now flagged" is 3 (was 1), new false alarms no gate
+reads.
+
+**Gates.**
+- Human gate pass, 1,194 rows over three rounds; `--update-doc`, `--write-baseline`.
+- Engine suite (`pytest -n auto`): 5,210 passed, 3 xfailed, 2 failed. Both failures were tests that used
+  spacing.extra as "a rule with no fix"; fixed in the rule commit, and the four affected files re-run: 36 passed.
+- `scripts/build-sidecars.ps1`, then `scripts/smoke_sidecars.py engine/dist/bridge-engine.exe`: passed
+  (the ta-irv indic-qa layer included).
+- Frontend untouched, so `npm run check/test/build` were not run; src-tauri untouched.

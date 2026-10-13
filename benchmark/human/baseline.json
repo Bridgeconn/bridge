@@ -1,11 +1,13 @@
 {
- "packVersion": "language-qa-7+ta-irv@1.1.0",
+ "packVersion": "language-qa-7+ta-irv@1.3.0",
  "rounds": [
   "2026-09-28",
-  "2026-09-29"
+  "2026-09-29",
+  "2026-10-13"
  ],
  "books": [
   "1ch",
+  "1co",
   "1ki",
   "1pe",
   "1sa",
@@ -13,9 +15,11 @@
   "2ch",
   "2co",
   "2ki",
+  "2pe",
   "2sa",
   "act",
   "amo",
+  "col",
   "dan",
   "deu",
   "ecc",
@@ -23,7 +27,9 @@
   "exo",
   "ezk",
   "ezr",
+  "gal",
   "gen",
+  "hab",
   "heb",
   "hos",
   "isa",
@@ -38,6 +44,7 @@
   "lev",
   "luk",
   "mat",
+  "mic",
   "mrk",
   "nam",
   "neh",
@@ -45,12 +52,31 @@
   "pro",
   "psa",
   "rev",
+  "rom",
+  "rut",
+  "sng",
   "zec"
  ],
  "rules": {
+  "common/punctuation.repeated": {
+   "labelled": 1,
+   "tp": 1,
+   "fp": 0,
+   "house": 0,
+   "precision": 1.0,
+   "inline": false,
+   "rounds": {
+    "2026-10-13": {
+     "labelled": 1,
+     "tp": 1,
+     "fp": 0,
+     "precision": 1.0
+    }
+   }
+  },
   "common/spacing.extra": {
-   "labelled": 23,
-   "tp": 23,
+   "labelled": 31,
+   "tp": 31,
    "fp": 0,
    "house": 0,
    "precision": 1.0,
@@ -67,6 +93,236 @@
      "tp": 8,
      "fp": 0,
      "precision": 1.0
+    },
+    "2026-10-13": {
+     "labelled": 8,
+     "tp": 8,
+     "fp": 0,
+     "precision": 1.0
+    }
+   }
+  },
+  "common/unicode.invisible": {
+   "labelled": 1,
+   "tp": 1,
+   "fp": 0,
+   "house": 0,
+   "precision": 1.0,
+   "inline": false,
+   "rounds": {
+    "2026-10-13": {
+     "labelled": 1,
+     "tp": 1,
+     "fp": 0,
+     "precision": 1.0
+    }
+   }
+  },
+  "ta-irv/indicqa.lex.compound": {
+   "labelled": 26,
+   "tp": 12,
+   "fp": 14,
+   "house": 0,
+   "precision": 0.4615,
+   "inline": false,
+   "rounds": {
+    "2026-10-13": {
+     "labelled": 26,
+     "tp": 12,
+     "fp": 14,
+     "precision": 0.4615
+    }
+   }
+  },
+  "ta-irv/indicqa.lex.near-miss": {
+   "labelled": 38,
+   "tp": 8,
+   "fp": 30,
+   "house": 0,
+   "precision": 0.2105,
+   "inline": false,
+   "rounds": {
+    "2026-10-13": {
+     "labelled": 38,
+     "tp": 8,
+     "fp": 30,
+     "precision": 0.2105
+    }
+   }
+  },
+  "ta-irv/indicqa.lex.unknown": {
+   "labelled": 42,
+   "tp": 9,
+   "fp": 33,
+   "house": 0,
+   "precision": 0.2143,
+   "inline": false,
+   "rounds": {
+    "2026-10-13": {
+     "labelled": 42,
+     "tp": 9,
+     "fp": 33,
+     "precision": 0.2143
+    }
+   }
+  },
+  "ta-irv/indicqa.punct.no-space-after": {
+   "labelled": 1,
+   "tp": 1,
+   "fp": 0,
+   "house": 0,
+   "precision": 1.0,
+   "inline": false,
+   "rounds": {
+    "2026-10-13": {
+     "labelled": 1,
+     "tp": 1,
+     "fp": 0,
+     "precision": 1.0
+    }
+   }
+  },
+  "ta-irv/indicqa.punct.repeated": {
+   "labelled": 2,
+   "tp": 1,
+   "fp": 1,
+   "house": 0,
+   "precision": 0.5,
+   "inline": false,
+   "rounds": {
+    "2026-10-13": {
+     "labelled": 2,
+     "tp": 1,
+     "fp": 1,
+     "precision": 0.5
+    }
+   }
+  },
+  "ta-irv/indicqa.sandhi.conflict": {
+   "labelled": 19,
+   "tp": 15,
+   "fp": 4,
+   "house": 0,
+   "precision": 0.7895,
+   "inline": false,
+   "rounds": {
+    "2026-10-13": {
+     "labelled": 19,
+     "tp": 15,
+     "fp": 4,
+     "precision": 0.7895
+    }
+   }
+  },
+  "ta-irv/indicqa.sandhi.dangling": {
+   "labelled": 7,
+   "tp": 6,
+   "fp": 1,
+   "house": 0,
+   "precision": 0.8571,
+   "inline": false,
+   "rounds": {
+    "2026-10-13": {
+     "labelled": 7,
+     "tp": 6,
+     "fp": 1,
+     "precision": 0.8571
+    }
+   }
+  },
+  "ta-irv/indicqa.sandhi.extra": {
+   "labelled": 40,
+   "tp": 9,
+   "fp": 24,
+   "house": 7,
+   "precision": 0.2727,
+   "inline": false,
+   "rounds": {
+    "2026-10-13": {
+     "labelled": 40,
+     "tp": 9,
+     "fp": 24,
+     "precision": 0.2727
+    }
+   }
+  },
+  "ta-irv/indicqa.sandhi.missing": {
+   "labelled": 27,
+   "tp": 23,
+   "fp": 0,
+   "house": 4,
+   "precision": 1.0,
+   "inline": false,
+   "rounds": {
+    "2026-10-13": {
+     "labelled": 27,
+     "tp": 23,
+     "fp": 0,
+     "precision": 1.0
+    }
+   }
+  },
+  "ta-irv/indicqa.sandhi.wrong-class": {
+   "labelled": 1,
+   "tp": 0,
+   "fp": 1,
+   "house": 0,
+   "precision": 0.0,
+   "inline": false,
+   "rounds": {
+    "2026-10-13": {
+     "labelled": 1,
+     "tp": 0,
+     "fp": 1,
+     "precision": 0.0
+    }
+   }
+  },
+  "ta-irv/indicqa.shape.initial-pulli": {
+   "labelled": 1,
+   "tp": 1,
+   "fp": 0,
+   "house": 0,
+   "precision": 1.0,
+   "inline": false,
+   "rounds": {
+    "2026-10-13": {
+     "labelled": 1,
+     "tp": 1,
+     "fp": 0,
+     "precision": 1.0
+    }
+   }
+  },
+  "ta-irv/indicqa.shape.malformed": {
+   "labelled": 9,
+   "tp": 9,
+   "fp": 0,
+   "house": 0,
+   "precision": 1.0,
+   "inline": false,
+   "rounds": {
+    "2026-10-13": {
+     "labelled": 9,
+     "tp": 9,
+     "fp": 0,
+     "precision": 1.0
+    }
+   }
+  },
+  "ta-irv/indicqa.shape.unusual-initial": {
+   "labelled": 7,
+   "tp": 0,
+   "fp": 7,
+   "house": 0,
+   "precision": 0.0,
+   "inline": false,
+   "rounds": {
+    "2026-10-13": {
+     "labelled": 7,
+     "tp": 0,
+     "fp": 7,
+     "precision": 0.0
     }
    }
   },
@@ -87,11 +343,11 @@
    }
   },
   "ta-irv/lexicon.known-misspelling": {
-   "labelled": 47,
-   "tp": 47,
-   "fp": 0,
+   "labelled": 79,
+   "tp": 72,
+   "fp": 7,
    "house": 0,
-   "precision": 1.0,
+   "precision": 0.9114,
    "inline": true,
    "rounds": {
     "2026-09-28": {
@@ -105,6 +361,12 @@
      "tp": 4,
      "fp": 0,
      "precision": 1.0
+    },
+    "2026-10-13": {
+     "labelled": 32,
+     "tp": 25,
+     "fp": 7,
+     "precision": 0.7812
     }
    }
   },
@@ -143,8 +405,8 @@
    "rounds": {}
   },
   "ta-irv/sandhi.compound.direction": {
-   "labelled": 25,
-   "tp": 25,
+   "labelled": 40,
+   "tp": 40,
    "fp": 0,
    "house": 0,
    "precision": 1.0,
@@ -153,6 +415,12 @@
     "2026-09-29": {
      "labelled": 25,
      "tp": 25,
+     "fp": 0,
+     "precision": 1.0
+    },
+    "2026-10-13": {
+     "labelled": 15,
+     "tp": 15,
      "fp": 0,
      "precision": 1.0
     }
@@ -203,8 +471,8 @@
    }
   },
   "ta-irv/sandhi.vallinam.demonstrative": {
-   "labelled": 24,
-   "tp": 24,
+   "labelled": 44,
+   "tp": 44,
    "fp": 0,
    "house": 0,
    "precision": 1.0,
@@ -221,12 +489,18 @@
      "tp": 17,
      "fp": 0,
      "precision": 1.0
+    },
+    "2026-10-13": {
+     "labelled": 20,
+     "tp": 20,
+     "fp": 0,
+     "precision": 1.0
     }
    }
   },
   "ta-irv/sandhi.vallinam.manner-adverb": {
-   "labelled": 21,
-   "tp": 21,
+   "labelled": 22,
+   "tp": 22,
    "fp": 0,
    "house": 0,
    "precision": 1.0,
@@ -241,6 +515,12 @@
     "2026-09-29": {
      "labelled": 20,
      "tp": 20,
+     "fp": 0,
+     "precision": 1.0
+    },
+    "2026-10-13": {
+     "labelled": 1,
+     "tp": 1,
      "fp": 0,
      "precision": 1.0
     }
@@ -272,8 +552,8 @@
    "rounds": {}
   },
   "ta-irv/typo.divine-name.dative-stem": {
-   "labelled": 4,
-   "tp": 4,
+   "labelled": 13,
+   "tp": 13,
    "fp": 0,
    "house": 0,
    "precision": 1.0,
@@ -284,12 +564,18 @@
      "tp": 4,
      "fp": 0,
      "precision": 1.0
+    },
+    "2026-10-13": {
+     "labelled": 9,
+     "tp": 9,
+     "fp": 0,
+     "precision": 1.0
     }
    }
   },
   "ta-irv/typo.divine-name.vowel-drop": {
-   "labelled": 5,
-   "tp": 5,
+   "labelled": 11,
+   "tp": 11,
    "fp": 0,
    "house": 0,
    "precision": 1.0,
@@ -304,6 +590,28 @@
     "2026-09-29": {
      "labelled": 4,
      "tp": 4,
+     "fp": 0,
+     "precision": 1.0
+    },
+    "2026-10-13": {
+     "labelled": 6,
+     "tp": 6,
+     "fp": 0,
+     "precision": 1.0
+    }
+   }
+  },
+  "ta-irv/typo.participle.sentence-final": {
+   "labelled": 1,
+   "tp": 1,
+   "fp": 0,
+   "house": 0,
+   "precision": 1.0,
+   "inline": false,
+   "rounds": {
+    "2026-10-13": {
+     "labelled": 1,
+     "tp": 1,
      "fp": 0,
      "precision": 1.0
     }

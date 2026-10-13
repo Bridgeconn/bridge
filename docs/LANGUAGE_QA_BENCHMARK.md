@@ -94,34 +94,50 @@ in 61 labelled verses. `verses.jsonl` is built from the reviewer's copy.
 `verses.jsonl`.
 
 <!-- human-benchmark:start -->
-_Generated 2026-09-29T14:38:36 by scripts/language_qa_benchmark.py --human-labels benchmark/human._
+_Generated 2026-10-13T11:03:07 by scripts/language_qa_benchmark.py --human-labels benchmark/human._
 
-Pack version `language-qa-7+ta-irv@1.1.0`; 41 books; 818 label rows over 2 review round(s) (2026-09-28, 2026-09-29). The gate reads the combined numbers.
+Pack version `language-qa-7+ta-irv@1.3.0`; 50 books; 1194 label rows over 3 review round(s) (2026-09-28, 2026-09-29, 2026-10-13). The gate reads the combined numbers.
 
 | Rule | Inline | Labelled | TP | FP | House form | Human precision (combined) | Per round (TP/labelled) | Lost TP | FP no longer produced |
 |---|---|---|---|---|---|---|---|---|---|
-| `common/spacing.extra` | yes | 23 | 23 | 0 | 0 | 100.0% | 2026-09-28: 15/15; 2026-09-29: 8/8 | 0 | 0 |
+| `common/punctuation.repeated` | no | 1 | 1 | 0 | 0 | 100.0% | 2026-10-13: 1/1 | 0 | 0 |
+| `common/spacing.extra` | yes | 31 | 31 | 0 | 0 | 100.0% | 2026-09-28: 15/15; 2026-09-29: 8/8; 2026-10-13: 8/8 | 0 | 0 |
+| `common/unicode.invisible` | no | 1 | 1 | 0 | 0 | 100.0% | 2026-10-13: 1/1 | 0 | 0 |
+| `ta-irv/indicqa.lex.compound` | no | 26 | 12 | 14 | 0 | 46.2% | 2026-10-13: 12/26 | 0 | 0 |
+| `ta-irv/indicqa.lex.near-miss` | no | 38 | 8 | 30 | 0 | 21.1% | 2026-10-13: 8/38 | 0 | 0 |
+| `ta-irv/indicqa.lex.unknown` | no | 42 | 9 | 33 | 0 | 21.4% | 2026-10-13: 9/42 | 0 | 0 |
+| `ta-irv/indicqa.punct.no-space-after` | no | 1 | 1 | 0 | 0 | 100.0% | 2026-10-13: 1/1 | 0 | 0 |
+| `ta-irv/indicqa.punct.repeated` | no | 2 | 1 | 1 | 0 | 50.0% | 2026-10-13: 1/2 | 0 | 0 |
+| `ta-irv/indicqa.sandhi.conflict` | no | 19 | 15 | 4 | 0 | 79.0% | 2026-10-13: 15/19 | 0 | 0 |
+| `ta-irv/indicqa.sandhi.dangling` | no | 7 | 6 | 1 | 0 | 85.7% | 2026-10-13: 6/7 | 0 | 0 |
+| `ta-irv/indicqa.sandhi.extra` | no | 40 | 9 | 24 | 7 | 27.3% | 2026-10-13: 9/40 | 0 | 0 |
+| `ta-irv/indicqa.sandhi.missing` | no | 27 | 23 | 0 | 4 | 100.0% | 2026-10-13: 23/27 | 0 | 0 |
+| `ta-irv/indicqa.sandhi.wrong-class` | no | 1 | 0 | 1 | 0 | 0.0% | 2026-10-13: 0/1 | 0 | 0 |
+| `ta-irv/indicqa.shape.initial-pulli` | no | 1 | 1 | 0 | 0 | 100.0% | 2026-10-13: 1/1 | 0 | 0 |
+| `ta-irv/indicqa.shape.malformed` | no | 9 | 9 | 0 | 0 | 100.0% | 2026-10-13: 9/9 | 0 | 0 |
+| `ta-irv/indicqa.shape.unusual-initial` | no | 7 | 0 | 7 | 0 | 0.0% | 2026-10-13: 0/7 | 0 | 0 |
 | `ta-irv/integrity.space-before-note-end` | no | 15 | 0 | 15 | 0 | 0.0% | 2026-09-28: 0/15 | 0 | 0 |
-| `ta-irv/lexicon.known-misspelling` | yes | 47 | 47 | 0 | 0 | 100.0% | 2026-09-28: 43/43; 2026-09-29: 4/4 | 0 | 4 |
+| `ta-irv/lexicon.known-misspelling` | yes | 79 | 72 | 7 | 0 | 91.1% | 2026-09-28: 43/43; 2026-09-29: 4/4; 2026-10-13: 25/32 | 0 | 4 |
 | `ta-irv/lexicon.known-split` | yes | 10 | 10 | 0 | 0 | 100.0% | 2026-09-29: 10/10 | 0 | 0 |
 | `ta-irv/lexicon.rare-near-common` | no | 0 | 0 | 0 | 0 | — | — | 0 | 21 |
 | `ta-irv/sandhi.clitic.fused` | no | 0 | 0 | 0 | 0 | — | — | 0 | 0 |
-| `ta-irv/sandhi.compound.direction` | yes | 25 | 25 | 0 | 0 | 100.0% | 2026-09-29: 25/25 | 0 | 0 |
+| `ta-irv/sandhi.compound.direction` | yes | 40 | 40 | 0 | 0 | 100.0% | 2026-09-29: 25/25; 2026-10-13: 15/15 | 0 | 0 |
 | `ta-irv/sandhi.vallinam.accusative` | yes | 76 | 74 | 2 | 0 | 97.4% | 2026-09-28: 35/37; 2026-09-29: 39/39 | 0 | 14 |
 | `ta-irv/sandhi.vallinam.dative` | yes | 87 | 87 | 0 | 0 | 100.0% | 2026-09-28: 46/46; 2026-09-29: 41/41 | 0 | 4 |
-| `ta-irv/sandhi.vallinam.demonstrative` | yes | 24 | 24 | 0 | 0 | 100.0% | 2026-09-28: 7/7; 2026-09-29: 17/17 | 0 | 1 |
-| `ta-irv/sandhi.vallinam.manner-adverb` | yes | 21 | 21 | 0 | 0 | 100.0% | 2026-09-28: 1/1; 2026-09-29: 20/20 | 0 | 0 |
+| `ta-irv/sandhi.vallinam.demonstrative` | yes | 44 | 44 | 0 | 0 | 100.0% | 2026-09-28: 7/7; 2026-09-29: 17/17; 2026-10-13: 20/20 | 0 | 1 |
+| `ta-irv/sandhi.vallinam.manner-adverb` | yes | 22 | 22 | 0 | 0 | 100.0% | 2026-09-28: 1/1; 2026-09-29: 20/20; 2026-10-13: 1/1 | 0 | 0 |
 | `ta-irv/sandhi.vallinam.wrong-consonant` | yes | 1 | 1 | 0 | 0 | 100.0% | 2026-09-29: 1/1 | 0 | 0 |
 | `ta-irv/tamil.repeated-word` | no | 0 | 0 | 0 | 0 | — | — | 0 | 20 |
-| `ta-irv/typo.divine-name.dative-stem` | no | 4 | 4 | 0 | 0 | 100.0% | 2026-09-29: 4/4 | 0 | 0 |
-| `ta-irv/typo.divine-name.vowel-drop` | no | 5 | 5 | 0 | 0 | 100.0% | 2026-09-28: 1/1; 2026-09-29: 4/4 | 0 | 0 |
+| `ta-irv/typo.divine-name.dative-stem` | no | 13 | 13 | 0 | 0 | 100.0% | 2026-09-29: 4/4; 2026-10-13: 9/9 | 0 | 0 |
+| `ta-irv/typo.divine-name.vowel-drop` | no | 11 | 11 | 0 | 0 | 100.0% | 2026-09-28: 1/1; 2026-09-29: 4/4; 2026-10-13: 6/6 | 0 | 0 |
+| `ta-irv/typo.participle.sentence-final` | no | 1 | 1 | 0 | 0 | 100.0% | 2026-10-13: 1/1 | 0 | 0 |
 | `ta-irv/typo.suffix.dropped-tha` | yes | 2 | 2 | 0 | 0 | 100.0% | 2026-09-29: 2/2 | 0 | 0 |
 
 Recall proxies over the contexts the pack skipped on purpose (a sample of the abstains, not of the text, so these are not recall):
 
 | Abstain class | Reviewer: missed | now flagged | Reviewer: correct skip | now flagged | House form | now flagged | Still-missed rate |
 |---|---|---|---|---|---|---|---|
-| A_ai_rootnoun | 1 | 0 | 29 | 1 | 0 | 0 | 3.3% |
+| A_ai_rootnoun | 1 | 0 | 29 | 3 | 0 | 0 | 3.3% |
 | B_ai_baremajority | 5 | 5 | 45 | 0 | 0 | 0 | 0.0% |
 | D_rku_dative | 17 | 17 | 0 | 0 | 0 | 0 | 0.0% |
 | E_kku_exception | 5 | 5 | 7 | 0 | 0 | 0 | 0.0% |
@@ -132,13 +148,23 @@ Recall proxies over the contexts the pack skipped on purpose (a sample of the ab
 
 Whole-population coverage for rules under 20 labels (inline rule (b): every finding in the collection confirmed, none wrong):
 
-- `common/punctuation.repeated`: 0 of 1 confirmed
-- `common/unicode.invisible`: 0 of 1 confirmed
+- `common/punctuation.repeated`: 1 of 1 confirmed
+- `common/unicode.invisible`: 1 of 1 confirmed
 - `ta-irv/lexicon.known-split`: 11 of 11 confirmed
 - `ta-irv/sandhi.vallinam.wrong-consonant`: 1 of 1 confirmed
-- `ta-irv/typo.divine-name.dative-stem`: 4 of 13 confirmed
-- `ta-irv/typo.divine-name.vowel-drop`: 5 of 11 confirmed
+- `ta-irv/typo.divine-name.dative-stem`: 13 of 13 confirmed
+- `ta-irv/typo.divine-name.vowel-drop`: 11 of 11 confirmed
 - `ta-irv/typo.suffix.dropped-tha`: 2 of 2 confirmed
+
+Labels superseded by a later decision (`benchmark/human/superseded.json`; kept, not scored):
+
+- 2026-10-13 R0267 MAT 16:8 (common/spacing.extra): a verse-final space is flagged with a fix that removes it; rounds 2026-09-28 and 2026-09-29 confirmed 18 of 18 (DECISIONS.md 2026-10-13, Benz)
+- 2026-10-13 R0272 MAT 16:9 (common/spacing.extra): a verse-final space is flagged with a fix that removes it; rounds 2026-09-28 and 2026-09-29 confirmed 18 of 18 (DECISIONS.md 2026-10-13, Benz)
+- 2026-10-13 R0263 MAT 16:17 (common/spacing.extra): a verse-final space is flagged with a fix that removes it; rounds 2026-09-28 and 2026-09-29 confirmed 18 of 18 (DECISIONS.md 2026-10-13, Benz)
+- 2026-10-13 R0275 MAT 16:26 (common/spacing.extra): a verse-final space is flagged with a fix that removes it; rounds 2026-09-28 and 2026-09-29 confirmed 18 of 18 (DECISIONS.md 2026-10-13, Benz)
+- 2026-10-13 R0273 PSA 68:32 (common/spacing.extra): a verse-final space is flagged with a fix that removes it; rounds 2026-09-28 and 2026-09-29 confirmed 18 of 18 (DECISIONS.md 2026-10-13, Benz)
+- 2026-10-13 R0270 PSA 84:8 (common/spacing.extra): a verse-final space is flagged with a fix that removes it; rounds 2026-09-28 and 2026-09-29 confirmed 18 of 18 (DECISIONS.md 2026-10-13, Benz)
+- 2026-10-13 R0277 REV 3:6 (common/spacing.extra): a verse-final space is flagged with a fix that removes it; rounds 2026-09-28 and 2026-09-29 confirmed 18 of 18 (DECISIONS.md 2026-10-13, Benz)
 <!-- human-benchmark:end -->
 
 ## AI agreement: what the numbers mean — read this first

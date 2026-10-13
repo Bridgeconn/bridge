@@ -977,3 +977,21 @@ the OV habit still leads where the OV is near-unanimous for a pair (7 கூட�
 **Revisit when:** a review round labels the remaining கூட leads, or the IRV text after
 போல stops being doubled.
 
+
+## 2026-10-13 — A verse-edge space is flagged with a fix that removes it; a later round's contrary verdict is superseded, not re-labelled (#230)
+**Decision:** `common/spacing.extra` keeps flagging repeated spaces and a space at the
+start or end of a verse, and every finding now offers its fix: repeated spaces become one,
+an edge space is removed (a poetry line break after it stays). Rule revision 2. The seven
+round-3 (2026-10-13) labels that called a verse-final space "not an error" (MAT 16:8, 16:9,
+16:17, 16:26; PSA 68:32, 84:8; REV 3:6) are listed in `benchmark/human/superseded.json`:
+kept unedited in their round, reported by the benchmark, not scored. Benz, 2026-10-13.
+**Because:** the same reviewer ruled both ways on the same shape: rounds 2026-09-28 and
+2026-09-29 confirmed 18 of 18 verse-final spaces ("remove for clean text/USFM"; "remove the
+line-end space, keep the line break"), round 2026-10-13 rejected 7 of 7 ("meaningless in
+USFM"). Scoring both would hold an inline rule at 81.6% (31/38) over a disagreement, not
+over a defect. Benz chose the earlier rounds, with the fix offered so removing the space is
+one click.
+**Rules out:** editing, deleting or re-labelling a committed label to settle a conflict;
+a `superseded.json` row without an entry here naming who decided.
+**Revisit when:** a project's house style keeps verse-final spaces (a house-style
+suppression then, not a rule change).
