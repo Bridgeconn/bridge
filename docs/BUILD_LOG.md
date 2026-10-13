@@ -19643,3 +19643,49 @@ a failure.
 workspace schema v5 (#238/#236/#240, after v0.16.0), from a source build. The installed v0.15.0
 engine, and v0.16.0, are v2 and refuse it at startup: `Workspace schema 5 is newer than supported
 v2`. Raised with Benz, not changed.
+
+## 2026-10-14 — Every Language QA finding drawn behind the Settings slider, with "Why" in the menu (#250)
+
+**What.** Benz's decision of 2026-10-13 (DECISIONS.md, same date): every Language QA finding is
+underlined in the verse text unless the reviewer's Settings > Language QA threshold hides it, not
+only reviewed-inline rules and indic-qa findings. The reviewed-inline tier (≥ 0.90 human precision
+on ≥ 20 labels) is still always drawn, and the slider cannot hide it. A book-header finding
+(`context: "introduction"`, #253) is never drawn.
+
+**How.**
+- `language_qa_drawn.gated_rules` now lists every enabled rule a pass can report. That means the
+  non-pack `language_qa.RULES` (common checks and project house style) and every enabled pack
+  rule, not only `match_type == "indic-qa"`. A rule the table does not know (another pack, or a
+  cache read before the first pass) is treated as unmeasured, at the finding's own confidence.
+- `served()` adds `rulePrecision` and `ruleLabelled` beside `drawn` on every served finding
+  (`inline`, `status`, `verse`). `languageQa.inline` serves through it instead of stamping
+  `drawn: True`.
+- The pass is untouched. The threshold is still applied per request, so there is no rescan, no
+  cache key change and no finding-id change. The indic-qa layer's de-duplication still defers
+  only to reviewed-inline findings.
+- Editor menu: a new "Why is this flagged?" item opens a text flyout (`FindingContextMenu` renders
+  a submenu of header lines as `role="note"`, which takes focus so Left/Escape close it). It shows
+  what was found, the rule's measured precision and label count (or "no reviewer has labelled"),
+  why it is underlined (reviewed inline, or the threshold and the rule's confidence), the first
+  fix's rationale, and the rule id. Use (Here/Chapter/Book), Ignore, Ignore this rule and False
+  positive were already on every Language QA mark and are unchanged.
+- Settings > Language QA wording, the `grammar` coverage label ("drawn behind the Settings
+  threshold", which was already untrue since 2026-10-07) and comments are updated.
+
+**Measured.**
+- Latency gate, local, 50 ms default: pass. `languageQa.inline` p95 6.4 ms during a scan (it now
+  returns every finding of the chapter), `languageQa.status` 10.1 ms, Language QA `verse.decide`
+  37.6 ms, `verse.get` 21.3 ms.
+- Human gates: ta-irv (1,194 label rows over three rounds), hi and ml all pass. `inline` and the
+  gate are untouched.
+
+**Gates.** Engine `pytest -n auto`: 5,330 passed, 1 skipped, 3 xfailed. `npm run check` 0 errors,
+0 warnings. `npm run test` 745 passed (new: the Why flyout in `FindingContextMenu.test.ts`; Why
+lines, the full menu on five kinds and an undrawn finding in `VerseList.test.ts`). `npm run build`
+ok. Frozen pair rebuilt and `scripts/smoke_sidecars.py` passed, including the indic-qa Hindi pack and the ta-irv layer.
+
+**Not done.** Not looked at in the desktop app at 1366x768. With the default threshold, a Tamil
+book now shows many more marks, and more verse rows lose their ✓ (a drawn mark is open,
+layered-rules 4.3). The common checks have no shipped precision (`rule_precision.json` lists pack
+rules only), so only the confidence floor can hide them. ta-irv's `rule_precision.json` was
+generated on 2026-10-07, before round 3; the slider reads that table.
