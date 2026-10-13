@@ -1,4 +1,5 @@
-import { writable, derived, get } from "svelte/store";
+import { perfBegin, perfEnd, perfInFlight } from "./perf";
+import { writable, derived, get, type Writable } from "svelte/store";
 import type { AiCheckReview, AlignmentWorkStatus, NativeCheckReview, NavigationSyncState, ProjectInfo, QaFinding, VerseDisplay, VerseHeading } from "./types/finding";
 import type { LanguageQaFinding, LanguageQaFlag } from "./types/languageQa";
 import type { EngineLogEntry } from "./api/bridgeClient";
@@ -70,7 +71,27 @@ export function manualOverrideMode(allowed: boolean): ReviewerMode {
 // switching back to a chapter you've already visited doesn't re-fetch.
 export const loadedChapters = writable<Record<string, boolean>>({});
 
-export const selectedVerse = writable<string | null>(null);
+// #232: a verse selection is Tier A's "navigate to a verse", wherever the
+// click came from (the list, the keyboard, a finding, a bookmark), so it is
+// timed here at the store rather than at any one caller. A selection made
+// while a chapter or a book is opening belongs to that opening's sample.
+const selectedVerseStore = writable<string | null>(null);
+let selectedVerseValue: string | null = null;
+selectedVerseStore.subscribe((value) => { selectedVerseValue = value; });
+function setSelectedVerse(value: string | null): void {
+  const timed = value !== selectedVerseValue && value !== null
+    && !perfInFlight("chapter.open") && !perfInFlight("book.switch") && !perfInFlight("project.open");
+  if (timed) perfBegin("verse.navigate", value ?? "");
+  selectedVerseStore.set(value);
+  if (timed) void perfEnd("verse.navigate");
+}
+export const selectedVerse: Writable<string | null> = {
+  subscribe: selectedVerseStore.subscribe,
+  set: setSelectedVerse,
+  update(fn: (value: string | null) => string | null) {
+    setSelectedVerse(fn(selectedVerseValue));
+  },
+};
 /** Ctrl/Shift-click multi-selection in the verse list (#118), feeding the
  *  Cross-verse alignment range picker. `selectedVerse` stays the single
  *  active verse; this is a separate, chapter-scoped set of verse strings. */

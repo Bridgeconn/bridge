@@ -595,6 +595,13 @@ export const bridge = {
     return invoke<EngineLogEntry[]>("engine_log_recent", { limit });
   },
 
+  /** One line of the frontend's own into the diagnostics log (#232): the
+   *  buffer, the `engine-log` event and engine-events.log, like a sidecar
+   *  event. Not an engine method. */
+  logFrontend(level: "info" | "warn" | "error", message: string): Promise<void> {
+    return invoke<void>("frontend_log", { level, message });
+  },
+
   engineStartupState(): Promise<EngineStartupState> {
     return invoke<EngineStartupState>("engine_startup_state");
   },

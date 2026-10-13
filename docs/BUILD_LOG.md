@@ -18877,3 +18877,75 @@ house style, not flagged.
   flaky under load, not occasional. Proposed for Revant, not fixed here.
 - Human gate: pass. `build-sidecars.ps1`, then `smoke_sidecars.py`: passed.
 - Frontend and src-tauri untouched; their gates were not run.
+
+## 2026-10-14 — #232 click-timing instrumentation, the p95 table and NFR-PERF-001 in tiers
+
+**What is measured.** `src/lib/perf.ts` brackets each Tier A and B action
+of requirement 1: `perfBegin(action)` at the click, `perfResponded(action)`
+when the first visible change was pushed, `perfEnd(action)` after the last
+store update. Both "responded" and "complete" are taken at the paint after
+that point (two animation frames), which is what "visible response within
+100 ms / complete within 300 ms (A) or 2 s (B)" means. A finished sample goes
+to the bounded `perfSamples` store and, through the sink App.svelte installs,
+to the diagnostics log as one line:
+
+    1760400000000 [info] perf action=chapter.open tier=B responded=12.4 complete=180.2 detail=12
+
+The shell got one command for it, `frontend_log` (`EngineSidecar::
+log_from_frontend`), which records a frontend line exactly like a sidecar
+event: the in-memory buffer, the `engine-log` event and `engine-events.log`.
+`performance.mark`/`measure` are written as well for a DevTools timeline.
+
+**Where the marks live**, by the rule for this week (App.svelte and the
+stores, not VerseList):
+
+| action | tier | begin | responded | end |
+|---|---|---|---|---|
+| `verse.navigate` | A | `selectedVerse.set` in `stores.ts`, whoever called it (list, keyboard, finding, bookmark); skipped while a chapter, book or project open owns the span | = end | the paint after the set |
+| `menu.open` | A | `FindingContextMenu.svelte` creation (inside the click), and `openPlacesMenu` in App | = end | the paint after mount |
+| `panel.toggle` | A | the `sidePanels` store notifying App (rail and toolbar both go through `toggleSidePanel`) | = end | the paint after the update |
+| `decision.record` | A | `findingActions.decideLocalFinding` / `decideLanguageQaFinding` / the optimistic variant (the mark leaving the store is the response) and `reviewStores.decideReviewFinding` | the store update | the engine's reply and the store update |
+| `project.open` | B | `ImportScreen.openPath` at the click | the disabled buttons | App's `handleOpened` after the dashboard has loaded |
+| `chapter.open` | B | `activateChapter` | `currentChapter.set` | verses in the stores and one selected; aborted when superseded |
+| `book.report` | B | `loadReport` | `reportLoading` | the report in hand |
+| `book.switch` | B | `switchBook` | "Opening X…" | the first chapter entered; aborted on error |
+
+`word.select` is in the table with no mark: the selection lives in
+`VerseList.svelte` (and the alignment modal), which is Benz's this week. Two
+lines there (`perfBegin("word.select")` on mousedown, `perfEnd` after the
+selection state is set) complete the set.
+
+**The runner.** Engine diagnostics (the panel behind the engine status)
+gained a "Responsiveness" section: the p95 table of this session's samples
+with the tier budget and a pass/FAIL per row, "Copy table" for the
+release-notes markdown, and "Measure 20× each", which repeats the actions
+App can drive without a mouse (next verse, next chapter, the reference
+panel, the next book of a collection, the book report) twenty times each
+while a book is open in the editor. The actions whose click lives in a
+component (a menu, a decision, a word) are measured when the reviewer does
+them; on the measurement day that is twenty right-clicks and twenty
+decisions by hand.
+
+**The script.** `scripts/perf_table.py` reads `engine-events.log` (the
+installed app's by default, `--log` otherwise, `--since` an ISO time or epoch
+ms), and prints the table with `--hardware` named above it, `--json` for
+the evidence file and `--gate` to fail on a budget miss. Its action and budget
+tables are pinned to `perf.ts` by a test, and its percentile is the same
+nearest-rank one as `benchmark_language_qa.py` and `perf.ts` (half to even,
+as Python rounds), so the in-app table and the script agree to the sample.
+
+**NFR-PERF-001** in the SRS is rewritten from "five seconds" to the three
+tiers, naming the instrumentation and the script; the hardware line is left
+for the first measurement.
+
+Tests: `src/lib/__tests__/perf.test.ts` (sample recording at the paint,
+responded before end, unknown and aborted actions, a throwing sink, the log
+line, the percentile against Python's rounding, the summary's pass/FAIL and
+unmeasured rows, the table, the runner and its refusal without a project)
+and `engine/tests/service/test_perf_table_script.py` (parsing, `--since`,
+the summary, the markdown, `--gate`/`--json`/a missing log, the pin against
+`perf.ts`). Not done: any measurement. The 30-minute long-task recording
+and the 4-hour memory sample are the field-machine day's; the recording is a
+DevTools Performance capture on a dev build or Windows Performance Recorder
+on the installed one, and the memory sample is Task Manager's private bytes
+of `Bridge.exe`, `msedgewebview2.exe` and `bridge-engine.exe` every 15 min.

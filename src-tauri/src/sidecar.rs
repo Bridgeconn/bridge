@@ -402,6 +402,19 @@ impl EngineSidecar {
     /// Most recent diagnostics entries, oldest first, for the frontend's
     /// diagnostics panel and for `get_engine_log` at startup (live updates
     /// after that arrive via the "engine-log" event instead of polling).
+    /// A line the frontend wants in the diagnostics log (#232: the
+    /// responsiveness samples), recorded like a sidecar event: the buffer,
+    /// the `engine-log` event and engine-events.log. Dropped until the app
+    /// handle is set.
+    pub async fn log_from_frontend(&self, level: &str, message: String) {
+        let level = match level {
+            "warn" | "error" => level,
+            _ => "info",
+        };
+        let Some(app) = self.app.lock().await.clone() else { return };
+        record_log(&self.log, &app, level, message).await;
+    }
+
     pub async fn recent_log(&self, limit: usize) -> Vec<LogEntry> {
         let buf = self.log.lock().await;
         let skip = buf.len().saturating_sub(limit);

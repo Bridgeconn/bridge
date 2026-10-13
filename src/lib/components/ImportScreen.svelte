@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from "svelte";
   import { iso6393 } from "iso-639-3";
   import { bridge } from "../api/bridgeClient";
+  import { perfAbort, perfBegin, perfResponded } from "../perf";
   import { project } from "../stores";
   import type {
     DuplicateMatch, ImportJobSnapshot, ImportMetadata, ImportPreview, RegisteredProject,
@@ -122,13 +123,18 @@
   }
 
   async function openPath(path: string, projectId?: string) {
+    // #232 (Tier B): begins at the click; App.svelte ends it when the
+    // dashboard has painted. The disabled buttons are the first response.
+    perfBegin("project.open", path.split(/[\\/]/).pop() ?? "");
     loading = true;
     error = null;
+    perfResponded("project.open");
     try {
       const info = await bridge.openProject(path, projectId);
       project.set(info);
       onOpened();
     } catch (value) {
+      perfAbort("project.open");
       error = message(value);
       await loadProjects();
     } finally {

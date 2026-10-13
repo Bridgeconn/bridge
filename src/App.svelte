@@ -1,6 +1,9 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { bridge } from "./lib/api/bridgeClient";
+  import {
+    formatPerfLine, perfAbort, perfBegin, perfEnd, perfInFlight, perfResponded, registerPerfRunner, setPerfSink,
+  } from "./lib/perf";
   import { BUSY_LABEL, MAX_BUSY_TIMEOUTS, checkFailureMessage, isBusyTimeout } from "./lib/checkMonitor";
   import ImportScreen from "./lib/components/ImportScreen.svelte";
   import TopBar from "./lib/components/TopBar.svelte";
@@ -132,9 +135,54 @@
     : null;
   $: placesActions = placesMenu ? buildPlacesMenu($bookmarks, $recentChapters, collectionOf($project), currentPlace) : [];
 
+  // #232: every finished responsiveness sample goes to the diagnostics log
+  // through the shell, where scripts/perf_table.py reads it; a logging
+  // failure is nobody's problem but the log's.
+  setPerfSink((sample) => { void bridge.logFrontend("info", formatPerfLine(sample)).catch(() => {}); });
+  // A side-panel toggle (#232, Tier A) is timed at the store: the rail and the
+  // toolbar both go through toggleSidePanel, whose update notifies here
+  // synchronously inside the click, and the paint after it is the response.
+  let sidePanelsSeen = false;
+  const unsubscribeSidePanels = sidePanels.subscribe(() => {
+    if (!sidePanelsSeen) { sidePanelsSeen = true; return; }
+    perfBegin("panel.toggle");
+    void perfEnd("panel.toggle");
+  });
+  onDestroy(() => { unsubscribeSidePanels(); registerPerfRunner(null); setPerfSink(null); });
+  // The in-app runner for the measurement day (#232): the actions App.svelte
+  // can drive without a mouse, each already instrumented. Registered while a
+  // book is open in the editor, cleared otherwise.
+  $: registerPerfRunner(opened && $project && !showingDashboard ? {
+    navigateVerse: async () => {
+      const verses = $chapterVerseNums[$currentChapter] ?? [];
+      if (verses.length < 2) return;
+      const index = verses.indexOf($selectedVerse ?? "");
+      selectedVerse.set(verses[(index + 1) % verses.length]);
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    },
+    openChapter: async () => {
+      const chapters = $project?.chapters ?? [];
+      if (chapters.length < 2) return;
+      const index = chapters.indexOf($currentChapter);
+      await activateChapter(chapters[(index + 1) % chapters.length]);
+    },
+    togglePanel: async () => {
+      toggleSidePanel("reference");
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    },
+    switchBook: ($project?.importedProjects?.length ?? 0) > 1 ? async () => {
+      const siblings = $project?.importedProjects ?? [];
+      const index = siblings.findIndex((book) => book.path === $project?.path);
+      await switchBook(siblings[(index + 1) % siblings.length].path);
+    } : null,
+    openReport: async () => { await loadReport(); },
+  } : null);
+
   function openPlacesMenu(event: MouseEvent): void {
+    perfBegin("menu.open", "places");
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
     placesMenu = { x: rect.left, y: rect.bottom + 4 };
+    void perfEnd("menu.open");
   }
 
   async function onPlacesAction(event: CustomEvent<{ id: string }>): Promise<void> {
@@ -500,7 +548,8 @@
     showingDashboard = true;
     report = null;
     reportError = "";
-    void loadDashboard();
+    // #232: "open a project" ends when the dashboard it lands on has painted.
+    void loadDashboard().then(() => perfEnd("project.open"));
     // The QA report is deliberately NOT built here. Measured on Genesis of a
     // real Hindi IRV import: build_book_report() takes ~130 s (project_scan
     // 78 s + exception_first_queue 44 s), and the sidecar's stdio loop is
@@ -522,14 +571,17 @@
   }
 
   async function loadReport(): Promise<void> {
+    perfBegin("book.report", $project?.bookId ?? "");
     reportLoading = true;
     reportError = "";
+    perfResponded("book.report");
     try {
       report = await bridge.projectReport();
     } catch (error) {
       reportError = error instanceof Error ? error.message : String(error);
     } finally {
       reportLoading = false;
+      void perfEnd("book.report");
     }
   }
 
@@ -780,8 +832,10 @@
     }
     const siblings = $project.importedProjects;
     const destination = siblings?.find((book) => book.path === path);
+    perfBegin("book.switch", destination?.bookId ?? "");
     openingBook = destination?.bookName ?? "book";
     bookOpenError = "";
+    perfResponded("book.switch");
     try {
       await stopActiveJob();
       const info = await bridge.openProject(path);
@@ -790,8 +844,10 @@
     resetReviewState();
       project.set(info);
       if (enterEditor) await enterCurrentProject();
+      void perfEnd("book.switch");
       return true;
     } catch (error) {
+      perfAbort("book.switch");
       bookOpenError = error instanceof Error ? error.message : String(error);
       return false;
     } finally {
@@ -977,14 +1033,24 @@
 
   async function activateChapter(chapter: string, targetVerse?: string): Promise<void> {
     const sequence = ++chapterLoadSequence;
+    // #232 (Tier B): the chapter number is the first visible change; the
+    // chapter is open once its verses are in the stores and one is selected.
+    // A book switch owns the whole span, so its chapter open is not timed.
+    const timed = !perfInFlightBookOrProject();
+    if (timed) perfBegin("chapter.open", chapter);
     currentChapter.set(chapter);
     selectedVerseSet.set([]); // the multi-selection is chapter-scoped (#118)
+    if (timed) perfResponded("chapter.open");
     await ensureChapterData(chapter);
-    if (sequence !== chapterLoadSequence || chapter !== $currentChapter) return;
+    if (sequence !== chapterLoadSequence || chapter !== $currentChapter) {
+      if (timed) perfAbort("chapter.open");
+      return;
+    }
     const verses = $chapterVerseNums[chapter] ?? [];
     selectedVerse.set(
       targetVerse && verses.includes(targetVerse) ? targetVerse : (verses.length > 0 ? verses[0] : null),
     );
+    if (timed) void perfEnd("chapter.open");
     void hydrateChapterAIReviews(chapter, $project?.path ?? "", sequence);
     if ($project) recordRecentChapter({ collection: collectionOf($project), book: $project.bookId.toLowerCase(), chapter });
     if (!$loadedChapters[chapter] && !activeJobId) {
@@ -1058,6 +1124,10 @@
     if (request.chapter !== $currentChapter) await activateChapter(request.chapter, request.verses[0]);
     if ($currentChapter !== request.chapter) return;
     openCrossVerse(request.verses[0], request.verses);
+  }
+
+  function perfInFlightBookOrProject(): boolean {
+    return perfInFlight("book.switch") || perfInFlight("project.open");
   }
 
   function selectVerse(v: string) {

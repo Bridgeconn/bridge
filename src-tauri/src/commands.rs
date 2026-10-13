@@ -44,6 +44,18 @@ pub async fn engine_log_recent(
 /// The loading screen's one catch-up call (#233): stages that already
 /// happened, whether the engine is up or failed, the version and the paths
 /// "Copy diagnostics" prints. Live updates after it arrive as `engine-stage`.
+/// The frontend's own diagnostics line (#232): the responsiveness samples
+/// land in the same log the sidecar's events do, so one file carries both.
+#[tauri::command]
+pub async fn frontend_log(
+    sidecar: State<'_, EngineSidecar>,
+    level: String,
+    message: String,
+) -> Result<(), String> {
+    sidecar.log_from_frontend(&level, message).await;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn engine_startup_state(
     app: tauri::AppHandle,

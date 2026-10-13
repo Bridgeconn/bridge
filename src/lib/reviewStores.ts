@@ -1,6 +1,7 @@
 import { derived, get, writable } from "svelte/store";
 
 import { bridge } from "./api/bridgeClient";
+import { perfAbort, perfBegin, perfEnd } from "./perf";
 import type {
   QaDisposition,
   QaFindingDetail,
@@ -349,12 +350,14 @@ export async function decideFinding(
   if (revision === undefined) {
     return { ok: false, conflict: false, message: "This finding is no longer loaded.", promoted: [] };
   }
+  perfBegin("decision.record", "qaReview");
   try {
     const result = await bridge.qaReviewDecideFinding(findingId, disposition, revision, {
       note: options.note,
       promote: options.promote,
       expectedTargetContentHashes: detail?.finding?.targetContentHashes,
     });
+    void perfEnd("decision.record");
     reviewQueue.update((items) =>
       items.map((item) =>
         item.id === findingId
@@ -379,6 +382,7 @@ export async function decideFinding(
       promoted: result.promotedCoverageAccountIds ?? [],
     };
   } catch (error) {
+    perfAbort("decision.record");
     const message = String(error);
     const conflict = message.includes("revision_conflict")
       || message.toLowerCase().includes("revision conflict")

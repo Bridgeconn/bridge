@@ -649,8 +649,24 @@ Bridge is a Windows desktop application built from:
 
 ### 10.2 Performance and responsiveness
 
-- `NFR-PERF-001 P1` Interactive navigation and status requests should normally
-  complete within five seconds on supported field hardware.
+- `NFR-PERF-001 P1` Interactive actions shall meet three response tiers,
+  measured at p95 over at least 20 repetitions on the field hardware named
+  below, on a real 66-book project:
+  - Tier A, instant (navigate to a verse, open a verse, select a word, open a
+    menu, toggle a panel, record a decision): a visible response within
+    100 ms, complete within 300 ms.
+  - Tier B, medium (open a project, open a chapter, generate a book report,
+    switch books): feedback within 100 ms, complete within 2 s.
+  - Tier C, heavy (import, whole-book or whole-project checks, AI jobs,
+    export): a progress bar with a working cancel within 100 ms, the rest of
+    the UI usable meanwhile, and the timing recorded under NFR-PERF-004.
+
+  The frontend records each Tier A and B action's click-to-paint and
+  click-to-complete times (`src/lib/perf.ts`) in the diagnostics log;
+  `scripts/perf_table.py` prints the p95 table that every release's notes
+  carry. Field hardware: to be recorded with the first measurement
+  (2026-10-15, the 1366x768 reference machine); until then the table names
+  the machine it was taken on.
 - `NFR-PERF-002 P1` Expensive work shall expose progress and cancellation and
   shall not block the UI for its full duration.
 - `NFR-PERF-003 P1` Large collection discovery/import shall avoid eager

@@ -1,4 +1,5 @@
 import { bridge } from "./api/bridgeClient";
+import { perfAbort, perfBegin, perfEnd, perfInFlight, perfResponded } from "./perf";
 import { nudgeLanguageQa } from "./languageQaInline";
 import { noticeLearned } from "./houseStyleUi";
 import { findingsByVerse, languageQaFindingsByVerse, verseKey } from "./stores";
@@ -45,12 +46,14 @@ export function decideLanguageQaFinding(
   status: LanguageQaDecision,
   chosen: LanguageQaSuggestion | null = null,
 ): Promise<Record<string, unknown>> {
+  if (!perfInFlight("decision.record")) perfBegin("decision.record", "languageQa");
   return bridge.decideVerse(finding.chapter, finding.verse, finding.id, status, undefined,
     languageQaDecisionIssue(finding, chosen)).then((result) => {
     nudgeLanguageQa();  // the decision started a new pass
     noticeLearned(result);  // the learner may have just learned house style from it
+    void perfEnd("decision.record");
     return result;
-  });
+  }, (error: unknown) => { perfAbort("decision.record"); throw error; });
 }
 
 /**
@@ -65,8 +68,12 @@ export function decideLanguageQaFindingOptimistically(
   status: "ignored" | "rejected",
 ): Promise<string> {
   const key = verseKey(finding.chapter, finding.verse);
+  // #232: the mark leaving the store is the visible response; the decision
+  // completes when the engine has recorded it.
+  perfBegin("decision.record", "languageQa-optimistic");
   languageQaFindingsByVerse.update((map) =>
     key in map ? { ...map, [key]: map[key].filter((f) => f.id !== finding.id) } : map);
+  perfResponded("decision.record");
   return decideLanguageQaFinding(finding, status).then(
     () => "",
     (error: unknown) => {
@@ -87,7 +94,13 @@ export async function decideLocalFinding(
   findingId: string,
   status: FindingStatus,
 ): Promise<void> {
-  await bridge.decideVerse(chapter, verse, findingId, status);
+  perfBegin("decision.record", "local");
+  try {
+    await bridge.decideVerse(chapter, verse, findingId, status);
+  } catch (error) {
+    perfAbort("decision.record");
+    throw error;
+  }
   const key = verseKey(chapter, verse);
   findingsByVerse.update((map) => ({
     ...map,
@@ -95,4 +108,5 @@ export async function decideLocalFinding(
       finding.id === findingId ? { ...finding, status } : finding,
     ),
   }));
+  void perfEnd("decision.record");
 }

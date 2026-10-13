@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, onMount, tick } from "svelte";
+  import { perfBegin, perfEnd } from "../perf";
 
   interface FindingMenuAction {
     id: string;
@@ -25,6 +26,11 @@
     // is "here". ArrowRight / ArrowLeft move across them.
     scopes?: { id: string; label: string; title?: string }[];
   }
+
+  // #232 (Tier A): the menu is created inside the click that opened it and
+  // is "open" at the paint after mount.
+  perfBegin("menu.open", "finding");
+  onMount(() => { void perfEnd("menu.open"); });
 
   export let x = 0;
   export let y = 0;
