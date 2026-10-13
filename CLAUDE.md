@@ -249,7 +249,7 @@ A raw Scripture import becomes a translationCore-compatible book project:
                                                 dialog (2026-10-08). An indic-qa rule may be switched back
                                                 on there; inline never.
 <project>/.apps/translationCoreAI/bridge-workbench.sqlite3
-                                                schema v7. Every Bridge-private store lives here:
+                                                schema v8. Every Bridge-private store lives here:
                                                 the human-owned ones (#76), the derived ones
                                                 (#77) -- progress rollup, check-finding snapshots,
                                                 check cache, triage verdicts, metrics, backups index --
@@ -265,7 +265,8 @@ A raw Scripture import becomes a translationCore-compatible book project:
                                                 means unaligned) and the per-verse automatic
                                                 alignment verdicts (`alignment_verdicts`, #216).
 <project>/.apps/translationCoreAI/backups/      the backup files themselves, indexed by the DB
-%LOCALAPPDATA%\Bridge\data\workspace.sqlite3    app-level, schema v2 (#77): users, devices, the
+%LOCALAPPDATA%\Bridge\data\workspace.sqlite3    app-level, schema v5 (#77, #236, #238, #240): users
+                                                with their role and the chosen one, devices, the
                                                 project registry, non-secret settings (bookmarks and
                                                 recent chapters among them), and one cached
                                                 progress rollup per project for the dashboard
@@ -402,17 +403,20 @@ translation team that database *is* months of work, and no reset is available.
 
 This same discipline now has two more, independent ladders. `bridge-workbench.sqlite3`
 (`WorkbenchRepository`, `engine/tc_ai_bridge/workbench_repository.py`,
-`WORKBENCH_SCHEMA_VERSION`, currently v7 — v2 added `change_log.columns_json` for
+`WORKBENCH_SCHEMA_VERSION`, currently v8 — v2 added `change_log.columns_json` for
 sync and rebuilt the immutability trigger; v3 added `alignment_cross_verse_links`,
 #117; v4 added `language_qa_cache`, #169; v5 rebuilt `human_decisions` to admit the `housestyle` kind, #169;
 v6 added `language_qa_batches`, `language_qa_learned_fixes` and `language_qa_flags`, indic-qa editor
 features;
-v7 added `alignment_null_decisions` and `alignment_verdicts`, #216) and `workspace.sqlite3`
+v7 added `alignment_null_decisions` and `alignment_verdicts`, #216; v8 lifted
+`team_assignments` into real columns, #240) and `workspace.sqlite3`
 (`WorkspaceRepository`, `engine/tc_ai_bridge/workspace_repository.py`,
-`WORKSPACE_SCHEMA_VERSION`, currently v2 — v1 is exactly the unversioned
+`WORKSPACE_SCHEMA_VERSION`, currently v5 — v1 is exactly the unversioned
 devices/users the first cut created, kept as `IF NOT EXISTS` so an existing
 database is adopted with its ids intact; v2 added `projects`, `settings_kv`,
-`project_progress_cache`). Three databases, three version numbers; a bump in one
+`project_progress_cache`; v3 added `projects.archived_at` and `last_opened_by`, #238;
+v4 added `users.role`, #236; v5 added `project_assignments_cache`, #240). Three
+databases, three version numbers; a bump in one
 is never a bump in another, and each gets its own forward block. The pre-release
 amendment above applies to all three.
 
