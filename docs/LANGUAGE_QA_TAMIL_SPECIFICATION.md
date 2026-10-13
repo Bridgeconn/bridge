@@ -74,7 +74,7 @@ A verse does not move on while obvious Tamil errors remain.
 |---|---|---|---|---|---|
 | 11 | Verse-by-verse source fidelity | Omissions, additions, meaning shifts against the source. | Assisted | Stage 6B location, Stage 7 meaning preservation and Stage 8 bidirectional coverage, reviewed in the 9A queue. The confidence values are uncalibrated. | Consultant |
 | 12 | Negation | A lost, added or reversed negative. | Assisted | Stage 7 POLARITY. **Known limitation on Tamil:** Tamil negatives are split by the comparator, and the check reports false contradictions. This is pinned by `test_tamil_negation_polarity_limit_is_pinned_not_worked_around` and is scheduled work. | Consultant |
-| 13 | Pronoun and reference tracking | Who does what to whom; divine and human referents. | Not checked | | Consultant |
+| 13 | Pronoun and reference tracking | Who does what to whom; divine and human referents. | Assisted | 4,741 tN notes are about this: `writing-pronouns`, `figs-123person`, `figs-you`, `figs-youdual`, `figs-exclusive`, `writing-participants`. The tN check (translationNotes, unfoldingWord v90, bundled for 56 books; NUM, 1CH, 2CH, ECC, ISA, JER, EZK, DAN, AMO and ZEC have none) presents each note on its verse for the Consultant to decide. Assisted on Benz's decision of 2026-10-13 (#266) | Consultant |
 | 14 | Logical relationships | Cause, result, purpose, contrast, condition. | Not checked | | Consultant |
 | 15 | Figures of speech | Idioms, metaphors, and whether a figure is kept or explained. | Not checked | tN notes are shown as resources. | Consultant |
 | 16 | Implicit information | What is made explicit, and whether it is justified. | Not checked | | Consultant |
