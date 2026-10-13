@@ -141,6 +141,9 @@ from tc_ai_bridge.triage import (
     run_book_triage,
 )
 from tc_ai_bridge.semantic_review_policy import native_tc_apply_allowed
+from tc_ai_bridge.authorization import (
+    Action, AuthorizationError, Role, action_for_method, authorize, refuse_named_actor,
+)
 from check_jobs import (
     CheckJobConflict,
     CheckJobError,
@@ -730,7 +733,26 @@ class BridgeEngine:
             self._local_user = self.workspace.get_or_create_local_user(
                 self.settings.reviewer_name
             )
+            self._local_user.setdefault("role", Role.PROJECT_ADMIN.value)
         return self._local_user
+
+    def refresh_local_user(self) -> dict[str, str]:
+        """Re-read the local user (a role change, #236; a rename or a switch,
+        #237). The cached dict is what authorize() reads on every request."""
+        self._local_user = None
+        return self.local_user()
+
+    def _authorize(self, method: str, params: Any) -> None:
+        """Before every method (#236): the signed-in user's role must allow
+        the method's action, and the request may not name its own actor
+        (#183). A method missing from the table is refused rather than let
+        through; the pinning test keeps the table total."""
+        refuse_named_actor(params if isinstance(params, dict) else None)
+        try:
+            action = action_for_method(method)
+        except KeyError:
+            raise AuthorizationError(f"'{method}' is not a classified method; refusing it.") from None
+        authorize(self.local_user(), self.project, action)
 
     def current_actor_id(self) -> str:
         """The stable `user_id` to stamp on a write.
@@ -6714,6 +6736,7 @@ class BridgeEngine:
             # between two apparent actors. It sends this instead, and the engine
             # falls back to the same value when it is absent.
             "localUserId": self.current_actor_id(),
+            "localUserRole": str(self.local_user().get("role") or Role.PROJECT_ADMIN.value),
             "reviewerMode": self.settings.reviewer_mode,
             "paratextUsername": self.settings.paratext_username,
             "paratextNavigation": self.settings.paratext_navigation,
@@ -6921,6 +6944,7 @@ class BridgeEngine:
         self._language_qa.touch()
         try:
             m, p = request.method, request.params
+            self._authorize(m, p)
 
             if m in {Methods.LANGUAGE_QA_STATUS, Methods.LANGUAGE_QA_PAUSE, Methods.LANGUAGE_QA_INLINE,
                      Methods.LANGUAGE_QA_HISTORY, Methods.LANGUAGE_QA_VERSE, Methods.LANGUAGE_QA_SET_PACK,
@@ -7550,7 +7574,7 @@ class BridgeEngine:
                     human_proposed_text=str(p.get("humanProposedText") or ""),
                     explanation=str(p.get("explanation") or ""),
                     request_suggestion=bool(p.get("requestSuggestion") or False),
-                    actor_id=str(p.get("actorId") or self.current_actor_id()),
+                    actor_id=self.current_actor_id(),
                 ))
             if m == Methods.CORRECTION_EDIT_PROPOSAL:
                 return EngineResponse.ok(request.id, result=self.correction_edit_proposal(
@@ -7558,30 +7582,27 @@ class BridgeEngine:
                     proposed_text=str(p.get("proposedText") or ""),
                     explanation=str(p.get("explanation") or ""),
                     expected_revision=int(p.get("expectedProposalRevision") or 0),
-                    actor_id=str(p.get("actorId") or self.current_actor_id()),
+                    actor_id=self.current_actor_id(),
                 ))
             if m == Methods.CORRECTION_REJECT_PROPOSAL:
                 return EngineResponse.ok(request.id, result=self.correction_reject_proposal(
                     str(p.get("proposalId") or ""),
                     expected_revision=int(p.get("expectedProposalRevision") or 0),
-                    actor_id=str(p.get("actorId") or self.current_actor_id()),
+                    actor_id=self.current_actor_id(),
                     reason=str(p.get("reason") or p.get("note") or ""),
                 ))
             if m == Methods.CORRECTION_REGENERATE_PROPOSAL:
                 return EngineResponse.ok(request.id, result=self.correction_regenerate_proposal(
                     str(p.get("proposalId") or ""),
                     expected_revision=int(p.get("expectedProposalRevision") or 0),
-                    actor_id=str(p.get("actorId") or self.current_actor_id()),
+                    actor_id=self.current_actor_id(),
                 ))
             if m == Methods.CORRECTION_GET_PROPOSAL_HISTORY:
                 return EngineResponse.ok(request.id, result=self.correction_get_proposal_history(
                     str(p.get("proposalId") or ""),
                 ))
             if m == Methods.CORRECTION_APPLY_PROPOSAL:
-                actor = p.get("actor") or {
-                    "actorType": "HUMAN",
-                    "actorId": str(p.get("actorId") or self.current_actor_id()),
-                }
+                actor = {"actorType": "HUMAN", "actorId": self.current_actor_id()}
                 return EngineResponse.ok(request.id, result=self.correction_apply_proposal(
                     proposal_id=str(p.get("proposalId") or ""),
                     expected_proposal_revision=int(p.get("expectedProposalRevision") or 0),
@@ -7597,23 +7618,20 @@ class BridgeEngine:
             if m == Methods.CORRECTION_REANALYZE_AFFECTED:
                 return EngineResponse.ok(request.id, result=self.correction_reanalyze_affected(
                     str(p.get("applicationId") or ""),
-                    str(p.get("requestedBy") or self.current_actor_id()),
+                    self.current_actor_id(),
                     bool(p.get("retry") or False),
                 ))
             if m == Methods.CORRECTION_VERIFY_APPLICATION:
                 return EngineResponse.ok(request.id, result=self.correction_verify_application(
                     str(p.get("applicationId") or ""),
-                    str(p.get("requestedBy") or self.current_actor_id()),
+                    self.current_actor_id(),
                 ))
             if m == Methods.CORRECTION_GET_VERIFICATION:
                 return EngineResponse.ok(request.id, result=self.correction_get_verification(
                     str(p.get("applicationId") or ""),
                 ))
             if m == Methods.CORRECTION_ACKNOWLEDGE_CORRECTED:
-                actor = p.get("actor") or {
-                    "actorType": "HUMAN",
-                    "actorId": str(p.get("actorId") or self.current_actor_id()),
-                }
+                actor = {"actorType": "HUMAN", "actorId": self.current_actor_id()}
                 return EngineResponse.ok(request.id, result=self.correction_acknowledge_corrected(
                     application_id=str(p.get("applicationId") or ""),
                     verification_id=str(p.get("verificationId") or ""),
@@ -7705,6 +7723,8 @@ class BridgeEngine:
                 ))
 
             return EngineResponse.fail(request.id, "unknown_method", f"No handler for '{m}'")
+        except AuthorizationError as exc:
+            return EngineResponse.fail(request.id, "forbidden", str(exc))
         except ProjectError as exc:
             return EngineResponse.fail(request.id, "project_error", str(exc))
         except AlignmentError as exc:

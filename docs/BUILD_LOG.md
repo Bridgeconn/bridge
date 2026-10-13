@@ -19206,3 +19206,58 @@ targets; this rule reads cross-reference notes only.
   ping 8.0. The ungated write paths (verse.edit 1,175 ms, project.open 830) are not a Language QA cost.
 - `build-sidecars.ps1`, then `smoke_sidecars.py`: passed.
 - Frontend and src-tauri untouched; their gates were not run.
+
+## 2026-10-14 — #236 roles and authorize(); #183's wire fields removed; #111 decided; #182 deferred
+
+**Roles.** `engine/tc_ai_bridge/authorization.py` holds the three roles of
+requirement 4 (`project_admin`, `editor`, `reporter`), five actions (`read`,
+`run_checks`, `write`, `manage_projects`, `manage_users`), the role table
+(reporter: read; editor: read, run checks, write; project_admin: all) and
+`authorize(user, project, action)`, which raises `AuthorizationError` with a
+sentence for the screen ("Rina is a reporter and cannot change the text,
+alignments or decisions."). `project` is accepted for the hub's per-project
+roles and ignored today. Workspace schema v4 adds `users.role`, default
+`project_admin`, because a single-user installation always was one;
+`get_or_create_local_user` returns it, `set_user_role` sets it (#237's
+Users screen), `settings.get` reports it as `localUserRole`.
+
+**Every method is classified.** `METHOD_ACTIONS` names all 193 protocol
+methods and the dispatcher asks `authorize()` before the `if m ==` chain; an
+unclassified method is refused, and
+`test_every_engine_method_is_classified_and_nothing_else_is` pins the table
+against `Methods` both ways, so a new method cannot arrive without a line
+there. The choices worth knowing: `report.*`, `project.report` and
+`triage.results` are reads (a reporter's job is reports); `report.cancel`,
+`languageQa.pause` and `navigation.*` are reads (session toggles, nothing
+recorded); `export.*` and `settings.set` are writes; `project.import*`,
+`forget`, `delete`, `rename`, `archive`, `unarchive` are `manage_projects`.
+The refusal is the protocol error code `forbidden`.
+
+**#183 landed.** The eight dispatcher reads of `actorId`, `actor` and
+`requestedBy` are gone; every correction write is stamped with
+`current_actor_id()`. A request carrying any of the three keys is refused
+(`refuse_named_actor`, before the method runs) and writes nothing. The client
+wrappers, `CorrectionReviewPanel`'s eight sends and `reviewerActorId()`,
+`correctionApplication.ts`'s `"human"` fallback and `AlignmentQaMode`'s pass
+are removed; the four engine tests that sent the field no longer do.
+
+**#111 decided:** `team.py` and `session.py` are deleted (nothing imported
+`session.py`; `team.py` only fed a constant `team` section of the project
+report, which is dropped from the report payload; the frontend never read
+it). `security.py` stays: `ai_payload_manifest` is used by `ai_client.py` and
+`correction_wording.py`. The workbench `team_members` and `team_assignments`
+tables stay: #45/#46 are v1 scope (DECISIONS 2026-10-12) and #240's
+assignments are their first writer. Recorded in DECISIONS.md.
+
+**#182 deferred, decided.** The seven `actor_id="human"` defaults become
+required parameters in their own commit after #237, when the only callers
+left are the dispatcher and tests; 51 call sites counted, all
+mechanical. The decision is yes; the timing is to keep this commit
+reviewable.
+
+Tests: `tests/service/test_authorize_roles.py` (table pin; the role table;
+a reporter refused on `verse.decide`, `verse.edit`, `checks.start` and
+`project.rename` with the workbench seq unchanged and reads still answered;
+an editor refused on `project.rename`, `archive` and `import.start` and
+allowed to edit and run checks; the admin default; a request naming its actor
+refused for each of the three keys with nothing written).

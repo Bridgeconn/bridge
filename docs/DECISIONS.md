@@ -995,3 +995,22 @@ one click.
 a `superseded.json` row without an entry here naming who decided.
 **Revisit when:** a project's house style keeps verse-final spaces (a house-style
 suppression then, not a rule change).
+
+## 2026-10-14 — The file-era team scaffold goes; the workbench team tables stay (#111)
+**Decision:** `tc_ai_bridge/team.py` and `tc_ai_bridge/session.py` are deleted with #236.
+`security.py` stays. The workbench tables `team_members` and `team_assignments` stay at
+schema v7 and are not rebuilt. Roles live in `workspace.users.role` (v4) and one
+`authorize()` in `tc_ai_bridge/authorization.py`; assignments (#240) will be the first
+writer of `team_assignments`.
+**Because:** nothing imported `session.py`; `team.py` was read only by `reporting.py`,
+which put its constant `team` section into the project report that no reader opened
+(#93 found `TeamWorkflow` never wrote `team.json`). `security.py`'s `ai_payload_manifest`
+is used by the AI client and the correction wording service. #45/#46 are v1 scope
+(2026-10-12), so the tables, which already carry `actor_id`/`device_id` and the
+immutability triggers, are the right home for members and assignments; dropping and
+re-creating them would be a migration for nothing.
+**Rules out:** mapping `team.py`'s `translator / reviewer / consultant / administrator`
+to the new roles (there is no data to map; the mapping in TEAM_ARCHITECTURE.md §5 is
+historical); a per-project `team.json`.
+**Revisit when:** the hub (#80) needs per-project roles; then `team_members` gains the
+role column, and `authorize()`'s `project` argument starts to matter.

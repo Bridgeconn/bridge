@@ -50,7 +50,7 @@ import os
 import uuid
 
 
-WORKSPACE_SCHEMA_VERSION = 3
+WORKSPACE_SCHEMA_VERSION = 4
 WORKSPACE_SCHEMA_ID = "bridge-workspace"
 
 # v1: exactly the two tables the unversioned first cut of this module created.
@@ -122,10 +122,18 @@ ALTER TABLE projects ADD COLUMN archived_at TEXT;
 ALTER TABLE projects ADD COLUMN last_opened_by TEXT;
 """
 
+# v4 (#236): the user's role. The default is project_admin because a
+# single-user installation always was one; a second user is given a role by
+# a project_admin on the Users screen (#237). Additive.
+_MIGRATION_V4 = r"""
+ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'project_admin';
+"""
+
 _MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, _MIGRATION_V1),
     (2, _MIGRATION_V2),
     (3, _MIGRATION_V3),
+    (4, _MIGRATION_V4),
 )
 
 
@@ -294,7 +302,7 @@ class WorkspaceRepository:
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
-                "SELECT user_id, display_name FROM users WHERE active=1 ORDER BY created_at LIMIT 1"
+                "SELECT user_id, display_name, role FROM users WHERE active=1 ORDER BY created_at LIMIT 1"
             ).fetchone()
             if row is not None:
                 user_id = str(row["user_id"])
@@ -304,15 +312,24 @@ class WorkspaceRepository:
                         (name, now, user_id),
                     )
                 conn.commit()
-                return {"userId": user_id, "displayName": name}
+                return {"userId": user_id, "displayName": name, "role": str(row["role"] or "project_admin")}
             user_id = str(uuid.uuid4())
             conn.execute(
-                "INSERT INTO users(user_id, display_name, created_at, updated_at, active) "
-                "VALUES(?,?,?,?,1)",
+                "INSERT INTO users(user_id, display_name, created_at, updated_at, active, role) "
+                "VALUES(?,?,?,?,1,'project_admin')",
                 (user_id, name, now, now),
             )
             conn.commit()
-            return {"userId": user_id, "displayName": name}
+            return {"userId": user_id, "displayName": name, "role": "project_admin"}
+
+    def set_user_role(self, user_id: str, role: str) -> None:
+        """#236: give a user one of the three roles. The caller has checked
+        the value against `authorization.Role`."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE users SET role=?, updated_at=? WHERE user_id=?", (str(role), self._now(), str(user_id)),
+            )
+            conn.commit()
 
     # -- per-project progress rollup cache (TEAM_ARCHITECTURE.md section 4) --
     #

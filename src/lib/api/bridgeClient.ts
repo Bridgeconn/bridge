@@ -1314,7 +1314,6 @@ export const bridge = {
     humanProposedText?: string;
     explanation?: string;
     requestSuggestion?: boolean;
-    actorId?: string;
   }): Promise<CorrectionProposal> {
     return call("correction.createProposal", options);
   },
@@ -1323,14 +1322,12 @@ export const bridge = {
     proposedText: string;
     explanation?: string;
     expectedProposalRevision: number;
-    actorId?: string;
   }): Promise<CorrectionProposal> {
     return call("correction.editProposal", { proposalId, ...options });
   },
 
   correctionRejectProposal(proposalId: string, options: {
     expectedProposalRevision: number;
-    actorId?: string;
     note?: string;
   }): Promise<CorrectionProposal> {
     return call("correction.rejectProposal", { proposalId, ...options });
@@ -1338,7 +1335,6 @@ export const bridge = {
 
   correctionRegenerateProposal(proposalId: string, options: {
     expectedProposalRevision: number;
-    actorId?: string;
   }): Promise<CorrectionProposal> {
     return call("correction.regenerateProposal", { proposalId, ...options });
   },
@@ -1355,8 +1351,9 @@ export const bridge = {
     findingId: string;
     expectedFindingRevision: number;
     applicationId: string;
-    actor: { actorType: "HUMAN"; actorId: string };
   }): Promise<CorrectionApplicationIntent> {
+    // The engine attributes the write to the signed-in user (#183); a
+    // request naming its actor is refused.
     return call("correction.applyProposal", options);
   },
 
@@ -1366,7 +1363,6 @@ export const bridge = {
 
   correctionReanalyzeAffected(options: {
     applicationId: string;
-    requestedBy: string;
     retry?: boolean;
   }): Promise<CorrectionAffectedAnalysisResult> {
     return call("correction.reanalyzeAffected", options);
@@ -1376,7 +1372,6 @@ export const bridge = {
   // verdict and evidence; it never computes one.
   correctionVerifyApplication(options: {
     applicationId: string;
-    requestedBy: string;
   }): Promise<CorrectionVerificationState> {
     return call("correction.verifyApplication", options);
   },
@@ -1390,7 +1385,6 @@ export const bridge = {
     verificationId: string;
     expectedVerificationRevision: number;
     expectedFindingRevision: number;
-    actor: { actorType: "HUMAN"; actorId: string };
     note?: string;
   }): Promise<CorrectionVerificationState> {
     return call("correction.acknowledgeCorrected", options);

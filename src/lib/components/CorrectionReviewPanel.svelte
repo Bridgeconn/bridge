@@ -277,7 +277,6 @@
     try {
       verification = await bridge.correctionVerifyApplication({
         applicationId: application.applicationId,
-        requestedBy: reviewerActorId(),
       });
       notice = verificationLabel(verification.verificationStatus) + ".";
     } catch (exc) {
@@ -297,7 +296,6 @@
         verificationId: verification.verificationId,
         expectedVerificationRevision: verification.verificationRevision,
         expectedFindingRevision: verification.findingRevision,
-        actor: { actorType: "HUMAN", actorId: reviewerActorId() },
         note: acknowledgeNote.trim(),
       });
       acknowledgeOpen = false;
@@ -443,7 +441,6 @@
     try {
       affectedResult = await bridge.correctionReanalyzeAffected({
         applicationId: application.applicationId,
-        requestedBy: reviewerActorId(),
         retry,
       });
       affectedJob = affectedResult.job;
@@ -496,7 +493,6 @@
         findingId,
         findingRevision: eligibility?.findingRevision || findingRevision,
         proposal: selectedProposal,
-        actorId: reviewerActorId(),
         applicationId,
       });
       confirmationOpen = false;
@@ -569,7 +565,6 @@
         humanProposedText: requestSuggestion ? "" : proposedText.trim(),
         explanation: explanation.trim(),
         requestSuggestion,
-        actorId: reviewerActorId(),
       });
       proposals = [...proposals, created];
       selectedProposalId = created.id;
@@ -601,7 +596,6 @@
         proposedText: text.trim(),
         explanation: why.trim(),
         expectedProposalRevision: selectedProposal.revision,
-        actorId: reviewerActorId(),
       });
       proposals = proposals.map((item) => item.id === updated.id ? updated : item);
       await loadHistory(updated.id);
@@ -627,7 +621,6 @@
     try {
       const updated = await bridge.correctionRejectProposal(selectedProposal.id, {
         expectedProposalRevision: selectedProposal.revision,
-        actorId: reviewerActorId(),
         note: reviewNote.trim(),
       });
       proposals = proposals.map((item) => item.id === updated.id ? updated : item);
@@ -649,7 +642,6 @@
     try {
       const replacement = await bridge.correctionRegenerateProposal(oldId, {
         expectedProposalRevision: selectedProposal.revision,
-        actorId: reviewerActorId(),
       });
       await reloadProposals(replacement.id);
       notice = "A new suggestion was created. The previous proposal remains in history.";

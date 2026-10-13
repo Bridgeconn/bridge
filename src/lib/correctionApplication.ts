@@ -8,7 +8,6 @@ import type {
 export interface ApplicableCorrection {
   eligibility: CorrectionEligibility;
   proposal: CorrectionProposal | null;
-  actorId: string;
   disabledReason: string;
 }
 
@@ -48,7 +47,6 @@ export async function getApplicableCorrection(findingId: string): Promise<Applic
   return {
     eligibility,
     proposal,
-    actorId: settings.localUserId || "",
     disabledReason,
   };
 }
@@ -58,7 +56,6 @@ export function applyCorrectionProposal(options: {
   findingId: string;
   findingRevision: number;
   proposal: CorrectionProposal;
-  actorId: string;
   applicationId?: string;
 }): Promise<CorrectionApplicationIntent> {
   return bridge.correctionApplyProposal({
@@ -67,6 +64,5 @@ export function applyCorrectionProposal(options: {
     findingId: options.findingId,
     expectedFindingRevision: options.findingRevision,
     applicationId: options.applicationId || newCorrectionApplicationId(),
-    actor: { actorType: "HUMAN", actorId: options.actorId || "human" },
   });
 }
