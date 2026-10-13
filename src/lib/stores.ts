@@ -1,6 +1,6 @@
 import { perfBegin, perfEnd, perfInFlight } from "./perf";
 import { writable, derived, get, type Writable } from "svelte/store";
-import type { AiCheckReview, AlignmentWorkStatus, NativeCheckReview, NavigationSyncState, ProjectInfo, QaFinding, VerseDisplay, VerseHeading } from "./types/finding";
+import type { AiCheckReview, AlignmentWorkStatus, Assignment, NativeCheckReview, NavigationSyncState, ProjectInfo, QaFinding, VerseDisplay, VerseHeading } from "./types/finding";
 import type { LanguageQaFinding, LanguageQaFlag } from "./types/languageQa";
 import type { EngineLogEntry } from "./api/bridgeClient";
 
@@ -118,7 +118,18 @@ export function resetBookState(): void {
   loadedChapters.set({});
   selectedVerse.set(null);
   selectedVerseSet.set([]);
+  bookAssignments.set([]);
   checkingProgress.set({ running: false, percent: 0, label: "", jobId: "", state: "idle", error: "", scope: "chapter" });
+}
+
+/** #240: is `chapter` of the open book mine? A chapter assignment wins over
+ *  a whole-book one; "" asks about the book. */
+export function assignedToMe(assignments: Assignment[], chapter: string, me: string): boolean {
+  if (!me) return false;
+  const own = assignments.find((a) => a.chapter === chapter);
+  if (own) return own.assigneeId === me;
+  const book = assignments.find((a) => a.chapter === "");
+  return Boolean(book && book.assigneeId === me);
 }
 
 export interface CheckingProgress {
@@ -135,6 +146,10 @@ export const checkingProgress = writable<CheckingProgress>({
   running: false, percent: 0, label: "", jobId: "", state: "idle", error: "", scope: "chapter",
 });
 
+/** #240: the open book's assignments and who is signed in, so the chapter
+ *  list can mark the chapters that are "my work". Reset with the book. */
+export const bookAssignments = writable<Assignment[]>([]);
+export const localUserId = writable<string>("");
 export const settingsOpen = writable(false);
 export const exportOpen = writable(false);
 export const diagnosticsOpen = writable(false);

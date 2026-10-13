@@ -35,10 +35,11 @@
   import DiagnosticsPanel from "./lib/components/DiagnosticsPanel.svelte";
   import StartupScreen from "./lib/components/StartupScreen.svelte";
   import UserPicker from "./lib/components/UserPicker.svelte";
+  import AssignmentsDialog from "./lib/components/AssignmentsDialog.svelte";
   import { STARTUP_TIMEOUT_MS, mergeStage } from "./lib/startup";
   import type { EngineStartupStage, EngineStartupState } from "./lib/api/bridgeClient";
   import ProjectReportScreen from "./lib/components/ProjectReportScreen.svelte";
-  import type { AiCheckReview, AlignmentWorkStatus, BookProgressEntry, CheckJobSnapshot, ProjectReport, QaFinding, VerseDisplay, VerseHeading } from "./lib/types/finding";
+  import type { AiCheckReview, AlignmentWorkStatus, BookProgressEntry, CheckJobSnapshot, ProjectReport, QaFinding, UserRole, VerseDisplay, VerseHeading, WorkspaceUser } from "./lib/types/finding";
   import type {
     QaReport, ReportJobSnapshot, TriageJobSnapshot, TriageRecord,
   } from "./lib/types/report";
@@ -49,6 +50,7 @@
     checkStatusByVerse, alignmentStatusByVerse, loadedChapters, selectedVerse, selectedVerseSet, checkingProgress, approvedCount, verseNums,
     verseKey, settingsOpen, exportOpen, bookApprovedSummary, resetBookState, reviewerMode,
     aiCheckReviewsByVerse, diagnosticsOpen, engineLog, appendEngineLog, navigationStatus,
+    bookAssignments, localUserId,
   } from "./lib/stores";
   import { editingChapter, editingVerse, editSaving } from "./lib/verseEditor";
   import { languageQaChannel, nudgeLanguageQa, startLanguageQaInline } from "./lib/languageQaInline";
@@ -403,6 +405,12 @@
   let startupDone = false;
   // #237: several users and none chosen yet: the picker comes before Home.
   let needsUserChoice = false;
+  // #240: who is signed in (for "My work") and the assignments dialog.
+  let localUserRole: UserRole = "project_admin";
+  let assigningPath = "";
+  let assigningUsers: WorkspaceUser[] = [];
+  let assigningBusy = false;
+  let assigningError = "";
   let startupTimer: ReturnType<typeof setTimeout> | undefined;
   let startupAttempt = 0;
   let unlistenFileDrop: (() => void) | null = null;
@@ -439,6 +447,8 @@
         const settings = await bridge.getSettings();
         reviewerMode.set(settings.reviewerMode);
         needsUserChoice = Boolean(settings.needsUserChoice);
+        localUserId.set(settings.localUserId || "");
+        localUserRole = settings.localUserRole ?? "project_admin";
         setPlaces(settings);
         triageThreshold = settings.triageHideThreshold > 0 ? settings.triageHideThreshold : null;
       } catch (error) {
@@ -549,11 +559,47 @@
     bookOpenError = "";
   }
 
+  // #240: the open book's assignments, for the chapter list's marks.
+  async function loadAssignments(): Promise<void> {
+    try {
+      bookAssignments.set((await bridge.assignmentsList()).assignments);
+    } catch {
+      bookAssignments.set([]);
+    }
+  }
+
+  async function openAssignments(path: string): Promise<void> {
+    assigningError = "";
+    if ($project && path !== $project.path && !(await switchBook(path, false))) return;
+    try {
+      assigningUsers = (await bridge.usersList()).users;
+      await loadAssignments();
+      assigningPath = path;
+    } catch (error) {
+      assigningError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  async function assign(chapter: string, userId: string): Promise<void> {
+    assigningBusy = true;
+    assigningError = "";
+    try {
+      const listed = userId ? await bridge.assignmentsSet(chapter, userId) : await bridge.assignmentsClear(chapter);
+      bookAssignments.set(listed.assignments);
+      void loadDashboard();
+    } catch (error) {
+      assigningError = error instanceof Error ? error.message : String(error);
+    } finally {
+      assigningBusy = false;
+    }
+  }
+
   async function handleOpened() {
     opened = true;
     showingDashboard = true;
     report = null;
     reportError = "";
+    void loadAssignments();
     // #232: "open a project" ends when the dashboard it lands on has painted.
     void loadDashboard().then(() => perfEnd("project.open"));
     // The QA report is deliberately NOT built here. Measured on Genesis of a
@@ -855,6 +901,7 @@
       resetBookState();
     resetReviewState();
       project.set(info);
+      void loadAssignments();
       if (enterEditor) await enterCurrentProject();
       void perfEnd("book.switch");
       return true;
@@ -1216,6 +1263,19 @@
 </script>
 
 <div class="frame print-expand">
+  {#if assigningPath && $project}
+    <AssignmentsDialog
+      bookName={$project.bookName || $project.bookId.toUpperCase()}
+      chapters={$project.chapters}
+      users={assigningUsers}
+      assignments={$bookAssignments}
+      busy={assigningBusy}
+      error={assigningError}
+      onSet={(chapter, userId) => void assign(chapter, userId)}
+      onClear={(chapter) => void assign(chapter, "")}
+      onClose={() => { assigningPath = ""; }}
+    />
+  {/if}
   {#if startupDone && needsUserChoice}
     <UserPicker onDone={() => { needsUserChoice = false; }} />
   {/if}
@@ -1303,6 +1363,9 @@
       openBookName={$project?.bookName || $project?.bookId?.toUpperCase() || ""}
       onLoadReport={loadReport}
       onNavigateToFinding={navigateToFinding}
+      myUserId={$localUserId}
+      canAssign={localUserRole === "project_admin"}
+      onAssign={(path) => void openAssignments(path)}
     />
   {:else if screen === "report"}
     <ProjectReportScreen

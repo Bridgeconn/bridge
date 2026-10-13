@@ -19334,3 +19334,47 @@ Tests: `tests/service/test_users_rpcs.py::test_review_decisions_carry_the_
 signed_in_user` (a qaReview decision through the dispatcher records the
 engine's user id, not "human"); the existing correction and review suites
 pass with the required argument.
+
+## 2026-10-15 — #240 assignments and "My work"
+
+**Record.** Workbench schema v8 lifts `team_assignments` into real columns
+(`chapter`, `''` for the whole book so the scope's unique index works;
+`assignee_id`, `assigned_by`, `assigned_at`), additive, no rebuild. One row
+per scope of a book, written through `_write` with the lifted columns and
+deleted through a batch, so both ride the change_log for the hub's first
+sync slice (#80). `TranslationCoreProject.list_assignments / set_assignment
+/ clear_assignment`; a chapter must exist in the book, an assignee must be
+an active user.
+
+**Copy.** Workspace schema v5 adds `project_assignments_cache`, one JSON
+list per book keyed like the progress cache and refreshed from each write's
+own `change_log.seq`; `sync_assignments_cache` repairs it on open the way
+`sync_progress_cache` does, and `project.forget` drops it with the progress
+entries. `project.listBookProgress` carries `assignments` per book from
+that cache in one query, so "My work" on a 66-book Bible never opens a
+sibling's database.
+
+**RPCs.** `assignments.list` (anyone), `assignments.set` and
+`assignments.clear` (`manage_projects`: a project_admin's, refused as
+`forbidden` otherwise), for the open book; the dashboard's Assign… on a
+sibling previews that book first (the existing `switchBook(path, false)`
+seam) and then opens the dialog.
+
+**UI.** `AssignmentsDialog.svelte`: the whole book and each chapter with a
+select of active users, "— nobody —" clears. The dashboard shows an
+assignee line per book ("book: Rina · ch 3: Revant", highlighted when it
+includes me), a "My work (n)" filter beside the search, and Assign… for a
+project_admin. The chapter list in the top bar marks my chapters with ●: a
+chapter assignment wins over a whole-book one (`assignedToMe` in
+`stores.ts`), from `bookAssignments`, loaded with the book and reset with it.
+
+Tests: `tests/service/test_assignments.py` (3): book and chapter
+assignment with the lifted columns and the change_log seq, the dashboard
+seeing both from the cache, refusals for a missing chapter and an inactive
+or unknown user, clear and its no-op; the cache repaired on open and
+forgotten with the project; a reporter/editor refused on set and clear but
+able to read. `AssignmentsDialog.test.ts` (3), `ProjectDashboardAssignments
+.test.ts` (2), `assignedToMe` through the top bar's mark is covered by the
+store function's rule. The ladders' tests move to workbench v8 and
+workspace v5. Not run on the desktop: assigning from the dashboard and
+seeing ● in the chapter list.

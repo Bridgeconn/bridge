@@ -3635,6 +3635,97 @@ class TranslationCoreProject:
                         extra_columns={'chapter': chapter_key},
                     )
 
+    # -- assignments (#240) ------------------------------------------------
+    #
+    # One `team_assignments` row per scope of this book: chapter '' is the
+    # whole book. The payload is what the dashboard shows; the lifted columns
+    # are what the hub will query. Every write refreshes the workspace cache
+    # from the write's own change_log seq, as the progress totals do.
+
+    def _assignment_row_id(self, chapter: str) -> str:
+        return natural_row_id(self.workbench_identity.project_id, self.book_id, 'assignment', chapter or 'book')
+
+    def list_assignments(self) -> list[dict[str, Any]]:
+        identity = self.workbench_identity
+        rows = self.workbench.payloads(
+            'team_assignments', project_id=identity.project_id, book_id=self.book_id,
+        )
+        out = []
+        for payload in rows:
+            if not isinstance(payload, dict) or 'assigneeId' not in payload:
+                continue  # a row from before v8 carried no assignment shape
+            out.append({
+                'chapter': str(payload.get('chapter') or ''),
+                'assigneeId': str(payload.get('assigneeId') or ''),
+                'assignedBy': str(payload.get('assignedBy') or ''),
+                'assignedAt': str(payload.get('assignedAt') or ''),
+            })
+        out.sort(key=lambda a: (a['chapter'] != '', _chapter_sort_key(a['chapter'])))
+        return out
+
+    def set_assignment(self, chapter: str | int, assignee_id: str, *, assigned_by: str) -> dict[str, Any]:
+        identity = self.workbench_identity
+        chapter_key = str(chapter or '')
+        if chapter_key and chapter_key not in self.chapters():
+            raise ProjectError(f'Chapter {chapter_key} does not exist in this book.')
+        iso = self._timestamp()[0]
+        payload = {
+            'chapter': chapter_key, 'assigneeId': str(assignee_id),
+            'assignedBy': str(assigned_by), 'assignedAt': iso,
+        }
+        receipt = self.workbench._write(
+            'team_assignments', self._assignment_row_id(chapter_key),
+            project_id=identity.project_id, book_id=self.book_id, payload=payload,
+            actor_id=identity.actor_id, device_id=identity.device_id, expected_revision=None,
+            extra_columns={
+                'chapter': chapter_key, 'assignee_id': str(assignee_id),
+                'assigned_by': str(assigned_by), 'assigned_at': iso,
+            },
+        )
+        self._refresh_assignments_cache(int(receipt['seq']))
+        return payload
+
+    def clear_assignment(self, chapter: str | int) -> bool:
+        identity = self.workbench_identity
+        chapter_key = str(chapter or '')
+        row_id = self._assignment_row_id(chapter_key)
+        if self.workbench.get('team_assignments', row_id) is None:
+            return False
+        with self.workbench.batch() as batch:
+            batch.delete(
+                'team_assignments', row_id,
+                project_id=identity.project_id, book_id=self.book_id,
+                actor_id=identity.actor_id, device_id=identity.device_id,
+            )
+        self._refresh_assignments_cache(
+            self.workbench.max_seq(project_id=identity.project_id, table='team_assignments'),
+        )
+        return True
+
+    def _refresh_assignments_cache(self, source_seq: int) -> None:
+        identity = self.workbench_identity
+        self.workspace.upsert_assignments_cache(
+            self.path, project_id=identity.project_id, book_id=self.book_id,
+            assignments=self.list_assignments(), source_seq=int(source_seq),
+        )
+
+    def sync_assignments_cache(self) -> str:
+        """Repair this book's assignments cache on open, as the progress cache
+        is repaired: trusted only at the change_log seq of the latest
+        team_assignments write and for this project id and book."""
+        identity = self.workbench_identity
+        current_seq = self.workbench.max_seq(project_id=identity.project_id, table='team_assignments')
+        cached = self.workspace.assignments_cache_entry(self.path)
+        if (
+            cached is not None and cached['sourceSeq'] == current_seq
+            and cached['projectId'] == identity.project_id and cached['bookId'] == self.book_id
+        ):
+            return 'fresh'
+        if current_seq == 0 and cached is None:
+            return 'fresh'
+        self._refresh_assignments_cache(current_seq)
+        return 'repaired'
+
     def update_progress_chapter_alignment(self, chapter: str | int, aligned_verse_count: int, *,
                                           verse_count: int) -> None:
         """#239: one alignment writer refreshed its chapter's aligned-verse
@@ -3723,6 +3814,11 @@ class TranslationCoreProject:
             totals=totals, updated_at=updated_at, source_seq=current_seq,
         )
         return 'repaired'
+
+
+def _chapter_sort_key(chapter: str) -> tuple[int, str]:
+    digits = ''.join(ch for ch in str(chapter) if ch.isdigit())
+    return (int(digits) if digits else 0, str(chapter))
 
 
 def _workbench_db_path(project_root: str | Path) -> Path:

@@ -957,6 +957,23 @@ export interface BookProgressEntry {
   missing: boolean;
   /** null = lazy sibling never opened, or a materialized book never checked yet. */
   progress: BookProgressSummary | null;
+  /** #240: who this book, or its chapters, is assigned to; from the workspace cache. */
+  assignments?: Assignment[];
+}
+
+/** One assignment (#240): `chapter` is "" for the whole book. */
+export interface Assignment {
+  chapter: string;
+  assigneeId: string;
+  assigneeName: string;
+  assignedBy: string;
+  assignedAt: string;
+}
+
+export interface AssignmentsList {
+  bookId: string;
+  path: string;
+  assignments: Assignment[];
 }
 
 export type VerseNoteKind = "footnote" | "xref";

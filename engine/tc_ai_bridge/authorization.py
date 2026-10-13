@@ -150,6 +150,7 @@ _READ = (
     "paratext.getState", "issueResolution.list", "logos.getState",
     "navigation.status", "navigation.poll", "navigation.bridgeChanged", "navigation.resolve",
     "users.list", "users.setCurrent",
+    "assignments.list",
 )
 
 _RUN_CHECKS = (
@@ -187,6 +188,8 @@ _WRITE = (
 _MANAGE_PROJECTS = (
     "project.import", "project.import.start", "project.import.cancel",
     "project.forget", "project.delete", "project.rename", "project.archive", "project.unarchive",
+    # #240: who works on what is the project admin's call.
+    "assignments.set", "assignments.clear",
 )
 
 # #237: anyone may see who exists and sign in as themselves at startup; only

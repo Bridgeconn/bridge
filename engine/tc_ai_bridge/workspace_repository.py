@@ -50,7 +50,7 @@ import os
 import uuid
 
 
-WORKSPACE_SCHEMA_VERSION = 4
+WORKSPACE_SCHEMA_VERSION = 5
 WORKSPACE_SCHEMA_ID = "bridge-workspace"
 
 # v1: exactly the two tables the unversioned first cut of this module created.
@@ -129,11 +129,28 @@ _MIGRATION_V4 = r"""
 ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'project_admin';
 """
 
+# v5 (#240): one cached list of assignments per book, keyed like the
+# progress cache and refreshed from the same `change_log.seq` discipline,
+# so the dashboard's "My work" reads 66 books in one query and never opens a
+# sibling's database. The workbench row is the record; this is a copy.
+_MIGRATION_V5 = r"""
+CREATE TABLE project_assignments_cache(
+    path_key TEXT PRIMARY KEY,
+    project_path TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    book_id TEXT NOT NULL,
+    assignments_json TEXT NOT NULL,
+    source_seq INTEGER NOT NULL,
+    refreshed_at TEXT NOT NULL
+);
+"""
+
 _MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, _MIGRATION_V1),
     (2, _MIGRATION_V2),
     (3, _MIGRATION_V3),
     (4, _MIGRATION_V4),
+    (5, _MIGRATION_V5),
 )
 
 
@@ -494,6 +511,62 @@ class WorkspaceRepository:
                         "refreshedAt": str(row["refreshed_at"]),
                     }
         return out
+
+    # -- per-book assignments cache (#240) --------------------------------
+
+    def upsert_assignments_cache(self, project_path: str | Path, *, project_id: str, book_id: str,
+                                 assignments: list[dict[str, Any]], source_seq: int) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO project_assignments_cache(path_key, project_path, project_id, book_id, "
+                "assignments_json, source_seq, refreshed_at) VALUES(?,?,?,?,?,?,?) "
+                "ON CONFLICT(path_key) DO UPDATE SET project_path=excluded.project_path, "
+                "project_id=excluded.project_id, book_id=excluded.book_id, "
+                "assignments_json=excluded.assignments_json, source_seq=excluded.source_seq, "
+                "refreshed_at=excluded.refreshed_at",
+                (
+                    project_path_key(project_path), str(project_path), str(project_id), str(book_id),
+                    json.dumps(list(assignments), ensure_ascii=False), int(source_seq), self._now(),
+                ),
+            )
+            conn.commit()
+
+    def assignments_cache_by_keys(self, keys: list[str]) -> dict[str, dict[str, Any]]:
+        if not keys:
+            return {}
+        out: dict[str, dict[str, Any]] = {}
+        with self._connect() as conn:
+            for i in range(0, len(keys), 500):
+                chunk = keys[i:i + 500]
+                rows = conn.execute(
+                    "SELECT path_key, project_id, book_id, assignments_json, source_seq FROM project_assignments_cache "
+                    f"WHERE path_key IN ({','.join('?' * len(chunk))})", chunk,
+                ).fetchall()
+                for row in rows:
+                    try:
+                        assignments = json.loads(row["assignments_json"])
+                    except (TypeError, ValueError):
+                        assignments = []
+                    out[str(row["path_key"])] = {
+                        "projectId": str(row["project_id"]), "bookId": str(row["book_id"]),
+                        "assignments": assignments if isinstance(assignments, list) else [],
+                        "sourceSeq": int(row["source_seq"]),
+                    }
+        return out
+
+    def assignments_cache_entry(self, project_path: str | Path) -> dict[str, Any] | None:
+        return self.assignments_cache_by_keys([project_path_key(project_path)]).get(project_path_key(project_path))
+
+    def forget_assignments_cache(self, paths: list[str | Path]) -> int:
+        keys = [project_path_key(path) for path in paths]
+        if not keys:
+            return 0
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"DELETE FROM project_assignments_cache WHERE path_key IN ({','.join('?' * len(keys))})", keys,
+            )
+            conn.commit()
+            return int(cur.rowcount)
 
     def forget_progress_cache(self, paths: list[str | Path]) -> int:
         """Drop cache entries for folders that are being deleted, forgotten or

@@ -377,6 +377,10 @@ class Methods:
     USERS_DEACTIVATE = "users.deactivate"
     USERS_SET_ROLE = "users.setRole"
     USERS_SET_CURRENT = "users.setCurrent"
+    # #240: assign a book or a chapter to a user; "My work" reads these.
+    ASSIGNMENTS_LIST = "assignments.list"
+    ASSIGNMENTS_SET = "assignments.set"
+    ASSIGNMENTS_CLEAR = "assignments.clear"
     PROJECT_ARCHIVE = "project.archive"
     PROJECT_UNARCHIVE = "project.unarchive"
     PROJECT_SCAN = "project.scan"
@@ -803,6 +807,33 @@ class BridgeEngine:
         user = self.refresh_local_user()
         return {"currentUserId": user["userId"], "displayName": user["displayName"], "role": user.get("role")}
 
+    # -- assignments (#240) ------------------------------------------------
+
+    def _assignment_view(self, assignment: dict[str, Any], names: dict[str, str]) -> dict[str, Any]:
+        assignee = str(assignment.get("assigneeId") or "")
+        return {**assignment, "assigneeName": names.get(assignee, "") if assignee else ""}
+
+    def assignments_list(self) -> dict[str, Any]:
+        self._require_project()
+        names = self.workspace.user_display_names()
+        return {
+            "bookId": self.project.book_id, "path": str(self.project.path),
+            "assignments": [self._assignment_view(a, names) for a in self.project.list_assignments()],
+        }
+
+    def assignments_set(self, chapter: str, user_id: str) -> dict[str, Any]:
+        self._require_project()
+        user = self.workspace.get_user(user_id)
+        if user is None or not user["active"]:
+            raise ProjectError("Choose an active user to assign to.")
+        self.project.set_assignment(chapter, user_id, assigned_by=self.current_actor_id())
+        return self.assignments_list()
+
+    def assignments_clear(self, chapter: str) -> dict[str, Any]:
+        self._require_project()
+        self.project.clear_assignment(chapter)
+        return self.assignments_list()
+
     def _needs_user_choice(self) -> bool:
         active = [u for u in self.workspace.list_users() if u["active"]]
         return len(active) > 1 and not self.settings.current_user_id
@@ -966,6 +997,10 @@ class BridgeEngine:
             progress_cache = {"state": candidate.sync_progress_cache()}
         except Exception as exc:
             progress_cache = {"state": "error", "error": str(exc)}
+        try:
+            candidate.sync_assignments_cache()  # #240, same discipline, same reason
+        except Exception:  # noqa: BLE001 -- a cache problem never blocks an open
+            pass
         timer.mark("progress_cache")
         if recovery_failed:
             self._passage_semantic_status = {
@@ -1171,6 +1206,10 @@ class BridgeEngine:
             key = project_path_key(path) if not lazy and not missing else ""
             rows.append((entry, path, lazy, missing, key))
         cached = self.workspace.progress_cache_by_keys([key for *_, key in rows if key])
+        # #240: the dashboard's "My work" needs every book's assignments, from
+        # the cache in one query, never a sibling's database.
+        assignment_cache = self.workspace.assignments_cache_by_keys([key for *_, key in rows if key])
+        names = self.workspace.user_display_names()
         refill: list[dict[str, Any]] = []
         books: list[dict[str, Any]] = []
         for entry, path, lazy, missing, key in rows:
@@ -1185,6 +1224,10 @@ class BridgeEngine:
                 if hit is not None:
                     progress = {**hit["totals"], "updatedAt": hit["updatedAt"]}
             books.append({
+                "assignments": [
+                    self._assignment_view(a, names)
+                    for a in (assignment_cache.get(key, {}).get("assignments", []) if key else [])
+                ],
                 "path": str(path), "bookId": str(entry.get("bookId") or ""),
                 "bookName": str(entry.get("bookName") or ""), "lazy": lazy,
                 "missing": missing, "progress": progress,
@@ -1201,6 +1244,7 @@ class BridgeEngine:
         forgotten = self.project_registry.forget(project_id)
         if forgotten:
             self.workspace.forget_progress_cache([path for path in paths if path])
+            self.workspace.forget_assignments_cache([path for path in paths if path])
         return {"forgotten": forgotten}
 
     def delete_project(self, project_id: str) -> dict[str, Any]:
@@ -7147,6 +7191,14 @@ class BridgeEngine:
                 return EngineResponse.ok(request.id, result=self.users_set_role(
                     str(p.get("userId") or ""), str(p.get("role") or ""),
                 ))
+            if m == Methods.ASSIGNMENTS_LIST:
+                return EngineResponse.ok(request.id, result=self.assignments_list())
+            if m == Methods.ASSIGNMENTS_SET:
+                return EngineResponse.ok(request.id, result=self.assignments_set(
+                    str(p.get("chapter") or ""), str(p.get("userId") or ""),
+                ))
+            if m == Methods.ASSIGNMENTS_CLEAR:
+                return EngineResponse.ok(request.id, result=self.assignments_clear(str(p.get("chapter") or "")))
             if m == Methods.USERS_SET_CURRENT:
                 return EngineResponse.ok(request.id, result=self.users_set_current(str(p.get("userId") or "")))
             if m == Methods.PROJECT_RENAME:

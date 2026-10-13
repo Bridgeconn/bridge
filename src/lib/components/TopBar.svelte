@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { bridge, type EngineInfo } from "../api/bridgeClient";
-  import { project, currentChapter, navigationStatus } from "../stores";
+  import { project, currentChapter, navigationStatus, bookAssignments, localUserId, assignedToMe } from "../stores";
 
   export let screen: "home" | "dashboard" | "validation" | "review" | "editor" | "report";
   export let projectName = "";
@@ -122,7 +122,7 @@
       >‹</button>
       <select class="select" style="width:72px;" value={$currentChapter} on:change={handleChapterSelect}>
         {#each chapters as ch}
-          <option value={ch}>Ch {ch}</option>
+          <option value={ch}>Ch {ch}{assignedToMe($bookAssignments, ch, $localUserId) ? " ●" : ""}</option>
         {/each}
       </select>
       <button

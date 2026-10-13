@@ -61,6 +61,8 @@ import type {
   NavigationSyncState,
   ProjectInfo,
   RegisteredProject,
+  Assignment,
+  AssignmentsList,
   UserRole,
   UsersList,
   WorkspaceUser,
@@ -289,6 +291,9 @@ export type EngineMethod =
   | "alignment.null.set"
   | "alignment.null.clear"
   | "alignment.window.autoAlign"
+  | "assignments.clear"
+  | "assignments.list"
+  | "assignments.set"
   | "alignment.autoAlign.revert"
   | "alignment.autoAlign.verdict"
   | "alignment.autoAlign.start"
@@ -691,6 +696,20 @@ export const bridge = {
 
   unarchiveProject(projectId: string): Promise<{ projectId: string; archived: boolean; books: number }> {
     return call("project.unarchive", { projectId });
+  },
+
+  // -- assignments (#240): for the open book. set and clear are a
+  // project_admin's; "" as the chapter means the whole book.
+  assignmentsList(): Promise<AssignmentsList> {
+    return call("assignments.list");
+  },
+
+  assignmentsSet(chapter: string, userId: string): Promise<AssignmentsList> {
+    return call("assignments.set", { chapter, userId });
+  },
+
+  assignmentsClear(chapter: string): Promise<AssignmentsList> {
+    return call("assignments.clear", { chapter });
   },
 
   // -- users (#237). list and setCurrent are anyone's; the rest is a

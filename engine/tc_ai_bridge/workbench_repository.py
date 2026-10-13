@@ -41,7 +41,7 @@ _GENERATIONS: dict[str, int] = {}
 _GENERATION_LOCK = threading.Lock()
 
 
-WORKBENCH_SCHEMA_VERSION = 7
+WORKBENCH_SCHEMA_VERSION = 8
 WORKBENCH_SCHEMA_ID = "bridge-workbench-v1"
 
 _IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -687,6 +687,20 @@ CREATE UNIQUE INDEX ux_alignment_verdicts_verse
     ON alignment_verdicts(project_id, book_id, chapter, verse);
 """
 
+# v8 (#240): `team_assignments` gets its lifted columns. One row per scope,
+# `chapter` '' for the whole book; the row id is the natural key, so the index
+# is for lookup only. The table was already in MUTABLE_TABLES
+# and rides the change_log, which is what the hub's first sync slice reads.
+# Additive: nothing is rebuilt.
+_MIGRATION_V8 = r"""
+ALTER TABLE team_assignments ADD COLUMN chapter TEXT NOT NULL DEFAULT '';
+ALTER TABLE team_assignments ADD COLUMN assignee_id TEXT;
+ALTER TABLE team_assignments ADD COLUMN assigned_by TEXT;
+ALTER TABLE team_assignments ADD COLUMN assigned_at TEXT;
+CREATE INDEX ix_team_assignments_scope ON team_assignments(project_id, book_id, chapter);
+CREATE INDEX ix_team_assignments_assignee ON team_assignments(project_id, assignee_id);
+"""
+
 _MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, _MIGRATION_V1),
     (2, _MIGRATION_V2),
@@ -695,6 +709,7 @@ _MIGRATIONS: tuple[tuple[int, str], ...] = (
     (5, _MIGRATION_V5),
     (6, _MIGRATION_V6),
     (7, _MIGRATION_V7),
+    (8, _MIGRATION_V8),
 )
 
 
