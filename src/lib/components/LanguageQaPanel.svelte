@@ -668,6 +668,7 @@
               {#if finding.context}<span class="where">in {finding.context}</span>{/if}
               <p class="evidence">{finding.originalText}</p>
               {#if finding.context === "heading" && finding.contextText}<p class="muted">Heading: {finding.contextText}</p>{/if}
+              {#if finding.context === "introduction" && finding.contextText}<p class="muted">Book introduction: {finding.contextText}</p>{/if}
               <p>{finding.message}</p>
               {#if finding.reference}
                 <p class="reference"><b>{finding.reference.label} {finding.reference.ref}:</b> {finding.reference.text}</p>

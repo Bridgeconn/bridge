@@ -132,6 +132,21 @@ describe("Language QA", () => {
     expect(screen.getByText(reference.text)).toBeTruthy();
   });
 
+  it("says when a finding is in the book's introduction (#253)", async () => {
+    const findings = [
+      lqaFinding({ id: "i1", chapter: "1", verse: "1", originalText: "மத் 8 ", message: "Space inside \\ior.",
+        context: "introduction", contextText: "மத் 8 ராஜாவின் அதிகாரமும் ஊழியமும்", suggestions: [],
+        suggestedReplacement: null }),
+    ];
+    publish({ totalFindings: 1, findings });
+    statusCall.mockResolvedValue(snapshot({ totalFindings: 1, findings }));
+    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
+    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
+    await screen.findByText("Space inside \\ior.");
+    expect(screen.getByText("in introduction")).toBeTruthy();
+    expect(screen.getByText(/Book introduction: மத் 8 ராஜாவின்/)).toBeTruthy();
+  });
+
   it("shows incomplete coverage instead of claiming a clean publication", async () => {
     const incomplete = { totalFindings: 0, findings: [], incomplete: true,
       limitations: ["Chapter 1: 4: Unbalanced \\f: 1 open, 0 close; verse not checked."] };

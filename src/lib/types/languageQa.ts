@@ -66,9 +66,13 @@ export interface LanguageQaFinding {
    * dictionary layer): "footnote" -- start/end still index the stored verse,
    * so a suggestion applies as usual; "heading" -- a section heading before
    * this verse, start/end index `contextText`, and no suggestion is offered
-   * because a fix would be written into the verse. Absent: the verse text. */
-  context?: "footnote" | "heading";
-  /** The heading's visible text, for context "heading". */
+   * because a fix would be written into the verse; "introduction" -- the
+   * book's header or introduction (\h, \toc, \mt, \ip, \ior ...), anchored at
+   * the book's first verse, start/end index `contextText`, and no fix is
+   * applied because Bridge does not edit the header (#253). Absent: the verse
+   * text. */
+  context?: "footnote" | "heading" | "introduction";
+  /** The heading's or header line's visible text, for "heading" and "introduction". */
   contextText?: string;
   /** The same verse in a reference text (ta-irv: the 1957 Old Version). */
   reference?: LanguageQaReference;

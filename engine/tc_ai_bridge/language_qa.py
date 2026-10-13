@@ -184,6 +184,10 @@ RULES: dict[str, RuleMeta] = {
     "spacing.extra": RuleMeta("common", "integrity", "spacing", "medium", revision=2),   # 2: offers the fix (one space; remove an edge space)
     "punctuation.repeated": RuleMeta("common", "integrity", "punctuation", "medium"),
     "punctuation.space-before": RuleMeta("common", "integrity", "punctuation", "medium"),
+    # Book header and introduction (framework item 47, #253; language_qa_header.py).
+    "header.missing": RuleMeta("common", "integrity", "usfm", "high"),
+    "intro.ior-space": RuleMeta("common", "integrity", "usfm", "high"),
+    "intro.ior-target": RuleMeta("common", "integrity", "usfm", "high"),
     # Cross-references (framework item 28, #249; book step, language_qa_xrefs.py).
     "xref.target-missing": RuleMeta("common", "integrity", "usfm", "high"),
     "xref.origin-mismatch": RuleMeta("common", "integrity", "usfm", "high"),

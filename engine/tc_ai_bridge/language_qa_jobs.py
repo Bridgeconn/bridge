@@ -24,6 +24,7 @@ from .language_qa_drawn import InlinePolicy, drawn_rule_names, gated_rules, is_d
 from .language_qa_learned import learned_findings
 from .language_qa_headings import heading_findings
 from .language_qa_notes import caller_findings
+from .language_qa_header import book_source_text, header_findings
 from .language_qa_xrefs import collection_names, xref_findings
 from .language_packs.indic import ConfusionSet
 from .language_packs.lexicon import lexicon_findings, lexicon_fingerprint
@@ -1129,11 +1130,18 @@ class LanguageQaManager:
                 audit += heading_findings(book, book_headings, chapter_verses, proceed=proceed)
             with timings.step("lqa.book.note_callers"):
                 audit += caller_findings(book, chapter_texts, proceed=proceed)
+            names: dict[str, str] = {}
             with timings.step("lqa.book.xrefs"):
                 try:
-                    audit += xref_findings(book, chapter_texts, collection_names(context[0]), proceed=proceed)
+                    names = collection_names(context[0])
+                    audit += xref_findings(book, chapter_texts, names, proceed=proceed)
                 except Exception as exc:  # a sibling's files must never fail the pass
                     limitations.append(f"Cross-reference targets not checked: {type(exc).__name__}: {exc}")
+            with timings.step("lqa.book.header"):
+                try:
+                    audit += header_findings(book, book_source_text(context[0]), chapter_verses, names)
+                except Exception as exc:  # the preserved source must never fail the pass
+                    limitations.append(f"Book header not checked: {type(exc).__name__}: {exc}")
             with timings.step("lqa.book.learned"):
                 audit += learned_findings(book, book_text, learned, fixes=learned_fixes, max_verse_chars=MAX_VERSE_CHARS,
                                           finding_id=stable_finding_id, rule_fields=rule_fields, suggestion=suggestion,

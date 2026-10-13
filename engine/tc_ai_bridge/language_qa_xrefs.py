@@ -61,7 +61,7 @@ def max_verses() -> dict[tuple[str, int], int]:
         return _max_verse
 
 
-def _source_of(project_root: Path) -> Path | None:
+def source_of(project_root: Path) -> Path | None:
     """A book project's preserved USFM: `<book>.usfm` once materialized, the
     copy named in `.bridge/lazy-import.json` while lazy."""
     import json  # noqa: PLC0415
@@ -86,7 +86,7 @@ def collection_names(project_root: str | Path) -> dict[str, str]:
     root = Path(project_root).resolve()
     roots = [root] + [Path(str(entry.get("path"))) for entry in collection_projects(root)
                       if entry.get("path") and Path(str(entry.get("path"))).resolve() != root]
-    sources = [(r, _source_of(r)) for r in roots]
+    sources = [(r, source_of(r)) for r in roots]
     key = tuple((str(src), src.stat().st_mtime_ns) for _r, src in sources if src is not None)
     with _lock:
         cached = _names_cache.get(str(root))

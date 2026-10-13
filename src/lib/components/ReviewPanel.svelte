@@ -827,7 +827,7 @@
                   <span class="engine-badge">{isLearnedFinding(f) ? "learned fix" : f.category}</span>
                   <span class="check-id">{f.ruleId}</span>
                   {#if f.previouslyIgnored}<span class="badge badge-decided" title="Ignored under an older rule version; check it again">re-check</span>{/if}
-                  {#if f.context}<span class="engine-badge" title={f.context === "heading" ? `Section heading: ${f.contextText ?? ""}` : "Footnote text"}>in {f.context}</span>{/if}
+                  {#if f.context}<span class="engine-badge" title={f.context === "heading" ? `Section heading: ${f.contextText ?? ""}` : f.context === "introduction" ? `Book introduction: ${f.contextText ?? ""}` : "Footnote text"}>in {f.context}</span>{/if}
                 </div>
                 <p class="explain"><b>{f.originalText}</b> — {f.message}</p>
                 {#if f.reference}<p class="explain lqa-reference"><b>{f.reference.label} {f.reference.ref}:</b> {f.reference.text}</p>{/if}
