@@ -48,6 +48,7 @@ from tc_ai_bridge.project_import import (
     collection_projects,
     collection_qa_runs,
     ensure_bridge_original_language,
+    import_checkpoint,
     import_source,
     inspect_import,
     materialize_lazy_project,
@@ -155,6 +156,12 @@ from ai_review_jobs import (
     AIReviewJobManager,
     AIReviewJobNotFound,
     AIReviewJobSpec,
+)
+from import_jobs import (
+    ImportJobConflict,
+    ImportJobError,
+    ImportJobManager,
+    ImportJobNotFound,
 )
 from report_jobs import (
     ReportBook,
@@ -378,6 +385,12 @@ class Methods:
     TRIAGE_RESULTS = "triage.results"
     PROJECT_INSPECT_IMPORT = "project.inspectImport"
     PROJECT_IMPORT = "project.import"
+    # The same import as a background job (#231): start returns at once with
+    # a snapshot, status is polled, cancel ends it with nothing on disk. The
+    # sync project.import stays for scripts, tests and the smoke check.
+    PROJECT_IMPORT_START = "project.import.start"
+    PROJECT_IMPORT_STATUS = "project.import.status"
+    PROJECT_IMPORT_CANCEL = "project.import.cancel"
     CHAPTER_VERSES = "chapter.verses"
     CHAPTER_VERSE_DATA = "chapter.verseData"
 
@@ -638,6 +651,7 @@ class BridgeEngine:
         self._correction_affected_analysis_service: CorrectionAffectedAnalysisService | None = None
         self._correction_verification_service: CorrectionVerificationService | None = None
         self._report_jobs = ReportJobManager()
+        self._import_jobs = ImportJobManager()  # #231
         self._triage_jobs = TriageJobManager()
         # Guards each book's triage store against a triage.override arriving
         # on the dispatcher thread while the triage worker is mid-merge. One
@@ -1023,47 +1037,99 @@ class BridgeEngine:
         if not self._import_lock.acquire(blocking=False):
             raise ProjectError("Another project import is already running.")
         try:
-            timer = _PhaseTimer()
-            preview = inspect_import(path)
-            timer.mark("inspect")
-            duplicate = self.project_registry.classify(preview, metadata)
-            timer.mark("classify")
-            if duplicate["classification"] == "exactDuplicate" and not allow_duplicate:
-                raise ProjectError(
-                    "This source has already been imported. Open the existing project, "
-                    "or explicitly choose Import as separate copy."
-                )
-            root = Path(destination_root).resolve() if destination_root else self.project_root
-            result = import_source(path, root, metadata)
-            timer.mark("import_source")
-            # A folder that is being (re)populated is a new project even at an
-            # old path; whatever the cache said about that path is void.
-            self.workspace.forget_progress_cache([
-                str(imported.get("path") or "") for imported in result["projects"] if imported.get("path")
-            ])
-            fingerprints = source_fingerprints(preview)
-            for imported in result["projects"]:
-                book_id = str(imported.get("bookId") or "").lower()
-                registered = self.project_registry.register(
-                    imported["path"],
-                    source_fingerprint=fingerprints.get(book_id, ""),
-                    project_id=str(imported.get("projectId") or ""),
-                    collection_id=str(imported.get("collectionId") or ""),
-                )
-                imported.update({
-                    "projectId": registered["projectId"],
-                    "collectionId": registered.get("collectionId", ""),
-                })
-            timer.mark("register")
-
-            info = self.open_project(result["primaryProjectPath"])
-            timer.mark("open_primary")
-            info["import"] = result
-            info["importedProjects"] = result["projects"]
-            _trace(f"project.import {len(result['projects'])} book(s) {timer.summary()}")
-            return info
+            result = self._import_and_register(path, metadata, destination_root, allow_duplicate)
         finally:
             self._import_lock.release()
+        timer = _PhaseTimer()
+        info = self.open_project(result["primaryProjectPath"])
+        timer.mark("open_primary")
+        info["import"] = result
+        info["importedProjects"] = result["projects"]
+        _trace(f"project.import open {timer.summary()}")
+        return info
+
+    def _import_and_register(self, path: str, metadata: dict[str, Any], destination_root: str = "",
+                             allow_duplicate: bool = False, *,
+                             progress: Callable[[dict[str, Any]], None] | None = None,
+                             cancel: Callable[[], bool] | None = None) -> dict[str, Any]:
+        """Inspect, write and register the import; the caller holds _import_lock.
+
+        Never reads or writes self.project, so the import job (#231) runs it on
+        a worker thread while the dispatcher keeps answering. The registry is
+        locked internally for the same reason. ``progress`` and ``cancel`` are
+        import_source's checkpoints; the sync RPC passes neither.
+        """
+        timer = _PhaseTimer()
+        import_checkpoint(progress, cancel, phase="inspect")
+        preview = inspect_import(path)
+        timer.mark("inspect")
+        import_checkpoint(progress, cancel, phase="classify", bookCount=len(preview.get("books") or []))
+        duplicate = self.project_registry.classify(preview, metadata)
+        timer.mark("classify")
+        if duplicate["classification"] == "exactDuplicate" and not allow_duplicate:
+            raise ProjectError(
+                "This source has already been imported. Open the existing project, "
+                "or explicitly choose Import as separate copy."
+            )
+        root = Path(destination_root).resolve() if destination_root else self.project_root
+        result = import_source(path, root, metadata, progress=progress, cancel=cancel)
+        timer.mark("import_source")
+        # Past import_source the books are on disk; a cancel from here on is
+        # too late and is ignored rather than leaving unregistered folders.
+        if progress is not None:
+            progress({"phase": "register", "bookCount": len(result["projects"])})
+        # A folder that is being (re)populated is a new project even at an
+        # old path; whatever the cache said about that path is void.
+        self.workspace.forget_progress_cache([
+            str(imported.get("path") or "") for imported in result["projects"] if imported.get("path")
+        ])
+        fingerprints = source_fingerprints(preview)
+        for imported in result["projects"]:
+            book_id = str(imported.get("bookId") or "").lower()
+            registered = self.project_registry.register(
+                imported["path"],
+                source_fingerprint=fingerprints.get(book_id, ""),
+                project_id=str(imported.get("projectId") or ""),
+                collection_id=str(imported.get("collectionId") or ""),
+            )
+            imported.update({
+                "projectId": registered["projectId"],
+                "collectionId": registered.get("collectionId", ""),
+            })
+        timer.mark("register")
+        _trace(f"project.import {len(result['projects'])} book(s) {timer.summary()}")
+        return result
+
+    def start_import(self, path: str, metadata: dict[str, Any],
+                     destination_root: str = "", allow_duplicate: bool = False) -> dict[str, Any]:
+        """project.import.start (#231): the same import on a worker thread.
+
+        The import lock is taken here, on the dispatcher, so the sync RPC and
+        a second start are refused at once rather than queued; the worker
+        releases it when it ends, whichever way it ends.
+        """
+        if not self._import_lock.acquire(blocking=False):
+            raise ProjectError("Another project import is already running.")
+
+        def run(progress: Callable[[dict[str, Any]], None], cancel: Callable[[], bool]) -> dict[str, Any]:
+            try:
+                return self._import_and_register(
+                    path, metadata, destination_root, allow_duplicate, progress=progress, cancel=cancel,
+                )
+            finally:
+                self._import_lock.release()
+
+        try:
+            return self._import_jobs.start(run, source_path=str(path))
+        except BaseException:
+            self._import_lock.release()
+            raise
+
+    def import_status(self, job_id: str = "") -> dict[str, Any]:
+        return self._import_jobs.status(job_id)
+
+    def cancel_import(self, job_id: str = "") -> dict[str, Any]:
+        return self._import_jobs.cancel(job_id)
 
     def _ensure_resource_indexes(self, project: TranslationCoreProject) -> None:
         """Prepare raw-import tN/tW indexes on demand, once per book."""
@@ -6713,6 +6779,15 @@ class BridgeEngine:
                     p["path"], p.get("metadata", {}), p.get("destinationRoot", ""),
                     bool(p.get("allowDuplicate", False)),
                 ))
+            if m == Methods.PROJECT_IMPORT_START:
+                return EngineResponse.ok(request.id, result=self.start_import(
+                    p["path"], p.get("metadata", {}), p.get("destinationRoot", ""),
+                    bool(p.get("allowDuplicate", False)),
+                ))
+            if m == Methods.PROJECT_IMPORT_STATUS:
+                return EngineResponse.ok(request.id, result=self.import_status(p.get("jobId", "")))
+            if m == Methods.PROJECT_IMPORT_CANCEL:
+                return EngineResponse.ok(request.id, result=self.cancel_import(p.get("jobId", "")))
             if m == Methods.CHAPTER_VERSES:
                 return EngineResponse.ok(request.id, result={"verses": self.chapter_verses(p["chapter"])})
             if m == Methods.CHAPTER_VERSE_DATA:
@@ -7351,6 +7426,12 @@ class BridgeEngine:
             return EngineResponse.fail(request.id, "ai_job_conflict", str(exc))
         except AIReviewJobError as exc:
             return EngineResponse.fail(request.id, "ai_job_error", str(exc))
+        except ImportJobNotFound as exc:
+            return EngineResponse.fail(request.id, "import_job_not_found", str(exc))
+        except ImportJobConflict as exc:
+            return EngineResponse.fail(request.id, "import_job_conflict", str(exc))
+        except ImportJobError as exc:
+            return EngineResponse.fail(request.id, "import_job_error", str(exc))
         except ReportJobNotFound as exc:
             return EngineResponse.fail(request.id, "report_not_found", str(exc))
         except ReportJobConflict as exc:

@@ -1,9 +1,14 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { iso6393 } from "iso-639-3";
   import { bridge } from "../api/bridgeClient";
   import { project } from "../stores";
-  import type { DuplicateMatch, ImportMetadata, ImportPreview, RegisteredProject } from "../types/finding";
+  import type {
+    DuplicateMatch, ImportJobSnapshot, ImportMetadata, ImportPreview, RegisteredProject,
+  } from "../types/finding";
+
+  const IMPORT_TERMINAL = new Set<ImportJobSnapshot["state"]>(["succeeded", "failed", "cancelled"]);
+  const IMPORT_POLL_MS = 250;
 
   export let onOpened: () => void;
   export let droppedPath = "";
@@ -23,6 +28,13 @@
   // see the "slowEngineStart" escalation below), not just the registry
   // scan.
   let projectsLoading = true;
+  // The background import (#231). The screen stays usable while it runs:
+  // the banner at the top shows the phase, the book and Cancel, and when
+  // the job succeeds the primary book is opened from here.
+  let importJob: ImportJobSnapshot | null = null;
+  let importNotice = "";
+  let importGeneration = 0;
+  let importPollTimer: ReturnType<typeof setTimeout> | undefined;
   let slowEngineStart = false;
   let slowEngineStartTimer: ReturnType<typeof setTimeout> | undefined;
   let preview: ImportPreview | null = null;
@@ -35,6 +47,9 @@
   };
 
   onMount(() => { void loadProjects(); });
+  onDestroy(() => { importGeneration += 1; clearTimeout(importPollTimer); });
+
+  $: importing = importJob !== null && !IMPORT_TERMINAL.has(importJob.state);
 
   $: if (dropSequence > handledDropSequence && droppedPath) {
     handledDropSequence = dropSequence;
@@ -169,7 +184,7 @@
   }
 
   async function inspect(path: string) {
-    if (loading) {
+    if (loading || importing) {
       error = "Please wait for the current operation to finish, then drop the source again.";
       return;
     }
@@ -210,14 +225,75 @@
       if (previousClassification === "new" && refreshed.duplicates.classification !== "new") {
         return;
       }
-      const info = await bridge.importProject(preview.sourcePath, metadata, allowDuplicate);
-      project.set(info);
-      onOpened();
+      importNotice = "";
+      let snapshot: ImportJobSnapshot;
+      try {
+        snapshot = await bridge.importStart(preview.sourcePath, metadata, allowDuplicate);
+      } catch (value) {
+        // An import is already running (a double click): follow it instead.
+        if (!/already running/i.test(message(value))) throw value;
+        snapshot = await bridge.importStatus("");
+      }
+      importJob = snapshot;
+      void pollImport(snapshot.jobId, ++importGeneration);
     } catch (value) {
       error = message(value);
     } finally {
       loading = false;
     }
+  }
+
+  async function pollImport(jobId: string, generation: number) {
+    try {
+      while (generation === importGeneration) {
+        const snapshot = await bridge.importStatus(jobId);
+        if (generation !== importGeneration) return;
+        importJob = snapshot;
+        if (IMPORT_TERMINAL.has(snapshot.state)) {
+          if (snapshot.state === "succeeded" && snapshot.result) {
+            const primary = snapshot.result.projects[0];
+            const info = await bridge.openProject(snapshot.result.primaryProjectPath, primary?.projectId);
+            if (generation !== importGeneration) return;
+            // project.open does not echo the collection's siblings; only the
+            // import knows them, and the book switcher reads them from here.
+            info.importedProjects = snapshot.result.projects;
+            importJob = null;
+            project.set(info);
+            onOpened();
+          } else if (snapshot.state === "cancelled") {
+            importJob = null;
+            importNotice = "Import cancelled. Nothing was written.";
+          } else {
+            importJob = null;
+            error = snapshot.error || "The import failed.";
+          }
+          return;
+        }
+        await new Promise<void>((resolve) => { importPollTimer = setTimeout(resolve, IMPORT_POLL_MS); });
+      }
+    } catch (value) {
+      if (generation !== importGeneration) return;
+      importJob = null;
+      error = message(value);
+    }
+  }
+
+  async function cancelImport() {
+    if (!importJob) return;
+    try {
+      importJob = await bridge.importCancel(importJob.jobId);
+    } catch (value) {
+      error = message(value);
+    }
+  }
+
+  function importLabel(job: ImportJobSnapshot): string {
+    const lead = job.state === "cancelling" ? "Cancelling" : job.phaseLabel;
+    const book = job.totalBooks > 1 && job.currentBook
+      ? ` (book ${Math.min(job.completedBooks + 1, job.totalBooks)} of ${job.totalBooks})`
+      : "";
+    const chapter = job.chapter && job.chapterCount ? `, chapter ${job.chapter} of ${job.chapterCount}` : "";
+    return `${lead}${book}${chapter}`;
   }
 
   function reset() {
@@ -229,6 +305,17 @@
 </script>
 
 <div class="screen">
+  {#if importJob}
+    <div class="import-banner" role="status" aria-live="polite">
+      <span class="import-label" title={importJob.sourcePath}>
+        Importing: {importLabel(importJob)} — {importJob.percent}%
+      </span>
+      <div class="track"><div class="fill" style="width:{importJob.percent}%"></div></div>
+      <button class="small-button" on:click={cancelImport} disabled={importJob.state === "cancelling"}>
+        {importJob.state === "cancelling" ? "Cancelling…" : "Cancel"}
+      </button>
+    </div>
+  {/if}
   {#if preview === null}
     <div class="header">
       <div class="eyebrow">PROJECT HOME</div>
@@ -288,6 +375,7 @@
 
       <button class="link-button" on:click={openExisting} disabled={loading}>Open an existing Bridge/translationCore project without copying it</button>
       {#if loading}<p class="working">Reading, validating, or opening the selected project…</p>{/if}
+      {#if importNotice}<p class="working">{importNotice}</p>{/if}
       {#if error}<p class="error">{error}</p>{/if}
     </div>
   {:else}
@@ -372,18 +460,19 @@
           <label><span>Bible / translation name</span><input bind:value={metadata.bibleName} placeholder="e.g. Unlocked Literal Text" /></label>
 
           {#if exactMatch}
-            <button class="import-button" on:click={() => openPath(exactMatch.path, exactMatch.projectId)} disabled={loading}>Open existing project</button>
-            <button class="separate-button" on:click={() => runImport(true)} disabled={loading || !canImport}>Import as a separate copy</button>
+            <button class="import-button" on:click={() => openPath(exactMatch.path, exactMatch.projectId)} disabled={loading || importing}>Open existing project</button>
+            <button class="separate-button" on:click={() => runImport(true)} disabled={loading || importing || !canImport}>Import as a separate copy</button>
           {:else}
-            <button class="import-button" on:click={() => runImport(false)} disabled={loading || !canImport}>
-              {loading ? `Importing ${preview.books.length === 1 ? "book" : `${preview.books.length} books`}…` : preview.duplicates.classification === "new" ? `Import ${preview.books.length === 1 ? "book" : `${preview.books.length} books`}` : "Continue with separate import"}
+            <button class="import-button" on:click={() => runImport(false)} disabled={loading || importing || !canImport}>
+              {importing ? `Importing ${preview.books.length === 1 ? "book" : `${preview.books.length} books`}…` : preview.duplicates.classification === "new" ? `Import ${preview.books.length === 1 ? "book" : `${preview.books.length} books`}` : "Continue with separate import"}
             </button>
           {/if}
           {#if !canImport}<p class="required">Select a language and complete both project names.</p>{/if}
         </section>
       </div>
 
-      {#if loading}<p class="working">Importing…</p>{/if}
+      {#if loading}<p class="working">Checking the source…</p>{/if}
+      {#if importNotice}<p class="working">{importNotice}</p>{/if}
       {#if error}<p class="error">{error}</p>{/if}
     </div>
   {/if}
@@ -391,6 +480,10 @@
 
 <style>
   .screen { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--surface); }
+  .import-banner { flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 10px 40px; border-bottom: 1px solid var(--border); background: var(--surface-2, var(--surface)); max-width: 900px; width: 100%; margin: 0 auto; box-sizing: border-box; }
+  .import-label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-sm); color: var(--text); }
+  .import-banner .track { flex: 1 1 120px; height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+  .import-banner .fill { height: 100%; background: var(--accent); transition: width .2s linear; }
   .header { flex-shrink: 0; padding: 28px 40px 18px; border-bottom: 1px solid var(--border); }
   .list-area { flex: 1; overflow: auto; padding: 20px 40px; }
   .footer { flex-shrink: 0; padding: 16px 40px 24px; border-top: 1px solid var(--border); background: var(--surface); }

@@ -14,9 +14,11 @@ is not consulted. There is no other migration (TEAM_ARCHITECTURE.md ss3.5).
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import os
+import threading
 import tempfile
 import uuid
 from datetime import datetime, timezone
@@ -140,6 +142,18 @@ def collection_fingerprint(fingerprints: dict[str, str]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _locked(method):
+    """Serialise the registry's public surface. The in-memory entry list is
+    read by the dispatcher (project.list, project.open) while an import job
+    registers new books from its worker thread (#231); the RLock lets
+    classify() call list_projects() and list_projects() call register()."""
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapper
+
+
 class ProjectRegistry:
     def __init__(
         self, path: Path, managed_root: Path, *, workspace: WorkspaceRepository | None = None,
@@ -148,6 +162,7 @@ class ProjectRegistry:
         # an empty table and otherwise unused. The workspace database defaults
         # to the one beside it, which is where BridgeEngine keeps its own.
         self.path = Path(path)
+        self._lock = threading.RLock()
         self.workspace = workspace or WorkspaceRepository(self.path.parent / "workspace.sqlite3")
         self.managed_root = Path(managed_root).resolve(strict=False)
         self._data = self._load()
@@ -280,6 +295,7 @@ class ProjectRegistry:
         except OSError:
             return ""
 
+    @_locked
     def register(
         self,
         path: str | Path,
@@ -363,6 +379,7 @@ class ProjectRegistry:
             self._save()
         return dict(entry)
 
+    @_locked
     def list_projects(self, *, refresh_managed: bool = True, collapse_collections: bool = False) -> list[dict[str, Any]]:
         self.managed_root.mkdir(parents=True, exist_ok=True)
         if refresh_managed or not self._managed_discovered:
@@ -432,6 +449,7 @@ class ProjectRegistry:
             result[index]["bookCount"] = counts[collection_id]
         return result
 
+    @_locked
     def group_entries(self, project_id: str) -> list[dict[str, Any]]:
         """Return the entry for ``project_id`` plus any siblings sharing its collectionId."""
         target = self._find(project_id=project_id)
@@ -445,6 +463,7 @@ class ProjectRegistry:
             if isinstance(entry, dict) and entry.get("collectionId") == collection_id
         ]
 
+    @_locked
     def forget(self, project_id: str) -> bool:
         before = len(self._data["projects"])
         target = self._find(project_id=project_id)
@@ -461,10 +480,12 @@ class ProjectRegistry:
             self._save()
         return changed
 
+    @_locked
     def get(self, project_id: str) -> dict[str, Any] | None:
         entry = self._find(project_id=project_id)
         return dict(entry) if entry is not None else None
 
+    @_locked
     def classify(self, preview: dict[str, Any], metadata: dict[str, Any] | None = None) -> dict[str, Any]:
         projects = self.list_projects(refresh_managed=False)
         source_by_book = source_fingerprints(preview)

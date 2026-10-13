@@ -48,6 +48,7 @@ import type {
   BookProgressEntry,
   CheckJobSnapshot,
   DesktopConnectorState,
+  ImportJobSnapshot,
   ImportMetadata,
   ImportPreview,
   CheckSelectionMutation,
@@ -345,6 +346,9 @@ export type EngineMethod =
   | "project.delete"
   | "project.forget"
   | "project.import"
+  | "project.import.cancel"
+  | "project.import.start"
+  | "project.import.status"
   | "project.inspectImport"
   | "project.list"
   | "project.listBookProgress"
@@ -689,6 +693,21 @@ export const bridge = {
 
   importProject(path: string, metadata: ImportMetadata, allowDuplicate = false): Promise<ProjectInfo> {
     return call("project.import", { path, metadata, allowDuplicate });
+  },
+
+  /** The same import as a background job (#231): the snapshot comes back at
+   * once, `importStatus` is polled, and the caller opens the primary book
+   * itself from the result's `primaryProjectPath`. */
+  importStart(path: string, metadata: ImportMetadata, allowDuplicate = false): Promise<ImportJobSnapshot> {
+    return call("project.import.start", { path, metadata, allowDuplicate });
+  },
+
+  importStatus(jobId: string): Promise<ImportJobSnapshot> {
+    return call("project.import.status", { jobId });
+  },
+
+  importCancel(jobId: string): Promise<ImportJobSnapshot> {
+    return call("project.import.cancel", { jobId });
   },
 
   chapterVerses(chapter: string): Promise<{ verses: string[] }> {

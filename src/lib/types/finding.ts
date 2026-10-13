@@ -766,6 +766,40 @@ export interface ProjectInfo {
   };
 }
 
+export type ImportJobState = "queued" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled";
+
+/** What project.import.start returned: the written and registered books. The
+ * client opens `primaryProjectPath` itself with project.open. */
+export interface ImportJobResult {
+  sourcePath: string;
+  kind: ImportPreview["kind"];
+  projectName: string;
+  bibleName: string;
+  primaryProjectPath: string;
+  projects: ImportedProject[];
+}
+
+/** One poll of the background import (#231). `phaseLabel` is the engine's
+ * own wording for the phase; `chapter`/`chapterCount` are set only while the
+ * first book is being normalised. */
+export interface ImportJobSnapshot {
+  jobId: string;
+  sourcePath: string;
+  state: ImportJobState;
+  phase: string;
+  phaseLabel: string;
+  totalBooks: number;
+  completedBooks: number;
+  currentBook: string | null;
+  chapter: number | null;
+  chapterCount: number | null;
+  percent: number;
+  result: ImportJobResult | null;
+  error: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+}
+
 export interface ImportBook {
   bookId: string;
   bookName: string;

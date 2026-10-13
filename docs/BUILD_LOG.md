@@ -18644,3 +18644,49 @@ reads.
 - `scripts/build-sidecars.ps1`, then `scripts/smoke_sidecars.py engine/dist/bridge-engine.exe`: passed
   (the ta-irv indic-qa layer included).
 - Frontend untouched, so `npm run check/test/build` were not run; src-tauri untouched.
+
+## 2026-10-14 — #231 import as a cancellable job, #242 the window auto-align as a job
+
+**#231.** `project.import` was one blocking RPC (300 s, no progress, no
+cancel). It is now also a job: `project.import.start` returns a snapshot at
+once, `.status` is polled, `.cancel` ends it. Engine: `engine/import_jobs.py`,
+the report-job shape with its own lock domain; the worker runs the new
+`BridgeEngine._import_and_register` (inspect, classify, write, register) and
+never touches `self.project`, so the import screen opens the primary book
+afterwards with the ordinary `project.open`. The sync RPC stays for scripts,
+tests and the smoke, and shares `_import_lock` with the job (taken on the
+dispatcher in `start_import`, released by the worker), so a second start or a
+sync call during a job is refused at once.
+
+Two things found on the way, both fixed in the same commit because the cancel
+contract needed them:
+
+- **`import_source` moved each book into the destination as soon as it was
+  written.** A crash on book 40 of 66 left 39 books behind, and a cancel could
+  not have been clean. Every book is now staged and the whole set is moved at
+  the end; a rename that fails part-way takes the moved books back out
+  (`test_project_import_staging.py`, three tests). `import_checkpoint`
+  (progress + cancel) runs before every book, before every chapter of the
+  eagerly normalised first book, and before the commit, which is the last
+  cancel point; `ImportCancelled` is a `ProjectError`.
+- **`ProjectRegistry` had no lock.** The dispatcher reads its in-memory entry
+  list (`project.list`, `project.open`) while the worker registers new books;
+  the public methods now take one RLock (`_locked`), re-entrant because
+  `classify` calls `list_projects` and `list_projects` calls `register`.
+
+Snapshot: `phase` / `phaseLabel` (engine wording), `totalBooks`,
+`completedBooks`, `currentBook`, `chapter` / `chapterCount` for the first book,
+`percent` (inspect 0-8, classify 8-10, books 10-90 split per book and, for the
+first, per chapter, commit 90-95, register 95-100), `result` once succeeded.
+Frontend: `bridge.importStart/importStatus/importCancel`,
+`ImportJobSnapshot`; `ImportScreen.svelte` polls every 250 ms and draws a
+banner with the label, the bar and Cancel above both views, so Project Home
+stays usable; "Import cancelled. Nothing was written." on cancel. Timeout
+table: the three job methods stay at the default 30 s (`sidecar::tests`,
+now 14). Tests: `tests/service/test_import_job.py` (progress and registration
+through the dispatcher; cancel mid-write with status answering meanwhile and
+nothing on disk afterwards; a failed job frees the lock; status/cancel with no
+job) and `ImportScreen.test.ts` (bar and Cancel from the start snapshot before
+any poll; cancel opens nothing; a failed job is an error with the form usable).
+Not measured: the 66-book time on the field machine (NFR-PERF-004) and the
+installed-build walk; both are the field-machine day.

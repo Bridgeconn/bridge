@@ -231,6 +231,9 @@ async fn record_log(log: &LogBuffer, app: &AppHandle, level: &str, message: Stri
 
 fn request_timeout_seconds(method: &str) -> u64 {
     match method {
+        // The sync import, kept for scripts and the smoke check. The import
+        // screen uses project.import.start/.status/.cancel (#231), which only
+        // start, poll and flag a worker thread and so stay at the default.
         "project.import" => 300,
         // Inspecting a whole Bible parses every Scripture file and computes
         // source fingerprints for duplicate detection. Project Home may also
@@ -791,6 +794,17 @@ mod tests {
         assert_eq!(request_timeout_seconds("alignment.autoAlign.start"), 30);
         assert_eq!(request_timeout_seconds("alignment.crossVerse.propose"), 30);
         assert_eq!(request_timeout_seconds("alignment.crossVerse.link"), 30);
+    }
+
+    #[test]
+    fn import_job_control_stays_interactive_while_the_sync_import_keeps_its_headroom() {
+        // #231: start returns a snapshot at once, status is polled every
+        // quarter second and cancel must never queue behind a whole-Bible
+        // write. Only the sync RPC does the work inline.
+        assert_eq!(request_timeout_seconds("project.import.start"), 30);
+        assert_eq!(request_timeout_seconds("project.import.status"), 30);
+        assert_eq!(request_timeout_seconds("project.import.cancel"), 30);
+        assert_eq!(request_timeout_seconds("project.import"), 300);
     }
 
     #[test]
