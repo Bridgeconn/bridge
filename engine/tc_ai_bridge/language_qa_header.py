@@ -5,7 +5,9 @@ Language QA reads a book's header (`\\h`, `\\toc1-3`, `\\mt`) and introduction
 `usfm_parser.identify_usfm` (the preamble) and `usfm_verse.lift_verse` (the
 `\\ior` spans): gotcha 14, no pattern over the USFM here.
 
-- `header.missing`: no, or an empty, `\\toc1`, `\\toc2`, `\\toc3` or `\\mt`.
+- `header.missing`: no, or an empty, `\\h`, `\\toc1`, `\\toc2`, `\\toc3` or `\\mt`.
+- `header.running-head` (item 43, #254): the running head `\\h` differs from the
+  title `\\mt` (Benz, 2026-10-13: the running head repeats the title).
 - `intro.ior-space`: a space inside `\\ior … \\ior*` (MAT, 3 of 3 confirmed
   2026-10-13).
 - `intro.ior-target`: an `\\ior` reference whose chapter or verse does not exist
@@ -28,7 +30,7 @@ from .language_qa_xrefs import _ITEM, _targets, max_verses, normalize_name, sour
 from .usfm_parser import identify_usfm, read_usfm_text
 from .usfm_verse import lift_verse
 
-REQUIRED = ("toc1", "toc2", "toc3", "mt")
+REQUIRED = ("h", "toc1", "toc2", "toc3", "mt")
 OUTLINE_TAGS = frozenset({"io", "io1", "io2", "io3", "io4"})
 
 _lock = threading.Lock()
@@ -92,6 +94,10 @@ def header_findings(book: str, source_text: str | None, chapter_verses: dict[str
     for tag in REQUIRED:
         if not first.get(tag):
             add("header.missing", "", 0, 0, f"No \\{tag} in the book header.")
+
+    if first.get("h") and first.get("mt") and not _same(first["h"], first["mt"]):
+        add("header.running-head", first["h"], 0, len(first["h"]),
+            f"Running head \\h \"{first['h']}\" differs from the title \\mt \"{first['mt']}\".")
 
     tops = max_verses()
     own = book.upper()

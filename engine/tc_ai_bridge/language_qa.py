@@ -186,6 +186,7 @@ RULES: dict[str, RuleMeta] = {
     "punctuation.space-before": RuleMeta("common", "integrity", "punctuation", "medium"),
     # Book header and introduction (framework item 47, #253; language_qa_header.py).
     "header.missing": RuleMeta("common", "integrity", "usfm", "high"),
+    "header.running-head": RuleMeta("common", "integrity", "consistency", "high"),  # item 43, #254
     "intro.ior-space": RuleMeta("common", "integrity", "usfm", "high"),
     "intro.ior-target": RuleMeta("common", "integrity", "usfm", "high"),
     # Cross-references (framework item 28, #249; book step, language_qa_xrefs.py).

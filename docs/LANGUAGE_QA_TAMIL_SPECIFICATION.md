@@ -121,7 +121,7 @@ Bridge has no typesetting engine. Every item in this gate is proofed on the PDF.
 | 40 | Line breaking | No breaks inside a grapheme cluster; acceptable break points. | Not checked | Typesetter |
 | 41 | Hyphenation | Tamil hyphenation policy. | Not checked | Typesetter |
 | 42 | Page-level composition | Widows, orphans, column balance, spacing. | Not checked | Typesetter |
-| 43 | Running heads and page numbers | Correct book/chapter heads. | Not checked | Typesetter |
+| 43 | Running heads and page numbers | Correct book/chapter heads. | Checked | Typesetter |
 | 44 | Footnote composition | Note placement and callers. | Checked | Typesetter |
 | 45 | Cross-column reading order | Text flows in the right order across columns. | Not checked | Typesetter |
 | 46 | Maps, captions and illustrations | Tamil labels, name spellings consistent with the text. | Not checked | Typesetter |
@@ -130,6 +130,8 @@ Bridge has no typesetting engine. Every item in this gate is proofed on the PDF.
 Item 44 is checked in the USFM, before typesetting: `common/note.caller-mixed` flags a `\f`/`\x` caller unlike the book's others (IRV: `\x -` at JOL 2:28 and RUT 2:1, 2 of 2 confirmed 2026-10-13) and `common/note.space-before-caller` a space between a word and its note's caller (53 footnotes; Benz, 2026-10-13), each with its fix (#246). Where the note text falls on the page is still proofed on the PDF.
 
 Item 47 is checked in the book header and introduction (context `introduction`, #253): `common/header.missing` (no or empty `\toc1`, `\toc2`, `\toc3` or `\mt`: the title page and the contents), `common/intro.ior-space` (a space inside `\ior … \ior*`; MAT, 3 of 3 confirmed 2026-10-13) and `common/intro.ior-target` (an outline reference to a chapter that does not exist). The glossary and the maps index are separate books the IRV does not have, and are **not checked**.
+
+Item 43 is checked in the USFM: `common/header.running-head` flags a running head `\h` that differs from the book title `\mt` (Benz, 2026-10-13: the running head repeats the title; in the IRV, LAM and ACT), and `common/header.missing` a missing `\h` (#254). Chapter heads come from `\c`; page numbers are proofed on the PDF.
 
 ## Gate 6: Final publication acceptance
 

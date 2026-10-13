@@ -58,3 +58,23 @@ def test_the_pass_reads_the_preserved_source(tmp_path):
     assert [(f["rule"], f["context"]) for f in result["findings"] if f["rule"].startswith(("intro.", "header."))] == \
         [("intro.ior-space", "introduction")]
     assert not [line for line in result["limitations"] if "header" in line.lower()]
+
+
+def test_a_running_head_unlike_the_title_is_flagged():
+    # Item 43 (#254): \h must equal \mt (Benz, 2026-10-13). ACT in the IRV:
+    text = (HEADER.format(extra="").replace("\\h மத்தேயு", "\\h அப்போஸ்தலருடைய நடபடிகள்")
+            .replace("\\mt மத்தேயு", "\\mt அப்போஸ்தலர்களுடைய நடபடிகள்"))
+    [finding] = header_findings("act", text, VERSES, NAMES)
+    assert (finding["rule"], finding["originalText"], finding["category"]) == \
+        ("header.running-head", "அப்போஸ்தலருடைய நடபடிகள்", "consistency")
+    assert "அப்போஸ்தலர்களுடைய நடபடிகள்" in finding["message"]
+
+
+def test_a_running_head_that_differs_only_in_spacing_is_the_same():
+    text = HEADER.format(extra="").replace("\\h மத்தேயு", "\\h  மத்தேயு ")
+    assert header_findings("mat", text, VERSES, NAMES) == []
+
+
+def test_a_missing_running_head():
+    text = HEADER.format(extra="").replace("\\h மத்தேயு\n", "")
+    assert [f["message"] for f in header_findings("mat", text, VERSES, NAMES)] == ["No \\h in the book header."]
