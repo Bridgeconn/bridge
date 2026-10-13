@@ -102,7 +102,7 @@ A verse does not move on while obvious Tamil errors remain.
 | 28 | Cross-references | Reference markup and targets. | Partial | USFM checker for structure; target validity is **not checked**. | Proofreader |
 | 29 | Words of Jesus | `\wj` coverage and boundaries. | Not checked | | Proofreader |
 | 30 | OT/NT quotation markup | Quotation markers and their extent. | Not checked | | Proofreader |
-| 31 | Headings and section titles | Presence, wording, consistency. | Not checked | Headings are imported and shown. | Translator |
+| 31 | Headings and section titles | Presence, wording, consistency. | Checked | Consistency: `common/heading.trailing-punctuation` (a `\s`/`\ms` title ending in . , ; or :; 25 of 25 confirmed 2026-10-13) and `common/heading.marker-mixed` (`\s` and `\s1` mixed in a book; 4 of 4). Presence: `common/heading.missing` (a chapter with no heading where four in five have one; none in the IRV). Wording: the indic-qa layer reads the headings (spelling, sandhi). All panel only, `context: heading` (#244) | Translator |
 | 32 | Paragraphing and discourse formatting | Paragraph breaks, discourse markers. | Not checked | | Typesetter |
 | 33 | Poetry | Poetry markers and indentation levels. | Partial | USFM checker for markers. Line breaks inside poetry are treated as whitespace, not as control characters. | Typesetter |
 | 34 | Special textual structures | Lists, genealogies, acrostics, letters. | Not checked | | Typesetter |

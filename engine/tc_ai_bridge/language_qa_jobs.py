@@ -22,6 +22,7 @@ from .language_packs import PackError, default_pack, load_project_overrides, loa
 from .language_packs import indic_qa_adapter
 from .language_qa_drawn import InlinePolicy, drawn_rule_names, gated_rules, is_drawn, with_drawn
 from .language_qa_learned import learned_findings
+from .language_qa_headings import heading_findings
 from .language_packs.indic import ConfusionSet
 from .language_packs.lexicon import lexicon_findings, lexicon_fingerprint
 from .language_packs.loader import apply_overrides
@@ -959,6 +960,7 @@ class LanguageQaManager:
         # dropped where the pack or the common rules already flagged the same
         # place: chapter:verse -> [(start, end, category)] of every raw finding.
         book_headings: dict[str, dict[str, list[dict[str, Any]]]] = {}
+        chapter_verses: dict[str, list[str]] = {}  # chapter -> verse keys, for heading.missing
         flagged: dict[str, list[tuple[int, int, str]]] = {}
         completed = 0
         for completed, path in enumerate(paths):
@@ -976,10 +978,12 @@ class LanguageQaManager:
                     data, signature, _ = self._read(path)
                     if book_checker or learned:
                         book_text[chapter] = data
-                    if layer:
-                        headings = _read_headings(path.with_name(f"{chapter}.headings.json"), chapter_limitations)
-                        if headings:
-                            book_headings[chapter] = headings
+                    chapter_verses[chapter] = list(data)
+                    # Every pack reads the headings now: the heading rules
+                    # (#244) run for all; the layer reads them too.
+                    headings = _read_headings(path.with_name(f"{chapter}.headings.json"), chapter_limitations)
+                    if headings:
+                        book_headings[chapter] = headings
                 cached = cache.get(chapter)
                 cached_verses = cached["verses"] if cached and cached.get("key") == key else {}
                 verses: dict[str, Any] = {}
@@ -1117,6 +1121,8 @@ class LanguageQaManager:
                     # findings the pack or common rules had already raised.
                     for _ in range(len(checked_book[0]) - len(kept)):
                         timings.add("lqa.book.layer_dropped_as_duplicate", 0.0)
+            with timings.step("lqa.book.headings"):
+                audit += heading_findings(book, book_headings, chapter_verses, proceed=proceed)
             with timings.step("lqa.book.learned"):
                 audit += learned_findings(book, book_text, learned, fixes=learned_fixes, max_verse_chars=MAX_VERSE_CHARS,
                                           finding_id=stable_finding_id, rule_fields=rule_fields, suggestion=suggestion,

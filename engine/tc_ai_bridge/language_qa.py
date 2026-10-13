@@ -183,6 +183,10 @@ RULES: dict[str, RuleMeta] = {
     "spacing.extra": RuleMeta("common", "integrity", "spacing", "medium", revision=2),   # 2: offers the fix (one space; remove an edge space)
     "punctuation.repeated": RuleMeta("common", "integrity", "punctuation", "medium"),
     "punctuation.space-before": RuleMeta("common", "integrity", "punctuation", "medium"),
+    # Section headings (language_qa_headings.py, framework item 31, #244).
+    "heading.trailing-punctuation": RuleMeta("common", "integrity", "punctuation", "high"),
+    "heading.marker-mixed": RuleMeta("common", "integrity", "usfm", "high"),
+    "heading.missing": RuleMeta("common", "integrity", "consistency", "medium"),
     # The project's approved proper nouns (house style, Phase 6.2).
     "name.minority-spelling": RuleMeta("project", "housestyle", "name", "medium"),
     "terminology.deprecated-form": RuleMeta("project", "housestyle", "termbase", "high"),

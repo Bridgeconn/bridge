@@ -18716,3 +18716,44 @@ and `autoAlignWindowJob.test.ts` (what the client sends, passes to
 `onProgress`, unavailable without polling, cancelled and failed reject). Not
 done: the installed-build walk of QA matrix D14 without a "Language QA:
 unavailable" moment, which needs a provider key and the desktop.
+
+
+## 2026-10-13 — Section-heading rules; framework item 31 is Checked (#244, #230)
+
+**What.** Three common Language QA rules over the section headings
+(`<chapter>.headings.json`), in `engine/tc_ai_bridge/language_qa_headings.py`, run in
+the pass's book step for every pack:
+- `common/heading.trailing-punctuation`: an `\s*`/`\ms*` title ending in `.` `,` `;` `:`
+  (`?` and `!` are fine; `\r`, `\sp`, `\mr` are not titles);
+- `common/heading.marker-mixed`: in a book whose headings use both `\s` and `\s1`
+  (the same level), the minority;
+- `common/heading.missing`: a chapter with no section heading, in a book of five or
+  more chapters where at least four in five have one.
+
+All panel only, `context: "heading"` (start/end index `contextText`, no fix offered,
+as for the layer's heading findings). Headings used to be read only when the indic-qa
+layer ran; every pack reads them now. Row 31 of LANGUAGE_QA_TAMIL_SPECIFICATION.md
+moves to Checked: wording was already the layer's, and these add consistency and presence.
+
+**Why.** Requirement 3 (#230); the 2026-10-13 review confirmed the candidates 25/25
+(trailing full stop) and 4/4 (mixed markers).
+
+**Measured on the IRV** (`D:\Claude Lab\IRV Tamil`, parsed as an import parses it):
+25 trailing-punctuation, 4 mixed-marker (JOL 2:28, OBA 1:15, 1TI 3:8, 2PE 3:14),
+0 missing-heading findings. The 7 headings ending in `?` are not flagged.
+
+**Not scored by the benchmark.** `language_qa_benchmark.scan_book` writes no headings,
+and the round-3 labels for these are `candidate` rows without offsets, so the human gate
+does not read them. The confirmation is the review count above.
+
+**Gates.**
+- `tests/jobs/test_language_qa_headings.py`: 7 passed (each rule, a non-title tag, a
+  rarely-headed book, and one pass through LanguageQaManager reading a headings.json).
+- Language QA test files: 3,476 passed.
+- Full engine suite: 5,218 passed, 3 xfailed, 1 failed:
+  `test_passage_semantic_runtime.py::test_moved_project_retains_identity_but_live_copy_is_rejected`,
+  a WinError 32 on renaming a folder whose `bridge-workbench.sqlite3` was still open,
+  under `-n auto`. It passes alone and touches no Language QA code; reported, not fixed.
+- Human gate: pass.
+- `build-sidecars.ps1`, then `scripts/smoke_sidecars.py engine/dist/bridge-engine.exe`: passed.
+- Frontend and src-tauri untouched; their gates were not run.
