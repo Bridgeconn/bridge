@@ -19880,3 +19880,67 @@ join code as an admin; the empty hub; the CSV. Not run: a real browser on a
 second machine against a hub on the LAN.
 
 Gates: pytest -n auto 5337 passed (the two known flakes only); npm check 0/0, test 758, build (both entries); frozen pair rebuilt and smoked. No Rust change.
+
+## 2026-10-14 — Elective checks (#251) and Greek Room on demand (#252), e4c5e9e
+
+**What changed.** A run now names its checks and runs only those. The editor has a **Checks ▾**
+menu beside **Run whole book**: six boxes (Translation Notes, Translation Words, Alignment, USFM
+and text, Language QA, Greek Room), saved per installation in `editorPrefs`
+(`bridge.editor.checks.v1`), default all but Greek Room. Chapter entry, the post-edit re-check,
+**Run chapter** and **Run whole book** all use it. The same menu has **Greek Room, on demand**:
+the verse, the chapter or the whole book. The Review panel's Greek Room tab has **Run Greek Room
+on this verse** and no longer runs anything on verse selection. Collection QA keeps its own
+selection (`bridge.dashboard.collectionChecks.v1`), Greek Room included by default. DECISIONS
+2026-10-13 records the reversal of "live on focus".
+
+**Engine.** `check_jobs.py` holds the vocabulary: groups `tN tW alignment text` (Bridge-side) and
+`wildebeest usfm names` (Greek Room); `"local"` keeps its old meaning (every Bridge-side group
+plus the book USFM and names scans) for older callers, `"greekroom"` is the three Greek Room
+tools. `run_local_qa(..., groups)` runs only the groups asked for; it was one unfiltered bundle,
+so `["tN"]` used to run alignment integrity, tC state, editorial and verse-USFM too. tN and tW
+split on the index entry's tool; comments, edit history and other tools' items come with either
+(group `tc`); Word Alignment's invalid state is alignment's. Every QaFinding now carries
+`check` (a new dataclass field, empty default, so stored findings still load through
+`from_dict`). Stage labels name the checks ("tN · tW · Alignment · Text", "Greek Room",
+"Language QA"); "QA" is gone.
+
+**A subset run merges, it does not replace.** Found while wiring it: `_on_check_job_complete`
+replaced each covered chapter's rollup rows and findings snapshot with what the job found, and
+`applyJobSnapshot` did the same to the editor's findings. With elective runs, a Greek-Room-only
+chapter run would have wiped the stored tN/tW findings, and the default chapter job would wipe
+stored Greek Room ones. Now each verse keeps its stored findings of the groups that did not run
+(with their current status from the rollup), and the Language QA ids and statuses when that
+stage did not run. The snapshot reports `checkGroups`; the frontend merges with the same rule
+(`checkSelection.mergeFindings`). After an edit the verse's findings are replaced outright: they
+described the old text.
+
+**The ✓.** A verse ticks when every check in the reviewer's selection has run on it with nothing
+open (and alignment complete, as before). `checkGroupsByVerse` records what has run since the
+verse was opened or edited; the verse-number title adds "Ran: …" and "Greek Room not run".
+A re-check of some checks (an alignment save) keeps a fully checked verse ticked and does not
+tick one whose other checks never ran.
+
+**Book caches.** A chapter or book Greek Room job clears the book's in-memory USFM and names
+results first (`_forget_greek_room_book_caches`), so findings an edit made stale come back fresh;
+the scan then runs in the job's preflight. A verse's Greek Room run reads those results from
+memory only and never scans: it runs on the dispatcher, and clearing the caches inside
+`verse.runChecks` is what `edit_verse`'s docstring records as tried and reverted (#24's failure
+mode). The first cut did take `_checker_lock` for a verse Greek Room run;
+`test_live_greek_room_and_status_stay_responsive_during_check_preparation` caught it at 2.2 s.
+`checks.start` was already refused during Collection QA; `verse.runChecks` with Greek Room now is
+too, and the frontend holds every run while Collection QA runs.
+
+**Measured** (Tamil IRV Luke fixture imported fresh, this dev machine, not the field laptop; a
+one-off script through the protocol): old default chapter list `["local","greekroom","languageQa"]` against
+the new default `["tN","tW","alignment","text","languageQa"]`.
+
+| Run | Old | New |
+|---|---|---|
+| First chapter of the session (book preflight) | 16.09 s, of which names 13.09 s, USFM checker 2.06 s, Greek Room stage 0.78 s | 11.74 s, of which resource indexes 7.79 s, first Language QA pass 3.62 s (paid by either) |
+| A later chapter, cold Wildebeest cache | 1.19 s (Greek Room stage 0.98 s) | 0.10 s |
+| Same chapter again, warm | 0.20 s | 0.15 s |
+| Post-edit verse re-check, median of 10 | 24 ms | 2 ms |
+
+**Not done here.** #275 (the Wildebeest section triage and analytics read) is decided separately.
+#272 will read the stored snapshot back on chapter entry; the merge above is what keeps that
+snapshot whole across elective runs. Not seen on the desktop: QA matrix M61, M62.
