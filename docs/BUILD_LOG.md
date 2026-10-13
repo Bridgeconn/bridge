@@ -18949,3 +18949,50 @@ and the 4-hour memory sample are the field-machine day's; the recording is a
 DevTools Performance capture on a dev build or Windows Performance Recorder
 on the installed one, and the memory sample is Task Manager's private bytes
 of `Bridge.exe`, `msedgewebview2.exe` and `bridge-engine.exe` every 15 min.
+
+## 2026-10-14 — #210 engine half: a lazy sibling is prepared on a worker, not on the dispatcher
+
+Benz's measurement (#210, 2026-10-12): on the 66-book IRV Tamil import,
+opening Psalms for the first time while the Genesis check ran held the
+single request thread for 63 s (`materialize_lazy=60.08s`, 16.6 s without the
+check's threads competing for the GIL), and the `checks.status` poll queued
+behind it timed out at the desktop's 30 s, which the check notice reported as
+a failure. His frontend half (dd8c4f8) made the monitor treat that timeout as
+a busy sidecar. This is the cause.
+
+`project.open` takes `prepareInBackground` (the desktop client always sends
+it). When the book is still the collection import's placeholder
+(`lazy_import_pending`), the open does not materialise inline: it starts the
+normalisation on the import job manager (#231's `ImportJobManager`, sharing
+the import lock, so an import and a prepare refuse each other instead of
+queueing) and answers `{"state": "preparing", "path", "jobId", "job"}` at
+once. `materialize_lazy_project` gained the same `progress`/`cancel`
+checkpoints as `import_source`, so the job's snapshot carries phase
+`normalize`, the book and `chapter x of y`, and a cancel at a chapter
+checkpoint leaves the descriptor in place for the next open to start over
+(the book is written in place; there is nothing to stage). `bridge.openProject`
+polls `project.import.status` every 250 ms, hands each snapshot to an
+optional `onProgress`, and opens again once the job has succeeded, which is
+then the ordinary fast path; App's "Opening Psalms…" row says "preparing
+chapter 12 of 150". Without the flag (scripts, the older tests) the open
+materialises inline as it always did; the collection QA runner, which
+materialises on its own thread, is untouched.
+
+What this does to Benz's table: `project.open` on the never-opened Psalms
+still takes its 16 to 60 s, on the worker; `checks.status`, `report.generate`
+and `triage.results` no longer queue behind it. The one request that waits is
+the second `project.open`, issued by the client after the job, and that is
+the fast path.
+
+Tests: `tests/service/test_project_open_prepare_job.py` (3): the open answers
+`preparing` while the write is held open and `ping` and `verse.get` answer
+meanwhile, a second open of the same book is refused rather than queued, the
+descriptor is gone and the open returns the book after the job; a cancel
+leaves the descriptor and the next open starts over; without the flag the
+open materialises inline and a prepared book never goes through the job.
+`openProjectPrepare.test.ts` (4): the polling and the second open, an
+already-prepared book without polling, cancelled and failed in plain words.
+The client seam test now pins `prepareInBackground: true` on `project.open`.
+Not run: the desktop repro Benz described (open a never-opened book during a
+check and watch the label switch and recover); it needs the 66-book project
+on a built app.

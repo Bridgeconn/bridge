@@ -60,6 +60,8 @@
   let activeJobId = "";
   let monitorGeneration = 0;
   let openingBook = "";
+  // #210: while a lazy sibling is prepared on the worker, which chapter it is on.
+  let openingDetail = "";
   let bookOpenError = "";
   let droppedPath = "";
   let dropSequence = 0;
@@ -834,11 +836,17 @@
     const destination = siblings?.find((book) => book.path === path);
     perfBegin("book.switch", destination?.bookId ?? "");
     openingBook = destination?.bookName ?? "book";
+    openingDetail = "";
     bookOpenError = "";
     perfResponded("book.switch");
     try {
       await stopActiveJob();
-      const info = await bridge.openProject(path);
+      const info = await bridge.openProject(path, undefined, (snapshot) => {
+        openingDetail = snapshot.chapter && snapshot.chapterCount
+          ? `preparing chapter ${snapshot.chapter} of ${snapshot.chapterCount}`
+          : snapshot.state === "succeeded" ? "" : "preparing";
+      });
+      openingDetail = "";
       if (!info.importedProjects && siblings) info.importedProjects = siblings;
       resetBookState();
     resetReviewState();
@@ -1235,7 +1243,7 @@
   {#if openingBook}
     <div class="progress-row checking-row">
       <div class="spin" />
-      <span class="progress-label">Opening {openingBook}…</span>
+      <span class="progress-label">Opening {openingBook}…{openingDetail ? ` ${openingDetail}` : ""}</span>
       <div class="track"><div class="fill indeterminate" /></div>
       <span />
     </div>

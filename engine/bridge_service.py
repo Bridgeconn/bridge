@@ -51,6 +51,7 @@ from tc_ai_bridge.project_import import (
     import_checkpoint,
     import_source,
     inspect_import,
+    lazy_import_pending,
     materialize_lazy_project,
     record_collection_qa_run,
 )
@@ -780,13 +781,25 @@ class BridgeEngine:
     def semantic_runtime_pending(self) -> bool:
         return not self._semantic_build_done.is_set()
 
-    def open_project(self, path: str, project_id: str = "", *, await_semantic: bool = False) -> dict[str, Any]:
+    def open_project(self, path: str, project_id: str = "", *, await_semantic: bool = False,
+                     prepare_in_background: bool = False) -> dict[str, Any]:
         """project.open. Returns once the translationCore project is loaded and
         registered; the PassageSemanticRuntime is built on a worker afterwards
         (#112 step two) and `passageSemantic` on the result says `BUILDING`.
         `awaitSemantic` (scripts, tests) waits for that build before returning,
         which is what every open did before.
+
+        A lazy sibling of a collection (never opened since the import) is
+        normalised first. With `prepareInBackground` (the desktop client) that
+        runs as an import job on a worker and this returns at once with
+        `{"state": "preparing", "jobId": ...}`; the client polls
+        `project.import.status` and opens again when it has succeeded (#210:
+        inline it held the single request thread for a minute on a 66-book
+        Bible while a check ran, and every status poll behind it timed out).
+        Without the flag it runs inline, as it always did.
         """
+        if prepare_in_background and lazy_import_pending(path):
+            return self.start_prepare(path)
         # A build still running for the outgoing project must end before that
         # project is replaced, or it would attach to the wrong one.
         self._await_semantic_runtime()
@@ -1201,6 +1214,31 @@ class BridgeEngine:
         except BaseException:
             self._import_lock.release()
             raise
+
+    def start_prepare(self, path: str) -> dict[str, Any]:
+        """Normalise a lazy sibling on the import job manager (#210). Shares
+        the import lock, so it is refused while an import runs, and uses the
+        same snapshot (phase "normalize", chapter x of y) the import screen
+        already draws."""
+        if not self._import_lock.acquire(blocking=False):
+            raise ProjectError("Another project import is already running.")
+
+        def run(progress: Callable[[dict[str, Any]], None], cancel: Callable[[], bool]) -> dict[str, Any]:
+            try:
+                timer = _PhaseTimer()
+                materialize_lazy_project(path, progress=progress, cancel=cancel)
+                timer.mark("materialize_lazy")
+                _trace(f"project.open prepare {Path(path).name} {timer.summary()}")
+                return {"path": str(path), "prepared": True}
+            finally:
+                self._import_lock.release()
+
+        try:
+            snapshot = self._import_jobs.start(run, source_path=str(path))
+        except BaseException:
+            self._import_lock.release()
+            raise
+        return {"state": "preparing", "path": str(path), "jobId": snapshot["jobId"], "job": snapshot}
 
     def import_status(self, job_id: str = "") -> dict[str, Any]:
         return self._import_jobs.status(job_id)
@@ -6838,6 +6876,7 @@ class BridgeEngine:
                 return EngineResponse.ok(request.id, result=self.open_project(
                     p["path"], p.get("projectId", ""),
                     await_semantic=bool(p.get("awaitSemantic", False)),
+                    prepare_in_background=bool(p.get("prepareInBackground", False)),
                 ))
             if m == Methods.PROJECT_LIST:
                 return EngineResponse.ok(request.id, result=self.list_projects())

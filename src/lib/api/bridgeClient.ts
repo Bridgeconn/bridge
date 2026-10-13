@@ -394,6 +394,23 @@ async function call<T>(method: EngineMethod, params?: Record<string, unknown>): 
 }
 
 const AUTO_ALIGN_TERMINAL = new Set<AutoAlignJobStatus["state"]>(["succeeded", "failed", "cancelled"]);
+
+/** project.open's answer for a lazy sibling being prepared on a worker (#210). */
+interface PreparingResult {
+  state: "preparing";
+  path: string;
+  jobId: string;
+  job: ImportJobSnapshot;
+}
+
+function isPreparing(value: ProjectInfo | PreparingResult): value is PreparingResult {
+  return (value as PreparingResult).state === "preparing" && typeof (value as PreparingResult).jobId === "string";
+}
+
+const IMPORT_JOB_TERMINAL = new Set<ImportJobSnapshot["state"]>(["succeeded", "failed", "cancelled"]);
+/** Preparing a book is chapters being written; a quarter second keeps the
+ *  "chapter x of y" label honest without crowding the dispatcher. */
+export const PREPARE_POLL_MS = 250;
 /** How often the window job is polled (#242): the engine's pass changes are
  *  tens of seconds apart, so half a second keeps the label honest without
  *  crowding the dispatcher. */
@@ -621,8 +638,33 @@ export const bridge = {
     return invoke<string | null>("pick_import_file");
   },
 
-  openProject(path: string, projectId?: string): Promise<ProjectInfo> {
-    return call("project.open", { path, projectId });
+  /** Open a book. A lazy sibling of a collection (never opened since the
+   *  import) is prepared first as a background job (#210): the engine answers
+   *  `{state: "preparing", jobId}` at once, this polls `project.import.status`
+   *  (the same snapshot the import banner draws, so `onProgress` can say
+   *  "chapter 12 of 150") and opens again when the job has succeeded. The
+   *  request thread stays free meanwhile, so a running check's status polls
+   *  keep answering. */
+  async openProject(
+    path: string, projectId?: string, onProgress?: (snapshot: ImportJobSnapshot) => void,
+  ): Promise<ProjectInfo> {
+    const first = await call<ProjectInfo | PreparingResult>("project.open", { path, projectId, prepareInBackground: true });
+    if (!isPreparing(first)) return first;
+    let snapshot = first.job;
+    for (;;) {
+      onProgress?.(snapshot);
+      if (IMPORT_JOB_TERMINAL.has(snapshot.state)) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, PREPARE_POLL_MS));
+      snapshot = await call<ImportJobSnapshot>("project.import.status", { jobId: first.jobId });
+    }
+    if (snapshot.state !== "succeeded") {
+      throw new Error(snapshot.state === "cancelled"
+        ? "Preparing the book was cancelled. Nothing was changed."
+        : snapshot.error || "Preparing the book failed.");
+    }
+    const opened = await call<ProjectInfo | PreparingResult>("project.open", { path, projectId, prepareInBackground: true });
+    if (isPreparing(opened)) throw new Error("The book is still being prepared.");
+    return opened;
   },
 
   listProjects(): Promise<{ projects: RegisteredProject[] }> {

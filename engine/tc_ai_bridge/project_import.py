@@ -1007,7 +1007,16 @@ def record_collection_qa_run(project_root: str | Path, entry: dict[str, Any],
     _write_json_atomic(path, data)
 
 
-def materialize_lazy_project(project_root: str | Path) -> bool:
+def lazy_import_pending(project_root: str | Path) -> bool:
+    """True while the book is still the lightweight placeholder a collection
+    import leaves (#210: project.open decides from this whether to prepare the
+    book on a worker before loading it)."""
+    return (Path(project_root).resolve() / _LAZY_IMPORT_PATH).is_file()
+
+
+def materialize_lazy_project(project_root: str | Path, *,
+                             progress: ImportProgress | None = None,
+                             cancel: ImportCancel | None = None) -> bool:
     """Normalize a lightweight imported book the first time it is opened.
 
     Collection import copies every source file into application storage up
@@ -1033,13 +1042,18 @@ def materialize_lazy_project(project_root: str | Path) -> bool:
     metadata = descriptor.get("metadata")
     if not isinstance(metadata, dict):
         raise ProjectError(f"Deferred import metadata is invalid: {descriptor_path}")
-    book = parse_scripture_file(source)
     expected = str(descriptor.get("bookId") or "").lower()
+    import_checkpoint(progress, cancel, phase="normalize", bookId=expected, bookIndex=0, bookCount=1)
+    book = parse_scripture_file(source)
     if expected and book.book_id != expected:
         raise ProjectError(
             f"Deferred Scripture source identifies {book.book_id.upper()}, expected {expected.upper()}."
         )
-    _write_imported_book(root, book, {str(key): str(value) for key, value in metadata.items()})
+    # Written in place (there is no second copy to stage into); a cancel at a
+    # chapter checkpoint leaves the descriptor, so the next open starts over.
+    _write_imported_book(
+        root, book, {str(key): str(value) for key, value in metadata.items()}, progress=progress, cancel=cancel,
+    )
     descriptor_path.unlink()
     return True
 
