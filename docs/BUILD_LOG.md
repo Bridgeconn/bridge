@@ -18757,3 +18757,32 @@ does not read them. The confirmation is the review count above.
 - Human gate: pass.
 - `build-sidecars.ps1`, then `scripts/smoke_sidecars.py engine/dist/bridge-engine.exe`: passed.
 - Frontend and src-tauri untouched; their gates were not run.
+
+
+## 2026-10-13 — Footnote text without \ft; framework item 27 is Checked (#245, #230)
+
+**What.** `common/footnote.missing-ft`, in `scan_text` beside the other integrity rules:
+a `\f … \f*` note with text but no paragraph marker (`\ft`, `\fq`, `\fqa`, `\fk`, `\fl`,
+`\fw`, `\fp`, `\fdc`). The finding spans the note (raw offsets) and offers the reviewer's
+fix: the same note with `\ft ` inserted after the `\fr` reference (after the caller when
+there is no `\fr`). A note holding only a reference is not flagged. Panel only, `usfm`
+category, `context: "footnote"`: Use applies it in its verse; a scoped (book-wide) apply
+leaves footnotes alone, as for the layer's footnote findings.
+
+Row 27 of LANGUAGE_QA_TAMIL_SPECIFICATION.md moves to Checked. Its "note content is not
+checked" was out of date: the indic-qa layer reads footnote text (round 3 had layer
+findings inside footnotes).
+
+**Why.** Requirement 3 (#230); the 2026-10-13 review confirmed 3 of 3 (EZR 4:7, MAT 22:44,
+LUK 11:50: text after `\xt …\xt*` with no `\ft`; "add `\ft` after `\fr`").
+
+**Measured on the IRV.** `scan_text` over every verse of the reviewer's copy: 3 findings,
+exactly those three, each fix the reviewer's (1,419 `\fr` against 1,416 `\ft`).
+
+**Gates.**
+- `tests/jobs/test_language_qa_footnotes.py`: 5 passed (the shape, applying the fix
+  re-scans clean, `\ft`/`\fq` notes fine, a bare reference, no `\fr`).
+- Full engine suite (`pytest -n auto`): 5,235 passed, 3 xfailed, none failed.
+- Human gate: pass.
+- `build-sidecars.ps1`, then `smoke_sidecars.py`: passed.
+- Frontend and src-tauri untouched; their gates were not run.

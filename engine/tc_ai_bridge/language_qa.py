@@ -183,6 +183,8 @@ RULES: dict[str, RuleMeta] = {
     "spacing.extra": RuleMeta("common", "integrity", "spacing", "medium", revision=2),   # 2: offers the fix (one space; remove an edge space)
     "punctuation.repeated": RuleMeta("common", "integrity", "punctuation", "medium"),
     "punctuation.space-before": RuleMeta("common", "integrity", "punctuation", "medium"),
+    # Footnote markup (framework item 27, #245).
+    "footnote.missing-ft": RuleMeta("common", "integrity", "usfm", "high"),
     # Section headings (language_qa_headings.py, framework item 31, #244).
     "heading.trailing-punctuation": RuleMeta("common", "integrity", "punctuation", "high"),
     "heading.marker-mixed": RuleMeta("common", "integrity", "usfm", "high"),
@@ -383,6 +385,12 @@ CROSSING_LIMITATION = "candidate(s) spanning inline USFM markup omitted."
 # as any whitespace does. Reporting it flooded IRV Psalms with 2,977 false
 # findings that filled the book cap by chapter 87.
 USFM_LINE_BREAKS = frozenset("\n\r")
+# Footnotes in raw verse text (footnote.missing-ft): a note, its paragraph
+# markers, its \fr reference token, and any marker at all.
+_FOOTNOTE = regex.compile(r"\\f\s+\S\s+(?P<body>.*?)\\f\*", regex.DOTALL)
+_NOTE_PARAGRAPH = regex.compile(r"\\(?:ft|fq|fqa|fk|fl|fw|fp|fdc)(?![a-z0-9])")
+_NOTE_REFERENCE = regex.compile(r"\s*\\fr\s+\S+\s*")
+_NOTE_MARKUP = regex.compile(r"\\\+?[a-z0-9]+\*?")
 
 
 @dataclass(frozen=True)
@@ -542,6 +550,28 @@ def scan_text(text: str, *, book: str, chapter: str, verse: str,
     with timings.step("rule.punctuation.space-before"):
         for match in regex.finditer(r" +(?:[,;:!?]|\.(?!\.))", text):
             add("punctuation.space-before", *match.span(), "Space before punctuation; check project style.")
+    with timings.step("rule.footnote.missing-ft"):
+        # Framework item 27 (#245): footnote text with no \ft (or other
+        # paragraph marker) after the \fr reference. The fix inserts \ft there,
+        # as the reviewer asked (2026-10-13, 3 of 3). Raw offsets: notes are
+        # not in the visible text.
+        for note in _FOOTNOTE.finditer(raw):
+            body = note.group("body")
+            if _NOTE_PARAGRAPH.search(body):
+                continue
+            if not _NOTE_MARKUP.sub("", _NOTE_REFERENCE.sub("", body, count=1)).strip():
+                continue  # a reference and nothing else: no text to mark
+            ref = _NOTE_REFERENCE.match(body)
+            at = note.start("body") + (ref.end() if ref else 0) - note.start()
+            fixed = note.group()[:at] + "\\ft " + note.group()[at:]
+            before = len(findings)
+            add("footnote.missing-ft", note.start(), note.end(),
+                "Footnote text has no \\ft marker after the reference.", "medium",
+                [suggestion(fixed, "rule", "Insert \\ft after the footnote reference")], raw_offsets=True)
+            if len(findings) > before:
+                # Offsets index the stored verse, so Use applies as usual; a
+                # scoped (book-wide) apply leaves footnotes alone.
+                findings[-1]["context"] = "footnote"
     if pack is not None:
         pack_pairs = timings.step("rule.pack.pairs")  # the pack's pair-stage rules (sandhi, splits, ...)
         pack_pairs.__enter__()

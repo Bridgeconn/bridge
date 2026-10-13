@@ -98,7 +98,7 @@ A verse does not move on while obvious Tamil errors remain.
 |---|---|---|---|---|---|
 | 25 | Chapter and verse structure | Missing, duplicated or out-of-order verses; versification. | Checked | USFM structural checker (`usfm.*`); versification support | Bridge |
 | 26 | USFM markers | Valid and closed markers, correct nesting. | Checked | USFM structural checker | Bridge |
-| 27 | Footnotes | Note markup and the text inside notes. | Partial | USFM checker for structure; `ta-irv/integrity.space-before-note-end` (a space before `\f*`/`\x*`). Note content is **not checked**. | Proofreader |
+| 27 | Footnotes | Note markup and the text inside notes. | Checked | Markup: USFM checker for structure; `common/footnote.missing-ft` (note text with no `\ft` after the `\fr` reference, with the fix that inserts it; 3 of 3 confirmed 2026-10-13, #245); `ta-irv/integrity.space-before-note-end` (a space before `\f*`/`\x*`). Text: the indic-qa layer reads footnote text (spelling, sandhi; `context: footnote`). Whether a note says the right thing is the Proofreader's | Proofreader |
 | 28 | Cross-references | Reference markup and targets. | Partial | USFM checker for structure; target validity is **not checked**. | Proofreader |
 | 29 | Words of Jesus | `\wj` coverage and boundaries. | Not checked | | Proofreader |
 | 30 | OT/NT quotation markup | Quotation markers and their extent. | Not checked | | Proofreader |
