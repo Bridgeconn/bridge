@@ -19570,3 +19570,40 @@ and the 53 space-before-caller findings (#246).
 gate pass (ping max 122 ms); sidecar build and smoke passed. Item 34: full engine suite 5,327 passed, none failed; human gate pass; latency gate pass (ping max 102 ms); sidecar build and smoke passed. Docs-only moves
 (49, 1, 4, 20, 50, 51, 55, 13–16) were verified against the rule files, the code and the bundled
 tN, not by a gate run. 40 and 41 added tests only: 5 passed.
+
+
+## 2026-10-13 — The source text beside the translation, a side panel (#67, requirement 8 Option A)
+
+**What.** A fourth editor side panel, **Source**, on the rail (the SidePanel/SideRail pattern of
+2026-10-09), placed next to the verse text. It shows the chapter's Hebrew, Aramaic or Greek verse by
+verse; the selected verse is highlighted and followed, as in the Reference panel.
+- Data: `alignment.getRange`'s `topTokens`, `sourceDirection` and `groups`; no new endpoint. Each
+  source word shows the target words it is aligned to (`topIds` → `bottomIds`); a word with none yet
+  is dotted; the selected verse says "n of m source words aligned".
+- Type: Ezra SIL (`--font-hebrew`) right to left, Gentium Plus (`--font-greek`) left to right; the
+  size follows the in-app A−/A+ (`--verse-scale`, set on `.work-col`).
+- Speed: `src/lib/sourceText.ts` keeps each chapter once read: a few KB of the contexts, which run to
+  about 1 MB for PSA 119. Opening the column or moving verse draws from it at once. A verse whose
+  alignment status changes (an alignment save or a text edit) is read again on its own with
+  `alignment.get`. Measured on IRV Psalms in the engine: `alignment.getRange` PSA 23 (6 verses)
+  12 ms; PSA 119 (176 verses) 220 ms, once per chapter.
+- Preference: open/closed and width persist with the editorPrefs `persisted` helper (localStorage),
+  as the prompt asked, not through settings. The saved layout is validated all-or-nothing, and
+  adding `source` to the required panels would have thrown away every reviewer's saved widths. So a
+  layout saved before the column existed keeps them and gains the column, closed.
+- `src/App.svelte` (Revant's file) has a 4-line mount, approved by Benz and noted on #67. The old
+  `showSource` stub the issue mentions was already gone.
+
+**Visual acceptance, measured.** jsdom does not lay out text, so the real `SourceTextPanel`, with the
+app's `index.css` and bundled fonts, was built into a throwaway Vite harness. It was fed real
+`alignment.getRange` output for IRV PSA 23 (UHB) and JHN 1:1–8 (UGNT), and captured with headless
+Chrome at every text-size step (0.85–1.7) and at device scale factors 1, 1.25 and 1.5, in a 320 px
+column. At every combination the Hebrew runs right to left, right-aligned, with vowel points intact;
+the Greek runs left to right with polytonic accents; text wraps with no clipping or overlap at 1.7 ×
+150%. The harness is not committed: it lives in the session scratchpad, and its fake bridge pairs
+words in order to show aligned and unaligned words together.
+
+**Gates.** `npm run check` 0 errors, 0 warnings; `npm run test` 735 passed (new:
+`SourceTextPanel.test.ts` 6, `sourcePanelPrefs.test.ts` 3); `npm run build` ok. The engine is
+untouched, so the engine suite was not run. Not yet seen in the installed desktop app (WebView2);
+the harness used Chrome, the same engine family.
