@@ -188,6 +188,62 @@ class AppSettings:
             except Exception: return ''
         return ''
 
+    # -- the team hub (#80) ------------------------------------------------
+    #
+    # The address, who this device joined as, and which books are linked are
+    # ordinary settings; the device token is a secret and is kept DPAPI-wrapped
+    # beside the API key (in-session only where DPAPI is unavailable).
+
+    @property
+    def hub_url(self) -> str:
+        return str(self.data.get('hub_url') or '').strip()
+
+    @property
+    def hub_identity(self) -> dict:
+        value = self.data.get('hub_identity')
+        return dict(value) if isinstance(value, dict) else {}
+
+    @property
+    def hub_links(self) -> dict:
+        """local project path -> hub project id."""
+        value = self.data.get('hub_links')
+        return dict(value) if isinstance(value, dict) else {}
+
+    def set_hub(self, url: str, token: str, identity: dict) -> None:
+        self.data['hub_url'] = str(url or '').strip()
+        self.data['hub_identity'] = dict(identity)
+        self.data.pop('hub_token_dpapi', None)
+        self.data['_session_hub_token'] = str(token or '')
+        if token and os.name == 'nt':
+            try:
+                self.data['hub_token_dpapi'] = dpapi_protect(token)
+            except Exception:
+                pass
+        self.save_sanitized()
+
+    def set_hub_link(self, project_path: str, hub_project_id: str) -> None:
+        links = self.hub_links
+        links[str(project_path)] = str(hub_project_id)
+        self.data['hub_links'] = links
+        self.save_sanitized()
+
+    def clear_hub(self) -> None:
+        for key in ('hub_url', 'hub_identity', 'hub_links', 'hub_token_dpapi', '_session_hub_token'):
+            self.data.pop(key, None)
+        self.save_sanitized()
+
+    def get_hub_token(self) -> str:
+        session = str(self.data.get('_session_hub_token', '')).strip()
+        if session:
+            return session
+        enc = str(self.data.get('hub_token_dpapi', '')).strip()
+        if enc and os.name == 'nt':
+            try:
+                return dpapi_unprotect(enc)
+            except Exception:
+                return ''
+        return ''
+
     @property
     def model(self) -> str:
         return str(self.data.get('model') or 'gpt-5.6')

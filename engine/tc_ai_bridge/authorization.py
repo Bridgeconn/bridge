@@ -151,6 +151,7 @@ _READ = (
     "navigation.status", "navigation.poll", "navigation.bridgeChanged", "navigation.resolve",
     "users.list", "users.setCurrent",
     "assignments.list",
+    "hub.status", "hub.conflicts",
 )
 
 _RUN_CHECKS = (
@@ -166,6 +167,8 @@ _RUN_CHECKS = (
 )
 
 _WRITE = (
+    # #80: a sync pass writes pulled rows; settling a conflict is a decision.
+    "hub.syncNow", "hub.resolveConflict",
     "verse.decide", "verse.edit", "check.saveSelection", "check.clearSelection",
     "alignment.crossVerse.link", "alignment.crossVerse.unlink", "alignment.null.set", "alignment.null.clear",
     "alignment.autoAlign.revert", "alignment.realign", "alignment.unalign", "alignment.save",
@@ -190,6 +193,8 @@ _MANAGE_PROJECTS = (
     "project.forget", "project.delete", "project.rename", "project.archive", "project.unarchive",
     # #240: who works on what is the project admin's call.
     "assignments.set", "assignments.clear",
+    # #80: joining a hub and linking a book change what this device shares.
+    "hub.join", "hub.leave", "hub.link",
 )
 
 # #237: anyone may see who exists and sign in as themselves at startup; only

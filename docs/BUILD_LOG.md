@@ -19748,3 +19748,73 @@ the longer review calls that share it. Scaling it by window size buys nothing at
 timeout message with its details and a usable page, and a raw error with no details, in
 `CrossVerseAlignmentModal.test.ts`); `npm run build` ok. Frontend-only, so the engine suite was not
 run. Not yet seen on the installed app against a real provider.
+## 2026-10-14 — #80 the team hub's first slice
+
+Built to the #227 review (DECISIONS 2026-10-15), which supersedes the issue
+text in one place: progress and check findings do **not** sync (each device
+rebuilds them); the twelve human-owned tables do.
+
+**Hub** (`bridge_server.py`, the `[server]` extra). Its own `hub.sqlite3`:
+join codes (stored as sha256), devices (token sha256, user id, display name,
+role, last seen), projects (hub project id, book, source sha256) and an
+append-only `events` table with a `hub_seq` cursor. A first start writes one
+project_admin join code to `admin-join-code.txt`. Endpoints: `POST
+/hub/join` (code + name → device token, no password), `POST /hub/join-codes`
+(admins invite with a role), `GET /hub/presence` (last seen per device),
+`POST /hub/projects/link`, `POST /sync/push` (idempotent on `event_id`,
+refuses tables outside `SYNCED_TABLES` and events for another project,
+reporters refused) and `GET /sync/pull?hubProjectId&after` (pages of 1000).
+`/rpc` now needs a device token and runs the request as that user
+(`BridgeEngine.handle_request_as`), so `authorize()` refuses a reporter's
+`qaReview.decideFinding` exactly as on the desktop. The hub never applies or
+merges events.
+
+**Linking** (the #227 rule). The first device to link a book registers it
+under its own project id. A later device with the same book and source
+sha256 adopts that id (`ProjectRegistry.adopt_project_id` rewrites
+`.bridge/project.json` and the registry entry, then the book is reopened),
+so every `natural_row_id` matches across devices with no row rewritten. It
+is refused while the book holds rows in a synced table under its old id:
+"link a fresh import". This is narrower than natural-key matching after the
+fact, which stays a later slice.
+
+**Device** (`tc_ai_bridge/hub_sync.py`). `SYNCED_TABLES` (12) and
+`NOT_SYNCED_TABLES` (14) pinned against `MUTABLE_TABLES`. One pass pushes
+unsynced events of the synced tables in batches of 500 and acknowledges the
+rest locally (they never travel, and the unsynced cursor must not grow),
+then pulls after its cursor and applies through
+`WorkbenchRepository.import_event_lines` (split out of `import_events`), the
+same revision check every local write uses. An event whose base is not the
+local row lands in workbench v9 `sync_conflicts` with the incoming event
+verbatim; the local row is left alone. Settling one (`hub.resolveConflict`,
+"kept-mine" or "redecided") marks it and never applies it. v9 also adds
+`sync_state` (pull cursor, last push/pull, last error); neither table is in
+`MUTABLE_TABLES` or the change log.
+
+**Desktop.** The hub address, identity and links are settings; the device
+token is DPAPI-wrapped like the API key. A daemon thread syncs the open book
+every 60 s while a hub is configured, resumed at startup; `hub.syncNow` only
+wakes it. `hub.join` and `hub.link` are explicit setup clicks with a 10 s
+HTTP timeout. An unreachable hub records `lastError` and changes nothing
+else. Settings › Team (`TeamPane.svelte`): join with address, code and name;
+link this book; last synced and the last error; Sync now; the open conflicts
+with who changed what and Keep mine; Leave the hub (removes nothing).
+Methods classified in `authorization.py` (status and conflicts read;
+syncNow and resolveConflict write; join, leave, link manage_projects);
+`hub.link` has the 180 s open class in `sidecar.rs`.
+
+Tests: `tests/service/test_hub_sync.py` (5): the table classification; two
+devices with the same imported book join an in-process hub (FastAPI test
+client as the transport), B adopts A's id, a decision crosses in one pass
+each, a concurrent change to the same decision leaves each side with its own
+row and one conflict naming the other's decision, settling marks it, a
+second pull is idempotent; a reporter token refused on
+`qaReview.decideFinding` over `/rpc` and on push, a made-up code and a
+missing token refused; the hub refusing a non-travelling table; an
+unreachable hub recording its error while `verse.edit` and the rest work;
+500 decisions pushed and pulled in 1.15 s in-process (marked `slow`; the
+requirement's budget is 30 s on a LAN).
+`TeamPane.test.ts` (3), `sidecar::tests` (15). Not run: two physical
+machines on a LAN; the 500-event figure over a real 100 Mbit link.
+
+Gates: pytest -n auto 5335 passed (the moved-project flake only); npm check 0/0, test 748, build; cargo test 15; frozen pair rebuilt and smoked.

@@ -1,40 +1,258 @@
-"""The team hub's HTTP transport (#79): `bridge-engine --serve`.
+"""The team hub: `bridge-engine --serve` (#79 transport, #80 first slice).
 
 An optional `[server]` extra (FastAPI, uvicorn), imported only by `main.py`
 when `--serve` is given, excluded from `bridge-engine.spec`, and never
 imported by `bridge_service.py` (a test pins that), so the desktop sidecar
 carries no server and no network path (DECISIONS 2026-09-11, 2026-10-15).
 
-The envelope is the stdio one: `POST /rpc` with `{id, method, params,
-session}` returns exactly what `BridgeEngine.handle_request` returns over
-stdio, so `bridgeClient.ts` can swap `invoke("engine_call")` for `fetch`
-without the protocol changing. `session` keeps two clients on two projects
-apart (`BridgeEngine._activate_session`).
+**Identity.** A name and a device, never a password (DECISIONS 2026-09-11).
+An administrator hands out a join code; a device posts it with a display
+name and gets a device token. The hub stores only the token's sha256. The
+first start writes one project_admin join code to `admin-join-code.txt` in
+the data dir, so the first administrator can join without a second tool.
 
-Requests are serialised by one lock. The engine's per-session state is
-swapped per request and its dispatcher assumes one request at a time, as
-the stdio loop does; job threads still run in parallel. Join codes, device
-tokens and `authorize()` per hub user are #80; until then the server binds
-to 127.0.0.1 by default, and `--host` is the administrator's explicit
-choice to listen on the LAN.
+**`/rpc`** carries the stdio envelope (`{id, method, params, session}`) and
+needs a device token; the engine runs the request as that token's user, so
+`authorize()` refuses a reporter's write exactly as on the desktop.
+
+**Sync** (`/hub/projects/link`, `/sync/push`, `/sync/pull`) is an append-only
+event store per hub project. The hub never applies events and never merges:
+devices apply what they pull through their own revision check and keep any
+conflict for a human (`tc_ai_bridge/hub_sync.py`). Pushing is an editor's or
+admin's; pulling is anyone's who has joined. A push is idempotent on
+`event_id`, and only the tables in `SYNCED_TABLES` are accepted.
+
+Requests are serialised by one lock: the engine swaps per-session state per
+request and its dispatcher assumes one at a time, as the stdio loop does.
+The server binds to 127.0.0.1 unless `--host` says otherwise.
 """
 from __future__ import annotations
 
+import hashlib
+import json
+import secrets
+import sqlite3
 import threading
+import uuid
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from bridge_service import BridgeEngine
 from greek_room_engine.protocol import EngineRequest, EngineResponse
+from tc_ai_bridge.authorization import Role, parse_role
+from tc_ai_bridge.hub_sync import SYNCED_TABLES
 from tc_ai_bridge.secret_store import AppSettings
 
+PULL_PAGE = 1000
+HUB_SCHEMA = r"""
+CREATE TABLE IF NOT EXISTS join_codes (
+    code_hash TEXT PRIMARY KEY,
+    role TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    uses INTEGER NOT NULL DEFAULT 0,
+    revoked_at TEXT
+);
+CREATE TABLE IF NOT EXISTS devices (
+    token_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    role TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    last_seen_at TEXT
+);
+CREATE TABLE IF NOT EXISTS projects (
+    hub_project_id TEXT PRIMARY KEY,
+    book_id TEXT NOT NULL,
+    source_sha256 TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    created_by TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS events (
+    hub_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT NOT NULL UNIQUE,
+    hub_project_id TEXT NOT NULL,
+    pushed_by TEXT NOT NULL,
+    received_at TEXT NOT NULL,
+    event_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_events_project ON events(hub_project_id, hub_seq);
+"""
 
-def create_app(engine: BridgeEngine) -> FastAPI:
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _hash(secret: str) -> str:
+    return hashlib.sha256(secret.encode("utf-8")).hexdigest()
+
+
+class HubStore:
+    """The hub's own SQLite file. Append-only for events; the hub is a copy
+    of what every device holds, so losing it costs a re-sync, not data."""
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self._connect() as conn:
+            conn.executescript(HUB_SCHEMA)
+            conn.commit()
+
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        conn = sqlite3.connect(str(self.path), timeout=10.0)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+    # -- join codes and devices ------------------------------------------------
+
+    def create_join_code(self, role: str, created_by: str) -> str:
+        code = "-".join(secrets.token_hex(2).upper() for _ in range(3))
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO join_codes(code_hash, role, created_at, created_by) VALUES(?,?,?,?)",
+                (_hash(code), parse_role(role).value, _now(), created_by),
+            )
+            conn.commit()
+        return code
+
+    def join(self, code: str, display_name: str, device_id: str) -> dict[str, Any]:
+        name = str(display_name or "").strip()
+        if not name:
+            raise HTTPException(400, "A display name is needed to join.")
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT role FROM join_codes WHERE code_hash=? AND revoked_at IS NULL",
+                (_hash(str(code or "").strip().upper()),),
+            ).fetchone()
+            if row is None:
+                raise HTTPException(403, "That join code is not valid on this hub.")
+            token = secrets.token_urlsafe(32)
+            user_id = str(uuid.uuid4())
+            conn.execute(
+                "INSERT INTO devices(token_hash, user_id, display_name, role, device_id, created_at) VALUES(?,?,?,?,?,?)",
+                (_hash(token), user_id, name, row["role"], str(device_id or ""), _now()),
+            )
+            conn.execute("UPDATE join_codes SET uses = uses + 1 WHERE code_hash=?", (_hash(str(code).strip().upper()),))
+            conn.commit()
+        return {"token": token, "userId": user_id, "displayName": name, "role": row["role"]}
+
+    def device(self, token: str) -> dict[str, Any] | None:
+        if not token:
+            return None
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM devices WHERE token_hash=?", (_hash(token),)).fetchone()
+            if row is None:
+                return None
+            conn.execute("UPDATE devices SET last_seen_at=? WHERE token_hash=?", (_now(), row["token_hash"]))
+            conn.commit()
+        return {"userId": row["user_id"], "displayName": row["display_name"], "role": row["role"],
+                "deviceId": row["device_id"], "lastSeenAt": row["last_seen_at"]}
+
+    def presence(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT display_name, role, device_id, last_seen_at FROM devices ORDER BY last_seen_at DESC"
+            ).fetchall()
+        return [{"displayName": r["display_name"], "role": r["role"], "deviceId": r["device_id"],
+                 "lastSeenAt": r["last_seen_at"]} for r in rows]
+
+    # -- projects --------------------------------------------------------------
+
+    def link(self, book_id: str, source_sha256: str, local_project_id: str, user_id: str) -> dict[str, Any]:
+        """The first device to link a book registers it under its own local id;
+        every later device with the same book and source joins that one."""
+        book = str(book_id or "").lower()
+        sha = str(source_sha256 or "")
+        if not book or not sha or not local_project_id:
+            raise HTTPException(400, "Linking needs the book, its source sha256 and the local project id.")
+        with self._connect() as conn:
+            existing = conn.execute(
+                "SELECT * FROM projects WHERE book_id=? AND source_sha256=? ORDER BY created_at LIMIT 1", (book, sha),
+            ).fetchone()
+            if existing is not None:
+                return {"hubProjectId": existing["hub_project_id"], "created": False}
+            taken = conn.execute("SELECT 1 FROM projects WHERE hub_project_id=?", (local_project_id,)).fetchone()
+            if taken is not None:
+                raise HTTPException(409, "That project id is already linked to a different book or source.")
+            conn.execute(
+                "INSERT INTO projects(hub_project_id, book_id, source_sha256, created_at, created_by) VALUES(?,?,?,?,?)",
+                (local_project_id, book, sha, _now(), user_id),
+            )
+            conn.commit()
+        return {"hubProjectId": local_project_id, "created": True}
+
+    def project_exists(self, hub_project_id: str) -> bool:
+        with self._connect() as conn:
+            return conn.execute("SELECT 1 FROM projects WHERE hub_project_id=?", (hub_project_id,)).fetchone() is not None
+
+    # -- events ------------------------------------------------------------------
+
+    def push(self, hub_project_id: str, events: list[dict[str, Any]], pushed_by: str) -> dict[str, Any]:
+        accepted = duplicates = 0
+        received = _now()
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            for event in events:
+                if not isinstance(event, dict) or not event.get("event_id"):
+                    raise HTTPException(400, "Every event needs an event_id.")
+                if event.get("table_name") not in SYNCED_TABLES:
+                    raise HTTPException(400, f"Table {event.get('table_name')!r} does not travel through the hub.")
+                if str(event.get("project_id") or "") != hub_project_id:
+                    raise HTTPException(400, "An event belongs to a different project than the push names.")
+                cur = conn.execute(
+                    "INSERT OR IGNORE INTO events(event_id, hub_project_id, pushed_by, received_at, event_json) "
+                    "VALUES(?,?,?,?,?)",
+                    (str(event["event_id"]), hub_project_id, pushed_by, received, json.dumps(event, ensure_ascii=False)),
+                )
+                if cur.rowcount:
+                    accepted += 1
+                else:
+                    duplicates += 1
+            conn.commit()
+        return {"accepted": accepted, "duplicates": duplicates}
+
+    def pull(self, hub_project_id: str, after: int) -> dict[str, Any]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT hub_seq, event_json FROM events WHERE hub_project_id=? AND hub_seq>? ORDER BY hub_seq LIMIT ?",
+                (hub_project_id, int(after), PULL_PAGE + 1),
+            ).fetchall()
+        more = len(rows) > PULL_PAGE
+        rows = rows[:PULL_PAGE]
+        return {"events": [{"hubSeq": int(r["hub_seq"]), "event": json.loads(r["event_json"])} for r in rows],
+                "more": more}
+
+
+def _token(request: Request) -> str:
+    header = request.headers.get("authorization", "")
+    return header[7:].strip() if header.lower().startswith("bearer ") else ""
+
+
+def create_app(engine: BridgeEngine, store: HubStore | None = None) -> FastAPI:
     app = FastAPI(title="Bridge hub", docs_url=None, redoc_url=None, openapi_url=None)
     lock = threading.Lock()
+    hub = store
+
+    def device_for(request: Request) -> dict[str, Any]:
+        if hub is None:
+            raise HTTPException(503, "This server has no hub store.")
+        device = hub.device(_token(request))
+        if device is None:
+            raise HTTPException(401, "Join this hub first: the device token is missing or unknown.")
+        return device
 
     @app.get("/health")
     def health() -> dict[str, Any]:
@@ -47,12 +265,61 @@ def create_app(engine: BridgeEngine) -> FastAPI:
             engine_request = EngineRequest.from_dict(body)
         except Exception as exc:  # noqa: BLE001 -- a bad body is the client's error
             return JSONResponse(EngineResponse.fail("__unknown__", "bad_request", str(exc)).to_dict())
+        user = device_for(request) if hub is not None else None
         with lock:
             try:
-                response = engine.handle_request(engine_request)
+                response = engine.handle_request_as(engine_request, user)
             except Exception as exc:  # noqa: BLE001 -- same defence as the stdio loop
                 response = EngineResponse.fail(engine_request.id, "internal_error", str(exc))
         return JSONResponse(response.to_dict())
+
+    @app.post("/hub/join")
+    async def join(request: Request) -> dict[str, Any]:
+        if hub is None:
+            raise HTTPException(503, "This server has no hub store.")
+        body = await request.json()
+        return hub.join(str(body.get("joinCode") or ""), str(body.get("displayName") or ""),
+                        str(body.get("deviceId") or ""))
+
+    @app.post("/hub/join-codes")
+    async def new_join_code(request: Request) -> dict[str, Any]:
+        device = device_for(request)
+        if parse_role(device["role"]) is not Role.PROJECT_ADMIN:
+            raise HTTPException(403, f"{device['displayName']} is not a project admin and cannot invite.")
+        body = await request.json()
+        role = parse_role(body.get("role"), default=Role.EDITOR)
+        return {"joinCode": hub.create_join_code(role.value, device["userId"]), "role": role.value}  # type: ignore[union-attr]
+
+    @app.get("/hub/presence")
+    def presence(request: Request) -> dict[str, Any]:
+        device_for(request)
+        return {"devices": hub.presence()}  # type: ignore[union-attr]
+
+    @app.post("/hub/projects/link")
+    async def link(request: Request) -> dict[str, Any]:
+        device = device_for(request)
+        body = await request.json()
+        return hub.link(str(body.get("bookId") or ""), str(body.get("sourceSha256") or ""),  # type: ignore[union-attr]
+                        str(body.get("localProjectId") or ""), device["userId"])
+
+    @app.post("/sync/push")
+    async def push(request: Request) -> dict[str, Any]:
+        device = device_for(request)
+        if parse_role(device["role"]) is Role.REPORTER:
+            raise HTTPException(403, f"{device['displayName']} is a reporter and cannot push changes.")
+        body = await request.json()
+        hub_project_id = str(body.get("hubProjectId") or "")
+        if not hub.project_exists(hub_project_id):  # type: ignore[union-attr]
+            raise HTTPException(404, "Link the project to this hub before pushing.")
+        events = body.get("events") if isinstance(body.get("events"), list) else []
+        return hub.push(hub_project_id, events, device["userId"])  # type: ignore[union-attr]
+
+    @app.get("/sync/pull")
+    def pull(request: Request, hubProjectId: str, after: int = 0) -> dict[str, Any]:  # noqa: N803 -- the wire name
+        device_for(request)
+        if not hub.project_exists(hubProjectId):  # type: ignore[union-attr]
+            raise HTTPException(404, "That project is not linked on this hub.")
+        return hub.pull(hubProjectId, after)  # type: ignore[union-attr]
 
     return app
 
@@ -67,7 +334,25 @@ def build_engine(data_dir: str | Path = "") -> BridgeEngine:
     return BridgeEngine()
 
 
+def build_store(data_dir: str | Path) -> HubStore:
+    """The hub store, and on a first start one admin join code written beside
+    it for the first administrator."""
+    root = Path(data_dir).resolve()
+    store = HubStore(root / "hub.sqlite3")
+    marker = root / "admin-join-code.txt"
+    if not marker.exists() and not store.presence():
+        code = store.create_join_code(Role.PROJECT_ADMIN.value, "hub")
+        marker.write_text(
+            f"{code}\nJoin with this code to become the hub's first project admin. Delete this file afterwards.\n",
+            encoding="utf-8",
+        )
+    return store
+
+
 def serve(data_dir: str = "", host: str = "127.0.0.1", port: int = 8765) -> None:
     import uvicorn
 
-    uvicorn.run(create_app(build_engine(data_dir)), host=host, port=int(port), log_level="warning")
+    root = Path(data_dir or Path.cwd() / "bridge-hub").resolve()
+    app = create_app(build_engine(root), build_store(root))
+    print(f"Bridge hub on http://{host}:{port} -- data in {root}", flush=True)
+    uvicorn.run(app, host=host, port=int(port), log_level="warning")

@@ -63,6 +63,8 @@ import type {
   RegisteredProject,
   Assignment,
   AssignmentsList,
+  HubConflict,
+  HubStatus,
   UserRole,
   UsersList,
   WorkspaceUser,
@@ -292,6 +294,13 @@ export type EngineMethod =
   | "alignment.null.clear"
   | "alignment.window.autoAlign"
   | "assignments.clear"
+  | "hub.conflicts"
+  | "hub.join"
+  | "hub.leave"
+  | "hub.link"
+  | "hub.resolveConflict"
+  | "hub.status"
+  | "hub.syncNow"
   | "assignments.list"
   | "assignments.set"
   | "alignment.autoAlign.revert"
@@ -696,6 +705,36 @@ export const bridge = {
 
   unarchiveProject(projectId: string): Promise<{ projectId: string; archived: boolean; books: number }> {
     return call("project.unarchive", { projectId });
+  },
+
+  // -- the team hub (#80). join and link are explicit setup clicks; syncNow
+  // only wakes the engine's sync thread and never waits on the network.
+  hubStatus(): Promise<HubStatus> {
+    return call("hub.status");
+  },
+
+  hubJoin(url: string, joinCode: string, displayName: string): Promise<HubStatus> {
+    return call("hub.join", { url, joinCode, displayName });
+  },
+
+  hubLeave(): Promise<HubStatus> {
+    return call("hub.leave");
+  },
+
+  hubLink(): Promise<HubStatus & { created: boolean }> {
+    return call("hub.link");
+  },
+
+  hubSyncNow(): Promise<HubStatus> {
+    return call("hub.syncNow");
+  },
+
+  hubConflicts(): Promise<{ hubProjectId: string; conflicts: HubConflict[] }> {
+    return call("hub.conflicts");
+  },
+
+  hubResolveConflict(conflictId: number, resolution: "kept-mine" | "redecided"): Promise<{ hubProjectId: string; conflicts: HubConflict[] }> {
+    return call("hub.resolveConflict", { conflictId, resolution });
   },
 
   // -- assignments (#240): for the open book. set and clear are a

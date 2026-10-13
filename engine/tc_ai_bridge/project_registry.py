@@ -453,6 +453,26 @@ class ProjectRegistry:
         return result
 
     @_locked
+    def adopt_project_id(self, path: str | Path, new_project_id: str) -> dict[str, Any]:
+        """#80: a second device links its own import of a book to the hub's
+        project by taking the hub's id, so row ids (built from the project id)
+        match on every device. Rewrites `.bridge/project.json` and the
+        registry entry; the caller has checked the book has nothing synced
+        under its old id."""
+        project_path = Path(path).resolve(strict=False)
+        entry = self._find(path=project_path)
+        if entry is None:
+            raise ProjectIdentityError("The project is not registered on this device.")
+        identity_path = project_path / _IDENTITY_PATH
+        identity = _read_json(identity_path)
+        identity["projectId"] = str(new_project_id)
+        _write_json_atomic(identity_path, identity)
+        entry["projectId"] = str(new_project_id)
+        self._dirty = True
+        self._save()
+        return dict(entry)
+
+    @_locked
     def rename(self, project_id: str, display_name: str) -> list[dict[str, Any]]:
         """#238: the name the list shows, on every book of the project's
         collection. A display name only: the folder, the manifest and the

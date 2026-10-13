@@ -964,6 +964,36 @@ export interface BookProgressEntry {
   assignments?: Assignment[];
 }
 
+/** #80: this device's view of the team hub. */
+export interface HubStatus {
+  joined: boolean;
+  url: string;
+  identity: { userId?: string; displayName?: string; role?: UserRole };
+  linkedHubProjectId: string;
+  sync: { pullCursor: number; lastPushAt: string | null; lastPullAt: string | null; lastError: string | null } | null;
+  openConflicts: number;
+  syncing: boolean;
+}
+
+/** #80: another device's change to a row this device also changed. Kept,
+ *  never applied; settling it marks it. */
+export interface HubConflict {
+  id: number;
+  eventId: string;
+  table: string;
+  rowKey: string;
+  baseRevision: number | null;
+  localRevision: number | null;
+  reason: string;
+  theirActorId: string;
+  theirActorName: string;
+  theirCreatedAt: string;
+  theirPayload: Record<string, unknown>;
+  receivedAt: string;
+  resolvedAt: string | null;
+  resolution: string | null;
+}
+
 /** One assignment (#240): `chapter` is "" for the whole book. */
 export interface Assignment {
   chapter: string;

@@ -378,6 +378,16 @@ class Methods:
     USERS_SET_ROLE = "users.setRole"
     USERS_SET_CURRENT = "users.setCurrent"
     # #240: assign a book or a chapter to a user; "My work" reads these.
+    # #80: the team hub, device side. join/leave/link are explicit setup
+    # clicks; syncNow only wakes the sync thread; nothing here is on a path a
+    # translator waits for.
+    HUB_STATUS = "hub.status"
+    HUB_JOIN = "hub.join"
+    HUB_LEAVE = "hub.leave"
+    HUB_LINK = "hub.link"
+    HUB_SYNC_NOW = "hub.syncNow"
+    HUB_CONFLICTS = "hub.conflicts"
+    HUB_RESOLVE_CONFLICT = "hub.resolveConflict"
     ASSIGNMENTS_LIST = "assignments.list"
     ASSIGNMENTS_SET = "assignments.set"
     ASSIGNMENTS_CLEAR = "assignments.clear"
@@ -741,6 +751,10 @@ class BridgeEngine:
         (`docs/DECISIONS.md`, 2026-09-11). The name seeds from the OS account
         for someone who has never set one, and is editable in Settings.
         """
+        request_user = getattr(self, "_request_user", None)
+        if request_user is not None:
+            # #80: on the hub a request runs as its device token's user.
+            return request_user
         if self._local_user is None:
             self._local_user = self.workspace.get_or_create_local_user(
                 self.settings.reviewer_name, current_user_id=self.settings.current_user_id,
@@ -806,6 +820,158 @@ class BridgeEngine:
         self.settings.reviewer_name = target["displayName"]
         user = self.refresh_local_user()
         return {"currentUserId": user["userId"], "displayName": user["displayName"], "role": user.get("role")}
+
+    # -- the team hub, device side (#80) -----------------------------------
+
+    def _hub_client(self):
+        from tc_ai_bridge.hub_sync import HubClient
+
+        url = self.settings.hub_url
+        if not url:
+            raise ProjectError("This device has not joined a hub.")
+        return HubClient(url, self.settings.get_hub_token(), transport=getattr(self, "_hub_transport", None))
+
+    def hub_status(self) -> dict[str, Any]:
+        project = self.project
+        link = self.settings.hub_links.get(str(project.path)) if project is not None else None
+        state = None
+        conflicts = 0
+        if project is not None and link:
+            state = project.workbench.sync_state(link)
+            conflicts = len(project.workbench.sync_conflicts(link))
+        thread = getattr(self, "_hub_thread", None)
+        return {
+            "joined": bool(self.settings.hub_url and self.settings.get_hub_token()),
+            "url": self.settings.hub_url, "identity": self.settings.hub_identity,
+            "linkedHubProjectId": link or "", "sync": state, "openConflicts": conflicts,
+            "syncing": bool(thread is not None and thread.is_alive() and getattr(self, "_hub_busy", False)),
+        }
+
+    def hub_join(self, url: str, join_code: str, display_name: str) -> dict[str, Any]:
+        from tc_ai_bridge.hub_sync import HubClient, HubError
+
+        name = str(display_name or "").strip() or self.local_user()["displayName"]
+        try:
+            client = HubClient(url, transport=getattr(self, "_hub_transport", None))
+            joined = client.join(join_code, name, self.workspace.get_or_create_device_id())
+        except HubError as exc:
+            raise ProjectError(str(exc)) from exc
+        self.settings.set_hub(url, str(joined.get("token") or ""), {
+            "userId": joined.get("userId"), "displayName": joined.get("displayName"), "role": joined.get("role"),
+        })
+        self._start_hub_thread()
+        return self.hub_status()
+
+    def hub_leave(self) -> dict[str, Any]:
+        self.settings.clear_hub()
+        return self.hub_status()
+
+    def hub_link(self) -> dict[str, Any]:
+        """Link the open book to the hub. The first device registers it under
+        its own project id; a later device adopts that id so row ids match
+        everywhere, which it may do only while it has nothing synced under its
+        old id (DECISIONS 2026-10-15)."""
+        from tc_ai_bridge.hub_sync import SYNCED_TABLES, HubError
+
+        self._require_project()
+        project = self.project
+        local_id = project.workbench_identity.project_id
+        sha = str(((project.import_metadata() or {}).get("source") or {}).get("sha256") or "") \
+            if hasattr(project, "import_metadata") else ""
+        if not sha:
+            imported = project.path / ".bridge" / "import.json"
+            try:
+                sha = str(json.loads(imported.read_text(encoding="utf-8-sig")).get("source", {}).get("sha256") or "")
+            except (OSError, ValueError):
+                sha = ""
+        if not sha:
+            raise ProjectError("This book has no import provenance (.bridge/import.json), so it cannot be linked.")
+        try:
+            linked = self._hub_client().link(project.book_id, sha, local_id)
+        except HubError as exc:
+            raise ProjectError(str(exc)) from exc
+        hub_id = str(linked.get("hubProjectId") or "")
+        if hub_id != local_id:
+            synced = sum(
+                len(project.workbench.rows(table, project_id=local_id)) for table in SYNCED_TABLES
+            )
+            if synced:
+                raise ProjectError(
+                    "This book already holds decisions made before linking, under its own id. "
+                    "Link a fresh import of the book instead; nothing has been changed."
+                )
+            self.project_registry.adopt_project_id(project.path, hub_id)
+            path = str(project.path)
+            self.open_project(path, await_semantic=True)
+        self.settings.set_hub_link(str(self.project.path), hub_id)
+        self._start_hub_thread()
+        return {**self.hub_status(), "created": bool(linked.get("created"))}
+
+    def hub_sync_once(self) -> dict[str, Any]:
+        """One push-and-pull for the open book, on the calling thread."""
+        from tc_ai_bridge.hub_sync import HubError, sync_project
+
+        project = self.project
+        if project is None:
+            return {"skipped": "no project"}
+        link = self.settings.hub_links.get(str(project.path))
+        if not link or not self.settings.hub_url:
+            return {"skipped": "not linked"}
+        try:
+            return sync_project(project.workbench, self._hub_client(), link)
+        except HubError as exc:
+            return {"error": str(exc)}
+
+    def hub_sync_now(self) -> dict[str, Any]:
+        """Wake the sync thread; never waits on the network."""
+        self._start_hub_thread()
+        event = getattr(self, "_hub_wake", None)
+        if event is not None:
+            event.set()
+        return self.hub_status()
+
+    def hub_conflicts(self) -> dict[str, Any]:
+        self._require_project()
+        link = self.settings.hub_links.get(str(self.project.path))
+        conflicts = self.project.workbench.sync_conflicts(link) if link else []
+        names = self.workspace.user_display_names()
+        for item in conflicts:
+            item["theirActorName"] = names.get(item["theirActorId"], "")
+        return {"hubProjectId": link or "", "conflicts": conflicts}
+
+    def hub_resolve_conflict(self, conflict_id: int, resolution: str) -> dict[str, Any]:
+        self._require_project()
+        if resolution not in {"kept-mine", "redecided"}:
+            raise ProjectError("A conflict is settled by keeping your own decision or by deciding again.")
+        self.project.workbench.resolve_sync_conflict(int(conflict_id), resolution)
+        return self.hub_conflicts()
+
+    HUB_SYNC_INTERVAL_SECONDS = 60.0
+
+    def _start_hub_thread(self) -> None:
+        """A slow daemon poll while a hub is configured. It never holds the
+        dispatcher, and an unreachable hub costs only a recorded error."""
+        if not self.settings.hub_url:
+            return
+        thread = getattr(self, "_hub_thread", None)
+        if thread is not None and thread.is_alive():
+            return
+        self._hub_wake = threading.Event()
+
+        def loop() -> None:
+            while self.settings.hub_url:
+                self._hub_busy = True
+                try:
+                    self.hub_sync_once()
+                except Exception as exc:  # noqa: BLE001 -- the loop must survive anything
+                    _trace(f"hub sync failed: {exc}")
+                finally:
+                    self._hub_busy = False
+                self._hub_wake.wait(self.HUB_SYNC_INTERVAL_SECONDS)
+                self._hub_wake.clear()
+
+        self._hub_thread = threading.Thread(target=loop, name="bridge-hub-sync", daemon=True)
+        self._hub_thread.start()
 
     # -- assignments (#240) ------------------------------------------------
 
@@ -884,6 +1050,11 @@ class BridgeEngine:
         }
 
     def start_background_warmup(self) -> None:
+        # #80: resume the hub poll on a device that had joined one.
+        try:
+            self._start_hub_thread()
+        except Exception:  # noqa: BLE001 -- never let the hub delay startup
+            pass
         """Slow loads, started off the dispatcher once the sidecar is ready
         (main.py only: tests that build a BridgeEngine never pay them). Today:
         uroman for the names check, which engine.info used to build, ~5 s
@@ -7074,6 +7245,20 @@ class BridgeEngine:
     # refusal rather than another session's findings.
     _DEFAULT_SESSION_ONLY_PREFIXES = ("languageQa.",)
 
+    def handle_request_as(self, request: EngineRequest, user: dict[str, Any] | None) -> EngineResponse:
+        """The hub's entry (#80): run one request as `user` (the device token's
+        user, with its role), so `authorize()` and every actor stamp see that
+        user. `None` is the local user, as over stdio."""
+        if user is None:
+            return self.handle_request(request)
+        self._request_user = {"userId": str(user.get("userId") or ""),
+                              "displayName": str(user.get("displayName") or ""),
+                              "role": str(user.get("role") or "")}
+        try:
+            return self.handle_request(request)
+        finally:
+            self._request_user = None
+
     def handle_request(self, request: EngineRequest) -> EngineResponse:
         started = time.perf_counter()
         session = str(getattr(request, "session", "") or "")
@@ -7256,6 +7441,24 @@ class BridgeEngine:
             if m == Methods.USERS_SET_ROLE:
                 return EngineResponse.ok(request.id, result=self.users_set_role(
                     str(p.get("userId") or ""), str(p.get("role") or ""),
+                ))
+            if m == Methods.HUB_STATUS:
+                return EngineResponse.ok(request.id, result=self.hub_status())
+            if m == Methods.HUB_JOIN:
+                return EngineResponse.ok(request.id, result=self.hub_join(
+                    str(p.get("url") or ""), str(p.get("joinCode") or ""), str(p.get("displayName") or ""),
+                ))
+            if m == Methods.HUB_LEAVE:
+                return EngineResponse.ok(request.id, result=self.hub_leave())
+            if m == Methods.HUB_LINK:
+                return EngineResponse.ok(request.id, result=self.hub_link())
+            if m == Methods.HUB_SYNC_NOW:
+                return EngineResponse.ok(request.id, result=self.hub_sync_now())
+            if m == Methods.HUB_CONFLICTS:
+                return EngineResponse.ok(request.id, result=self.hub_conflicts())
+            if m == Methods.HUB_RESOLVE_CONFLICT:
+                return EngineResponse.ok(request.id, result=self.hub_resolve_conflict(
+                    int(p.get("conflictId") or 0), str(p.get("resolution") or ""),
                 ))
             if m == Methods.ASSIGNMENTS_LIST:
                 return EngineResponse.ok(request.id, result=self.assignments_list())

@@ -1,5 +1,6 @@
 <script lang="ts">
   import UsersPane from "./UsersPane.svelte";
+  import TeamPane from "./TeamPane.svelte";
   import { onMount } from "svelte";
   import { bridge, type EngineInfo } from "../api/bridgeClient";
   import { nudgeLanguageQa } from "../languageQaInline";
@@ -9,7 +10,7 @@
   import type { CheckerSettings } from "../types/languageQa";
   import CheckerSettingsDialog from "./CheckerSettingsDialog.svelte";
 
-  type Pane = "ai" | "quality" | "connections" | "resources" | "terminology" | "languageQa" | "security" | "users";
+  type Pane = "ai" | "quality" | "connections" | "resources" | "terminology" | "languageQa" | "security" | "users" | "team";
 
   export let onClose: () => void;
   export let initialPane: Pane = "ai";
@@ -452,6 +453,7 @@
       <button class="nav-item" class:active={activePane === "languageQa"} on:click={() => (activePane = "languageQa")}>Language QA</button>
       <button class="nav-item" class:active={activePane === "security"} on:click={() => (activePane = "security")}>Security</button>
       <button class="nav-item" class:active={activePane === "users"} on:click={() => (activePane = "users")}>Users</button>
+      <button class="nav-item" class:active={activePane === "team"} on:click={() => (activePane = "team")}>Team</button>
       {#if engineInfo}
         <div class="about-version" title="What this window is actually running, not what Windows says was installed">
           Bridge {engineInfo.bridgeVersion} · Schema v{engineInfo.companionSchemaVersion}
@@ -798,6 +800,8 @@
         {/if}
       {:else if activePane === "users"}
         <UsersPane myRole={localUserRole} />
+      {:else if activePane === "team"}
+        <TeamPane />
       {:else if activePane === "security"}
         <h3>Security & privacy</h3>
         <p class="desc">Project data and Greek Room findings never leave this machine unless you explicitly use AI explain.</p>

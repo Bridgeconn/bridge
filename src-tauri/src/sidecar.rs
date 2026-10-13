@@ -250,6 +250,9 @@ fn request_timeout_seconds(method: &str) -> u64 {
         // Python finishes opening one. Same class as inspectImport (#112
         // step one; step two builds the runtime lazily).
         "project.open" => 180,
+        // #80: linking a second device to the hub adopts the hub's project id
+        // and reopens the book, so it costs an open.
+        "hub.link" => 180,
         // The first check for a book starts the isolated structural
         // checker, whose own hard timeout is 120 seconds. Keep enough
         // headroom for process startup/report parsing.
@@ -818,6 +821,17 @@ mod tests {
         assert_eq!(request_timeout_seconds("project.import.status"), 30);
         assert_eq!(request_timeout_seconds("project.import.cancel"), 30);
         assert_eq!(request_timeout_seconds("project.import"), 300);
+    }
+
+    #[test]
+    fn hub_setup_that_reopens_a_book_has_open_headroom_and_the_rest_stays_interactive() {
+        // #80: hub.link may reopen the book; joining, status and sync-now are
+        // short (the HTTP client's own timeout is 10 s, and sync-now only wakes
+        // the engine's sync thread).
+        assert_eq!(request_timeout_seconds("hub.link"), 180);
+        assert_eq!(request_timeout_seconds("hub.join"), 30);
+        assert_eq!(request_timeout_seconds("hub.status"), 30);
+        assert_eq!(request_timeout_seconds("hub.syncNow"), 30);
     }
 
     #[test]
