@@ -542,6 +542,9 @@ export interface AutoAlignJobStatus {
   verdictCounts: Record<string, number>;
   verdicts: Record<string, AutoAlignVerdictKind>;
   usage: { calls: number; totalTokens: number; estimatedCostUSD: number };
+  /** Per window, keyed "chapter:first-last": a failed window's `error` is the
+   * provider's own text, while `error` below only counts failed windows. */
+  results?: Record<string, { chapter: string; verses: string[]; status: "succeeded" | "failed"; error: string | null }>;
   error: string | null;
   unavailable: { reason: string; message: string } | null;
   resumeOf: string;

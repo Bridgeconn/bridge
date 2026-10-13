@@ -6,7 +6,7 @@ import {
   alignmentStatusByVerse, chapterVerseNums, checkStatusByVerse, currentChapter, findingsByVerse,
 } from "../../stores";
 import type {
-  AlignmentContext, AlignmentRange, AlignmentToken, AutoAlignWindowResult, CrossVerseLink, CrossVerseLinkResult,
+  AlignmentContext, AlignmentRange, AlignmentToken, AutoAlignJobStatus, AutoAlignWindowResult, CrossVerseLink, CrossVerseLinkResult,
 } from "../../types/finding";
 
 const {
@@ -511,7 +511,7 @@ describe("CrossVerseAlignmentModal", () => {
       autoAlignWindow.mockResolvedValue(after());
       await renderPage("2");
       await fireEvent.click(await screen.findByRole("button", { name: /Align automatically/ }));
-      await waitFor(() => expect(autoAlignWindow).toHaveBeenCalledWith("1", ["1", "2", "3-4"]));
+      await waitFor(() => expect(autoAlignWindow).toHaveBeenCalledWith("1", ["1", "2", "3-4"], true, expect.any(Function)));
       const strip = screen.getByLabelText("Verse verdicts");
       expect(await within(strip).findByText(/✓ Aligned/)).toBeInTheDocument();
       expect(within(strip).getAllByText(/Needs review/).length).toBeGreaterThan(0);
@@ -586,6 +586,66 @@ describe("CrossVerseAlignmentModal", () => {
       await renderPage("2");
       await fireEvent.click(await screen.findByRole("button", { name: /Align automatically/ }));
       expect(await screen.findByText(/No OpenAI-compatible API key is configured/)).toBeInTheDocument();
+    });
+
+    /** A window-job status as the engine reports it (#242). */
+    function status(over: Partial<AutoAlignJobStatus> = {}): AutoAlignJobStatus {
+      return {
+        jobId: "j1", scope: "window", apply: true, state: "running", stage: "", chapters: ["1"], windowsTotal: 1,
+        windowsDone: 0, windowsFailed: 0, percent: 0, currentWindow: { chapter: "1", verses: ["1", "2", "3-4"] },
+        currentPass: null, windowResult: null, verdictCounts: {}, verdicts: {},
+        usage: { calls: 0, totalTokens: 0, estimatedCostUSD: 0 }, error: null, unavailable: null, resumeOf: "",
+        createdAt: "", finishedAt: null, ...over,
+      };
+    }
+
+    it("the button shows the pass the job status reports, not a timer (#243)", async () => {
+      let report: (s: AutoAlignJobStatus) => void = () => {};
+      let finish: (r: AutoAlignWindowResult) => void = () => {};
+      autoAlignWindow.mockImplementation((_c: string, _v: string[], _a: boolean, onProgress: (s: AutoAlignJobStatus) => void) => {
+        report = onProgress;
+        return new Promise((resolve) => { finish = resolve; });
+      });
+      await renderPage("2");
+      await fireEvent.click(await screen.findByRole("button", { name: /Align automatically/ }));
+      expect(await screen.findByText("Starting…")).toBeInTheDocument();
+      report(status({ currentPass: { number: 1, of: 2, direction: "source-first", stage: "" } }));
+      expect(await screen.findByText("Aligning… pass 1 of 2")).toBeInTheDocument();
+      report(status({ currentPass: { number: 2, of: 2, direction: "target-first", stage: "" } }));
+      expect(await screen.findByText("Aligning… pass 2 of 2")).toBeInTheDocument();
+      report(status({ currentPass: { number: null, of: 2, direction: "", stage: "reconcile" } }));
+      expect(await screen.findByText("Comparing the two passes…")).toBeInTheDocument();
+      finish(after());
+      expect(await screen.findByRole("button", { name: /Align again/ })).toBeInTheDocument();
+    });
+
+    it("a provider timeout says nothing was changed, with the raw text one click away, and leaves the page usable", async () => {
+      autoAlignWindow.mockImplementation(async (_c: string, _v: string[], _a: boolean, onProgress: (s: AutoAlignJobStatus) => void) => {
+        onProgress(status({
+          state: "failed", windowsDone: 1, windowsFailed: 1, error: "1 window(s) failed.",
+          results: { "1:1-3-4": { chapter: "1", verses: ["1", "2", "3-4"], status: "failed", error: "The read operation timed out" } },
+        }));
+        throw new Error("1 window(s) failed.");
+      });
+      await renderPage("2");
+      await fireEvent.click(await screen.findByRole("button", { name: /Align automatically/ }));
+      const alert = await screen.findByRole("alert");
+      expect(alert.textContent).toContain("The AI provider did not answer within 4 minutes; nothing was changed.");
+      expect(alert.textContent).not.toContain("1 window(s) failed.");
+      const details = within(alert).getByText("Show details").closest("details") as HTMLDetailsElement;
+      expect(details.open).toBe(false);
+      expect(within(details).getByText("The read operation timed out")).toBeInTheDocument();
+      await waitFor(() => expect(screen.getByRole("button", { name: /Align automatically/ })).toBeEnabled());
+      expect(screen.getByRole("button", { name: /Suggest links/ })).toBeEnabled();
+    });
+
+    it("an error with no plain wording is shown as it is, with no details", async () => {
+      autoAlignWindow.mockRejectedValue(new Error("Verse/project data changed while AI was preparing alignment"));
+      await renderPage("2");
+      await fireEvent.click(await screen.findByRole("button", { name: /Align automatically/ }));
+      const alert = await screen.findByRole("alert");
+      expect(alert.textContent).toContain("Verse/project data changed while AI was preparing alignment");
+      expect(within(alert).queryByText("Show details")).toBeNull();
     });
 
     it("loads the stored verdict of a verse an earlier pass ran on", async () => {

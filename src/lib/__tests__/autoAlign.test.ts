@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   idFor, isLiveGap, liveIssues, liveSuggestions, placedByPass, relationTag, signatureOf, suggestionsForSource,
-  verdictView, windowProblem,
+  verdictView, windowProblem, passLabel, providerProblem, windowJobError,
 } from "../autoAlign";
 import type { AlignmentContext, AutoAlignSuggestion, AutoAlignVerdict } from "../types/finding";
 
@@ -91,5 +91,38 @@ describe("autoAlign helpers", () => {
     expect(windowProblem([], verses)).toMatch(/at least one/);
     expect(windowProblem(["1", "2", "3-4", "5", "6", "7"], verses)).toMatch(/at most 5/);
     expect(windowProblem(["1", "5"], verses)).toMatch(/consecutive/);
+  });
+});
+
+describe("window job progress and provider failures (#243)", () => {
+  const pass = (number: number | null, stage = "") => ({ state: "running" as const, currentPass: { number, of: 2, direction: "", stage } });
+
+  it("labels the pass the status reports", () => {
+    expect(passLabel(null)).toBe("Starting…");
+    expect(passLabel({ state: "queued", currentPass: null })).toBe("Starting…");
+    expect(passLabel(pass(1))).toBe("Aligning… pass 1 of 2");
+    expect(passLabel(pass(2))).toBe("Aligning… pass 2 of 2");
+    expect(passLabel(pass(null, "reconcile"))).toBe("Comparing the two passes…");
+    expect(passLabel(pass(null, "apply"))).toBe("Writing what both passes agree on…");
+    expect(passLabel({ state: "running", currentPass: null })).toBe("Aligning…");
+  });
+
+  it("takes the failed window's own error over the job's count", () => {
+    const results = { "1:1-3": { chapter: "1", verses: ["1", "2", "3"], status: "failed" as const, error: "The read operation timed out" } };
+    expect(windowJobError({ results }, "1 window(s) failed.")).toBe("The read operation timed out");
+    expect(windowJobError({ results: {} }, "1 window(s) failed.")).toBe("1 window(s) failed.");
+    expect(windowJobError(null, "boom")).toBe("boom");
+  });
+
+  it("words a timeout, a 429 and an unreachable provider plainly, and leaves anything else raw", () => {
+    expect(providerProblem("The read operation timed out")).toBe("The AI provider did not answer within 4 minutes; nothing was changed.");
+    expect(providerProblem("Network error contacting OpenAI: timed out")).toContain("did not answer within 4 minutes");
+    expect(providerProblem("OpenAI API error HTTP 429: Rate limit reached for gpt-5.6")).toBe(
+      "The AI provider is limiting requests right now; nothing was changed. Try again in a minute.");
+    expect(providerProblem("Network error contacting OpenAI: [WinError 10061] No connection could be made because the target machine actively refused it"))
+      .toBe("Could not reach the AI provider; nothing was changed. Check the internet connection and Settings › AI provider.");
+    expect(providerProblem("Network error contacting OpenAI: [Errno 11001] getaddrinfo failed")).toContain("Could not reach");
+    expect(providerProblem("OpenAI API error HTTP 401: Incorrect API key provided")).toBeNull();
+    expect(providerProblem("Verse/project data changed while AI was preparing alignment")).toBeNull();
   });
 });

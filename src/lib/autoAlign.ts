@@ -6,7 +6,7 @@
 // positional id, because a write made after the pass can renumber the ids.
 // Everything here resolves a signature against the verse's *current* context.
 import type {
-  AlignmentContext, AlignmentToken, AutoAlignIssue, AutoAlignSuggestion, AutoAlignVerdict,
+  AlignmentContext, AlignmentToken, AutoAlignIssue, AutoAlignJobStatus, AutoAlignSuggestion, AutoAlignVerdict,
 } from "./types/finding";
 import { nullDecidedIds, unaccountedTargets, unrealizedSources } from "./alignmentGroups";
 
@@ -145,3 +145,35 @@ export function windowProblem(selection: string[], chapterVerses: string[]): str
 }
 
 export { nullDecidedIds };
+
+/** What the "Align automatically" button says while the window job runs
+ * (#243): the pass the engine reports on its status (#242), never a timer. */
+export function passLabel(status: Pick<AutoAlignJobStatus, "state" | "currentPass"> | null): string {
+  const pass = status?.currentPass;
+  if (pass?.number) return `Aligning… pass ${pass.number} of ${pass.of}`;
+  if (pass?.stage === "reconcile") return "Comparing the two passes…";
+  if (pass?.stage === "apply") return "Writing what both passes agree on…";
+  return status?.state === "queued" || !status ? "Starting…" : "Aligning…";
+}
+
+/** The raw error of a failed window job: the window's own error (the
+ * provider's text) rather than the job's "1 window(s) failed." */
+export function windowJobError(status: Pick<AutoAlignJobStatus, "results"> | null, fallback: string): string {
+  const failed = Object.values(status?.results ?? {}).find((r) => r.status === "failed" && r.error);
+  return failed?.error ?? fallback;
+}
+
+/** A plain sentence for a provider failure the reviewer cannot act on in the
+ * text (#243), or null to show the raw text as it is. Nothing is written
+ * when any of these fire: the window job writes only after both passes. The
+ * AI client's socket timeout is 240 s (ai_client.OpenAIResponsesClient). */
+export function providerProblem(raw: string): string | null {
+  if (/timed out|timeout/i.test(raw)) return "The AI provider did not answer within 4 minutes; nothing was changed.";
+  if (/\bHTTP 429\b|rate limit/i.test(raw)) {
+    return "The AI provider is limiting requests right now; nothing was changed. Try again in a minute.";
+  }
+  if (/Network error|refused|10061|getaddrinfo|unreachable|Name or service not known|No route to host/i.test(raw)) {
+    return "Could not reach the AI provider; nothing was changed. Check the internet connection and Settings › AI provider.";
+  }
+  return null;
+}

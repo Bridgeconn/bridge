@@ -15,12 +15,13 @@
   } from "../stores";
   import { alignmentStatusLabel } from "../alignmentStatus";
   import type {
-    AlignmentContext, AlignmentCounts, AlignmentToken, AutoAlignIssue, AutoAlignSuggestion, AutoAlignVerdict,
+    AlignmentContext, AlignmentCounts, AlignmentToken, AutoAlignIssue, AutoAlignJobStatus, AutoAlignSuggestion,
+    AutoAlignVerdict,
     CrossVerseLink, CrossVerseLinkResult, CrossVerseProposal, NullDecisionEntry, NullReason,
   } from "../types/finding";
   import {
-    idFor, liveIssues, liveSuggestions, placedByPass, relationTag, signatureOf, suggestionKey,
-    suggestionsForSource, suggestionsForTarget, verdictView, windowProblem,
+    idFor, liveIssues, liveSuggestions, passLabel, placedByPass, providerProblem, relationTag, signatureOf,
+    suggestionKey, suggestionsForSource, suggestionsForTarget, verdictView, windowJobError, windowProblem,
   } from "../autoAlign";
   import { createPointerDrag } from "../alignmentDrag";
   import {
@@ -54,6 +55,9 @@
   let loading = true;
   let busy = false;
   let error = "";
+  /** The raw text behind a plain error (#243), shown under "Show details"
+   *  only while `error` is still the message it explains. */
+  let errorDetail: { message: string; raw: string } | null = null;
   let notice = "";
   /** When set, both columns show only that verse's gaps. */
   let gapFilterVerse: string | null = null;
@@ -211,13 +215,17 @@
     busy = true;
     error = "";
     notice = "";
-    autoStage = "Aligning… pass 1 of 2";
-    // The two passes are one request; this only tells the reviewer it is the
-    // longer of the two waits once the first has had time to return.
-    const stageTimer = setTimeout(() => { autoStage = "Aligning… pass 2 of 2"; }, 20000);
+    errorDetail = null;
+    // The window is a job (#242): the label follows the pass its status
+    // reports (#243), and the last status keeps the window's own error.
+    autoStage = passLabel(null);
+    let lastStatus: AutoAlignJobStatus | null = null;
     try {
       const wanted = [...selection];
-      const result = await bridge.autoAlignWindow(chapter, wanted);
+      const result = await bridge.autoAlignWindow(chapter, wanted, true, (status) => {
+        lastStatus = status;
+        autoStage = passLabel(status);
+      });
       if (result.unavailable) {
         error = result.unavailable.message;
         return;
@@ -257,9 +265,11 @@
       notice = "";
       error = result.failures?.length ? `Some agreed changes were not applied: ${result.failures.join("; ")}` : "";
     } catch (value) {
-      error = value instanceof Error ? value.message : String(value);
+      const raw = windowJobError(lastStatus, value instanceof Error ? value.message : String(value));
+      const plain = providerProblem(raw);
+      error = plain ?? raw;
+      errorDetail = plain ? { message: plain, raw } : null;
     } finally {
-      clearTimeout(stageTimer);
       autoStage = "";
       autoBusy = false;
       busy = false;
@@ -782,7 +792,14 @@
       {/if}
 
       {#if notice}<div class="notice">{notice}</div>{/if}
-      {#if error}<div class="error">{error}</div>{/if}
+      {#if error}
+        <div class="error" role="alert">
+          {error}
+          {#if errorDetail?.message === error}
+            <details class="error-detail"><summary>Show details</summary><code>{errorDetail.raw}</code></details>
+          {/if}
+        </div>
+      {/if}
       {#if loading}<div class="reloading"><span class="spin" /> Updating range…</div>{/if}
 
       <div class="columns">
@@ -1135,6 +1152,9 @@
   .notice, .error { border-radius: 9px; padding: 8px 12px; margin-bottom: 8px; font-size: var(--fs-sm); line-height: 1.45; flex-shrink: 0; }
   .notice { background: #EAF7EF; color: var(--success); }
   .error { background: #FFF0F0; color: var(--danger); }
+  .error-detail { margin-top: 4px; color: var(--text-2); }
+  .error-detail summary { cursor: pointer; font-size: var(--fs-xs); }
+  .error-detail code { display: block; margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-xs); }
 
   /* Two vertically scrolling columns: the range view never scrolls sideways (#72). */
   .columns { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 12px; flex: 1; min-height: 0; }
