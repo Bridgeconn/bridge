@@ -20,7 +20,7 @@ from . import terminology
 from .housestyle import bundled_seed, house_style, name_findings, preferences_from, with_seed
 from .language_packs import PackError, default_pack, load_project_overrides, loaded_pack
 from .language_packs import indic_qa_adapter
-from .language_qa_drawn import InlinePolicy, drawn_rule_names, gated_rules, is_drawn, with_drawn
+from .language_qa_drawn import InlinePolicy, drawn_rule_names, gated_rules, is_drawn, served, with_drawn
 from .language_qa_learned import learned_findings
 from .language_qa_headings import heading_findings
 from .language_qa_notes import caller_findings
@@ -411,8 +411,8 @@ class LanguageQaManager:
         self._decisions_loader: Callable[[], list[dict[str, Any]]] | None = None
         self._housestyle_loader: Callable[[], list[dict[str, Any]]] | None = None
         self._summary: dict[str, Any] = {"state": "idle", "findings": [], "limitations": []}
-        # The user's inline threshold, and the indic-qa rules of the last pass it
-        # decides (language_qa_drawn). Applied per request: never in a pass.
+        # The user's inline threshold, and the rules of the last pass it decides
+        # (language_qa_drawn). Applied per request: never in a pass.
         self._policy = InlinePolicy()
         self._gated: dict[str, dict[str, Any]] = {}
         # The reviewer's learned fixes (workbench v6), read on every pass so a
@@ -605,8 +605,8 @@ class LanguageQaManager:
 
     def inline(self, *, chapter: str | None = None) -> dict[str, Any]:
         """Every finding drawn in the text, for one chapter or the whole book --
-        not paged. Drawn means reviewed-inline, or an indic-qa finding the
-        user's threshold lets through (language_qa_drawn). The verse marks are
+        not paged. Drawn means reviewed-inline, or any other finding the
+        user's threshold lets through (language_qa_drawn, #250). The verse marks are
         drawn from this; status() is a page for the panel's list, and a page
         cannot back marks (a book with more findings than one page lost marks
         past it). Still bounded: the summary itself never holds more than
@@ -614,7 +614,7 @@ class LanguageQaManager:
         MAX_VERSE_FINDINGS.
 
         The findings are picked under the lock and copied after it is released.
-        Since every indic-qa finding is drawn by default, a chapter's copy can
+        Since every finding is drawn by default, a chapter's copy can
         be large, and verse.decide and the pass wait on the same lock. That is
         safe because a published finding is never changed in place: a pass
         replaces `_summary` whole, and `update()` touches only top-level keys."""
@@ -635,7 +635,7 @@ class LanguageQaManager:
                 "ruleVersion": RULE_VERSION, "chapter": wanted,
                 "inlineRules": list(self._inline_rules()), "drawnRules": self._drawn_rules(),
             }
-        result["findings"] = [{**copy.deepcopy(f), "drawn": True} for f in findings]
+        result["findings"] = [served(copy.deepcopy(f), gated, policy) for f in findings]
         return result
 
     def rule_counts(self) -> dict[str, int]:

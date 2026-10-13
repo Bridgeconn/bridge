@@ -26,7 +26,7 @@
   import { addProjectWords, canAddProjectWord } from "../projectWords";
   import { bridge } from "../api/bridgeClient";
   import { wordAtPoint } from "../utils/wordAt";
-  import { orderedSuggestions, suggestionTag } from "../languageQaSuggestions";
+  import { findingWhy, orderedSuggestions, suggestionTag } from "../languageQaSuggestions";
   import OccurrencesPopup from "./OccurrencesPopup.svelte";
   import type { HouseStyleScope } from "../types/houseStyle";
   import type { QaFinding } from "../types/finding";
@@ -225,6 +225,12 @@
         label: "Mark as false positive",
         disabled: busy,
         title: "This is not a problem: hide it and list it under False positives in the Language QA panel.",
+      },
+      {
+        id: "why",
+        label: "Why is this flagged?",
+        title: "What the rule found, how far reviewers have confirmed it, and why it is underlined",
+        submenu: findingWhy(finding).map((line, i) => ({ id: `why:${i}`, label: line, header: true })),
       },
       {
         id: "flag",

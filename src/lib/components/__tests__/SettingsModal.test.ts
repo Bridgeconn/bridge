@@ -579,7 +579,7 @@ describe("SettingsModal terminology (#171)", () => {
   it("offers the threshold with no project open, and asks for one before the pack and house style", async () => {
     render(SettingsModal, { props: { initialPane: "languageQa", onClose: vi.fn() } });
     expect(await screen.findByLabelText(/Minimum measured precision: 0%/)).toBeInTheDocument();
-    expect(screen.getByText("Every indic-qa finding is drawn.")).toBeInTheDocument();
+    expect(screen.getByText("Every finding is drawn.")).toBeInTheDocument();
     expect(screen.getByText(/Open a project to choose its Language QA rules/)).toBeInTheDocument();
     expect(languageQaStatus).not.toHaveBeenCalled();
     expect(housestyleList).not.toHaveBeenCalled();

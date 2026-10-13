@@ -31,7 +31,7 @@
   let reviewerNameUpdatedAt = "";
   let localUserRole: UserRole = "project_admin";
   let engineInfo: EngineInfo | null = null;
-  // Settings > Language QA: which indic-qa findings are drawn in the text.
+  // Settings > Language QA: which findings are drawn in the text (#250).
   // App-level (a reviewer's tolerance), applied by the engine per request.
   let inlinePrecision = 0;
   let inlineConfidence: InlineConfidence = "low";
@@ -664,12 +664,12 @@
         <h3>Language QA</h3>
         <p class="desc">Offline spelling, punctuation and consistency checks of the target text. Nothing here changes Scripture text.</p>
         <h3 class="sub">Drawn in the text</h3>
-        <p class="desc">indic-qa findings (Punjabi, Malayalam, Hindi, Odia, and the Tamil OV layer) are underlined in the verse text unless this threshold hides them. Hidden ones stay in the Language QA panel. A rule reviewers have not labelled has no measured precision and always passes the slider. Rules reviewed as inline are always drawn.</p>
+        <p class="desc">Every Language QA finding is underlined in the verse text unless this threshold hides it, and right-clicking it offers the fix. Hidden ones stay in the Language QA panel. A rule reviewers have not labelled has no measured precision and always passes the slider. Rules reviewed as inline (at least 90% confirmed) are always drawn.</p>
         <div class="field">
           <label for="lqa-precision">Minimum measured precision: {inlinePrecision}%</label>
           <input id="lqa-precision" type="range" min="0" max="100" step="5" bind:value={inlinePrecision}
             aria-valuetext={inlinePrecision === 0 ? "0: draw every finding" : `${inlinePrecision} percent`} />
-          <div class="hint">{inlinePrecision === 0 ? "Every indic-qa finding is drawn." : `Rules reviewers confirmed less than ${inlinePrecision}% of the time are listed, not drawn.`}</div>
+          <div class="hint">{inlinePrecision === 0 ? "Every finding is drawn." : `Rules reviewers confirmed less than ${inlinePrecision}% of the time are listed, not drawn.`}</div>
         </div>
         <div class="field">
           <label for="lqa-confidence">Lowest rule confidence drawn</label>

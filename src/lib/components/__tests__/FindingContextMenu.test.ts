@@ -147,3 +147,42 @@ describe("FindingContextMenu, as the indic-qa editor's word menu", () => {
     expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Ignore this occurrence" }));
   });
 });
+
+describe("FindingContextMenu, a text flyout (the Language QA Why, #250)", () => {
+  const withWhy = [
+    { id: "ignore", label: "Ignore this occurrence" },
+    { id: "why", label: "Why is this flagged?",
+      submenu: [{ id: "why:0", label: "Possible missing வல்லினம்.", header: true },
+                { id: "why:1", label: "Rule: ta-irv/x", header: true }] },
+  ];
+
+  it("shows the lines as text, not items, and dispatches nothing", async () => {
+    const { component } = render(FindingContextMenu, { props: { x: 20, y: 30, actions: withWhy } });
+    const action = vi.fn();
+    component.$on("action", action);
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Why is this flagged?" }));
+    const note = screen.getByRole("note", { name: "Why is this flagged?" });
+    expect(note.textContent).toContain("Possible missing வல்லினம்.");
+    expect(note.querySelectorAll('[role="menuitem"]')).toHaveLength(0);
+    await fireEvent.click(screen.getByText("Rule: ta-irv/x"));
+    expect(action).not.toHaveBeenCalled();
+  });
+
+  it("takes focus itself, so Left and Escape close it back to its item", async () => {
+    const { component } = render(FindingContextMenu, { props: { x: 20, y: 30, actions: withWhy } });
+    const close = vi.fn();
+    component.$on("close", close);
+    const why = screen.getByRole("menuitem", { name: "Why is this flagged?" });
+    why.focus();
+    await fireEvent.keyDown(why, { key: "ArrowRight" });
+    const note = screen.getByRole("note");
+    await waitFor(() => expect(note).toHaveFocus());
+    await fireEvent.keyDown(note, { key: "ArrowLeft" });
+    expect(screen.queryByRole("note")).toBeNull();
+    expect(why).toHaveFocus();
+    await fireEvent.click(why);
+    await fireEvent.keyDown(screen.getByRole("note"), { key: "Escape" });
+    expect(screen.queryByRole("note")).toBeNull();
+    expect(close).not.toHaveBeenCalled();
+  });
+});

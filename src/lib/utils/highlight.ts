@@ -30,8 +30,9 @@ export const LANGUAGE_QA_CATEGORY_MARKS: Record<LanguageQaCategory, string> = {
   termbase: "m-term",              // purple double
   name: "m-term",
   usfm: "m-lqa-spacing",           // markup hygiene, not a text change
-  // indic-qa profile packs (pa, ml, hi, or): drawn by default, behind the
-  // reviewer's threshold in Settings > Language QA (each finding's `drawn`).
+  // indic-qa profile packs (pa, ml, hi, or). Every category is drawn by
+  // default, behind the reviewer's threshold in Settings > Language QA (each
+  // finding's `drawn`, #250).
   consistency: "m-lqa-typo",       // a minority spelling: the same family as a possible typo
   grammar: "m-lqa-sandhi",         // a lead between two words, like a sandhi lead
   // A word the reviewer replaced before (language_qa_learned.py): blue dotted.
@@ -229,8 +230,8 @@ export function buildSegments(
   // their own native shape rather than forced into QaFinding's either.
   // Only findings the engine says are drawn carry a span; the rest are listed
   // in the panel only. `drawn` is the engine's answer under the user's inline
-  // threshold (language_qa_drawn.py), so an unreviewed indic-qa rule can be
-  // drawn while `inline` stays the reviewed flag. A payload without `drawn`
+  // threshold (language_qa_drawn.py), so an unreviewed rule can be drawn
+  // while `inline` stays the reviewed flag. A payload without `drawn`
   // falls back to `inline`.
   for (const finding of languageQaFindings) {
     if (!(finding.drawn ?? finding.inline)) continue;

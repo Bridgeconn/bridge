@@ -127,7 +127,7 @@ _IN_SCOPE_LABELS = {
     "usfm": ("USFM markup formatting (not a text change)", "USFM குறியீட்டு வடிவமைப்பு (உரை மாற்றம் அல்ல)"),
     # Profile packs only; no Tamil label is shown for them.
     "consistency": ("Spelling consistency with the rest of the translation", ""),
-    "grammar": ("Agreement and case leads attested in the corpus (listed, not drawn)", ""),
+    "grammar": ("Agreement and case leads attested in the corpus (drawn behind the Settings threshold)", ""),
     "learned": ("Words you replaced before, where they recur", "முன்பு நீங்கள் மாற்றிய சொற்கள் மீண்டும் வரும் இடங்கள்"),
 }
 # A profile pack flags corpus-attested agreement pairs, so it cannot say

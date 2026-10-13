@@ -1061,3 +1061,39 @@ release gate for one install, and NSSM would be a download the field machine can
 A lost hub costs a re-sync, not data, because every device holds its own copy.
 **Rules out:** the hub in the desktop sidecar (2026-09-11 stands); any hosted hub.
 **Revisit when:** a team without a Windows machine wants to host the hub.
+
+## 2026-10-13 — Every Language QA finding is drawn behind the Settings slider; the 0.90 tier is always drawn (#250)
+**Decision:** Every Language QA finding is underlined in the verse text, with its fix one
+right-click away, unless the reviewer's Settings > Language QA threshold hides it. That covers
+ta-irv's own rules, the indic-qa layer and profile packs, the common checks and the project's
+house-style rules. The threshold is unchanged: a minimum measured reviewer precision (default 0)
+and a lowest rule confidence (default low). A rule with no labels passes the slider. A rule
+reviewed inline (at least 0.90 human precision on at least 20 labels, 2026-09-28) is always drawn,
+and the slider cannot hide it. A book-header finding (`context: "introduction"`, #253) is never
+drawn, because it is not in the verse text. The editor's menu adds "Why is this flagged?". It
+shows what was found, the rule's measured precision and label count, why the finding is
+underlined, the reason for the first fix, and the rule id. Use (with Chapter and Book), Ignore,
+Ignore this rule and False positive are unchanged. Benz decided this on 2026-10-13.
+**Because:** Benz wants Language QA to show any typo, sandhi or grammar error in the editor
+itself, with the action on the word. Most ta-irv findings were panel-only, so the reviewer had to
+leave the text to act on them. The slider already gave the reviewer a way to narrow indic-qa
+findings (2026-10-07), and it now does the same for every rule.
+**Consequences:**
+- A verse with any drawn mark is not shown as clean, so by default more rows lose their ✓
+  (layered-rules 4.3, unchanged).
+- The indic-qa layer's de-duplication still defers only to reviewed-inline findings. That is a
+  pass-time rule, and the threshold never touches a pass. A pack finding and a layer finding on
+  the same span can therefore both be drawn.
+- The common checks have no shipped precision (`rule_precision.json` lists pack rules only), so
+  the precision slider never hides them. The confidence floor does.
+**Rules out:** treating `drawn` as review evidence. The CI human gate, the benchmark and the
+`inline` flag are unchanged, and promoting a rule to the always-drawn tier is still a
+`rule_versions.json` edit with its own entry here. Also ruled out: applying the threshold during a
+pass, and applying any fix without a click.
+**Supersedes:** for what the text draws, the first sentence of 2026-09-28 "Inline means at least
+0.90 human-labelled precision". That entry now decides only the always-drawn tier. Also, the
+indic-qa-only scope of 2026-10-07 "indic-qa findings are drawn in the text by default", and the
+"never drawn inline" clause of 2026-10-07 "Corpus-attested agreement leads ... listed only". A
+grammar lead is drawn under the slider, and it still never carries the reviewed `inline` flag.
+**Revisit when:** reviewers find the default too noisy (raise the default floor), or the hub
+(#46) shares one threshold across a team.

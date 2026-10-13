@@ -55,10 +55,15 @@ export interface LanguageQaFinding {
   /** The reviewed flag: the rule is inline by review (rule_versions.json,
    * INLINE_RULES), which the CI human gate checks. Never the user's setting. */
   inline: boolean;
-  /** Whether the verse text draws it: reviewed-inline, or an indic-qa finding
-   * the Settings > Language QA threshold lets through (language_qa_drawn.py).
-   * Every finding languageQa.inline returns is drawn. */
+  /** Whether the verse text draws it: reviewed-inline, or any other finding
+   * the Settings > Language QA threshold lets through (language_qa_drawn.py,
+   * #250). Every finding languageQa.inline returns is drawn. */
   drawn?: boolean;
+  /** The rule's measured reviewer precision (0-1) and how many of its
+   * findings reviewers labelled, as served (language_qa_drawn.served); null
+   * and 0 for a rule nobody labelled. Shown by the editor menu's "Why". */
+  rulePrecision?: number | null;
+  ruleLabelled?: number;
   /** Set when the finding was ignored under an older rule or pack version and
    * is shown again for re-checking. */
   previouslyIgnored?: boolean;

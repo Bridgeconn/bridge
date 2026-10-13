@@ -1369,9 +1369,10 @@ export interface SettingsData {
   /** Report screen: hide findings AI triage rated this likely (50-100) to be
    * a false positive. 0 means off. Default 90. */
   triageHideThreshold: number;
-  /** Settings > Language QA: an indic-qa finding is drawn in the text only
-   * when its rule's measured reviewer precision is at least this (0-100; a
-   * rule nobody labelled always passes). 0, the default, draws them all. */
+  /** Settings > Language QA: a finding whose rule is not reviewed inline is
+   * drawn in the text only when its rule's measured reviewer precision is at
+   * least this (0-100; a rule nobody labelled always passes). 0, the default,
+   * draws them all (#250). */
   languageQaInlinePrecision: number;
   /** The lowest rule confidence drawn in the text. Default "low" (every rule). */
   languageQaInlineConfidence: InlineConfidence;

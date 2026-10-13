@@ -311,14 +311,14 @@ describe("VerseList footnote handling", () => {
 
     it("offers no Use item when the finding has no suggestion", async () => {
       expect((await openMenu({ suggestions: [] })).map(([label]) => label)).toEqual(["Ignore this occurrence", "Book", "Project", "Ignore this rule▸", "Mark as false positive",
-          "Flag for review…", "Copy word", "Search in this book", "Show IRV occurrences…", "Show OV occurrences…", "Edit…"]);
+          "Why is this flagged?▸", "Flag for review…", "Copy word", "Search in this book", "Show IRV occurrences…", "Show OV occurrences…", "Edit…"]);
     });
 
     it("offers one Use item, with Chapter and Book on its row and the rationale as its tooltip", async () => {
       const items = await openMenu();
       expect(items[0]).toEqual(['Use "அந்தக் காகம்"', "test rationale"]);
       expect(items.map(([label]) => label)).toEqual(['Use "அந்தக் காகம்"', "Chapter", "Book", "Ignore this occurrence", "Book", "Project", "Ignore this rule▸", "Mark as false positive",
-          "Flag for review…", "Copy word", "Search in this book", "Show IRV occurrences…", "Show OV occurrences…", "Edit…"]);
+          "Why is this flagged?▸", "Flag for review…", "Copy word", "Search in this book", "Show IRV occurrences…", "Show OV occurrences…", "Edit…"]);
       // The word and what was found head the menu, as in the indic-qa editor: text, not an item.
       expect(screen.getByRole("menu").textContent).toContain("“அந்த காகம்”");
     });
@@ -445,6 +445,59 @@ describe("VerseList footnote handling", () => {
         }
         expect(fastest, label).toBeLessThan(100);
       }
+    });
+
+    it("Why shows what was found, how far reviewers confirmed the rule, and why it is underlined", async () => {
+      await openMenu({ inline: false, drawn: true, rulePrecision: 0.874, ruleLabelled: 38 });
+      await fireEvent.click(screen.getByRole("menuitem", { name: "Why is this flagged?" }));
+      const lines = Array.from(screen.getByRole("note").querySelectorAll("p")).map((p) => p.textContent);
+      expect(lines).toEqual([
+        "Possible missing வல்லினம்.",
+        "Reviewers confirmed 87% of 38 labelled findings of this rule.",
+        "Underlined because your Settings › Language QA threshold lets it through (rule confidence: medium).",
+        "Fix: test rationale",
+        "Rule: ta-irv/tamil.vallinam-missing",
+      ]);
+      expect(decideVerse).not.toHaveBeenCalled();
+      expect(editVerse).not.toHaveBeenCalled();
+    });
+
+    it("Why says a reviewed-inline rule is always underlined, and an unlabelled one is unlabelled", async () => {
+      await openMenu({ inline: true, rulePrecision: null, ruleLabelled: 0, suggestions: [] });
+      await fireEvent.click(screen.getByRole("menuitem", { name: "Why is this flagged?" }));
+      const text = screen.getByRole("note").textContent ?? "";
+      expect(text).toContain("No reviewer has labelled findings of this rule yet.");
+      expect(text).toContain("Reviewed inline (at least 90% confirmed): always underlined.");
+      expect(text).not.toContain("Fix:");
+    });
+
+    // #250: every kind is drawn behind the slider, and every drawn kind gets
+    // the same complete menu: its Use items, Ignore, False positive and Why.
+    it.each([
+      ["typo (lexicon)", "tamil.wordlist-variant"],
+      ["spacing", "spacing.extra"],
+      ["unicode", "unicode.corruption"],
+      ["termbase", "terminology.deprecated-form"],
+      ["sandhi", "tamil.vallinam-missing"],
+    ])("a drawn %s finding that is not reviewed inline has the full menu", async (_kind, rule) => {
+      seed("அந்த காகம் பறந்தது.");
+      languageQaFindingsByVerse.set({ "1:6": [lqaFinding({ rule, inline: false, drawn: true })] });
+      render(VerseList, { props: { onSelect: vi.fn() } });
+      const mark = document.querySelector('[data-verse-key="1:6"] mark[class*="m-lqa"], [data-verse-key="1:6"] mark.m-term');
+      expect(mark, rule).not.toBeNull();
+      await fireEvent.contextMenu(mark as HTMLElement);
+      const labels = screen.getAllByRole("menuitem").map((item) => item.textContent);
+      for (const label of ['Use "அந்தக் காகம்"', "Chapter", "Ignore this occurrence", "Mark as false positive",
+        "Why is this flagged?▸"]) {
+        expect(labels, `${rule}: ${label}`).toContain(label);
+      }
+    });
+
+    it("a finding the engine did not draw has no mark and so no menu", () => {
+      seed("அந்த காகம் பறந்தது.");
+      languageQaFindingsByVerse.set({ "1:6": [lqaFinding({ rule: "spacing.extra", inline: false, drawn: false })] });
+      render(VerseList, { props: { onSelect: vi.fn() } });
+      expect(document.querySelector('[data-verse-key="1:6"] mark[class*="m-lqa"]')).toBeNull();
     });
 
     it("the verse menu opens this verse's Language QA history", async () => {
