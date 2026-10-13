@@ -19434,3 +19434,49 @@ filed: `overrides.json` as a `project_state` row; `natural_row_id` taking
 the hub project id; `team_members.role`. Ran: nothing (docs only); the
 table count and the sync code (`unsynced`, `mark_synced`, `import_events`,
 `record_domain_event`) were read from today's tree, not from the design.
+
+## 2026-10-16 — #79 engine sessions, the HTTP transport, `--serve`
+
+**Sessions.** A request carries an optional envelope-level `session`
+(`EngineRequest.session`, not a param: `project.open` already uses
+`projectId` for the registry id of a book being located). `""` is the
+desktop's session and the stdio loop never sends anything else, so the
+frontend is unchanged. `BridgeEngine._activate_session` swaps the
+per-project fields (`project`, the semantic runtime and its build event
+and thread, the semantic status, the three correction services, the
+cross-verse touch index) in and out of a per-session dict before the
+request runs, after waiting for an in-flight semantic build (the build
+thread writes into the active session's fields, #112). The workspace
+(settings, registry, users, job managers, the whole-book caches, already
+keyed by project path) is shared. This is the narrow form of the
+`Workspace`/`ProjectSession` split TEAM_ARCHITECTURE §6 designed: the same
+isolation without moving 280 `self.project` reads into a new class; the
+class split can follow if a second consumer needs it.
+
+**Language QA stays with the desktop.** Its scan is one background worker
+bound to one book; a non-default session gets `session_unsupported` for
+`languageQa.*`, and opening a project in a hub session does not rebind the
+scan.
+
+**Transport.** `engine/bridge_server.py`: FastAPI `POST /rpc` with the stdio
+envelope and `GET /health`; one lock serialises requests (the dispatcher
+assumes one at a time, as stdio does; job threads still run in parallel).
+`main.py` routes `--serve [--data-dir] [--host] [--port]` there and imports
+the module only then; `--host` defaults to 127.0.0.1, so listening on the
+LAN is the administrator's explicit choice until #80 adds join codes and
+device tokens. `[server]` extra (fastapi, uvicorn) in `pyproject.toml`, the
+same plus httpx in `dev` for the test client; `bridge-engine.spec` excludes
+`bridge_server`, fastapi, starlette and uvicorn. The snake_case Tauri
+command table the issue mentions is already gone (#115's `engine_call`), so
+the client's method names are the shared definition.
+
+Tests: `tests/service/test_bridge_server.py` (5): two sessions on two
+projects read and write their own project in any order and a fresh session
+has none; Language QA refused outside the desktop session; `--serve`
+parsing with the stdio default; an AST check that `bridge_service` and the
+stdio transport import nothing of the server, and the spec excludes it;
+`POST /rpc` through FastAPI's test client answers `ping` and `project.open`
+with the stdio envelope and a bad body with `bad_request`.
+`test_stdio_e2e.py` unchanged and green.
+
+Gates: pytest -n auto 5298 passed (the two known timing/flake tests only); frozen pair rebuilt without the server and `smoke_sidecars.py` passed. No frontend or Rust change.

@@ -33,6 +33,26 @@ def _apply_cli_overrides() -> None:
                 os.environ[variable] = args[index + 1]
 
 
+def _serve_args(argv: list[str]) -> dict[str, object] | None:
+    """`--serve [--data-dir <dir>] [--host <h>] [--port <n>]` (#79): the team
+    hub. None when --serve is absent, which is every desktop launch."""
+    if "--serve" not in argv:
+        return None
+
+    def value(flag: str, default: str) -> str:
+        if flag in argv:
+            index = argv.index(flag)
+            if index + 1 < len(argv):
+                return argv[index + 1]
+        return default
+
+    return {
+        "data_dir": value("--data-dir", ""),
+        "host": value("--host", "127.0.0.1"),
+        "port": int(value("--port", "8765")),
+    }
+
+
 def _start() -> None:
     """Boot in named stages so the shell's loading screen can say what is
     slow (#233). Each stage line goes out *before* the work it names:
@@ -43,6 +63,14 @@ def _start() -> None:
     module: at the top it would run before anything could be reported, and
     `import main` from a test would pay for it and print to stdout."""
     _apply_cli_overrides()
+    serve = _serve_args(sys.argv[1:])
+    if serve is not None:
+        # The hub: an optional [server] extra, imported only here, so the
+        # stdio sidecar never carries it (DECISIONS 2026-09-11, 2026-10-15).
+        from bridge_server import serve as run_server
+
+        run_server(**serve)  # type: ignore[arg-type]
+        return
     send_stage("modules", "Loading engine modules")
     from bridge_service import BridgeEngine
 

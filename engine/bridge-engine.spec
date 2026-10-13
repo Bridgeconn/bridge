@@ -78,7 +78,8 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # The hub's HTTP server (#79) is a pip extra, never in the desktop sidecar.
+    excludes=['bridge_server', 'fastapi', 'starlette', 'uvicorn'],
     noarchive=False,
     optimize=0,
 )

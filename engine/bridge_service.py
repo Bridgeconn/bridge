@@ -970,7 +970,8 @@ class BridgeEngine:
         except ProjectIdentityError as exc:
             raise ProjectError(str(exc)) from exc
         timer.mark("register")
-        self._language_qa.unbind()
+        if not getattr(self, '_active_session', ''):  # #79: the scan follows the desktop session only
+            self._language_qa.unbind()
         # #113: the outgoing project lets go of its database files first.
         if self.project is not candidate:
             self._close_project_db_handles()
@@ -1023,7 +1024,8 @@ class BridgeEngine:
             })
             timer.mark("project_info")
             _trace(f"project.open {candidate.book_id} RECOVERY_REQUIRED {timer.summary()}")
-            self._language_qa.bind(candidate, blocked_reason="Project recovery requires attention.")
+            if not getattr(self, '_active_session', ''):  # #79: the scan follows the desktop session only
+                self._language_qa.bind(candidate, blocked_reason="Project recovery requires attention.")
             return info
         self._passage_semantic_status = {
             "available": False, "readOnly": True, "state": "BUILDING",
@@ -1052,7 +1054,8 @@ class BridgeEngine:
         })
         timer.mark("project_info")
         _trace(f"project.open {candidate.book_id} {timer.summary()}")
-        self._language_qa.bind(candidate)
+        if not getattr(self, '_active_session', ''):  # #79: the scan follows the desktop session only
+            self._language_qa.bind(candidate)
         # Rebuilt from the book's decisions on first use: anything recorded
         # while the book was closed (an import, another device) is picked up.
         self._housestyle_learner.forget(str(candidate.path))
@@ -7018,8 +7021,71 @@ class BridgeEngine:
 
     # -- protocol dispatch --------------------------------------------------
 
+    # -- project sessions (#79) ---------------------------------------------
+    #
+    # The per-project state a request runs against. The desktop has one
+    # session ("") and never names it; a hub client names its own, so two
+    # clients on two projects do not clobber each other's open project. The
+    # workspace (settings, registry, users, job managers, the whole-book
+    # caches, which are keyed by project path already) is shared. Switching
+    # waits for an in-flight semantic build, because the build thread writes
+    # into the active session's fields (#112 step two).
+    _SESSION_FIELDS = (
+        "project", "_passage_semantic_runtime_value", "_semantic_build_done", "_semantic_build_thread",
+        "_passage_semantic_status", "_correction_application_service",
+        "_correction_affected_analysis_service", "_correction_verification_service",
+        "_cross_verse_index_key", "_cross_verse_index",
+    )
+
+    def _fresh_session_state(self) -> dict[str, Any]:
+        done = threading.Event()
+        done.set()
+        return {
+            "project": None, "_passage_semantic_runtime_value": None, "_semantic_build_done": done,
+            "_semantic_build_thread": None,
+            "_passage_semantic_status": {"available": False, "readOnly": True, "state": "NO_PROJECT"},
+            "_correction_application_service": None, "_correction_affected_analysis_service": None,
+            "_correction_verification_service": None, "_cross_verse_index_key": None, "_cross_verse_index": {},
+        }
+
+    def _activate_session(self, key: str) -> None:
+        active = getattr(self, "_active_session", "")
+        if key == active:
+            return
+        self._await_semantic_runtime()
+        sessions = self.__dict__.setdefault("_sessions", {})
+        sessions[active] = {name: getattr(self, name) for name in self._SESSION_FIELDS}
+        state = sessions.pop(key, None) or self._fresh_session_state()
+        for name, value in state.items():
+            setattr(self, name, value)
+        self._active_session = key
+        runtime = self._passage_semantic_runtime_value
+        if runtime is not None:
+            self._analysis_jobs.bind_runtime(runtime)
+
+    def session_keys(self) -> list[str]:
+        """The sessions this engine holds, the active one included."""
+        held = set(self.__dict__.get("_sessions", {}))
+        held.add(getattr(self, "_active_session", ""))
+        return sorted(held)
+
+    # The Language QA scan is one background worker bound to one book, the
+    # desktop's (its manager is not per session); a hub session gets a clear
+    # refusal rather than another session's findings.
+    _DEFAULT_SESSION_ONLY_PREFIXES = ("languageQa.",)
+
     def handle_request(self, request: EngineRequest) -> EngineResponse:
         started = time.perf_counter()
+        session = str(getattr(request, "session", "") or "")
+        if session and request.method.startswith(self._DEFAULT_SESSION_ONLY_PREFIXES):
+            return EngineResponse.fail(
+                request.id, "session_unsupported",
+                f"{request.method} runs only in the desktop session; the Language QA scan is bound to one book.",
+            )
+        try:
+            self._activate_session(session)
+        except Exception as exc:  # noqa: BLE001
+            return EngineResponse.fail(request.id, "internal_error", f"Could not switch session: {exc}")
         try:
             return self._handle_request(request)
         finally:

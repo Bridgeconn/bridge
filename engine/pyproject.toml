@@ -45,6 +45,19 @@ dev = [
     # Reads indic-qa's reviewer workbooks (scripts/import_indic_qa_labels.py).
     # Tooling only: the engine never imports it, so the frozen build lacks it.
     "openpyxl>=3.1",
+    # The hub's HTTP transport under test (tests/service/test_bridge_server.py
+    # skips without them). Never in the desktop sidecar: bridge-engine.spec
+    # excludes them, and bridge_service.py never imports them.
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "httpx>=0.27",
+]
+# The team hub (#79, #80): `bridge-engine --serve --data-dir <hub>`. An optional
+# extra on purpose -- the desktop sidecar never carries a server, and the stdio
+# path imports nothing from bridge_server.py (DECISIONS 2026-09-11, 2026-10-15).
+server = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
 ]
 # Optional, not a hard dependency: the real PyPI package name is
 # "wildebeest-nlp" (NOT "wildebeest" — that name belongs to an unrelated
