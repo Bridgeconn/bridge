@@ -19689,3 +19689,28 @@ book now shows many more marks, and more verse rows lose their ✓ (a drawn mark
 layered-rules 4.3). The common checks have no shipped precision (`rule_precision.json` lists pack
 rules only), so only the confidence floor can hide them. ta-irv's `rule_precision.json` was
 generated on 2026-10-07, before round 3; the slider reads that table.
+
+## 2026-10-14 — The Logos helper test's startup budget scales with load (#247)
+
+**What.** `test_logos_get_state_spawns_the_real_helper_and_returns_environment_safe_result` failed
+now and then under `pytest -n auto` on a loaded machine. The cause is the client's 10 s startup
+default, not the helper or its reuse.
+
+**Measured.** The real `logos_bridge.ps1` helper answers its first `state` request in 0.7 s on an
+idle machine. With 16 CPU-burning processes on 8 cores and 12 helpers starting at once:
+- with the 10 s default, all 12 timed out ("did not respond within the connector timeout (10.0s;
+  helper generation 1)"). The client then stopped each helper (correct), so `running` was False,
+  which is exactly Revant's failure on 2026-10-13;
+- with a 60 s budget, all 12 answered, in 10.9 to 17.3 s.
+
+**Change.** The test gives its engine a client with `startup_timeout=job_timeout(10.0)`
+(`tests/support/waits.py`: 10 s × workers, never below 60 s). Every assertion stays, and one is
+added: a second `logos.getState` reuses the same helper process. The client's own 10 s default is
+unchanged.
+
+**Acceptance run.** Ten consecutive `pytest -n auto tests/connectors` runs alongside a
+`scripts/build-sidecars.ps1` build plus eight CPU burners: 10 of 10 passed, 19 tests each. The full
+engine suite was not re-run for this one-file test change. It last ran at b136bb8: 5,330 passed.
+
+**Not changed, worth knowing.** A translator's machine as loaded as this one would also see the
+first Logos request time out at 10 s. It is retried on the next call, and nothing is lost.
