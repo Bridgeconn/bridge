@@ -2995,12 +2995,17 @@ class BridgeEngine:
     def auto_align_window(
         self, chapter: str, verses: Any, *, apply: bool = True, run_id: str = "", job_id: str = "",
         passes: dict[str, Any] | None = None,
+        report: Callable[[dict[str, Any]], None] | None = None,
+        cancelled: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
         """alignment.window.autoAlign (#219): ask the window twice, write what
         both passes agree on, suggest the rest, report what neither placed.
 
         `passes` lets the chapter job (#221) hand in passes it already asked
-        for, so reconciling across windows needs no second request.
+        for, so reconciling across windows needs no second request. `report`
+        and `cancelled` are the job's checkpoints (#242): the pass about to be
+        asked, then reconcile and apply; a cancel seen at any of them ends the
+        window with AutoAlignCancelled before its write.
         Returns a structured `unavailable` -- never raises -- when no provider
         is configured: offline is a supported state. Nothing is ever sent on
         open, import or check; this runs only on an explicit request.
@@ -3016,6 +3021,15 @@ class BridgeEngine:
         owned = self._auto_owned(chapter, ordered)
         window, guidance = self._build_auto_window(chapter, ordered, owned)
         usage = {"calls": 0, "totalTokens": 0, "estimatedCostUSD": 0.0}
+
+        def checkpoint(**event: Any) -> None:
+            if cancelled is not None and cancelled():
+                raise auto_align_jobs.AutoAlignCancelled(
+                    "Automatic alignment was cancelled before anything was written."
+                )
+            if report is not None:
+                report(event)
+
         if passes is None:
             try:
                 client = self._ai_client()
@@ -3032,15 +3046,20 @@ class BridgeEngine:
                 usage["estimatedCostUSD"] = round(usage["estimatedCostUSD"] + cost, 6)
                 return raw
 
+            checkpoint(**{"pass": 1, "of": 2, "direction": alignment_window.SOURCE_FIRST})
             pass_a = alignment_window.ask(window, call_model, alignment_window.SOURCE_FIRST, guidance=guidance, error=AIError)
+            checkpoint(**{"pass": 2, "of": 2, "direction": alignment_window.TARGET_FIRST})
             pass_b = alignment_window.ask(window, call_model, alignment_window.TARGET_FIRST, guidance=guidance, error=AIError)
         else:
             pass_a = alignment_window.decode(passes.get(alignment_window.SOURCE_FIRST), window, alignment_window.SOURCE_FIRST, error=AIError)
             pass_b = alignment_window.decode(passes.get(alignment_window.TARGET_FIRST), window, alignment_window.TARGET_FIRST, error=AIError)
+        checkpoint(stage="reconcile")
         corpus = self._auto_corpus(chapter, ordered)
         agreement = alignment_agreement.agree(
             pass_a, pass_b, tokens=window.tokens(), corpus=corpus, homed=window.homed(),
         )
+        # The last checkpoint before anything is written.
+        checkpoint(stage="apply")
         return self._apply_agreement(
             chapter, ordered, window, agreement, base=base, apply=apply, run_id=run_id, job_id=job_id,
             usage=usage, notes=[*pass_a.notes, *pass_b.notes],
@@ -3318,10 +3337,17 @@ class BridgeEngine:
 
     # ---- chapter / book job (#221) ------------------------------------------------
 
-    def _auto_job_windows(self, scope: str, chapters: Any) -> dict[str, list[list[str]]]:
+    def _auto_job_windows(self, scope: str, chapters: Any, verses: Any = None) -> dict[str, list[list[str]]]:
         self._require_project()
-        if scope not in {"chapter", "book"}:
-            raise ProjectError("Automatic alignment runs on a chapter or a book.")
+        if scope not in {"chapter", "book", "window"}:
+            raise ProjectError("Automatic alignment runs on a window, a chapter or a book.")
+        if scope == "window":
+            # #242: the page's one window as a job, so the two provider calls
+            # run on the worker and the dispatcher keeps answering.
+            if not isinstance(chapters, list) or len(chapters) != 1:
+                raise ProjectError("A window job names exactly one chapter.")
+            chapter = str(chapters[0])
+            return {chapter: [self._auto_window_verses(chapter, verses)]}
         if scope == "book":
             wanted = [str(c) for c in self.project.chapters()]
         else:
@@ -3337,12 +3363,12 @@ class BridgeEngine:
             windows[chapter] = auto_align_jobs.windows_for(verses, window=3, overlap=1)
         return windows
 
-    def auto_align_estimate(self, scope: str = "chapter", chapters: Any = None) -> dict[str, Any]:
+    def auto_align_estimate(self, scope: str = "chapter", chapters: Any = None, verses: Any = None) -> dict[str, Any]:
         """alignment.autoAlign.estimate: what a job would cost, worked out
         offline from the real window payloads. About three characters per token
         for the mixed Greek/Hebrew/Tamil text is a rough rule, so this is an
         estimate to show before the click, not a quote."""
-        windows = self._auto_job_windows(scope, chapters)
+        windows = self._auto_job_windows(scope, chapters, verses)
         count = sum(len(w) for w in windows.values())
         input_tokens = 0
         for chapter, chapter_windows in windows.items():
@@ -3363,8 +3389,9 @@ class BridgeEngine:
             "hasApiKey": bool(self.settings.get_api_key()),
         }
 
-    def start_auto_align_job(self, scope: str = "chapter", chapters: Any = None, apply: bool = True) -> dict[str, Any]:
-        windows = self._auto_job_windows(scope, chapters)
+    def start_auto_align_job(self, scope: str = "chapter", chapters: Any = None, apply: bool = True,
+                             verses: Any = None) -> dict[str, Any]:
+        windows = self._auto_job_windows(scope, chapters, verses)
         try:
             self._ai_client()
         except AIError as exc:
@@ -3375,8 +3402,10 @@ class BridgeEngine:
         return self._start_auto_align(spec)
 
     def _start_auto_align(self, spec) -> dict[str, Any]:
-        def run_window(chapter: str, verses: list[str], job_id: str) -> dict[str, Any]:
-            return self.auto_align_window(chapter, verses, apply=spec.apply, job_id=job_id)
+        def run_window(chapter: str, verses: list[str], job_id: str, *, report=None, cancelled=None) -> dict[str, Any]:
+            return self.auto_align_window(
+                chapter, verses, apply=spec.apply, job_id=job_id, report=report, cancelled=cancelled,
+            )
         try:
             return self._auto_align_jobs.start(spec, run_window=run_window)
         except auto_align_jobs.AutoAlignJobConflict as exc:
@@ -6932,6 +6961,7 @@ class BridgeEngine:
             if m == Methods.ALIGNMENT_AUTO_ALIGN_START:
                 return EngineResponse.ok(request.id, result=self.start_auto_align_job(
                     str(p.get("scope") or "chapter"), p.get("chapters"), bool(p.get("apply", True)),
+                    verses=p.get("verses"),
                 ))
             if m == Methods.ALIGNMENT_AUTO_ALIGN_STATUS:
                 return EngineResponse.ok(request.id, result=self.auto_align_job_status(str(p.get("jobId") or "")))
@@ -6941,7 +6971,7 @@ class BridgeEngine:
                 return EngineResponse.ok(request.id, result=self.retry_auto_align_job(str(p.get("jobId") or "")))
             if m == Methods.ALIGNMENT_AUTO_ALIGN_ESTIMATE:
                 return EngineResponse.ok(request.id, result=self.auto_align_estimate(
-                    str(p.get("scope") or "chapter"), p.get("chapters"),
+                    str(p.get("scope") or "chapter"), p.get("chapters"), verses=p.get("verses"),
                 ))
             if m == Methods.LEXICON_GET_ENTRY:
                 return EngineResponse.ok(

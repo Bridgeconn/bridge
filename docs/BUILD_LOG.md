@@ -18690,3 +18690,29 @@ job) and `ImportScreen.test.ts` (bar and Cancel from the start snapshot before
 any poll; cancel opens nothing; a failed job is an error with the form usable).
 Not measured: the 66-book time on the field machine (NFR-PERF-004) and the
 installed-build walk; both are the field-machine day.
+
+**#242.** `alignment.window.autoAlign` ran its two provider calls on the
+dispatcher; on the installed 0.14.0 that was 275 s with seven
+`languageQa.status` timeouts (#241). The page's window is now scope
+`"window"` of the chapter job (`alignment.autoAlign.start` with `chapters:
+[chapter]` and `verses`), one window, on the worker. `auto_align_window` takes
+`report` and `cancelled` checkpoints: before pass 1, before pass 2, at
+reconcile and at apply; the snapshot carries `currentPass` (`number` 1 or 2,
+`of`, `direction`, `stage`) and `stage` text ("Asking about 1:1-3 (pass 2 of
+2)"), and, for a window job only, `windowResult`, the full result the page
+draws from. A cancel is honoured at the next checkpoint before the write and
+raises `AutoAlignCancelled`, so a cancelled job has written nothing; this also
+changes the chapter job, which used to keep an in-flight window's writes (its
+retry re-runs that window, so nothing is lost). The sync method stays for
+tests and scripts, at 540 s. Frontend: `bridge.autoAlignWindow` keeps its
+signature and now starts and polls the job (500 ms), with an optional
+`onProgress(snapshot)` for the modal; `CrossVerseAlignmentModal.svelte` is
+untouched (its pass text from engine state is #243, Benz) and already gets the
+non-blocking behaviour. Tests: `tests/service/test_auto_align_window_job.py`
+(a gated fake provider: `ping` and `verse.get` answer while pass 1 is held,
+pass 1 then 2 reported, the full window result on success; cancel during pass
+1 leaves the alignment file byte-identical and no verdicts; window validation)
+and `autoAlignWindowJob.test.ts` (what the client sends, passes to
+`onProgress`, unavailable without polling, cancelled and failed reject). Not
+done: the installed-build walk of QA matrix D14 without a "Language QA:
+unavailable" moment, which needs a provider key and the desktop.

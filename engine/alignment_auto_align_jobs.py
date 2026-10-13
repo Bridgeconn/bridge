@@ -33,7 +33,12 @@ from typing import Any, Callable, Optional
 
 TERMINAL_STATES = {"succeeded", "failed", "cancelled"}
 
-RunWindow = Callable[[str, list[str], str], dict[str, Any]]
+# run_window(chapter, verses, job_id, *, report, cancelled) -> the window
+# result. `report` receives one dict per checkpoint ({"pass": 1|2, "of": 2,
+# "direction": ...} before each provider call, {"stage": "reconcile"|"apply"}
+# after them); `cancelled` is asked at the same checkpoints and raises
+# AutoAlignCancelled when the job was cancelled, before anything is written.
+RunWindow = Callable[..., dict[str, Any]]
 
 
 class AutoAlignJobError(RuntimeError):
@@ -46,6 +51,11 @@ class AutoAlignJobConflict(AutoAlignJobError):
 
 class AutoAlignJobNotFound(AutoAlignJobError):
     pass
+
+
+class AutoAlignCancelled(AutoAlignJobError):
+    """Raised inside a window run at a checkpoint after cancel was asked for.
+    Nothing has been written for that window (#242)."""
 
 
 def _now() -> str:
@@ -75,7 +85,7 @@ def windows_for(verses: list[str], *, window: int = 3, overlap: int = 1) -> list
 
 @dataclass(frozen=True)
 class AutoAlignJobSpec:
-    scope: str                                  # "chapter" | "book"
+    scope: str                                  # "chapter" | "book" | "window" (#242: one window, from the page)
     chapters: tuple[str, ...]
     windows: dict[str, list[list[str]]]         # chapter -> windows still to run
     apply: bool = True
@@ -88,6 +98,13 @@ class _AutoAlignJob:
         self.spec = spec
         self.state = "queued"
         self.current: Optional[dict[str, Any]] = None
+        # #242: which provider call is in flight for the current window, so a
+        # page can say "pass 1 of 2" from engine state rather than a timer.
+        self.current_pass: Optional[dict[str, Any]] = None
+        # #242: the full window result, kept only for a window-scoped job --
+        # the page needs the per-verse suggestions and contexts the chapter
+        # summary leaves out.
+        self.window_result: Optional[dict[str, Any]] = None
         self.stage = "Queued"
         self.results: dict[str, dict[str, Any]] = {}     # "chapter:v1-v3" -> window result summary
         self.verdicts: dict[str, str] = {}               # "chapter:verse" -> latest verdict
@@ -113,6 +130,8 @@ class _AutoAlignJob:
                 "windowsFailed": sum(1 for r in self.results.values() if r.get("status") == "failed"),
                 "percent": 100 if self.state == "succeeded" else (round(done / total * 100) if total else 0),
                 "currentWindow": copy.deepcopy(self.current),
+                "currentPass": copy.deepcopy(self.current_pass),
+                "windowResult": copy.deepcopy(self.window_result) if self.spec.scope == "window" else None,
                 "verdictCounts": counts,
                 "verdicts": dict(self.verdicts),
                 "results": copy.deepcopy(self.results),
@@ -132,8 +151,8 @@ class AutoAlignJobManager:
         self._lock = threading.RLock()
 
     def start(self, spec: AutoAlignJobSpec, *, run_window: RunWindow) -> dict[str, Any]:
-        if spec.scope not in {"chapter", "book"}:
-            raise AutoAlignJobError("Automatic alignment runs on a chapter or a book.")
+        if spec.scope not in {"chapter", "book", "window"}:
+            raise AutoAlignJobError("Automatic alignment runs on a window, a chapter or a book.")
         with self._lock:
             active = self._jobs.get(self._active or "")
             if active is not None and active.state not in TERMINAL_STATES:
@@ -189,20 +208,49 @@ class AutoAlignJobManager:
                     if self._cancelled(job):
                         return
                     key = _key(chapter, window)
+                    label = f"{chapter}:{window[0]}-{window[-1]}"
                     with job.lock:
                         job.current = {"chapter": chapter, "verses": list(window)}
-                        job.stage = f"Asking about {chapter}:{window[0]}-{window[-1]}"
+                        job.current_pass = None
+                        job.stage = f"Asking about {label}"
+
+                    def report(event: dict[str, Any], _label: str = label) -> None:
+                        with job.lock:
+                            number = event.get("pass")
+                            of = int(event.get("of", 2) or 2)
+                            job.current_pass = {
+                                "number": number, "of": of,
+                                "direction": str(event.get("direction") or ""),
+                                "stage": str(event.get("stage") or ""),
+                            }
+                            if number:
+                                job.stage = f"Asking about {_label} (pass {number} of {of})"
+                            elif event.get("stage") == "reconcile":
+                                job.stage = f"Reconciling {_label}"
+                            elif event.get("stage") == "apply":
+                                job.stage = f"Writing {_label}"
+
                     try:
-                        result = run_window(chapter, list(window), job.id)
+                        result = run_window(
+                            chapter, list(window), job.id, report=report, cancelled=job.cancel_event.is_set,
+                        )
+                    except AutoAlignCancelled:
+                        # Cancel arrived while a request was in flight: that
+                        # window stops at its next checkpoint, before its
+                        # write, so a cancelled job has written nothing (#242).
+                        self._cancelled(job)
+                        return
                     except Exception as exc:  # one bad window must not sink the chapter
                         if self._cancelled(job):
                             return
                         with job.lock:
+                            job.current_pass = None
                             job.results[key] = {"chapter": chapter, "verses": list(window), "status": "failed", "error": str(exc)}
                         continue
-                    # A request already in flight when cancel arrived has written;
-                    # its verdicts are kept (they are real), nothing after it runs.
                     with job.lock:
+                        job.current_pass = None
+                        if job.spec.scope == "window":
+                            job.window_result = result
                         if result.get("unavailable"):
                             job.unavailable = result["unavailable"]
                             job.state = "failed"

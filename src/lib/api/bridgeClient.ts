@@ -43,6 +43,7 @@ import type {
   AutoAlignWindowResult,
   AutoAlignVerdict,
   AutoAlignJobStatus,
+  AutoAlignScope,
   AutoAlignEstimate,
   CrossVerseProposalResult,
   BookProgressEntry,
@@ -391,6 +392,12 @@ async function call<T>(method: EngineMethod, params?: Record<string, unknown>): 
   }
   return (envelope.result ?? (envelope as unknown)) as T;
 }
+
+const AUTO_ALIGN_TERMINAL = new Set<AutoAlignJobStatus["state"]>(["succeeded", "failed", "cancelled"]);
+/** How often the window job is polled (#242): the engine's pass changes are
+ *  tens of seconds apart, so half a second keeps the label honest without
+ *  crowding the dispatcher. */
+export const AUTO_ALIGN_WINDOW_POLL_MS = 500;
 
 export const bridge = {
   /** One page of one list: every open finding, only those shown again for
@@ -923,9 +930,39 @@ export const bridge = {
 
   /** #219: ask the window twice and write what both passes agree on. Sends the
    *  window's words to the configured provider; returns `unavailable` without
-   *  a key. Never called on open, import or check. */
-  autoAlignWindow(chapter: string, verses: string[], apply = true): Promise<AutoAlignWindowResult> {
-    return call("alignment.window.autoAlign", { chapter, verses, apply });
+   *  a key. Never called on open, import or check.
+   *
+   *  Since #242 this is the window-scoped background job, started and polled
+   *  here, so the two provider calls run on the engine's worker and every
+   *  other request keeps answering. `onProgress` receives each snapshot;
+   *  `currentPass.number` is the pass in flight. The sync engine method
+   *  (`alignment.window.autoAlign`) still exists for scripts and tests. A
+   *  cancelled job rejects; nothing was written in that case. */
+  async autoAlignWindow(
+    chapter: string, verses: string[], apply = true,
+    onProgress?: (snapshot: AutoAlignJobStatus) => void,
+  ): Promise<AutoAlignWindowResult> {
+    const offline = (unavailable: { reason: string; message: string }): AutoAlignWindowResult =>
+      ({ chapter, verses, runId: "", calibrationVersion: "", results: [], unavailable });
+    let snapshot = await call<AutoAlignJobStatus & { unavailable?: { reason: string; message: string } | null }>(
+      "alignment.autoAlign.start", { scope: "window", chapters: [chapter], verses, apply },
+    );
+    if (!snapshot.jobId) {
+      if (snapshot.unavailable) return offline(snapshot.unavailable);
+      throw new Error(snapshot.error || "Automatic alignment did not start.");
+    }
+    for (;;) {
+      onProgress?.(snapshot);
+      if (AUTO_ALIGN_TERMINAL.has(snapshot.state)) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, AUTO_ALIGN_WINDOW_POLL_MS));
+      snapshot = await call("alignment.autoAlign.status", { jobId: snapshot.jobId });
+    }
+    if (snapshot.state === "succeeded" && snapshot.windowResult) return snapshot.windowResult;
+    if (snapshot.unavailable) return offline(snapshot.unavailable);
+    if (snapshot.state === "cancelled") {
+      throw new Error("Automatic alignment was cancelled. Nothing was written.");
+    }
+    throw new Error(snapshot.error || "Automatic alignment failed.");
   },
 
   /** Undo what the last automatic pass wrote in one verse, where it is still
@@ -942,16 +979,16 @@ export const bridge = {
 
   /** #221: what aligning a chapter (or the book) would cost, worked out
    *  offline. Shown before the job is started. */
-  autoAlignEstimate(scope: "chapter" | "book", chapters: string[] = []): Promise<AutoAlignEstimate> {
-    return call("alignment.autoAlign.estimate", { scope, chapters });
+  autoAlignEstimate(scope: AutoAlignScope, chapters: string[] = [], verses?: string[]): Promise<AutoAlignEstimate> {
+    return call("alignment.autoAlign.estimate", { scope, chapters, verses });
   },
 
   /** Start the background job; returns its first snapshot, or `unavailable`
    *  without a key. */
-  autoAlignStart(scope: "chapter" | "book", chapters: string[] = [], apply = true): Promise<AutoAlignJobStatus & {
+  autoAlignStart(scope: AutoAlignScope, chapters: string[] = [], apply = true, verses?: string[]): Promise<AutoAlignJobStatus & {
     unavailable?: { reason: string; message: string } | null;
   }> {
-    return call("alignment.autoAlign.start", { scope, chapters, apply });
+    return call("alignment.autoAlign.start", { scope, chapters, apply, verses });
   },
 
   autoAlignStatus(jobId = ""): Promise<AutoAlignJobStatus> {

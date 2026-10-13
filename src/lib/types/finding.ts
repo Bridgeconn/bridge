@@ -517,9 +517,11 @@ export interface AutoAlignVerdict {
 }
 
 /** #221: the chapter / book job over overlapping windows. */
+export type AutoAlignScope = "chapter" | "book" | "window";
+
 export interface AutoAlignJobStatus {
   jobId: string;
-  scope: "chapter" | "book";
+  scope: AutoAlignScope;
   apply: boolean;
   state: "queued" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled";
   stage: string;
@@ -529,6 +531,13 @@ export interface AutoAlignJobStatus {
   windowsFailed: number;
   percent: number;
   currentWindow: { chapter: string; verses: string[] } | null;
+  /** #242: the provider call in flight for the current window (`number` 1 or
+   * 2 while a pass is being asked, null while reconciling or writing, when
+   * `stage` says which). Null between windows. */
+  currentPass: { number: number | null; of: number; direction: string; stage: string } | null;
+  /** #242: the full window result, only for a window-scoped job once it has
+   * succeeded; the chapter summary leaves out suggestions and contexts. */
+  windowResult: AutoAlignWindowResult | null;
   /** Counts by verdict, e.g. { ALIGNED_CLEAN: 24, NEEDS_REVIEW: 6 }. */
   verdictCounts: Record<string, number>;
   verdicts: Record<string, AutoAlignVerdictKind>;
@@ -542,7 +551,7 @@ export interface AutoAlignJobStatus {
 
 /** What a job would cost, worked out offline before the click. */
 export interface AutoAlignEstimate {
-  scope: "chapter" | "book";
+  scope: AutoAlignScope;
   chapters: string[];
   windows: number;
   calls: number;
