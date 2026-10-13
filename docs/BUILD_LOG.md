@@ -19079,3 +19079,35 @@ a parity test, not worked around in a rule. There are none in the IRV. Proposed,
 **Measured on the IRV:** the same findings as the pattern versions: 3 missing-ft, 53
 space-before-caller, 2 caller-mixed, `spacing.extra` 86. `scan_text` over every verse of
 the Bible takes 8.3 s in one process.
+
+
+## 2026-10-13 — Words of Jesus: \wj boundaries and placement; framework item 29 is Partial (#248, #230)
+
+**What.** Three common Language QA rules in `scan_text`, on the parser's `\wj` style spans
+(`lift_verse` styles), panel only, each with its fix:
+- `common/wj.glued`: `\wj*` directly between two words, so the words run together on
+  screen (MRK 2:14 `வா\wj*என்றார்`, which reads "வாஎன்றார்"). Fix: `\wj* `.
+- `common/wj.space-inside`: a space inside the close and a word right after it (LUK 24:26
+  `இல்லையா? \wj*என்று`). It reads correctly, so this is tidiness only (low). Fix: move the
+  space outside.
+- `common/wj.outside-speech`: `\wj` in a book or chapter where Jesus does not speak. The
+  reviewer's rule allows the Gospels, Acts, Revelation, 1 Corinthians 11 and
+  2 Corinthians 12 (1TI 5:18, Paul quoting Scripture). Fix: remove the markers; a note
+  inside the run stays.
+
+Row 29 moves to Partial: the boundaries are checked; whether every word of Jesus is marked
+needs the source and is not. An unbalanced `\wj` already stops the verse from being
+scanned and is reported as a limitation.
+
+**Why.** Requirement 3 (#230); the 2026-10-13 review confirmed 3 of 3.
+
+**Measured on the IRV:** exactly MRK 2:14, LUK 24:26 and 1TI 5:18, each with the
+reviewer's fix. `\wj` verses: MAT 645, MRK 289, LUK 588, JHN 431, ACT 31, REV 65, 1CO 2
+(chapter 11), 2CO 1 (chapter 12), 1TI 1.
+
+**Gates** (with the gotcha-14 correction above, run together).
+- `test_language_qa_words_of_jesus.py` 5, and the footnote, caller, spacing and heading
+  rule tests: 27 passed.
+- Full engine suite: 5,257 passed, 3 xfailed, none failed.
+- Human gate: pass. `build-sidecars.ps1`, then `smoke_sidecars.py`: passed.
+- Frontend and src-tauri untouched; their gates were not run.

@@ -184,6 +184,10 @@ RULES: dict[str, RuleMeta] = {
     "spacing.extra": RuleMeta("common", "integrity", "spacing", "medium", revision=2),   # 2: offers the fix (one space; remove an edge space)
     "punctuation.repeated": RuleMeta("common", "integrity", "punctuation", "medium"),
     "punctuation.space-before": RuleMeta("common", "integrity", "punctuation", "medium"),
+    # Words of Jesus (framework item 29, #248).
+    "wj.glued": RuleMeta("common", "integrity", "word-joining", "high"),
+    "wj.space-inside": RuleMeta("common", "integrity", "usfm", "high"),
+    "wj.outside-speech": RuleMeta("common", "integrity", "usfm", "medium"),
     # Note callers (framework item 44, #246; caller-mixed is a book step in language_qa_notes.py).
     "note.caller-mixed": RuleMeta("common", "integrity", "usfm", "high"),
     "note.space-before-caller": RuleMeta("common", "integrity", "spacing", "high"),
@@ -392,7 +396,13 @@ USFM_LINE_BREAKS = frozenset("\n\r")
 # Footnote paragraph markers (footnote.missing-ft): a note with none of these
 # has its text loose after the \fr reference.
 _NOTE_PARAGRAPH = frozenset({"ft", "fq", "fqa", "fk", "fl", "fw", "fp", "fdc"})
-
+# Where \wj may stand (wj.outside-speech): book -> None (the whole book) or the
+# chapters. The reviewer, 2026-10-13: the Gospels, Acts, Revelation,
+# 1 Corinthians 11 and 2 Corinthians 12.
+_WJ_SPEECH: dict[str, frozenset[str] | None] = {
+    **{book: None for book in ("mat", "mrk", "luk", "jhn", "act", "rev")},
+    "1co": frozenset({"11"}), "2co": frozenset({"12"}),
+}
 
 
 def note_extent(raw: str, note: Any) -> tuple[int, int]:
@@ -403,7 +413,8 @@ def note_extent(raw: str, note: Any) -> tuple[int, int]:
     return start, end
 
 
-
+def _word_char(char: str) -> bool:
+    return unicodedata.category(char)[0] in "LMN"
 
 
 @dataclass(frozen=True)
@@ -590,6 +601,38 @@ def scan_text(text: str, *, book: str, chapter: str, verse: str,
             add("note.space-before-caller", start, at,
                 "Space before a note caller: the caller prints apart from its word.", "low",
                 [suggestion("", "rule", "Remove the space before the caller")], raw_offsets=True)
+    with timings.step("rule.wj"):
+        # Framework item 29 (#248): \wj boundaries, and \wj where Jesus does
+        # not speak. Human review 2026-10-13, 3 of 3.
+        wj_spans = [span for span in lifted.styles if span.marker == "wj" and span.end > span.start]
+        for span in wj_spans:
+            close = span.end
+            if close >= len(text) or not _word_char(text[close]):
+                continue
+            lo, hi = lifted.raw_index[close - 1] + 1, lifted.raw_index[close]
+            if raw[lo:hi] != "\\wj*":
+                continue  # a note or another marker stands between: not this shape
+            if text[close - 1] == " ":
+                # LUK 24:26 "இல்லையா? \wj*என்று": reads right; tidy only.
+                add("wj.space-inside", lo - 1, hi,
+                    "Space inside \\wj*, none after it: move the space outside.", "low",
+                    [suggestion("\\wj* ", "rule", "Move the space after \\wj*")], raw_offsets=True)
+            else:
+                # MRK 2:14 "வா\wj*என்றார்" reads "வாஎன்றார்".
+                add("wj.glued", lo, hi, "No space after \\wj*: the words run together.", "medium",
+                    [suggestion("\\wj* ", "rule", "Add a space after \\wj*")], raw_offsets=True)
+        allowed = _WJ_SPEECH.get(book.lower(), ())
+        if allowed is not None and chapter not in allowed:
+            for span in wj_spans:
+                first = lifted.raw_index[span.start]
+                opener = raw.rindex("\\wj", 0, first)
+                closer = raw.index("\\wj*", lifted.raw_index[span.end - 1] + 1)
+                inner = raw[first:closer]  # notes inside the run stay
+                if raw[closer + 4:closer + 5].isspace():
+                    inner = inner.rstrip()
+                add("wj.outside-speech", opener, closer + 4,
+                    "\\wj (words of Jesus) where Jesus is not speaking.", "medium",
+                    [suggestion(inner, "rule", "Remove the \\wj markers")], raw_offsets=True)
     with timings.step("rule.footnote.missing-ft"):
         # Framework item 27 (#245): footnote text with no \ft (or other
         # paragraph marker) after the \fr reference. The fix inserts \ft there,
