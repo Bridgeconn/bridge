@@ -20536,3 +20536,23 @@ finding across overlapping spans. `VerseList.test.ts`: the DOM order `அப்�
 **Gates.** `npm run check` 0/0; `npm run test` and `npm run build` as recorded on the issue. Engine
 suite skipped: frontend only. **Not run:** the desktop app at 1366x768; the verse-editor row of
 QA 05B/#156 on the next build covers it.
+
+## 2026-10-14 — The verse list does not scroll on a click: already true since #236, now pinned (#179)
+
+**Checked against the code before starting.** The issue (filed 2026-09-29) listed the routes that called
+`onSelect` directly and bypassed `selectFromList`'s `lastScrolledKey` guard: the finding and Language
+QA mark menus, the mixed-source menu, Enter/Space and Shift+F10 on a row, Shift- and Ctrl-click.
+Every one of them was routed through `selectFromList` on 2026-10-09 (fe65e58, "right-click scroll
+and focus", #236), so on main none of them scrolls. The "plain left click on a mark" case the issue
+left open bubbles to the row's own click handler, which has always gone through `selectFromList`.
+
+**What this adds.** `VerseListScroll.test.ts`, the regression the issue asked for: three verses, a
+Greek Room mark in each, a Language QA mark in one, `onSelect` wired to the store as App does, and
+`Element.prototype.scrollTo` observed. Right-click on a mark of another verse (menu opens, no
+scroll), right-click on a Language QA mark, left-click on a mark, Shift-click and Ctrl-click on a
+row, Shift+F10 and Enter on a focused row: `scrollTo` is never called. A selection that does not come
+from the list (`selectedVerse.set`, as Go to, desktop sync and a report row do) still scrolls once.
+No component change.
+
+**Not run:** the desktop app; the "text moves out from under the cursor" symptom is a layout one, and
+jsdom does not lay out. The #156 walk on the next build covers it (M-row to add then).
