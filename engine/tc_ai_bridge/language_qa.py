@@ -6,6 +6,7 @@ Unicode Tamil §12.6 permits decomposed two-part vowels and Grantha conjuncts.
 from __future__ import annotations
 
 import bisect
+import functools
 import hashlib
 import json
 import unicodedata
@@ -457,6 +458,14 @@ class LiftedVerse:
         return (raw_start, raw_end) if raw_end - raw_start == end - start else None
 
 
+# A book pass lifts each verse in several stages (the sample, the verse scan,
+# the indic-qa book, structure, note callers), and again on every pass (#271).
+# The result is immutable, so one lifting per text is shared; the bound holds
+# the largest book (Psalms, 2,461 verses) with its headings.
+LIFT_MEMO = 4096
+
+
+@functools.lru_cache(maxsize=LIFT_MEMO)
 def lift_inline_usfm(raw: str) -> tuple[LiftedVerse | None, str]:
     """The text a reader sees, for Language QA to scan: footnotes and
     cross-references removed with their contents (the frontend's
@@ -465,7 +474,10 @@ def lift_inline_usfm(raw: str) -> tuple[LiftedVerse | None, str]:
 
     Returns (None, reason) instead of guessing when the markup cannot be lifted
     safely: unbalanced paired markers (usfm.marker_balance_issues), note markup
-    outside a complete note, or a backslash that is not a marker."""
+    outside a complete note, or a backslash that is not a marker.
+
+    Memoized on the raw text (LIFT_MEMO): LiftedVerse and everything in it is
+    frozen, so callers share one result and must not expect a fresh object."""
     # The lifting itself is usfm_verse.lift_verse (#91 Phase 1a), the one
     # fragment reader; this keeps Language QA's refusal: a verse whose markup
     # could not be lifted cleanly is not scanned, and the first problem is the

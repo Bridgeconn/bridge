@@ -1344,8 +1344,9 @@ export interface CheckJobSnapshot {
   finishedAt: string | null;
   languageQa?: CheckJobLanguageQa;
   /** Wall clock per stage ("stage:QA") and per engine ("greekroom.wildebeest"),
-   *  slowest first; measurement only (engine check_timing, 2026-10-08). */
-  timings?: Record<string, { ms: number; calls: number }>;
+   *  slowest first; measurement only (engine check_timing, 2026-10-08).
+   *  `cached`: times the step was reused from a cache instead of run (#271). */
+  timings?: Record<string, { ms: number; calls: number; cached?: number }>;
   elapsedSeconds?: number;
 }
 

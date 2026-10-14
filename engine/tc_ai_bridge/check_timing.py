@@ -34,6 +34,7 @@ class Timings:
         self._lock = threading.Lock()
         self._seconds: dict[str, float] = {}
         self._calls: dict[str, int] = {}
+        self._cached: dict[str, int] = {}
         self._started = time.perf_counter()
 
     @contextmanager
@@ -51,11 +52,24 @@ class Timings:
             self._seconds[name] = self._seconds.get(name, 0.0) + seconds
             self._calls[name] = self._calls.get(name, 0) + calls
 
+    def cached(self, name: str, count: int = 1) -> None:
+        """A step served from a cache instead of run (#271): no time, no call,
+        `cached` counts the reuses, so the saving shows beside the runs."""
+        with self._lock:
+            self._seconds.setdefault(name, 0.0)
+            self._calls.setdefault(name, 0)
+            self._cached[name] = self._cached.get(name, 0) + count
+
     def merge(self, other: "Timings") -> None:
         for name, (seconds, calls) in other._items():
             with self._lock:
                 self._seconds[name] = self._seconds.get(name, 0.0) + seconds
                 self._calls[name] = self._calls.get(name, 0) + calls
+        with other._lock:
+            cached = dict(other._cached)
+        with self._lock:
+            for name, count in cached.items():
+                self._cached[name] = self._cached.get(name, 0) + count
 
     def _items(self) -> list[tuple[str, tuple[float, int]]]:
         with self._lock:
@@ -65,9 +79,14 @@ class Timings:
         return time.perf_counter() - self._started
 
     def as_dict(self) -> dict[str, dict[str, Any]]:
-        """{name: {"ms": total, "calls": n}}, slowest first. JSON-native."""
+        """{name: {"ms": total, "calls": n}}, slowest first, plus "cached": n
+        for a step that was reused from a cache at least once. JSON-native."""
         items = sorted(self._items(), key=lambda item: -item[1][0])
-        return {name: {"ms": round(seconds * 1000, 1), "calls": calls} for name, (seconds, calls) in items}
+        with self._lock:
+            cached = dict(self._cached)
+        return {name: {"ms": round(seconds * 1000, 1), "calls": calls,
+                       **({"cached": cached[name]} if cached.get(name) else {})}
+                for name, (seconds, calls) in items}
 
     def summary(self, limit: int = 12) -> str:
         parts = [f"{name}={entry['ms']:.0f}ms/{entry['calls']}" for name, entry in list(self.as_dict().items())[:limit]]
@@ -78,6 +97,9 @@ class _NullTimings(Timings):
     """The no-op `current()` when nothing is being measured on this thread."""
 
     def add(self, name: str, seconds: float, calls: int = 1) -> None:  # noqa: D401 - deliberately nothing
+        return
+
+    def cached(self, name: str, count: int = 1) -> None:  # noqa: D401 - deliberately nothing
         return
 
 

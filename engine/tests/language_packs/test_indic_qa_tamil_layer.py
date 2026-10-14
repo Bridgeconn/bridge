@@ -10,6 +10,7 @@ from collections import Counter
 
 import pytest
 
+from tc_ai_bridge import check_timing
 from tc_ai_bridge.language_packs import default_pack, indic_qa_adapter, indic_qa_tamil, indic_qa_vendor
 from tc_ai_bridge.language_packs.loader import load_pack
 from tc_ai_bridge.language_packs.registry import packs_dir
@@ -188,3 +189,26 @@ def test_a_books_layer_findings_do_not_depend_on_the_books_checked_before_it():
     run({"5": {"1": "இந்த தேசம் இந்த தேசம் இந்த தேசம் அவனைத் தேவன்"}}, book="MAT")
     after, _ = run(gen)
     assert [(f["id"], f["message"]) for f in alone] == [(f["id"], f["message"]) for f in after]
+
+
+def test_an_edit_that_moves_no_word_across_irv_min_keeps_the_index_and_finds_the_same():
+    """#271: when a book's counts change but no word crosses irv_min, the
+    suggestion index build_index would make is the one held, so it is not
+    rebuilt; only classify()'s caches are cleared. The held index equals a
+    fresh build, and the findings equal a checker built from scratch."""
+    gen = {"1": {"27": "அவனைத் தேவசாயலாகவே சிருஷ்டித்தார்", "28": "இந்த தேசம் கீல் பூசு"}}
+    edited = {"1": {**gen["1"], "28": gen["1"]["28"] + " தேசம்"}}  # one more of a common word
+    indic_qa_adapter.release()
+    run(gen)
+    timings = check_timing.Timings()
+    with check_timing.activate(timings):
+        kept, _ = run(edited)
+    assert timings.as_dict()["lqa.indicqa.build_index"] == {"ms": 0.0, "calls": 0, "cached": 1}
+    checker = indic_qa_adapter._RESIDENT.checker
+    held = (list(checker.index.words), dict(checker.index.index))
+    checker.build_index()
+    assert (list(checker.index.words), dict(checker.index.index)) == held
+    indic_qa_adapter.release()
+    rebuilt, _ = run(edited)
+    assert [(f["id"], f["message"], f.get("suggestions")) for f in kept] == \
+        [(f["id"], f["message"], f.get("suggestions")) for f in rebuilt]

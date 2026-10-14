@@ -353,6 +353,31 @@ class LoadedChecker:
     built_for: dict[str, Counter] = field(default_factory=dict)
     # The one book whose live text replaced its snapshot share, if any.
     live_book: str | None = None
+    # (lexicon generation, settings generation) at the last full build_index.
+    index_state: tuple[int, int] | None = None
+
+
+def _same_index(loaded: LoadedChecker, previous: Counter, counts: Counter) -> bool:
+    """Whether build_index would rebuild the index the checker already holds,
+    after the open book's counts moved from `previous` to `counts` (#271).
+    Its sources are the lexicon's words (lemma_min), its extra words, and every
+    IRV word the lexicon knows that occurs at least irv_min times; so with the
+    lexicon and the settings unchanged since the last build, and no changed
+    word crossing irv_min, the same sorted sources give the same index. A
+    language with an on_build_index hook (hi, ml: consistency clusters from
+    counts) is always rebuilt."""
+    checker = loaded.checker
+    if checker.lang.on_build_index or loaded.index_state != (checker.lex.generation, checker.settings_gen):
+        return False
+    irv_min = checker.settings["suggest"]["irv_min"]
+    for word in set(previous) | set(counts):
+        delta = counts.get(word, 0) - previous.get(word, 0)
+        if not delta:
+            continue
+        after = checker.irv_count.get(word, 0)
+        if ((after - delta) >= irv_min) != (after >= irv_min) and checker.lex.known(word):
+            return False
+    return True
 
 
 _LOCK = threading.Lock()
@@ -477,6 +502,24 @@ def release(keep: str | None = None) -> None:
             gc.collect()
 
 
+def checker_key(pack: RulePack) -> str:
+    """What a resident checker is built from (_resident's key) as one string:
+    the pack, its version and every checker setting, project overrides
+    included, which RulePack.fingerprint() does not cover. A cached book
+    result of the checker is valid only under the same key (#271)."""
+    return json.dumps([pack.name, pack.version, _settings(pack)], sort_keys=True, ensure_ascii=False)
+
+
+def is_resident(pack: RulePack, book: str) -> bool:
+    """Whether the resident checker is `pack`'s, under its current settings,
+    holding `book`'s live text: what the panel's Book words list reads. A pass
+    that reuses its cached book result must still leave this true, so it runs
+    the checker again when it is not (another book or pack was checked)."""
+    key = (pack.name, pack.version, json.dumps(_settings(pack), sort_keys=True))
+    with _LOCK:
+        return _RESIDENT is not None and _RESIDENT.key == key and _RESIDENT.live_book == book_key(book)
+
+
 def _resident(pack: RulePack, book: str) -> LoadedChecker:
     """The pack's checker, holding the IRV snapshot plus at most one live book.
     A pass over another book starts again from the snapshot: otherwise a book
@@ -526,12 +569,28 @@ def _verse_numbers(verse: str) -> tuple[int, int | None]:
     return first, int(last) if last else None
 
 
-def _runs(lifted: Any, base: int, length: int) -> list[tuple[int, int]]:
+# (raw text, base, length) -> its runs: a book pass splits every line again,
+# though only an edited verse's lines can split differently (#271). Bounded by
+# clearing; a line's runs are a pure function of its raw text.
+_RUNS: dict[tuple[str, int, int], list[tuple[int, int]]] = {}
+RUNS_MEMO = 8192
+
+
+def _runs(lifted: Any, base: int, length: int, raw: str | None = None) -> list[tuple[int, int]]:
     """The text runs of one physical line, as (start, end) in the line: a run
     ends where lifted markup was (the next visible character does not follow
     the previous one in the raw verse). indic-qa's runs end at every marker
     too, and some of its rules work per run (Malayalam's grouped encoding fix);
-    for adjacency it joins the runs of a line into one stream, as here."""
+    for adjacency it joins the runs of a line into one stream, as here.
+    `raw`, the text `lifted` was lifted from, memoizes the answer."""
+    if raw is not None:
+        key = (raw, base, length)
+        known = _RUNS.get(key)
+        if known is None:
+            if len(_RUNS) >= RUNS_MEMO:
+                _RUNS.clear()
+            known = _RUNS[key] = _runs(lifted, base, length)
+        return known
     if length == 0:
         return [(0, 0)]
     index = lifted.raw_index
@@ -544,15 +603,16 @@ def _runs(lifted: Any, base: int, length: int) -> list[tuple[int, int]]:
     return out
 
 
-def _footnote_texts(raw: str) -> tuple[list[tuple[str, int]], int]:
+def _footnote_texts(raw: str, notes: Any = None) -> tuple[list[tuple[str, int]], int]:
     """([(text, raw offset)], skipped) for the prose parts of a verse's
-    footnotes. usfm_verse.lift_verse is the reader (gotcha 14); a part's text
-    is cut verbatim from the note, so it is found again inside the note's own
-    raw range by plain string search. A part that cannot be found is skipped
-    and counted, never guessed."""
+    footnotes. usfm_verse.lift_verse is the reader (gotcha 14); `notes`, when
+    the verse was lifted already, are its notes (no second lifting, #271). A
+    part's text is cut verbatim from the note, so it is found again inside the
+    note's own raw range by plain string search. A part that cannot be found
+    is skipped and counted, never guessed."""
     out: list[tuple[str, int]] = []
     skipped = 0
-    for note in lift_verse(raw).notes:
+    for note in (lift_verse(raw).notes if notes is None else notes):
         if note.kind != "footnote":
             continue
         cursor = note.raw_start
@@ -601,7 +661,7 @@ def build_book(book: str, chapters: dict[str, dict[str, Any]], *, lift: Callable
             base = 0
             for piece in lifted.visible.split("\n"):
                 line_no += 1
-                segs = [ud.Seg("t", piece[a:b], a, "", "heading", 0) for a, b in _runs(lifted, base, len(piece))]
+                segs = [ud.Seg("t", piece[a:b], a, "", "heading", 0) for a, b in _runs(lifted, base, len(piece), text)]
                 refs[len(lines)] = LineRef(chapter, verse, text, lifted, base, "heading", (), k)
                 lines.append(ud.Line(line_no, piece, "s", "s", n, number, last, f"{book} {n}:{verse}", segs, [],
                                      (n, previous, None, "s")))
@@ -628,14 +688,14 @@ def build_book(book: str, chapters: dict[str, dict[str, Any]], *, lift: Callable
             if lifted is None:
                 continue
             number, last = _verse_numbers(verse)
-            parts, skipped = _footnote_texts(text) if footnotes else ([], 0)
+            parts, skipped = _footnote_texts(text, lifted.notes) if footnotes else ([], 0)
             skipped_notes += skipped
             base = 0
             for k, piece in enumerate(lifted.visible.split("\n")):
                 line_no += 1
                 ref = f"{book} {n}:{verse}"
                 style, para = ("v", "p") if k == 0 else ("q", "q")
-                segs = [ud.Seg("t", piece[a:b], a, "", "verse", 0) for a, b in _runs(lifted, base, len(piece))]
+                segs = [ud.Seg("t", piece[a:b], a, "", "verse", 0) for a, b in _runs(lifted, base, len(piece), text)]
                 note_runs: list[tuple[int, int]] = []
                 if k == 0:
                     # Each footnote part is its own stream, placed after the line's
@@ -772,15 +832,25 @@ def profile_findings(pack: RulePack, book: str, chapters: dict[str, dict[str, An
         with timings.step("lqa.indicqa.index_book"):
             checker.index_book(key, synthetic)
         counts = checker.book_count.get(key, Counter())
-        if loaded.built_for.get(key) != counts:
+        previous = loaded.built_for.get(key)
+        if previous != counts:
             # A new or changed word can start or join a consistency cluster, and
             # build_index is where clusters are made; it also clears classify()'s
             # cache, which is keyed by generation, not by counts. Unchanged text
             # (a decision, a status refresh) needs neither.
-            with timings.step("lqa.indicqa.build_index"):
-                checker.build_index()
+            if previous is not None and _same_index(loaded, previous, counts):
+                # The suggestion index build_index would make is the one held:
+                # only the caches it clears are stale (#271).
+                timings.cached("lqa.indicqa.build_index")
+                checker._cache.clear()
+                checker._rule_cache.clear()
+            else:
+                with timings.step("lqa.indicqa.build_index"):
+                    checker.build_index()
+                loaded.index_state = (checker.lex.generation, checker.settings_gen)
             loaded.built_for = {key: Counter(counts)}
         occurrences: Counter = Counter()
+        ov_table = ov_reference.verses(dictionary) if layer and dictionary is not None else None
         # The general corpus (#246): consulted after the checker, in Bridge's
         # code. The slip rule reports a word once per book, at its first place.
         with timings.step("lqa.indicqa.corpus_load"):
@@ -854,8 +924,8 @@ def profile_findings(pack: RulePack, book: str, chapters: dict[str, dict[str, An
                         finding["context"] = context
                     if context == "heading":
                         finding["contextText"] = ref.lifted.visible
-                    if layer and dictionary is not None:
-                        reference = ov_reference.reference(dictionary, book, ref.chapter, ref.verse)
+                    if ov_table is not None:
+                        reference = ov_reference.lookup(ov_table, book, ref.chapter, ref.verse)
                         if reference is not None:
                             finding["reference"] = reference
                     findings.append(finding)

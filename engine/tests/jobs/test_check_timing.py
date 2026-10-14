@@ -45,4 +45,23 @@ def test_current_is_the_activated_timings_on_this_thread_only():
 def test_null_timings_records_nothing():
     with check_timing.NULL.step("ignored"):
         pass
+    check_timing.NULL.cached("ignored")
     assert check_timing.NULL.as_dict() == {}
+
+
+def test_a_reused_step_reports_cached_beside_its_runs():
+    """#271: a step served from a cache shows `cached`, with no time and no call;
+    a step never reused carries no `cached` key at all."""
+    timings = check_timing.Timings()
+    timings.add("ran", 0.004)
+    timings.cached("reused")
+    timings.add("both", 0.002)
+    timings.cached("both", 3)
+    result = timings.as_dict()
+    assert result["ran"] == {"ms": 4.0, "calls": 1}
+    assert result["reused"] == {"ms": 0.0, "calls": 0, "cached": 1}
+    assert result["both"] == {"ms": 2.0, "calls": 1, "cached": 3}
+    merged = check_timing.Timings()
+    merged.cached("both")
+    merged.merge(timings)
+    assert merged.as_dict()["both"] == {"ms": 2.0, "calls": 1, "cached": 4}
