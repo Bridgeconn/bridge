@@ -20279,3 +20279,62 @@ also keeps a bridged verse like `3-4` intact, and old 0:0 findings still land on
 **Tests.** `test_project_report_local_findings.py` seeds the snapshot instead of the dead section,
 and adds the writer-and-reader test: a Greek Room chapter job's Wildebeest finding reaches the
 report's exception queue and `triage.persisted_findings` at 1:1, and no `wildebeest` section exists.
+
+## 2026-10-14 — Collection QA: the skip hash covers every check input; the final stage survives a restart (#274)
+
+**What.** Code: ea944d2.
+- A Collection QA run no longer skips a book whose chapter text is unchanged when something else its checks
+  read has changed.
+- The whole-collection stage is kept and shown again after a restart.
+- `qaRuns[]` is written to every sibling's `collection.json`.
+
+**Why.** Benz's check inventory (2026-10-13). The skip rule hashed only `<book>/<N>.json`. So a book was
+skipped after any of these changed: a pack version, overrides, checker settings, the termbase, house
+style, a headings file or alignment. `qaFinalStage` held only a summary (completedAt, termbase coverage,
+the names count). `collection.qaStatus` after a restart reported no final stage at all. And `qaRuns[]`
+lived only in the copy of the book that was open when the run started, so opening another book re-ran
+everything.
+
+**How.**
+- `collection_jobs.book_content_hash` also hashes:
+  - `<book>/<N>.headings.json`;
+  - `.apps/translationCore/alignmentData/<book>/<N>.json`;
+  - every file under `.apps/translationCoreAI/language-packs/` (overrides and checker settings);
+  - the manifest's `target_language` and `language_qa`;
+  - each bundled pack's `pack.json` version, with the common rules' `RULE_VERSION`;
+  - the book's `human_decisions` rows of kind terminology and housestyle, read through
+    `tc_project._peek_workbench` (read only, nothing created).
+
+  Every pack's version is included because a pack can also be chosen by script evidence.
+- Each recorded run carries `hashCovers` (2). An entry without it covered the chapter files only, so it is
+  stale and runs again: the first run after this build re-checks every book once.
+- `record_collection_qa_run` writes the open book's copy first, which must succeed, then every sibling's.
+  A sibling copy that cannot be written is skipped, and that sibling's next run re-checks its books.
+  `collection_final_stage()` reads `qaFinalStage`.
+- `_collection_final_stage` records the whole stage, in the shape the panel reads. Cross-book names and
+  house-style proposals are capped at `FINAL_STAGE_ROWS` (500, the cap the names rows already had).
+  `collection_check_status`'s idle snapshot returns it. These two handlers are in `bridge_service.py`,
+  which is Revant's this week; Benz decided to edit them, and they were pulled, edited and pushed at once.
+- **Measured:** `book_content_hash` on the IRV Genesis import (641 KB of chapters, 9.5 MB of alignment)
+  takes 57–62 ms. That is a few seconds over a 66-book run, and 2–3 s for a run that skips every book.
+
+**Not done here.** Reloading the dashboard's book progress when a run ends needs `CollectionQaPanel.svelte`
+and `App.svelte`, which are Revant's this week. The exact change is on #274. Two more inputs of a book's
+Language QA are still not in the hash, the same class of gap:
+- learned fixes, which are shared across the collection;
+- decisions recorded since the run, which only change the stored counts.
+
+They are reported on #274, not added.
+
+**Gates.**
+- Engine `pytest -n auto`: 5,393 passed, 4 failed. The 4 passed when re-run alone and none touches a
+  collection run or the hash: `test_progress_dimensions` clean count, `test_projects_list_management`
+  summed progress, `test_stdio_e2e` uroman-after-ready, `test_dispatcher_releases_db_handles`.
+- New tests:
+  - the hash moves with each input (pack version, overrides, headings, alignment, the Language QA setting,
+    a termbase rule) and returns when the change is undone;
+  - an entry without `hashCovers` is re-run;
+  - a recorded run reaches every sibling's file;
+  - `tests/service/test_collection_qa_restart.py`: a new engine shows the final stage from either book, and
+    a termbase rule re-runs only its book.
+- `build-sidecars.ps1` + `smoke_sidecars.py`: passed. Frontend untouched; its gates were not run.
