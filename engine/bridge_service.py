@@ -45,6 +45,7 @@ from tc_ai_bridge.tc_project import (
 )
 from tc_ai_bridge.project_import import (
     apply_resource_materialization,
+    collection_final_stage,
     collection_projects,
     collection_qa_runs,
     ensure_bridge_original_language,
@@ -55,7 +56,8 @@ from tc_ai_bridge.project_import import (
     materialize_lazy_project,
     record_collection_qa_run,
 )
-from collection_jobs import CollectionJobConflict, CollectionJobError, CollectionJobManager, CollectionJobSpec
+from collection_jobs import (FINAL_STAGE_ROWS, CollectionJobConflict, CollectionJobError, CollectionJobManager,
+                             CollectionJobSpec)
 from tc_ai_bridge.housestyle import (
     LEARN_IGNORES, PREFER_USES, PROPOSE_PROJECT_BOOKS, PROPOSE_RULE_DECISIONS, PROPOSE_RULE_IGNORE_RATE,
     HouseStyleLearner, bundled_seed, name_suggestions, project_proposals,
@@ -5854,11 +5856,11 @@ class BridgeEngine:
             stage["crossBookNames"] = self._cross_book_names(texts)
         stage["completedAt"] = datetime.now(timezone.utc).isoformat()
         try:
+            # The whole stage, as the panel reads it, so it shows after a
+            # restart (#274); proposals are capped as the names rows are.
             record_collection_qa_run(collection_path, {}, final_stage={
-                "completedAt": stage["completedAt"],
-                "termbaseCoverage": stage["termbaseCoverage"],
-                "crossBookNames": (stage["crossBookNames"] or {}).get("summary"),
-            })
+                **stage, "houseStylePropagation": {**stage["houseStylePropagation"],
+                                                   "proposals": proposals[:FINAL_STAGE_ROWS]}})
         except Exception as exc:
             stage["recordError"] = str(exc)
         return stage
@@ -5883,14 +5885,15 @@ class BridgeEngine:
         rows = [{"explanation": f.explanation, "originalText": f.original_text,
                  "suggestedReplacement": f.suggested_replacement,
                  "evidence": [{"label": e.label, "value": e.value} for e in f.evidence][:6]}
-                for f in findings[:500]]
+                for f in findings[:FINAL_STAGE_ROWS]]
         return {"available": True, "findings": rows,
                 "summary": {"available": True, "count": len(findings)}}
 
     def collection_check_status(self, job_id: str = "") -> dict[str, Any]:
         """The run's snapshot; with no run in this session, an idle one built
-        from the recorded `qaRuns[]`, so the Collection QA screen shows each
-        book's last run after a restart."""
+        from the recorded `qaRuns[]` and `qaFinalStage`, so the Collection QA
+        screen shows each book's last run and the last whole-collection stage
+        after a restart (#274)."""
         try:
             return self._collection_jobs.status(job_id)
         except CollectionJobError:
@@ -5916,7 +5919,8 @@ class BridgeEngine:
         return {"jobId": "", "state": "idle", "paused": False, "collectionPath": collection_path,
                 "checks": [], "totalBooks": len(books),
                 "completedBooks": sum(1 for b in books if b["state"] == "done"),
-                "percent": 0, "currentBook": None, "books": books, "finalStage": None,
+                "percent": 0, "currentBook": None, "books": books,
+                "finalStage": collection_final_stage(collection_path),
                 "elapsedSeconds": 0, "estimatedRemainingSeconds": None, "error": None,
                 "createdAt": None, "finishedAt": None}
 

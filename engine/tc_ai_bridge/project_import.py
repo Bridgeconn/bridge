@@ -988,12 +988,37 @@ def collection_qa_runs(project_root: str | Path) -> dict[str, dict[str, Any]]:
     return {str(r.get("bookId")): r for r in runs if isinstance(r, dict) and r.get("bookId")}
 
 
+def collection_final_stage(project_root: str | Path) -> dict[str, Any] | None:
+    """The last whole-collection stage recorded in this project's
+    `.bridge/collection.json` (`qaFinalStage`), or None. A stage recorded
+    before #274 holds only its summary: no proposals, no cross-book rows."""
+    data = _read_json(Path(project_root).resolve() / _COLLECTION_PATH)
+    stage = data.get("qaFinalStage") if isinstance(data, dict) else None
+    return stage if isinstance(stage, dict) else None
+
+
 def record_collection_qa_run(project_root: str | Path, entry: dict[str, Any],
                              final_stage: dict[str, Any] | None = None) -> None:
     """Upsert one book's run into `qaRuns[]` (one entry per book, the latest),
-    and optionally the whole-collection stage's summary under `qaFinalStage`.
-    Every other key of the file is kept as it was; the write is atomic."""
-    path = Path(project_root).resolve() / _COLLECTION_PATH
+    and optionally the whole-collection stage under `qaFinalStage`, in this
+    book's `.bridge/collection.json` and then in every sibling's (#274): a run
+    is the collection's, so whichever book is opened next sees it. This book's
+    copy must be written; a sibling whose copy cannot be is skipped (it falls
+    back to running its books again). Every other key of each file is kept as
+    it was; each write is atomic."""
+    root = Path(project_root).resolve()
+    _upsert_collection_qa(root / _COLLECTION_PATH, entry, final_stage)
+    for sibling in _collection_projects(root):
+        folder = Path(str(sibling.get("path") or ""))
+        if folder == root or not (folder / _COLLECTION_PATH).is_file():
+            continue
+        try:
+            _upsert_collection_qa(folder / _COLLECTION_PATH, entry, final_stage)
+        except (OSError, ValueError):
+            continue
+
+
+def _upsert_collection_qa(path: Path, entry: dict[str, Any], final_stage: dict[str, Any] | None) -> None:
     data = _read_json(path) if path.is_file() else {}
     if not isinstance(data, dict):
         data = {}
