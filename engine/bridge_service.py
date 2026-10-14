@@ -5558,6 +5558,11 @@ class BridgeEngine:
                 # text gets the same id across runs. Not on the offsets: an
                 # edit earlier in the verse shifts them (#273).
                 occurrences[(f.check_type, f.original_text)] += 1
+                # The adapter knows only the reference string; anchor the
+                # finding to its verse as _qaissue_to_finding does, or every
+                # stored Wildebeest finding said chapter 0, verse 0 (#275).
+                f.chapter = int(next(iter(re.findall(r"\d+", str(chapter))), "0"))
+                f.verse = int(next(iter(re.findall(r"\d+", str(verse))), "0"))
                 f.id = _stable_finding_id(
                     chapter=chapter, verse=verse, engine=f.engine, check_type=f.check_type,
                     disambiguator=f"{f.original_text}#{occurrences[(f.check_type, f.original_text)]}",

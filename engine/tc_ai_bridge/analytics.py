@@ -47,23 +47,35 @@ def _local_findings_by_verse(project) -> dict[tuple[str, str], list[dict[str, An
     and filtered to still-open status via the same progress rollup
     _verse_coverage() reads for the coverage bar — so the exception queue
     and the coverage bar agree on what still needs attention instead of
-    reading two different pictures of the same data (issue #24)."""
+    reading two different pictures of the same data (issue #24).
+
+    Wildebeest findings come from the chapter snapshots a Greek Room run saves
+    (#252, #272), not a cache section: none was ever written outside tests,
+    so the report never showed one (#275)."""
     cache = project.load_check_cache()
     rollup = project.load_progress_rollup()
     chapters_rollup = rollup.get('chapters', {}) if isinstance(rollup.get('chapters'), dict) else {}
     by_verse: dict[tuple[str, str], list[dict[str, Any]]] = {}
-    for section in ('wildebeest', 'usfm', 'names'):
-        for f in (cache.get(section) or {}).get('findings', []) or []:
-            chapter = str(f.get('chapter', ''))
-            verse = str(f.get('verse', ''))
-            chapter_entry = chapters_rollup.get(chapter)
-            verse_map = chapter_entry.get('verses', {}) if isinstance(chapter_entry, dict) else {}
-            verse_entry = verse_map.get(verse) if isinstance(verse_map, dict) else None
-            statuses = verse_entry.get('findings', {}) if isinstance(verse_entry, dict) else {}
-            status = statuses.get(str(f.get('id', '')), 'open') if isinstance(statuses, dict) else 'open'
-            if status != 'open':
-                continue
-            by_verse.setdefault((chapter, verse), []).append(f)
+    # (chapter, verse, finding): a snapshot finding by the verse the job
+    # checked, which keeps a bridged verse like '3-4' intact; a cached one by
+    # its own fields.
+    found = [
+        (str(chapter), str(verse), f) for chapter in project.chapters()
+        for verse, findings in project.load_check_findings_snapshot(chapter).items()
+        for f in findings if isinstance(f, dict) and f.get('engine') == 'wildebeest'
+    ]
+    for section in ('usfm', 'names'):
+        found += [(str(f.get('chapter', '')), str(f.get('verse', '')), f)
+                  for f in (cache.get(section) or {}).get('findings', []) or [] if isinstance(f, dict)]
+    for chapter, verse, f in found:
+        chapter_entry = chapters_rollup.get(chapter)
+        verse_map = chapter_entry.get('verses', {}) if isinstance(chapter_entry, dict) else {}
+        verse_entry = verse_map.get(verse) if isinstance(verse_map, dict) else None
+        statuses = verse_entry.get('findings', {}) if isinstance(verse_entry, dict) else {}
+        status = statuses.get(str(f.get('id', '')), 'open') if isinstance(statuses, dict) else 'open'
+        if status != 'open':
+            continue
+        by_verse.setdefault((chapter, verse), []).append(f)
     return by_verse
 
 
