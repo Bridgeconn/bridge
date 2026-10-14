@@ -56,12 +56,19 @@ class GreekRoomEngine:
             names.preload_async()
 
     def check_verse(self, *, project_id: str, lang_code: str, ref: str,
-                     text: str, checks: list[str]) -> list[QaFinding]:
+                     text: str, checks: list[str],
+                     params: dict[str, Any] | None = None) -> list[QaFinding]:
         """Run the requested checks (by adapter/engine name) against one verse.
 
         A missing/unavailable adapter is skipped, not fatal — the whole
         request should never fail just because one upstream engine (e.g.
         USFM checker, which needs more integration work) isn't ready yet.
+
+        `params` is handed to every adapter as is. The one key read today is
+        `lifted`, the verse's `tc_ai_bridge.usfm_verse.LiftedVerse`, which
+        lets the Wildebeest adapter's token-level checks (#204) see past
+        USFM markup; the caller lifts, this package does not import
+        tc_ai_bridge (see WildebeestAdapter._token_level_findings).
         """
         findings: list[QaFinding] = []
         run_id = str(uuid.uuid4())
@@ -72,7 +79,7 @@ class GreekRoomEngine:
                 continue
             result = adapter.check_verse(
                 project_id=project_id, lang_code=lang_code, ref=ref,
-                text=text, params={},
+                text=text, params=dict(params or {}),
             )
             for f in result:
                 f.run_id = run_id

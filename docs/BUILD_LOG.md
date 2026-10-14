@@ -20401,3 +20401,60 @@ Revant chose to close #278 as delivered (DECISIONS 2026-10-14). Two tests pin it
 decided first on two linked devices is one `row_key` in the hub's event log plus one conflict, and
 a book with a decision made before linking is refused with its id and rows unchanged and nothing
 on the hub. No code change and no migration.
+
+## 2026-10-14 — Greek Room: a lone symbol and a whole word in another script are findings; NFD on the mock too (#204, #205)
+
+**What the reports said.** QA (JesniJ, 2026-10-01) imported `café` with the `é` in NFD and saw no
+Greek Room finding (#205); and saw `@`, `#` and a standalone `ദൈവം` in an English verse pass while
+`ദൈവംcalled` was flagged (#204).
+
+**What reproduced, and what did not.** Against wildebeest-nlp 0.9.2 in the 3.12 venv, and against
+the frozen engine inside the installed 0.17.0 (`engine.info`: real engine, 0.9.2), the reporter's own
+USFM imported and checked through the protocol gives the NFD finding on both check paths: the live
+`verse.runChecks` and the chapter job, with raw-string offsets 21–23 and the NFC `é` as the
+suggestion. The adapter has read Wildebeest's `non-canonical` since 20 August, before the report. So
+#205 is not reproducible on main or on 0.17.0 at the engine; what the reporter looked at on 1 October
+cannot be recovered from the issue, and the one candidate is the Wildebeest anchoring that #275 fixed
+today (every stored Wildebeest finding said chapter 0, verse 0, so the report and triage readers
+never showed one). The installed-app walk of the same steps stays with #156: Benz's own Bridge
+instance was open on this machine, and a second instance launched on a scratch `LOCALAPPDATA` opened
+its window but never started a WebView2 (no `EBWebView` folder, no debugging port), twice.
+
+#204 reproduced exactly. Wildebeest's report holds the raw material and nothing in it was a finding:
+a lone `@` is filed under `pattern` as "TOKENS WITH @ (U+0040 COMMERCIAL AT)" — beside "TOKENS WITH .
+(U+002E FULL STOP)" listing `dark.`, because its "characters of interest" include `.`, `,`, `-`, `'`
+and `?` — and a standalone Malayalam word in an English verse is a count under `letter-script`,
+with no per-token entry. The mock, for its part, flagged the first Latin letter anywhere in a verse
+that also had Tamil or Devanagari (so a whole English word in a Tamil verse was "mixed script") and
+knew no other script at all.
+
+**What changed** (`wildebeest_adapter.py`, `engine.py`; the vendored tree untouched):
+- `wildebeest.special_character`: a whitespace token holding a symbol from `_SUSPICIOUS_SYMBOLS`
+  (`@ # $ % & * + ~ _ | ¦ § € £ ¥ ₪ ¢ ¤ ₨ ₹ µ`), a subset of Wildebeest's characters of interest
+  chosen so ordinary sentence punctuation, dashes, quotes, `3:16`, `1/2` and ellipses never fire.
+  Once per token, flagged text the token, offsets into the raw string.
+- `wildebeest.foreign_script`: a whole word whose letters are all in one script that is not the
+  verse's expected script — the language id's usual script (the same table as
+  `language_qa.LANGUAGE_SCRIPTS`, copied because the adapter package stays free of `tc_ai_bridge`
+  imports), or for an unknown id the script of a strict majority of the verse's letters, or nothing.
+  A token mixing scripts is left to Wildebeest's `notable-token`. Evidence names the basis.
+- Both run on the real path and the mock; the mock also gets NFD detection (`_non_canonical_runs`,
+  one finding per distinct form with the NFC suggestion, as the real report is) and its mixed-script
+  check is per token across every script the helper knows.
+- **Markup.** A finding's offsets are into the raw stored verse, and an aligned or styled import keeps
+  `\wj ...\wj*`, `\f ...\f*`, `\zaln-s |x-strong=...` verbatim there — Luke IRV has markup in 720 of
+  1,140 verses. Wildebeest's own checks tokenise at punctuation and are not misled; a token scan
+  would flag `\zaln-s` as a Latin word and `\wj*` as an asterisk. So the scan runs on the lifted
+  plain text when the caller passes `params={"lifted": lift_verse(text)}` (`GreekRoomEngine.check_verse`
+  now forwards `params`; the adapter duck-types `plain` and `raw_span`, no new import), mapping each
+  span back to raw offsets; a `@` inside a footnote is not verse text and is not flagged. Without it,
+  a verse carrying any marker is left alone by these two checks rather than mis-scanned. **The
+  dispatcher does not pass it yet** — `bridge_service.py` is Revant's this week; the one-line change
+  at the Greek Room call site is written on #204.
+
+**Measured.** Both Tamil IRV books (1,244 verses, language `ta`, lifted): no finding of any kind,
+before and after. The reporter's cases, controls and markup cases: `greek_room_engine/tests/
+test_wildebeest_real.py` (real, 14), `test_wildebeest_mock.py` (mock, 9),
+`tests/service/test_greek_room_unicode_protocol.py` (import → live check and job, 4, runs on either
+engine). `pattern` and `char-conflict` stay unwired as categories (#125): `pattern`'s shape is now
+verified, `char-conflict`'s is not.
