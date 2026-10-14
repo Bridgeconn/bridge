@@ -28,7 +28,7 @@
     setPendingAcceptFinding, applyLanguageQaSuggestedFix,
   } from "../verseEditor";
   import { alignmentOpen, alignmentKey, openAlignment } from "../alignmentUi";
-  import { greekRoomVerseRunning, runVerseGreekRoom } from "../verseChecks";
+  import { greekRoomChapterSummary, greekRoomVerseRunning, runVerseGreekRoom } from "../verseChecks";
   import { aiReviewRequest, aiJobActive } from "../aiReviewUi";
   import { setSidePanel } from "../editorPrefs";
   import type { AiExplainResult, AIReviewJobSnapshot, FindingStatus, QaFinding } from "../types/finding";
@@ -541,6 +541,24 @@
 
   type ReviewTab = "greekroom" | "tntw" | "lqa" | "ai";
   let activeTab: ReviewTab = "greekroom";
+
+  // #202: a Greek Room result lands where the reader is looking. When a run
+  // finishes for the selected verse -- the button here, or a chapter or book
+  // job writing this verse's result -- the panel shows the Greek Room tab,
+  // so the finding is on screen without a click on the verse's mark. Only on
+  // the transition: a reader who then moves to another tab is left there.
+  // Selecting a verse that ran earlier is not a landing: the switch happens
+  // only when, for the same selected verse, the run goes from running to
+  // done or from not run to run.
+  let greekRoomSeen = { key: "", ran: false, checking: false };
+  $: {
+    const now = { key: selectedKey, ran: greekRoomRan, checking: greekRoomChecking };
+    const sameVerse = now.key !== "" && now.key === greekRoomSeen.key;
+    const finished = sameVerse && greekRoomSeen.checking && !now.checking && now.ran;
+    const arrived = sameVerse && !greekRoomSeen.ran && now.ran && !now.checking;
+    if (finished || arrived) activeTab = "greekroom";
+    greekRoomSeen = now;
+  }
   // The three real Greek Room engines (see each adapter's own engine_name:
   // wildebeest_adapter.py, usfm_adapter.py, names_adapter.py) — everything
   // else on a finding's `engine` field (tN/tW/alignment's own QAIssue.source,
@@ -714,6 +732,15 @@
                 <span class="not-run">Not run on this verse yet. The Checks menu runs it for the chapter or the book.</span>
               {/if}
             </div>
+            <!-- #202: the chapter's result, visible without a click on any verse's mark. -->
+            <p class="chapter-summary" data-testid="greek-room-chapter-summary">
+              {#if $greekRoomChapterSummary.checkedVerses === 0}
+                Greek Room: not run in this chapter.
+              {:else}
+                Greek Room: {$greekRoomChapterSummary.openFindings} open in this chapter
+                · {$greekRoomChapterSummary.checkedVerses} of {$greekRoomChapterSummary.totalVerses} verses checked.
+              {/if}
+            </p>
             {#if greekRoomError}<p class="none failed">Greek Room could not run: {greekRoomError}</p>{/if}
             {#each grOpenFindings as f}
               <div class="finding source-{categoryClass(f.category)}">
@@ -1136,6 +1163,8 @@
   .run-greek-room { font-size: var(--fs-xs); font-weight: 600; padding: 3px 9px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--text); cursor: pointer; }
   .run-greek-room:disabled { opacity: 0.6; cursor: not-allowed; }
   .not-run { font-size: var(--fs-2xs); color: var(--text-2); }
+  /* #202: the chapter's Greek Room result, under the run button. */
+  .chapter-summary { margin: 4px 0 8px; font-size: var(--fs-xs); color: var(--text-2); }
   .decision-row button:disabled { opacity: .55; cursor: not-allowed; }
   .verse-actions { display: flex; gap: 6px; flex: 0 0 auto; }
   .edit-btn { padding: 5px 9px; font-size: var(--fs-2xs); font-weight: 700; border-radius: 6px; border: none; background: var(--accent-bg); color: var(--accent); cursor: pointer; white-space: nowrap; }

@@ -2,9 +2,9 @@
 // alignment save, a tN/tW selection, or Run Greek Room on the verse. The run's
 // groups replace only their own findings, the verse remembers what has run,
 // and its ✓ shows only once every selected check has.
-import { get, writable } from "svelte/store";
+import { derived, get, writable } from "svelte/store";
 import { bridge } from "./api/bridgeClient";
-import { checkGroupsByVerse, checkStatusByVerse, findingsByVerse, verseKey } from "./stores";
+import { chapterVerseNums, checkGroupsByVerse, checkStatusByVerse, currentChapter, findingsByVerse, verseKey } from "./stores";
 import { coversSelection, editorCheckList, groupsOf, mergeFindings } from "./checkSelection";
 import type { QaFinding } from "./types/finding";
 
@@ -55,3 +55,38 @@ export async function runVerseGreekRoom(chapter: string, verse: string): Promise
     greekRoomVerseRunning.set("");
   }
 }
+
+/** #202: where the result of a Greek Room run lands without a click on the
+ *  verse's mark. Per chapter: how many of its verses have had Greek Room run
+ *  (a verse run, a chapter or book job) and how many Greek Room findings are
+ *  open across them. Read by the Review panel's Greek Room tab, and meant for
+ *  the status bar beside Language QA (App.svelte). */
+export interface GreekRoomChapterSummary {
+  /** Verses of the chapter Greek Room has run on. */
+  checkedVerses: number;
+  /** Verses in the chapter. */
+  totalVerses: number;
+  /** Open Greek Room findings (Wildebeest, USFM, names) across the chapter. */
+  openFindings: number;
+}
+
+const GREEK_ROOM_ENGINES = new Set(["wildebeest", "usfm", "names"]);
+
+export function summarizeGreekRoomChapter(
+  chapter: string, verses: readonly string[], findings: Record<string, QaFinding[]>,
+  ran: Record<string, string[]>,
+): GreekRoomChapterSummary {
+  let checkedVerses = 0;
+  let openFindings = 0;
+  for (const verse of verses) {
+    const key = verseKey(chapter, verse);
+    if ((ran[key] ?? []).includes("wildebeest")) checkedVerses += 1;
+    openFindings += (findings[key] ?? []).filter((f) => GREEK_ROOM_ENGINES.has(f.engine) && f.status === "open").length;
+  }
+  return { checkedVerses, totalVerses: verses.length, openFindings };
+}
+
+export const greekRoomChapterSummary = derived(
+  [currentChapter, chapterVerseNums, findingsByVerse, checkGroupsByVerse],
+  ([chapter, nums, findings, ran]) => summarizeGreekRoomChapter(chapter, nums[chapter] ?? [], findings, ran),
+);

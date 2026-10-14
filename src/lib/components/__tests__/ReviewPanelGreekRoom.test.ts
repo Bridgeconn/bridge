@@ -19,7 +19,7 @@ vi.mock("../../api/bridgeClient", () => ({
 }));
 
 import ReviewPanel from "../ReviewPanel.svelte";
-import { checkGroupsByVerse, currentChapter, findingsByVerse, project, selectedVerse } from "../../stores";
+import { chapterVerseNums, checkGroupsByVerse, currentChapter, findingsByVerse, project, selectedVerse } from "../../stores";
 
 describe("ReviewPanel Greek Room tab", () => {
   beforeEach(() => {
@@ -56,5 +56,68 @@ describe("ReviewPanel Greek Room tab", () => {
     selectedVerse.set("3");
     expect(await screen.findByText(/An earlier decision on this item \(ignored\)/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Ignore/ })).toBeInTheDocument();
+  });
+});
+
+describe("ReviewPanel Greek Room landing (#202)", () => {
+  const finding = (id: string, engine = "wildebeest") => ({ id, engine, check: engine, status: "open",
+    severity: "medium", category: "unicode", check_type: "wildebeest.zero_width",
+    explanation: "Contains a zero-width/invisible character: ZERO WIDTH SPACE.", evidence: [] }) as never;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    project.set({ path: "/p", bookId: "tst" } as never);
+    currentChapter.set("1");
+    chapterVerseNums.set({ "1": ["1", "2", "3"] });
+    findingsByVerse.set({});
+    checkGroupsByVerse.set({});
+    runVerseChecks.mockResolvedValue([finding("zw-2")]);
+  });
+
+  afterEach(() => selectedVerse.set(null));
+
+  function activeTab(): string {
+    return (document.querySelector('[role="tab"][aria-selected="true"]') as HTMLElement).textContent?.trim() ?? "";
+  }
+
+  it("comes back to the Greek Room tab when the verse's run finishes while another tab is up", async () => {
+    let finish: (value: unknown) => void = () => undefined;
+    runVerseChecks.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    render(ReviewPanel);
+    selectedVerse.set("2");
+    await fireEvent.click(await screen.findByRole("button", { name: "Run Greek Room on this verse" }));
+    await fireEvent.click(screen.getByRole("tab", { name: /Language QA/ }));
+    expect(activeTab()).toMatch(/^Language QA/);
+    finish([finding("zw-2")]);
+    await waitFor(() => expect(activeTab()).toMatch(/^Greek Room/));
+    expect(await screen.findByText(/ZERO WIDTH SPACE/)).toBeInTheDocument();
+  });
+
+  it("switches when a chapter job writes the selected verse's result, and not on selecting a verse that ran earlier", async () => {
+    checkGroupsByVerse.set({ "1:1": ["wildebeest"] });
+    findingsByVerse.set({ "1:1": [finding("zw-1")] });
+    render(ReviewPanel);
+    selectedVerse.set("2");
+    await fireEvent.click(await screen.findByRole("tab", { name: /Language QA/ }));
+    // Selecting verse 1, which ran earlier, leaves the reader on their tab.
+    selectedVerse.set("1");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(activeTab()).toMatch(/^Language QA/);
+    // Back on verse 2, a chapter job lands its result: the Greek Room tab opens.
+    selectedVerse.set("2");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    findingsByVerse.update((all) => ({ ...all, "1:2": [finding("zw-2")] }));
+    checkGroupsByVerse.update((all) => ({ ...all, "1:2": ["wildebeest"] }));
+    await waitFor(() => expect(activeTab()).toMatch(/^Greek Room/));
+  });
+
+  it("states the chapter's result under the run button", async () => {
+    render(ReviewPanel);
+    selectedVerse.set("3");
+    expect((await screen.findByTestId("greek-room-chapter-summary")).textContent).toMatch(/not run in this chapter/);
+    findingsByVerse.set({ "1:1": [finding("zw-1")], "1:2": [finding("zw-2"), finding("tn-2", "local")] });
+    checkGroupsByVerse.set({ "1:1": ["wildebeest"], "1:2": ["wildebeest"] });
+    await waitFor(() => expect(screen.getByTestId("greek-room-chapter-summary").textContent?.replace(/\s+/g, " "))
+      .toMatch(/Greek Room: 2 open in this chapter · 2 of 3 verses checked/));
   });
 });

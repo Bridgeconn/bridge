@@ -20601,3 +20601,28 @@ targets the older edit, Undo on a fresh history targets the newest edit, and is 
 are undone. **Gates** as recorded on the issues. **Not run:** the desktop app; the drag path is
 real pointer events (alignmentDrag.ts, covered by its own tests) and the join buttons are plain
 clicks, but the layout of a joined column at 1366x768 belongs to the #156 walk.
+
+## 2026-10-14 — A Greek Room result lands where the reader is looking (#202)
+
+**Re-read against the manual Greek Room (#252).** The report (a U+200B finding visible only after a
+click on the verse's small red mark) predates #252; now that Greek Room runs from a button or the
+Checks menu, the result of that click needs a landing. Two pieces, both in Benz's files:
+- **The panel switches to the Greek Room tab when a run lands for the selected verse**
+  (`ReviewPanel.svelte`): the verse's own run finishing (even if the reader moved to another tab
+  while it ran), or a chapter or book job writing this verse's result. Only on that transition:
+  selecting a verse that ran earlier leaves the reader on whatever tab they had, and the marks
+  in the verse list were already drawn as each result landed.
+- **The chapter's result is stated under the run button**: "Greek Room: N open in this chapter ·
+  M of K verses checked", or "not run in this chapter". It reads `greekRoomChapterSummary`
+  (`verseChecks.ts`, a derived store over the chapter's findings and run records), which is
+  also what the status bar line beside Language QA should read.
+
+**Not done here, asked of Revant on the issue:** the status bar entry itself is in `App.svelte`
+(#272 is in that file this week); one line reading the store is written on #202.
+
+**Tests.** `ReviewPanelGreekRoom.test.ts` (3 new): a run finishing while Language QA is up brings
+the Greek Room tab back with the U+200B finding; a chapter job landing the selected verse's result
+switches, selecting an already-run verse does not; the summary line counts. `verseChecks.test.ts`
+(2): the summary counts open Greek Room findings only, across the chapter's verses, and checked
+verses by their run record. Gates as recorded on the issue. **Not run:** the desktop app; the
+reporter's sample book with U+200B is on the #156 walk.
