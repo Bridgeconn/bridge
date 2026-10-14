@@ -692,6 +692,8 @@ class BridgeEngine:
         self._collection_jobs = CollectionJobManager()
         self._housestyle_learner = HouseStyleLearner()
         self._language_qa = LanguageQaManager()
+        # #280: a live pass keeps the dashboard's Language QA clean count current.
+        self._language_qa.on_published = self._refresh_progress_language_qa
         self._ai_review_jobs = AIReviewJobManager()
         self._auto_align_jobs = auto_align_jobs.AutoAlignJobManager()  # #221
         self._analysis_jobs = AnalysisJobManager()
@@ -6268,6 +6270,52 @@ class BridgeEngine:
             project.save_progress_totals(rollup["totals"])
         except Exception:  # noqa: BLE001 -- bookkeeping never fails the write
             pass
+
+    def _refresh_progress_language_qa(self, project_path: str, by_verse: dict[str, dict[str, Any]]) -> None:
+        """#280: a background Language QA pass (after an edit, a decision, a
+        scoped Use or an undo) changed which verses are clean, and the
+        dashboard's clean count must not wait for the next check job. For each
+        verse the rollup already holds Language QA ids for (a check job ran the
+        stage there; no key claims nothing), the pass's open and decided
+        findings replace them, built as the check job builds them. Only
+        changed verses are written, then the totals, which refreshes the
+        workspace cache. Runs on the Language QA worker after the pass, so no
+        extra pass. Best-effort: bookkeeping never fails the pass."""
+        project = self.project
+        if project is None or str(project.path) != str(project_path):
+            return
+        try:
+            rollup = project.load_progress_rollup()
+            changed: dict[str, dict[str, tuple[list[str], dict[str, str]]]] = {}
+            for chapter, chapter_entry in rollup.get("chapters", {}).items():
+                for verse, verse_entry in chapter_entry.get("verses", {}).items():
+                    old_ids = verse_entry.get("languageQaFindingIds")
+                    if not isinstance(old_ids, list):
+                        continue
+                    slot = by_verse.get(f"{chapter}:{verse}") or {}
+                    shown = [f for f in slot.get("findings") or () if isinstance(f, dict) and f.get("id")]
+                    hidden = [f for f in slot.get("hidden") or () if isinstance(f, dict) and f.get("id")]
+                    ids = [str(f["id"]) for f in (*shown, *hidden)]
+                    statuses = {str(f["id"]): FindingStatus.OPEN.value for f in shown}
+                    statuses.update({str(i): str(d) for i, d in (slot.get("decided") or {}).items()})
+                    current = verse_entry.get("findings") or {}
+                    if set(ids) == set(old_ids) and all(current.get(i) == s for i, s in statuses.items())                             and not any(i in current for i in old_ids if i not in statuses):
+                        continue
+                    changed.setdefault(str(chapter), {})[str(verse)] = (ids, statuses)
+            if not changed:
+                return
+            for chapter, verses in changed.items():
+                project.update_progress_language_qa(chapter, verses)
+            rollup = project.load_progress_rollup()
+            self._recompute_progress_totals(project, rollup)
+            project.save_progress_totals(rollup["totals"])
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            try:
+                project.release_thread_db_handles()
+            except Exception:  # noqa: BLE001
+                pass
 
     def edit_verse(self, chapter: str, verse: str, new_text: str, **strict_options: Any) -> dict[str, Any]:
         """Human-authorized scripture edit.

@@ -421,6 +421,11 @@ class LanguageQaManager:
         self._learned_on = True
         # The last completed pass's word counts, for the panel's Book words list.
         self._book_words: dict[str, Any] = {}
+        # #280: called with (project path, by_verse) after the background
+        # worker publishes a completed pass, outside the lock, so the book's
+        # progress rollup can follow a live pass. A check job's run_pass
+        # writes the rollup itself and does not call it.
+        self.on_published: Callable[[str, dict[str, dict[str, Any]]], None] | None = None
 
     def configure(self, *, inline_precision: Any = 0, inline_confidence: Any = "low",
                   learned_fixes: bool = True) -> None:
@@ -1375,12 +1380,22 @@ class LanguageQaManager:
             with self._lock:
                 if generation != self._generation:
                     continue
+                published = None
                 if result is not None:
                     source_signature = result.pop("_sourceSignature", None)
                     result["elapsedSeconds"] = round(time.monotonic() - started, 3)
                     self._summary = result
                     if source_signature is not None:
                         self._source_signature = source_signature
+                    if result.get("state") == "completed" and context is not None:
+                        published = (context[0], self._by_verse)
                 self._last_scan = time.monotonic()
                 self._thread = None
-                return
+            if published is not None and self.on_published is not None:
+                # A published by_verse is replaced whole by the next pass,
+                # never changed in place, so it is read here without the lock.
+                try:
+                    self.on_published(*published)
+                except Exception:  # noqa: BLE001 -- bookkeeping never fails a pass
+                    pass
+            return

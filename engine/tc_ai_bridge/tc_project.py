@@ -3760,6 +3760,60 @@ class TranslationCoreProject:
             expected_revision=None, extra_columns={'chapter': chapter_key},
         )
 
+    def update_progress_language_qa(self, chapter: str | int,
+                                    verses: dict[str, tuple[list[str], dict[str, str]]]) -> None:
+        """#280: a live Language QA pass (the background pass after an edit,
+        a decision, a scoped Use or an undo -- not a check job) changed some
+        verses of `chapter`. `verses` maps verse -> (its Language QA finding
+        ids, open or decided; those findings' statuses). For each, the chapter
+        row's id list and those findings' rows are replaced. Every other field
+        of the row and every other finding row is left as it was. One
+        transaction. A chapter with no row is left alone: the stage has not
+        run there, so nothing is claimed."""
+        identity = self.workbench_identity
+        chapter_key = str(chapter)
+        row_id = self._progress_chapter_row_id(chapter_key)
+        existing = self.workbench.get('progress_chapters', row_id)
+        if existing is None:
+            return
+        try:
+            loaded = json.loads(str(existing.get('payload_json') or ''))
+        except ValueError:
+            return
+        if not isinstance(loaded, dict):
+            return
+        payload = dict(loaded)
+        lqa_ids = dict(payload.get('languageQaFindingIds') or {})
+        with self.workbench.batch() as batch:
+            for verse, (ids, statuses) in verses.items():
+                verse_key = str(verse)
+                old = [str(i) for i in lqa_ids.get(verse_key) or []]
+                new = [str(i) for i in ids]
+                for finding_id in old:
+                    if finding_id not in new or finding_id not in statuses:
+                        batch.delete(
+                            'progress_findings', self._progress_finding_row_id(chapter_key, verse_key, finding_id),
+                            project_id=identity.project_id, book_id=self.book_id,
+                            actor_id=identity.actor_id, device_id=identity.device_id,
+                        )
+                for finding_id, status in statuses.items():
+                    batch.write(
+                        'progress_findings', self._progress_finding_row_id(chapter_key, verse_key, str(finding_id)),
+                        project_id=identity.project_id, book_id=self.book_id,
+                        payload={'chapter': chapter_key, 'verse': verse_key,
+                                 'findingId': str(finding_id), 'status': str(status)},
+                        actor_id=identity.actor_id, device_id=identity.device_id,
+                        extra_columns={'chapter': chapter_key},
+                    )
+                lqa_ids[verse_key] = new
+            payload['languageQaFindingIds'] = lqa_ids
+            batch.write(
+                'progress_chapters', row_id,
+                project_id=identity.project_id, book_id=self.book_id, payload=payload,
+                actor_id=identity.actor_id, device_id=identity.device_id,
+                extra_columns={'chapter': chapter_key},
+            )
+
     def save_progress_totals(self, totals: dict[str, Any]) -> dict[str, Any]:
         """Write the book's totals row and refresh the workspace cache from it.
 
