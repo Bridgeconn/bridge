@@ -527,6 +527,8 @@ class Methods:
     VERSE_HISTORY = "verse.history"
 
     CHECK_LIST_FOR_VERSE = "check.listForVerse"
+    # #272: the chapter's stored findings, when still current.
+    CHECK_LOAD_CHAPTER_FINDINGS = "check.loadChapterFindings"
     CHECK_VALIDATE_SELECTION = "check.validateSelection"
     CHECK_SAVE_SELECTION = "check.saveSelection"
     CHECK_CLEAR_SELECTION = "check.clearSelection"
@@ -5913,6 +5915,91 @@ class BridgeEngine:
                 "elapsedSeconds": 0, "estimatedRemainingSeconds": None, "error": None,
                 "createdAt": None, "finishedAt": None}
 
+    @staticmethod
+    def _chapter_inputs_fingerprint(project: TranslationCoreProject, chapter: str, groups: frozenset[str],
+                                    memo: Optional[dict[str, list[str]]] = None) -> str:
+        """What a chapter's stored findings were computed from (#272): its text
+        and alignment files, its tC check state and Word Alignment marks, the
+        book's tN/tW index, and the workbench rows the alignment gap check reads;
+        for Greek Room's book scans also the book's .usfm and every chapter's
+        text (names compares spellings across the book). File signatures, not
+        contents: an atomic write changes the file id. A finding's decision is
+        not an input; it is applied when the findings are read. `memo` keeps
+        the book-wide parts for one caller that fingerprints many chapters."""
+        root = Path(project.path)
+        memo = {} if memo is None else memo
+
+        def signed(path: Path) -> str:
+            try:
+                name = str(path.relative_to(root))
+            except ValueError:
+                name = str(path)
+            return f"{name}={project._file_signature(path)}"
+
+        def tree(folder: Path) -> list[str]:
+            return [signed(path) for path in sorted(folder.rglob("*.json"))] if folder.is_dir() else []
+
+        chapter = str(chapter)
+        parts = [signed(project.book_dir / f"{chapter}.json"), signed(project.chapter_path(chapter))]
+        for kind in ("selections", "invalidated", "comments", "verseEdits"):
+            parts += tree(project.check_dir / kind / project.book_id / chapter)
+        for state in ("completed", "invalid"):
+            parts += tree(project.tc_dir / "tools" / "wordAlignment" / state / chapter)
+        if "book" not in memo:
+            project_id = project.workbench_identity.project_id
+            memo["book"] = [
+                *tree(project.index_dir / "translationNotes" / project.book_id),
+                *tree(project.index_dir / "translationWords" / project.book_id),
+                *(f"{table}={project.workbench.max_seq(project_id=project_id, table=table)}"
+                  for table in ("alignment_cross_verse_links", "alignment_null_decisions", "alignment_verdicts")),
+            ]
+        parts += memo["book"]
+        if "usfm" in groups:
+            if "usfm" not in memo:
+                usfm = project.usfm_path()
+                memo["usfm"] = [signed(usfm)] if usfm is not None else []
+            parts += memo["usfm"]
+        if "names" in groups:
+            if "texts" not in memo:
+                memo["texts"] = [signed(project.book_dir / f"{other}.json") for other in project.chapters()]
+            parts += memo["texts"]
+        return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+
+    def load_chapter_findings(self, chapter: str) -> dict[str, Any]:
+        """check.loadChapterFindings (#272): the chapter's stored findings,
+        with today's decisions applied, when the snapshot still describes the
+        chapter; `current: false` otherwise, and the caller runs the job.
+        `checkGroups` says which checks the findings cover."""
+        self._require_project()
+        project = self.project
+        chapter = str(chapter)
+        payload = project.load_check_findings_payload(chapter)
+        groups = frozenset(payload.get("checkGroups") or [])
+        fingerprint = payload.get("inputsFingerprint")
+        stored = payload.get("verses")
+        if not fingerprint or not isinstance(stored, dict) or \
+                fingerprint != self._chapter_inputs_fingerprint(project, chapter, groups):
+            return {"chapter": chapter, "current": False, "checkGroups": [], "verses": {}}
+        verses: dict[str, list[dict[str, Any]]] = {}
+        for verse in project.verses(chapter):
+            verse = str(verse)
+            decisions = project.qa_decisions_for_verse(chapter, verse)
+            findings = []
+            for item in stored.get(verse) or []:
+                if not isinstance(item, dict) or not item.get("id"):
+                    continue
+                finding = QaFinding.from_dict(item)
+                record = decisions.get(finding.id)
+                if record:
+                    try:
+                        finding.status = FindingStatus(record.get("decision", "open"))
+                    except ValueError:
+                        pass
+                    finding.human_comment = record.get("note") or None
+                findings.append(finding.to_dict())
+            verses[verse] = findings
+        return {"chapter": chapter, "current": True, "checkGroups": sorted(groups), "verses": verses}
+
     def _on_check_job_complete(self, project: TranslationCoreProject, job: Any) -> None:
         """Rebuilds the progress rollup's entries for exactly the chapters
         this job covered — chapters it didn't touch are left alone. Only a
@@ -5931,19 +6018,33 @@ class BridgeEngine:
             ran = groups_ran(job.spec.checks)
             partial = not ran.issuperset(FINDING_GROUPS) or not ran_language_qa
             prior_rollup = project.load_progress_rollup().get("chapters", {}) if partial else {}
-            prior_snapshots: dict[str, dict[str, list[dict[str, Any]]]] = {}
+            # #272: a chapter's stored snapshot, and whether it still describes
+            # the chapter as it is now. Only a current one's findings carry.
+            prior_snapshots: dict[str, dict[str, Any]] = {}
+            fingerprint_memo: dict[str, list[str]] = {}
+
+            def prior(chapter: str) -> dict[str, Any]:
+                if chapter not in prior_snapshots:
+                    payload = project.load_check_findings_payload(chapter)
+                    groups = frozenset(payload.get("checkGroups") or [])
+                    current = bool(payload.get("inputsFingerprint")) and payload.get("inputsFingerprint") == \
+                        self._chapter_inputs_fingerprint(project, chapter, groups, fingerprint_memo)
+                    prior_snapshots[chapter] = {
+                        "verses": payload.get("verses") if current and isinstance(payload.get("verses"), dict) else {},
+                        "groups": groups if current else frozenset(), "current": current,
+                    }
+                return prior_snapshots[chapter]
 
             def carried(chapter: str, verse: str) -> tuple[list[dict[str, Any]], dict[str, str], Optional[list[str]]]:
                 """The verse's stored findings of checks this job did not run,
-                its stored Language QA statuses, and its Language QA ids."""
-                if not partial:
+                its stored Language QA statuses, and its Language QA ids, from a
+                snapshot that is still current (#272); none from a stale one."""
+                if not partial or not prior(chapter)["current"]:
                     return [], {}, None
-                if chapter not in prior_snapshots:
-                    prior_snapshots[chapter] = project.load_check_findings_snapshot(chapter)
                 verse_entry = (prior_rollup.get(chapter) or {}).get("verses", {}).get(verse) or {}
                 statuses = verse_entry.get("findings") or {}
                 kept = []
-                for finding in prior_snapshots[chapter].get(verse, []):
+                for finding in prior(chapter)["verses"].get(verse, []):
                     if not finding.get("id") or finding_dict_check(finding) in ran:
                         continue
                     finding = dict(finding)
@@ -6032,9 +6133,14 @@ class BridgeEngine:
             # Written after the rollup so a crash between the two leaves the
             # rollup -- what the dashboard reads -- intact.
             for chapter, verses_map in snapshot_by_chapter.items():
+                # #272: the checks the snapshot now covers (this job's, plus a
+                # current snapshot's others), and what they were computed from.
+                covered = ran | (prior(chapter)["groups"] if partial else frozenset())
                 project.save_check_findings_snapshot(
                     chapter, verses_map,
-                    language_qa=language_qa_by_chapter.get(chapter, {}) if LANGUAGE_QA_CHECK in job.spec.checks else None)
+                    language_qa=language_qa_by_chapter.get(chapter, {}) if LANGUAGE_QA_CHECK in job.spec.checks else None,
+                    check_groups=sorted(covered),
+                    inputs_fingerprint=self._chapter_inputs_fingerprint(project, chapter, covered, fingerprint_memo))
         except Exception:
             pass
 
@@ -7870,6 +7976,8 @@ class BridgeEngine:
                 return EngineResponse.ok(request.id, result=result)
             if m == Methods.VERSE_HISTORY:
                 return EngineResponse.ok(request.id, result=self.verse_history(p))
+            if m == Methods.CHECK_LOAD_CHAPTER_FINDINGS:
+                return EngineResponse.ok(request.id, result=self.load_chapter_findings(str(p["chapter"])))
             if m == Methods.CHECK_LIST_FOR_VERSE:
                 return EngineResponse.ok(request.id, result=self.list_checks_for_verse(
                     p["chapter"], p["verse"],

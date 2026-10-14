@@ -1314,6 +1314,14 @@ export interface CheckJobLanguageQa {
   limitations: string[];
 }
 
+/** check.loadChapterFindings (#272). */
+export interface StoredChapterFindings {
+  chapter: string;
+  current: boolean;
+  checkGroups: string[];
+  verses: Record<string, QaFinding[]>;
+}
+
 export interface CheckJobSnapshot {
   jobId: string;
   scope: "chapter" | "book";

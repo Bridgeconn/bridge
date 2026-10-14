@@ -3333,11 +3333,16 @@ class TranslationCoreProject:
         return natural_row_id(self.workbench_identity.project_id, self.book_id, 'check_findings', chapter)
 
     def save_check_findings_snapshot(self, chapter: str | int, verses: dict[str, list[dict[str, Any]]],
-                                     language_qa: dict[str, list[dict[str, Any]]] | None = None) -> str:
+                                     language_qa: dict[str, list[dict[str, Any]]] | None = None, *,
+                                     check_groups: list[str] | None = None,
+                                     inputs_fingerprint: str | None = None) -> str:
         """`language_qa` is the Language QA stage's findings per verse, open
         and decided (each decided one carries `decision`). Kept apart from
         `verses`, which every reader takes as QaFinding dicts. None (a job
-        without the stage) keeps the chapter's previous Language QA share."""
+        without the stage) keeps the chapter's previous Language QA share.
+        `check_groups` and `inputs_fingerprint` (#272): which checks the
+        findings cover, and a fingerprint of what they were computed from, so
+        chapter entry can show them instead of re-running the job."""
         identity = self.workbench_identity
         chapter_key = str(chapter)
         row_id = self._check_findings_row_id(chapter_key)
@@ -3354,6 +3359,10 @@ class TranslationCoreProject:
         }
         if isinstance(language_qa, dict):
             payload['languageQa'] = {str(v): list(f) for v, f in language_qa.items()}
+        if check_groups is not None:
+            payload['checkGroups'] = sorted(str(g) for g in check_groups)
+        if inputs_fingerprint is not None:
+            payload['inputsFingerprint'] = str(inputs_fingerprint)
         self.workbench._write(
             'check_findings', row_id,
             project_id=identity.project_id, book_id=self.book_id,
@@ -3381,6 +3390,14 @@ class TranslationCoreProject:
                 if isinstance(findings, list):
                     out[(chapter, str(verse))] = [f for f in findings if isinstance(f, dict)]
         return out
+
+    def load_check_findings_payload(self, chapter: str | int) -> dict[str, Any]:
+        """The chapter's whole stored snapshot (#272), {} when there is none."""
+        found = self.workbench.payloads(
+            'check_findings', project_id=self.workbench_identity.project_id,
+            book_id=self.book_id, equals={'chapter': str(chapter)},
+        )
+        return dict(found[0]) if found and isinstance(found[0], dict) else {}
 
     def load_check_findings_snapshot(self, chapter: str | int) -> dict[str, list[dict[str, Any]]]:
         found = self.workbench.payloads(

@@ -48,6 +48,7 @@ import type {
   CrossVerseProposalResult,
   BookProgressEntry,
   CheckJobSnapshot,
+  StoredChapterFindings,
   DesktopConnectorState,
   ParatextConnectorStatus,
   ImportJobSnapshot,
@@ -327,6 +328,7 @@ export type EngineMethod =
   | "chapter.verses"
   | "check.clearSelection"
   | "check.listForVerse"
+  | "check.loadChapterFindings"
   | "check.saveSelection"
   | "check.validateSelection"
   | "checks.cancel"
@@ -952,6 +954,12 @@ export const bridge = {
     learned?: VerseEditLearned;
   }> {
     return call("verse.edit", { chapter, verse, newText });
+  },
+
+  /** #272: the chapter's stored findings, decisions applied, when they still
+   *  describe the chapter (`current`); `checkGroups` says which checks they cover. */
+  loadChapterFindings(chapter: string): Promise<StoredChapterFindings> {
+    return call("check.loadChapterFindings", { chapter });
   },
 
   listChecksForVerse(chapter: string, verse: string): Promise<NativeCheckListResponse> {

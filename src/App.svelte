@@ -41,7 +41,7 @@
   import { STARTUP_TIMEOUT_MS, mergeStage } from "./lib/startup";
   import type { EngineStartupStage, EngineStartupState } from "./lib/api/bridgeClient";
   import ProjectReportScreen from "./lib/components/ProjectReportScreen.svelte";
-  import type { AiCheckReview, AlignmentWorkStatus, BookProgressEntry, CheckJobSnapshot, ProjectReport, UserRole, VerseDisplay, VerseHeading, WorkspaceUser } from "./lib/types/finding";
+  import type { AiCheckReview, AlignmentWorkStatus, BookProgressEntry, CheckJobSnapshot, ProjectReport, QaFinding, StoredChapterFindings, UserRole, VerseDisplay, VerseHeading, WorkspaceUser } from "./lib/types/finding";
   import type {
     QaReport, ReportJobSnapshot, TriageJobSnapshot, TriageRecord,
   } from "./lib/types/report";
@@ -55,7 +55,10 @@
     bookAssignments, localUserId, checkGroupsByVerse, type CheckStatus,
   } from "./lib/stores";
   import { get } from "svelte/store";
-  import { checkListLabel, coversSelection, editorCheckList, groupsOf, mergeFindings, selectedEditorChecks } from "./lib/checkSelection";
+  import {
+    boxesRan, checkListLabel, coversSelection, editorCheckList, groupsOf, mergeFindings, selectedEditorChecks,
+  } from "./lib/checkSelection";
+  import { planChapterEntry, shouldReadStored } from "./lib/chapterEntry";
   import { runVerseGreekRoom } from "./lib/verseChecks";
   import CheckMenu from "./lib/components/CheckMenu.svelte";
   import { editingChapter, editingVerse, editSaving } from "./lib/verseEditor";
@@ -1140,8 +1143,55 @@
     if (timed) void perfEnd("chapter.open");
     void hydrateChapterAIReviews(chapter, $project?.path ?? "", sequence);
     if ($project) recordRecentChapter({ collection: collectionOf($project), book: $project.bookId.toLowerCase(), chapter });
-    if (!$loadedChapters[chapter] && !activeJobId) {
-      await beginChecks("chapter", [chapter]);
+    await enterChapterChecks(chapter, sequence);
+  }
+
+  /** #272: on first entry, show the chapter's stored findings when they still
+   *  describe it, and run only the selected checks they do not cover; with
+   *  nothing current stored, run the chapter job as before (#114). */
+  async function enterChapterChecks(chapter: string, sequence: number): Promise<void> {
+    const state = () => ({
+      loaded: Boolean($loadedChapters[chapter]), jobActive: Boolean(activeJobId), collectionRunning: $collectionQaRunning,
+    });
+    if (!shouldReadStored(state())) return;
+    let stored: StoredChapterFindings | null = null;
+    try {
+      stored = await bridge.loadChapterFindings(chapter);
+    } catch (error) {
+      console.error("Stored chapter findings could not be read", error);
+    }
+    if (sequence !== chapterLoadSequence) return;
+    const selection = editorCheckList();
+    const plan = planChapterEntry(state(), stored, selection);
+    if (plan.kind === "stored" && stored) showStoredChapter(chapter, stored, selection, plan.run.length === 0);
+    if ((plan.kind === "stored" || plan.kind === "job") && plan.run.length) {
+      await beginChecks("chapter", [chapter], plan.run);
+    }
+  }
+
+  function showStoredChapter(
+    chapter: string, stored: StoredChapterFindings, selection: string[], complete: boolean,
+  ): void {
+    const verses = $chapterVerseNums[chapter] ?? [];
+    const covered = coversSelection(stored.checkGroups, selection);
+    const findings: Record<string, QaFinding[]> = {};
+    const groups: Record<string, string[]> = {};
+    const statuses: Record<string, CheckStatus> = {};
+    for (const verse of verses) {
+      const key = verseKey(chapter, verse);
+      findings[key] = stored.verses[verse] ?? [];
+      groups[key] = [...stored.checkGroups];
+      statuses[key] = covered ? "succeeded" : "pending";
+    }
+    findingsByVerse.update((existing) => ({ ...existing, ...findings }));
+    checkGroupsByVerse.update((existing) => ({ ...existing, ...groups }));
+    checkStatusByVerse.update((existing) => ({ ...existing, ...statuses }));
+    if (complete) {
+      loadedChapters.update((existing) => ({ ...existing, [chapter]: true }));
+      checkingProgress.set({
+        running: false, percent: 100, jobId: "", state: "succeeded", error: "", scope: "chapter",
+        label: `Stored results, text unchanged: ${checkListLabel(boxesRan(stored.checkGroups))}`,
+      });
     }
   }
 

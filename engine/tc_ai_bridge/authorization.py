@@ -123,7 +123,7 @@ _READ = (
     "languageQa.flags.list", "languageQa.words.list", "languageQa.bookWords", "languageQa.occurrences",
     "languageQa.reference", "languageQa.related",
     "checks.status",
-    "verse.get", "verse.history", "check.listForVerse", "check.validateSelection",
+    "verse.get", "verse.history", "check.listForVerse", "check.validateSelection", "check.loadChapterFindings",
     "alignment.get", "alignment.getRange", "alignment.gapScan", "alignment.crossVerse.propose",
     "alignment.autoAlign.verdict", "alignment.autoAlign.status", "alignment.autoAlign.estimate",
     "alignment.status", "alignment.backups",

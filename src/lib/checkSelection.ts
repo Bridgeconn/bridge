@@ -89,7 +89,7 @@ export function coversSelection(ran: readonly string[] | undefined, selection: r
 }
 
 /** Which boxes ran, by name, from a verse's run groups. */
-function boxesRan(ran: readonly string[]): CheckBoxId[] {
+export function boxesRan(ran: readonly string[]): CheckBoxId[] {
   const have = new Set(ran);
   return ORDER.filter((id) => BOX_GROUPS[id].filter((group) => group !== "tc").every((group) => have.has(group)));
 }
@@ -108,4 +108,10 @@ export function checksRunNote(ran: readonly string[] | undefined): string {
 /** "tN, tW, Alignment" for a progress line. */
 export function checkListLabel(checks: readonly string[]): string {
   return checks.map((id) => LABELS[id] ?? id).join(", ");
+}
+
+/** #272: the boxes of `selection` that stored findings covering `groups` lack. */
+export function missingChecks(groups: readonly string[], selection: readonly CheckBoxId[]): CheckBoxId[] {
+  const have = new Set(groups);
+  return selection.filter((id) => !groupsOf([id]).every((group) => have.has(group)));
 }
