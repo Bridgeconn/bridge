@@ -249,7 +249,7 @@ A raw Scripture import becomes a translationCore-compatible book project:
                                                 dialog (2026-10-08). An indic-qa rule may be switched back
                                                 on there; inline never.
 <project>/.apps/translationCoreAI/bridge-workbench.sqlite3
-                                                schema v9. Every Bridge-private store lives here:
+                                                schema v10. Every Bridge-private store lives here:
                                                 the human-owned ones (#76), the derived ones
                                                 (#77) -- progress rollup, check-finding snapshots,
                                                 check cache, triage verdicts, metrics, backups index --
@@ -262,8 +262,11 @@ A raw Scripture import becomes a translationCore-compatible book project:
                                                 journalled verse edits, it never writes Scripture),
                                                 null alignment decisions (`alignment_null_decisions`: a word with
                                                 no counterpart for a named reason, #216 -- no row
-                                                means unaligned) and the per-verse automatic
-                                                alignment verdicts (`alignment_verdicts`, #216).
+                                                means unaligned), the per-verse automatic
+                                                alignment verdicts (`alignment_verdicts`, #216),
+                                                and each user's role on this project
+                                                (`team_members`, #279; no row means the
+                                                installation or hub-token role applies).
 <project>/.apps/translationCoreAI/backups/      the backup files themselves, indexed by the DB
 %LOCALAPPDATA%\Bridge\data\workspace.sqlite3    app-level, schema v5 (#77, #236, #238, #240): users
                                                 with their role and the chosen one, devices, the
@@ -403,14 +406,15 @@ translation team that database *is* months of work, and no reset is available.
 
 This same discipline now has two more, independent ladders. `bridge-workbench.sqlite3`
 (`WorkbenchRepository`, `engine/tc_ai_bridge/workbench_repository.py`,
-`WORKBENCH_SCHEMA_VERSION`, currently v9 — v2 added `change_log.columns_json` for
+`WORKBENCH_SCHEMA_VERSION`, currently v10 — v2 added `change_log.columns_json` for
 sync and rebuilt the immutability trigger; v3 added `alignment_cross_verse_links`,
 #117; v4 added `language_qa_cache`, #169; v5 rebuilt `human_decisions` to admit the `housestyle` kind, #169;
 v6 added `language_qa_batches`, `language_qa_learned_fixes` and `language_qa_flags`, indic-qa editor
 features;
 v7 added `alignment_null_decisions` and `alignment_verdicts`, #216; v8 lifted
 `team_assignments` into real columns, #240; v9 added the hub's device-local
-`sync_state` and `sync_conflicts`, #80) and `workspace.sqlite3`
+`sync_state` and `sync_conflicts`, #80; v10 lifted `team_members.user_id` and `role` for
+per-project roles, #279) and `workspace.sqlite3`
 (`WorkspaceRepository`, `engine/tc_ai_bridge/workspace_repository.py`,
 `WORKSPACE_SCHEMA_VERSION`, currently v5 — v1 is exactly the unversioned
 devices/users the first cut created, kept as `IF NOT EXISTS` so an existing

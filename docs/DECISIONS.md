@@ -1154,3 +1154,21 @@ this on 2026-10-14.
 **Rules out:** linking a book after decisions were made in it; any rewrite of existing rows to new
 ids (the change log is append-only).
 **Revisit when:** a team needs to bring an in-use book onto the hub without a fresh import.
+
+## 2026-10-14 — A role on a project decides everything there but managing users (#279)
+
+**Decision:** A user may have a role on a project (`team_members`, one row per user per book,
+written to every book of a collection). Where they have one, it decides every action on that
+project: read, run checks, write, and manage the project (assignments, rename, archive). Managing
+users, including giving someone a role on a project, stays with the installation role on the desktop
+and the token role on the hub, because the user list is not a project's. `authorize()` is the one
+place this is decided: the desktop dispatcher, `/rpc`, and the hub's dashboard endpoints and push
+all call it. The desktop shows the per-project role in the top bar and a banner for a reporter. It
+hides no controls: a refused action says why, as it has since #236.
+**Because:** Revant chose both on 2026-10-14. One user can be an editor on one book and a reporter
+on another. A per-project admin can run their project without being able to change who exists.
+Hiding controls one by one is a separate piece of work across the editor, panels and modals, which
+the installation roles do not do either.
+**Rules out:** a per-project role that changes the user list; role checks outside `authorize()`.
+**Revisit when:** reviewers ask for disabled controls rather than refusals, or a project needs its
+own admins to invite people.

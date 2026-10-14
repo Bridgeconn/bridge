@@ -146,7 +146,7 @@ from tc_ai_bridge.triage import (
 )
 from tc_ai_bridge.semantic_review_policy import native_tc_apply_allowed
 from tc_ai_bridge.authorization import (
-    Action, AuthorizationError, Role, action_for_method, authorize, refuse_named_actor,
+    Action, AuthorizationError, Role, action_for_method, authorize, effective_role, refuse_named_actor,
 )
 from check_jobs import (
     CheckJobConflict,
@@ -434,6 +434,9 @@ class Methods:
     USERS_RENAME = "users.rename"
     USERS_DEACTIVATE = "users.deactivate"
     USERS_SET_ROLE = "users.setRole"
+    # #279: roles per project (the open book and its collection).
+    TEAM_ROLES = "team.roles"
+    TEAM_SET_ROLE = "team.setRole"
     USERS_SET_CURRENT = "users.setCurrent"
     # #240: assign a book or a chapter to a user; "My work" reads these.
     # #80: the team hub, device side. join/leave/link are explicit setup
@@ -864,6 +867,39 @@ class BridgeEngine:
         if target["role"] == Role.PROJECT_ADMIN.value and not admins:
             raise ProjectError("The last project admin cannot be deactivated.")
         return self.workspace.set_user_active(user_id, False)
+
+    # -- per-project roles (#279) ---------------------------------------------
+
+    def team_roles(self) -> dict[str, Any]:
+        """team.roles: each user's role on the open project (None: their
+        installation role applies), and the signed-in user's effective role
+        there, which the top bar shows."""
+        self._require_project()
+        roles = self.project.team_roles()
+        me = self.local_user()
+        users = [
+            {"userId": user["userId"], "displayName": user["displayName"], "installationRole": user["role"],
+             "projectRole": roles.get(user["userId"])}
+            for user in self.workspace.list_users() if user.get("active", True)
+        ]
+        return {
+            "users": users,
+            "effectiveRole": effective_role(me, self.project, Action.WRITE).value,
+            "projectRole": roles.get(me["userId"]),
+        }
+
+    def team_set_role(self, user_id: str, role: Optional[str]) -> dict[str, Any]:
+        """team.setRole: `user_id`'s role on the open project, or back to their
+        installation role (None). Written to every materialized book of the
+        collection, so a project is one role whichever book is open."""
+        self._require_project()
+        parsed = Role(str(role).strip()) if role else None
+        if self.workspace.get_user(user_id) is None:
+            raise ProjectError("Unknown user.")
+        set_by = self.local_user()["userId"]
+        for project in self._collection_book_projects():
+            project.set_team_role(user_id, parsed.value if parsed else None, set_by=set_by)
+        return self.team_roles()
 
     def users_set_role(self, user_id: str, role: str) -> dict[str, Any]:
         parsed = Role(str(role or "").strip())
@@ -7882,6 +7918,14 @@ class BridgeEngine:
                 return EngineResponse.ok(request.id, result=self.users_set_role(
                     str(p.get("userId") or ""), str(p.get("role") or ""),
                 ))
+            if m == Methods.TEAM_ROLES:
+                return EngineResponse.ok(request.id, result=self.team_roles())
+            if m == Methods.TEAM_SET_ROLE:
+                role = p.get("role")
+                if role is not None and not isinstance(role, str):
+                    raise ProjectError("role must be a role name or null")
+                return EngineResponse.ok(request.id, result=self.team_set_role(
+                    str(p.get("userId") or ""), role or None))
             if m == Methods.HUB_STATUS:
                 return EngineResponse.ok(request.id, result=self.hub_status())
             if m == Methods.HUB_JOIN:

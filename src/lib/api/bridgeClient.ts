@@ -68,6 +68,7 @@ import type {
   HubConflict,
   HubStatus,
   UserRole,
+  TeamRoles,
   UsersList,
   WorkspaceUser,
   VerseAlignment,
@@ -402,6 +403,8 @@ export type EngineMethod =
   | "users.rename"
   | "users.setCurrent"
   | "users.setRole"
+  | "team.roles"
+  | "team.setRole"
   | "triage.override"
   | "triage.results"
   | "triage.run"
@@ -776,6 +779,17 @@ export const bridge = {
 
   usersSetRole(userId: string, role: UserRole): Promise<WorkspaceUser> {
     return call("users.setRole", { userId, role });
+  },
+
+  /** #279: roles on the open project. */
+  teamRoles(): Promise<TeamRoles> {
+    return call("team.roles");
+  },
+
+  /** #279: a user's role on the open project (and its collection); null
+   *  returns them to their installation role. A project_admin's. */
+  teamSetRole(userId: string, role: UserRole | null): Promise<TeamRoles> {
+    return call("team.setRole", { userId, role });
   },
 
   usersSetCurrent(userId: string): Promise<{ currentUserId: string; displayName: string; role: UserRole }> {

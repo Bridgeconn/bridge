@@ -41,7 +41,7 @@ _GENERATIONS: dict[str, int] = {}
 _GENERATION_LOCK = threading.Lock()
 
 
-WORKBENCH_SCHEMA_VERSION = 9
+WORKBENCH_SCHEMA_VERSION = 10
 WORKBENCH_SCHEMA_ID = "bridge-workbench-v1"
 
 _IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -738,6 +738,16 @@ CREATE TABLE sync_conflicts (
 );
 """
 
+# v10 (#279): `team_members` gets its lifted columns, one row per user of the
+# book with that user's role on it. The table was already in MUTABLE_TABLES
+# and SYNCED_TABLES, unused; the columns ride change_log.columns_json like
+# v8's. Additive: nothing is rebuilt.
+_MIGRATION_V10 = r"""
+ALTER TABLE team_members ADD COLUMN user_id TEXT;
+ALTER TABLE team_members ADD COLUMN role TEXT;
+CREATE INDEX ix_team_members_user ON team_members(project_id, user_id);
+"""
+
 _MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, _MIGRATION_V1),
     (2, _MIGRATION_V2),
@@ -748,6 +758,7 @@ _MIGRATIONS: tuple[tuple[int, str], ...] = (
     (7, _MIGRATION_V7),
     (8, _MIGRATION_V8),
     (9, _MIGRATION_V9),
+    (10, _MIGRATION_V10),
 )
 
 

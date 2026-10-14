@@ -3722,6 +3722,54 @@ class TranslationCoreProject:
         out.sort(key=lambda a: (a['chapter'] != '', _chapter_sort_key(a['chapter'])))
         return out
 
+    # -- per-project roles (#279) -------------------------------------------
+    #
+    # One `team_members` row per user who has a role on this book that differs
+    # from, or pins, their installation (or hub token) role. No row: the
+    # installation role applies. authorization.authorize reads it.
+
+    def _team_member_row_id(self, user_id: str) -> str:
+        return natural_row_id(self.workbench_identity.project_id, self.book_id, 'team_member', str(user_id))
+
+    def team_roles(self) -> dict[str, str]:
+        """{user id: role} for every user with a role on this book."""
+        roles: dict[str, str] = {}
+        for row in self.workbench.rows(
+            'team_members', project_id=self.workbench_identity.project_id, book_id=self.book_id,
+        ):
+            if row.get('user_id') and row.get('role'):
+                roles[str(row['user_id'])] = str(row['role'])
+        return roles
+
+    def team_role(self, user_id: str) -> str | None:
+        """The user's role on this book, or None when the installation role applies."""
+        row = self.workbench.get('team_members', self._team_member_row_id(user_id))
+        return str(row['role']) if row and row.get('role') else None
+
+    def set_team_role(self, user_id: str, role: str | None, *, set_by: str) -> bool:
+        """Give `user_id` `role` on this book, or remove their row (None).
+        Returns whether anything changed."""
+        identity = self.workbench_identity
+        row_id = self._team_member_row_id(user_id)
+        current = self.workbench.get('team_members', row_id)
+        if role is None:
+            if current is None:
+                return False
+            with self.workbench.batch() as batch:
+                batch.delete('team_members', row_id, project_id=identity.project_id, book_id=self.book_id,
+                             actor_id=identity.actor_id, device_id=identity.device_id)
+            return True
+        if current is not None and current.get('role') == role:
+            return False
+        self.workbench._write(
+            'team_members', row_id, project_id=identity.project_id, book_id=self.book_id,
+            payload={'userId': str(user_id), 'role': str(role), 'setBy': str(set_by),
+                     'setAt': self._timestamp()[0]},
+            actor_id=identity.actor_id, device_id=identity.device_id, expected_revision=None,
+            extra_columns={'user_id': str(user_id), 'role': str(role)},
+        )
+        return True
+
     def set_assignment(self, chapter: str | int, assignee_id: str, *, assigned_by: str,
                        assignee_name: str = '') -> dict[str, Any]:
         identity = self.workbench_identity

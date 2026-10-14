@@ -7,6 +7,8 @@
   import { onMount } from "svelte";
   import { bridge } from "../api/bridgeClient";
   import type { UserRole, WorkspaceUser } from "../types/finding";
+  import { project } from "../stores";
+  import { refreshProjectRoles } from "../projectRole";
 
   export let myRole: UserRole = "project_admin";
 
@@ -21,6 +23,8 @@
   let renamingId = "";
   let renameDraft = "";
   let showInactive = false;
+  /** #279: each user's role on the open project; null is their installation role. */
+  let projectRoles: Record<string, UserRole | null> | null = null;
 
   const ROLES: UserRole[] = ["project_admin", "editor", "reporter"];
   const ROLE_LABELS: Record<UserRole, string> = {
@@ -28,6 +32,12 @@
   };
 
   $: canManage = myRole === "project_admin";
+
+  /** "an editor", "a reporter", "a project admin". */
+  function aRole(role: UserRole): string {
+    const label = ROLE_LABELS[role];
+    return `${/^[aeiou]/.test(label) ? "an" : "a"} ${label}`;
+  }
   $: visible = users.filter((user) => showInactive || user.active);
   $: inactiveCount = users.filter((user) => !user.active).length;
 
@@ -40,6 +50,9 @@
       const listed = await bridge.usersList();
       users = listed.users;
       currentUserId = listed.currentUserId;
+      projectRoles = $project
+        ? Object.fromEntries((await bridge.teamRoles()).users.map((u) => [u.userId, u.projectRole]))
+        : null;
     } catch (value) {
       error = message(value);
     } finally {
@@ -86,7 +99,17 @@
   function setRole(user: WorkspaceUser, value: string) {
     const role = value as UserRole;
     if (role === user.role) return;
-    void run(`${user.displayName} is now a ${ROLE_LABELS[role]}.`, () => bridge.usersSetRole(user.userId, role));
+    void run(`${user.displayName} is now ${aRole(role)}.`, () => bridge.usersSetRole(user.userId, role));
+  }
+
+  function setProjectRole(user: WorkspaceUser, value: string) {
+    const role = value ? (value as UserRole) : null;
+    const where = $project?.bookName ? ` on ${$project.bookName}` : " on this project";
+    void run(role ? `${user.displayName} is now ${aRole(role)}${where}.`
+      : `${user.displayName} has their usual role${where} again.`, async () => {
+      await bridge.teamSetRole(user.userId, role);
+      await refreshProjectRoles(true);
+    });
   }
 
   function deactivate(user: WorkspaceUser) {
@@ -109,7 +132,7 @@
   <p class="muted">Loading users…</p>
 {:else}
   <table class="users" aria-label="Users">
-    <thead><tr><th>Name</th><th>Role</th><th>Status</th><th></th></tr></thead>
+    <thead><tr><th>Name</th><th>Role</th>{#if projectRoles}<th title="A role on the open project overrides the usual one there; managing users always follows the usual role">On this project</th>{/if}<th>Status</th><th></th></tr></thead>
     <tbody>
       {#each visible as user (user.userId)}
         <tr class:inactive={!user.active}>
@@ -132,6 +155,20 @@
               {ROLE_LABELS[user.role] ?? user.role}
             {/if}
           </td>
+          {#if projectRoles}
+            <td>
+              {#if canManage && user.active}
+                <select aria-label="Role on this project for {user.displayName}" value={projectRoles[user.userId] ?? ""}
+                  disabled={busy} on:change={(event) => setProjectRole(user, event.currentTarget.value)}>
+                  <option value="">usual role</option>
+                  {#each ROLES as role}<option value={role}>{ROLE_LABELS[role]}</option>{/each}
+                </select>
+              {:else}
+                {@const scoped = projectRoles[user.userId]}
+                {scoped ? ROLE_LABELS[scoped] : "usual role"}
+              {/if}
+            </td>
+          {/if}
           <td>{user.active ? "active" : "deactivated"}</td>
           <td class="actions">
             {#if canManage && user.active}

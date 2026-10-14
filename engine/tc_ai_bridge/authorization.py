@@ -77,21 +77,46 @@ def authorize(user: Mapping[str, Any] | None, project: Any, action: Action | str
 
     ``user`` is the dict the workspace returns (``userId``, ``displayName``,
     ``role``); None is a caller the engine does not know, which is refused
-    for anything but a read. ``project`` is accepted for the hub's per-project
-    roles and ignored today.
+    for anything but a read. ``project`` (#279): the user's role on that
+    project, when it has one, decides every action but managing users, which
+    stays with the installation or hub-token role (the user list is not a
+    project's).
     """
     wanted = Action(action) if not isinstance(action, Action) else action
     if user is None:
         if wanted is Action.READ:
             return
         raise AuthorizationError("No user is signed in; only reading is allowed.")
-    role = parse_role(user.get("role"))
+    role = effective_role(user, project, wanted)
     if allowed(role, wanted):
         return
     name = str(user.get("displayName") or user.get("userId") or "This user")
+    where = " on this project" if role is not parse_role(user.get("role")) else ""
     raise AuthorizationError(
-        f"{name} is a {ROLE_LABELS[role]} and cannot {ACTION_VERBS[wanted]}."
+        f"{name} is a {ROLE_LABELS[role]}{where} and cannot {ACTION_VERBS[wanted]}."
     )
+
+
+def project_role(user: Mapping[str, Any] | None, project: Any) -> Role | None:
+    """``user``'s role on ``project`` (#279), or None when it has none."""
+    reader = getattr(project, "team_role", None)
+    if user is None or reader is None:
+        return None
+    try:
+        value = reader(str(user.get("userId") or ""))
+    except Exception:  # noqa: BLE001 -- a project that cannot answer has no roles
+        return None
+    return parse_role(value) if value else None
+
+
+def effective_role(user: Mapping[str, Any], project: Any, action: Action | None = None) -> Role:
+    """The role that decides ``action`` for ``user`` on ``project``: the
+    per-project one where it exists, except for managing users."""
+    if action is not Action.MANAGE_USERS:
+        scoped = project_role(user, project)
+        if scoped is not None:
+            return scoped
+    return parse_role(user.get("role"))
 
 
 ACTION_VERBS: dict[Action, str] = {
@@ -123,6 +148,7 @@ _READ = (
     "languageQa.flags.list", "languageQa.words.list", "languageQa.bookWords", "languageQa.occurrences",
     "languageQa.reference", "languageQa.related",
     "checks.status",
+    "team.roles",
     "verse.get", "verse.history", "check.listForVerse", "check.validateSelection", "check.loadChapterFindings",
     "alignment.get", "alignment.getRange", "alignment.gapScan", "alignment.crossVerse.propose",
     "alignment.autoAlign.verdict", "alignment.autoAlign.status", "alignment.autoAlign.estimate",
@@ -201,6 +227,8 @@ _MANAGE_PROJECTS = (
 # a project_admin changes the list.
 _MANAGE_USERS: tuple[str, ...] = (
     "users.create", "users.rename", "users.deactivate", "users.setRole",
+    # #279: a user's role on one project is still a user-list decision.
+    "team.setRole",
 )
 
 METHOD_ACTIONS: dict[str, Action] = {

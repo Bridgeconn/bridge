@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 
-const { usersList, usersCreate, usersRename, usersDeactivate, usersSetRole } = vi.hoisted(() => ({
+const { usersList, usersCreate, usersRename, usersDeactivate, usersSetRole, teamRoles, teamSetRole } = vi.hoisted(() => ({
+  teamRoles: vi.fn(),
+  teamSetRole: vi.fn(),
   usersList: vi.fn(),
   usersCreate: vi.fn(),
   usersRename: vi.fn(),
@@ -9,9 +11,14 @@ const { usersList, usersCreate, usersRename, usersDeactivate, usersSetRole } = v
   usersSetRole: vi.fn(),
 }));
 
-vi.mock("../../api/bridgeClient", () => ({ bridge: { usersList, usersCreate, usersRename, usersDeactivate, usersSetRole } }));
+vi.mock("../../api/bridgeClient", () => ({
+  bridge: { usersList, usersCreate, usersRename, usersDeactivate, usersSetRole, teamRoles, teamSetRole },
+}));
 
 import UsersPane from "../UsersPane.svelte";
+import { project } from "../../stores";
+import { projectRoles } from "../../projectRole";
+import { get } from "svelte/store";
 import type { WorkspaceUser } from "../../types/finding";
 
 function user(overrides: Partial<WorkspaceUser> = {}): WorkspaceUser {
@@ -87,5 +94,26 @@ describe("UsersPane (#237)", () => {
     await screen.findByText("Rina");
     await fireEvent.click(screen.getAllByRole("button", { name: "Deactivate" })[1]);
     await screen.findByText("The last project admin cannot be deactivated.");
+  });
+
+  it("with a book open, an admin gives someone a role on this project (#279)", async () => {
+    const roles = (rinaRole: string | null) => ({
+      users: [
+        { userId: "u-1", displayName: "Revant", installationRole: "project_admin", projectRole: null },
+        { userId: "u-2", displayName: "Rina", installationRole: "reporter", projectRole: rinaRole },
+      ],
+      effectiveRole: "project_admin", projectRole: null,
+    });
+    teamRoles.mockResolvedValue(roles(null));
+    teamSetRole.mockResolvedValue(roles("editor"));
+    project.set({ path: "/p", bookId: "php", bookName: "Philippians" } as never);
+    render(UsersPane, { props: { myRole: "project_admin" } });
+    const select = await screen.findByLabelText("Role on this project for Rina");
+    expect((select as HTMLSelectElement).value).toBe("");
+    await fireEvent.change(select, { target: { value: "editor" } });
+    await waitFor(() => expect(teamSetRole).toHaveBeenCalledWith("u-2", "editor"));
+    await screen.findByText("Rina is now an editor on Philippians.");
+    await waitFor(() => expect(get(projectRoles)).not.toBeNull());
+    project.set(null);
   });
 });

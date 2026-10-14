@@ -44,7 +44,7 @@ from fastapi.responses import JSONResponse
 
 from bridge_service import BridgeEngine
 from greek_room_engine.protocol import EngineRequest, EngineResponse
-from tc_ai_bridge.authorization import Role, parse_role
+from tc_ai_bridge.authorization import Action, AuthorizationError, Role, authorize, effective_role, parse_role
 from tc_ai_bridge.hub_sync import SYNCED_TABLES
 from tc_ai_bridge.secret_store import AppSettings
 
@@ -225,13 +225,23 @@ class HubStore:
             conn.commit()
 
     def _assignment_rows(self, conn: sqlite3.Connection, hub_project_id: str) -> dict[str, dict[str, Any]]:
-        """row_key -> {revision, payload} folded from the event log in order."""
+        return self._folded_rows(conn, hub_project_id, "team_assignments")
+
+    def team_roles(self, hub_project_id: str) -> dict[str, str]:
+        """#279: {user id: role} on one project, folded from its team_members events."""
+        with self._connect() as conn:
+            rows = self._folded_rows(conn, hub_project_id, "team_members")
+        return {str(r["payload"].get("userId") or ""): str(r["payload"].get("role") or "")
+                for r in rows.values() if r["payload"].get("userId") and r["payload"].get("role")}
+
+    def _folded_rows(self, conn: sqlite3.Connection, hub_project_id: str, table: str) -> dict[str, dict[str, Any]]:
+        """row_key -> {revision, payload} of one table, folded from the event log in order."""
         rows: dict[str, dict[str, Any]] = {}
         for row in conn.execute(
             "SELECT event_json FROM events WHERE hub_project_id=? ORDER BY hub_seq", (hub_project_id,),
         ):
             event = json.loads(row["event_json"])
-            if event.get("table_name") != "team_assignments":
+            if event.get("table_name") != table:
                 continue
             key = str(event.get("row_key") or "")
             if event.get("op") == "delete":
@@ -319,6 +329,48 @@ class HubStore:
                     payload_json=json.dumps(payload, ensure_ascii=False),
                     columns_json=json.dumps({"chapter": chapter_key, "assignee_id": assignee["userId"],
                                              "assigned_by": admin["userId"], "assigned_at": now}),
+                )
+            conn.execute(
+                "INSERT INTO events(event_id, hub_project_id, pushed_by, received_at, event_json) VALUES(?,?,?,?,?)",
+                (event["event_id"], hub_project_id, admin["userId"], now, json.dumps(event, ensure_ascii=False)),
+            )
+            conn.commit()
+        return {"changed": True, "eventId": event["event_id"]}
+
+    def author_team_role(self, hub_project_id: str, user: dict[str, Any], role: str | None,
+                         admin: dict[str, Any]) -> dict[str, Any]:
+        """#279: a user's role on one project, as a `team_members` event the hub
+        writes on the admin's behalf, exactly as author_assignment does. None
+        returns the user to their token role."""
+        from tc_ai_bridge.workbench_repository import natural_row_id
+
+        with self._connect() as conn:
+            project = conn.execute("SELECT * FROM projects WHERE hub_project_id=?", (hub_project_id,)).fetchone()
+            if project is None:
+                raise HTTPException(404, "That project is not linked on this hub.")
+            book_id = project["book_id"]
+            row_key = natural_row_id(hub_project_id, book_id, "team_member", user["userId"])
+            current = self._folded_rows(conn, hub_project_id, "team_members").get(row_key)
+            now = _now()
+            event: dict[str, Any] = {
+                "event_id": str(uuid.uuid4()), "project_id": hub_project_id, "book_id": book_id,
+                "table_name": "team_members", "row_key": row_key,
+                "actor_id": admin["userId"], "device_id": "hub", "created_at": now, "journal_tx_id": None,
+            }
+            if role is None:
+                if current is None:
+                    return {"changed": False}
+                event.update(op="delete", base_revision=current["revision"], new_revision=None,
+                             payload_json=json.dumps(current["payload"], ensure_ascii=False), columns_json=None)
+            else:
+                if current is not None and current["payload"].get("role") == role:
+                    return {"changed": False}
+                base = current["revision"] if current is not None else None
+                event.update(
+                    op="upsert", base_revision=base, new_revision=(base or 0) + 1,
+                    payload_json=json.dumps({"userId": user["userId"], "role": role, "setBy": admin["userId"],
+                                             "setAt": now}, ensure_ascii=False),
+                    columns_json=json.dumps({"user_id": user["userId"], "role": role}),
                 )
             conn.execute(
                 "INSERT INTO events(event_id, hub_project_id, pushed_by, received_at, event_json) VALUES(?,?,?,?,?)",
@@ -426,10 +478,47 @@ def create_app(engine: BridgeEngine, store: HubStore | None = None,
         device = device_for(request)
         return {"userId": device["userId"], "displayName": device["displayName"], "role": device["role"]}
 
+    class _HubProject:
+        """#279: one linked project as authorize() sees it, its per-project
+        roles folded from the hub's event log, so the dashboard's checks are
+        the same rule as every RPC's."""
+
+        def __init__(self, hub_project_id: str) -> None:
+            self.hub_project_id = hub_project_id
+
+        def team_role(self, user_id: str) -> str | None:
+            return hub.team_roles(self.hub_project_id).get(user_id)  # type: ignore[union-attr]
+
+    def project_role(device: dict[str, Any], hub_project_id: str) -> Role:
+        return effective_role(device, _HubProject(hub_project_id), Action.MANAGE_PROJECTS)
+
     @app.get("/hub/projects")
     def projects(request: Request) -> dict[str, Any]:
-        device_for(request)
-        return {"projects": hub.projects()}  # type: ignore[union-attr]
+        device = device_for(request)
+        listed = hub.projects()  # type: ignore[union-attr]
+        for project in listed:
+            hub_id = str(project.get("hubProjectId") or "")
+            project["myRole"] = project_role(device, hub_id).value
+            project["roles"] = hub.team_roles(hub_id)  # type: ignore[union-attr]
+        return {"projects": listed}
+
+    @app.post("/hub/team-roles")
+    async def set_team_role(request: Request) -> dict[str, Any]:
+        """#279: a user's role on one project. Managing users stays with the
+        token role, as on the desktop."""
+        device = device_for(request)
+        require_admin(device, "change someone's role on a project")
+        body = await request.json()
+        user = next((u for u in hub.users() if u["userId"] == str(body.get("userId") or "")), None)  # type: ignore[union-attr]
+        if user is None:
+            raise HTTPException(400, "Give a role to someone who has joined this hub.")
+        role = body.get("role")
+        if role is not None:
+            try:
+                role = Role(str(role)).value
+            except ValueError:
+                raise HTTPException(400, f"Unknown role: {role}") from None
+        return hub.author_team_role(str(body.get("hubProjectId") or ""), user, role, device)  # type: ignore[union-attr]
 
     @app.post("/hub/progress")
     async def progress(request: Request) -> dict[str, Any]:
@@ -445,14 +534,21 @@ def create_app(engine: BridgeEngine, store: HubStore | None = None,
     @app.get("/hub/users")
     def users(request: Request) -> dict[str, Any]:
         device = device_for(request)
-        require_admin(device, "see the team's users")
+        # #279: a project admin on any project needs the list to assign work there.
+        if not any(project_role(device, str(p.get("hubProjectId") or "")) is Role.PROJECT_ADMIN
+                   for p in hub.projects()):  # type: ignore[union-attr]
+            require_admin(device, "see the team's users")
         return {"users": hub.users()}  # type: ignore[union-attr]
 
     @app.post("/hub/assignments")
     async def assign(request: Request) -> dict[str, Any]:
         device = device_for(request)
-        require_admin(device, "assign work")
         body = await request.json()
+        # #279: assigning is managing the project, decided by the role on it.
+        try:
+            authorize(device, _HubProject(str(body.get("hubProjectId") or "")), Action.MANAGE_PROJECTS)
+        except AuthorizationError as exc:
+            raise HTTPException(403, str(exc)) from None
         assignee_id = str(body.get("userId") or "")
         assignee = None
         if assignee_id:
@@ -485,10 +581,13 @@ def create_app(engine: BridgeEngine, store: HubStore | None = None,
     @app.post("/sync/push")
     async def push(request: Request) -> dict[str, Any]:
         device = device_for(request)
-        if parse_role(device["role"]) is Role.REPORTER:
-            raise HTTPException(403, f"{device['displayName']} is a reporter and cannot push changes.")
         body = await request.json()
         hub_project_id = str(body.get("hubProjectId") or "")
+        # A reporter, by token or on this project (#279), pushes nothing.
+        try:
+            authorize(device, _HubProject(hub_project_id), Action.WRITE)
+        except AuthorizationError as exc:
+            raise HTTPException(403, str(exc)) from None
         if not hub.project_exists(hub_project_id):  # type: ignore[union-attr]
             raise HTTPException(404, "Link the project to this hub before pushing.")
         events = body.get("events") if isinstance(body.get("events"), list) else []

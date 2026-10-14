@@ -3,14 +3,15 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 
 const api = vi.hoisted(() => ({
   join: vi.fn(), me: vi.fn(), projects: vi.fn(), users: vi.fn(), assign: vi.fn(), joinCode: vi.fn(),
-  signedIn: vi.fn(), signOut: vi.fn(),
+  setTeamRole: vi.fn(), signedIn: vi.fn(), signOut: vi.fn(),
 }));
 
 vi.mock("../hubApi", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../hubApi")>();
   return {
     ...actual,
-    hubApi: { join: api.join, me: api.me, projects: api.projects, users: api.users, assign: api.assign, joinCode: api.joinCode },
+    hubApi: { join: api.join, me: api.me, projects: api.projects, users: api.users, assign: api.assign,
+      joinCode: api.joinCode, setTeamRole: api.setTeamRole },
     signedIn: api.signedIn,
     signOut: api.signOut,
   };
@@ -26,6 +27,7 @@ function project(overrides: Partial<HubProject> = {}): HubProject {
       alignedVerseCount: 10, alignedKnownVerseCount: 20 },
     progressPostedAt: "2026-10-14T09:00:00Z", lastActivityAt: "2026-10-14T09:00:00Z", events: 3,
     assignments: [{ chapter: "2", assigneeId: "u-1", assigneeName: "Revant", assignedBy: "u-9", assignedAt: "" }],
+    myRole: "editor", roles: {},
     ...overrides,
   };
 }
@@ -44,6 +46,7 @@ describe("DashboardApp (#81)", () => {
     api.signedIn.mockReturnValueOnce(false).mockReturnValue(true);
     api.join.mockResolvedValue({ userId: "u-3", displayName: "Rina", role: "reporter" });
     api.me.mockResolvedValue({ userId: "u-3", displayName: "Rina", role: "reporter" });
+    api.projects.mockResolvedValue({ projects: [project({ myRole: "reporter" })] });
     render(DashboardApp);
     await fireEvent.input(await screen.findByLabelText("Join code"), { target: { value: " AB-CD " } });
     await fireEvent.input(screen.getByLabelText("Your name"), { target: { value: "Rina" } });
@@ -64,6 +67,7 @@ describe("DashboardApp (#81)", () => {
   it("lets a project admin assign a chapter and invite a user", async () => {
     api.signedIn.mockReturnValue(true);
     api.me.mockResolvedValue({ userId: "u-1", displayName: "Revant", role: "project_admin" });
+    api.projects.mockResolvedValue({ projects: [project({ myRole: "project_admin" })] });
     api.assign.mockResolvedValue({ changed: true });
     api.joinCode.mockResolvedValue({ joinCode: "1A2B-3C4D-5E6F", role: "reporter" });
     render(DashboardApp);
@@ -78,6 +82,31 @@ describe("DashboardApp (#81)", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Create join code" }));
     expect(await screen.findByText("1A2B-3C4D-5E6F")).toBeInTheDocument();
     expect(api.joinCode).toHaveBeenCalledWith("reporter");
+  });
+
+  it("an editor who is project admin on one book assigns there; a token admin sets roles per book (#279)", async () => {
+    api.signedIn.mockReturnValue(true);
+    api.me.mockResolvedValue({ userId: "u-2", displayName: "Rina", role: "editor" });
+    api.projects.mockResolvedValue({ projects: [
+      project({ myRole: "project_admin" }),
+      project({ hubProjectId: "p-phm", bookId: "phm", bookName: "Philemon", myRole: "editor" }),
+    ] });
+    render(DashboardApp);
+    expect(await screen.findAllByRole("button", { name: "Assign…" })).toHaveLength(1);
+    expect(api.users).toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole("button", { name: "Assign…" }));
+    expect(screen.queryByText("Roles on Titus")).toBeNull(); // managing users stays with a token admin
+  });
+
+  it("a token admin gives someone a role on one book", async () => {
+    api.signedIn.mockReturnValue(true);
+    api.me.mockResolvedValue({ userId: "u-1", displayName: "Revant", role: "project_admin" });
+    api.projects.mockResolvedValue({ projects: [project({ myRole: "project_admin" })] });
+    api.setTeamRole.mockResolvedValue({ changed: true });
+    render(DashboardApp);
+    await fireEvent.click(await screen.findByRole("button", { name: "Assign…" }));
+    await fireEvent.change(screen.getByLabelText("Role on Titus for Rina"), { target: { value: "reporter" } });
+    await waitFor(() => expect(api.setTeamRole).toHaveBeenCalledWith("p-tit", "u-2", "reporter"));
   });
 
   it("explains an empty hub", async () => {

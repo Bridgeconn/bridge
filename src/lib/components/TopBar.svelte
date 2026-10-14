@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { bridge, type EngineInfo } from "../api/bridgeClient";
   import { project, currentChapter, navigationStatus, bookAssignments, localUserId, assignedToMe } from "../stores";
+  import { projectRoles, ROLE_NAMES } from "../projectRole";
 
   export let screen: "home" | "dashboard" | "validation" | "review" | "editor" | "report";
   export let projectName = "";
@@ -107,6 +108,11 @@
       {:else}
         <span class="crumb current">{$project?.bookName ?? ""}</span>
       {/if}
+      {#if $projectRoles?.projectRole}
+        <!-- #279: a role given on this project, which overrides the installation role here. -->
+        <span class="project-role" title="Your role on this project; it decides what you can do here">
+          {ROLE_NAMES[$projectRoles.projectRole] ?? $projectRoles.projectRole} on this project</span>
+      {/if}
     {/if}
   </nav>
 
@@ -180,6 +186,7 @@
   .crumb.current { color: var(--text); cursor: default; }
   .crumb.current:hover { background: transparent; }
   .crumb-sep { color: var(--text-3); font-size: var(--fs-sm); flex-shrink: 0; }
+  .project-role { margin-left: 6px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--text-2); font-size: var(--fs-2xs); font-weight: 650; white-space: nowrap; flex-shrink: 0; }
   .crumb-select { height: 28px; border: 1px solid transparent; border-radius: 6px; font-size: var(--fs-sm); font-weight: 600; padding: 0 4px; background: transparent; color: var(--text); max-width: 200px; }
   .crumb-select:hover { background: var(--surface-2); }
   /* Chapter stepper (issue #53): the two arrows read as one control with the

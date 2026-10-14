@@ -34,6 +34,10 @@ export interface HubProject {
   lastActivityAt: string | null;
   events: number;
   assignments: HubAssignment[];
+  /** #279: the signed-in user's role on this project (theirs by token where
+   *  the project gives them none), and every per-project role on it. */
+  myRole: HubRole;
+  roles: Record<string, HubRole>;
 }
 
 export interface HubUser {
@@ -99,6 +103,9 @@ export const hubApi = {
   users: () => request<{ users: HubUser[] }>("GET", "/hub/users"),
   assign: (hubProjectId: string, chapter: string, userId: string) =>
     request<{ changed: boolean }>("POST", "/hub/assignments", { hubProjectId, chapter, userId }),
+  /** #279: a user's role on one project; null returns them to their token role. */
+  setTeamRole: (hubProjectId: string, userId: string, role: HubRole | null) =>
+    request<{ changed: boolean }>("POST", "/hub/team-roles", { hubProjectId, userId, role }),
   joinCode: (role: HubRole) => request<{ joinCode: string; role: HubRole }>("POST", "/hub/join-codes", { role }),
 };
 

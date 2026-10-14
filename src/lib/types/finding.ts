@@ -900,6 +900,13 @@ export interface DuplicateAssessment {
 
 /** #236/#237: the three roles of requirement 4. */
 export type UserRole = "project_admin" | "editor" | "reporter";
+/** team.roles (#279): each user's role on the open project (null: their
+ *  installation role applies), and the signed-in user's role there. */
+export interface TeamRoles {
+  users: Array<{ userId: string; displayName: string; installationRole: UserRole; projectRole: UserRole | null }>;
+  effectiveRole: UserRole;
+  projectRole: UserRole | null;
+}
 
 /** One row of the workspace's users table (#237). `current` marks the user
  * this installation is signed in as. */

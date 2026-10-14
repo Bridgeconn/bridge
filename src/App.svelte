@@ -60,6 +60,7 @@
   } from "./lib/checkSelection";
   import { planChapterEntry, shouldReadStored } from "./lib/chapterEntry";
   import { runVerseGreekRoom } from "./lib/verseChecks";
+  import { projectRoles, refreshProjectRoles } from "./lib/projectRole";
   import CheckMenu from "./lib/components/CheckMenu.svelte";
   import { editingChapter, editingVerse, editSaving } from "./lib/verseEditor";
   import { languageQaChannel, nudgeLanguageQa, startLanguageQaInline } from "./lib/languageQaInline";
@@ -398,6 +399,10 @@
     checkingProgress.update((p) => ({ ...p, running: false, label: "Collection QA finished", state: "succeeded" }));
   }
   $: if (!$project || !opened) stopCollectionQa();
+  // #279: the signed-in user's role on the open project, re-read when the
+  // project or the user changes (a role set in Settings > Users refreshes it too).
+  $: projectRoleKey = $project && opened && engineStatus === "ready" ? `${$project.path}|${$localUserId}` : "";
+  $: void refreshProjectRoles(Boolean(projectRoleKey));
 
   // Startup (#233). The loading screen covers the window until the engine
   // answers its first ping; its status line is the latest stage the shell
@@ -1496,6 +1501,10 @@
       <!-- The toolbar spans the text and the reference panel, so the two start
            at the same height under it. The review panel keeps the full height. -->
       <div class="work-col" style:--verse-scale={$textScale}>
+        {#if $projectRoles?.effectiveRole === "reporter"}
+          <!-- #279: the engine refuses every change; say so before a click finds out. -->
+          <p class="role-banner" role="status">You are a reporter on this project: you can read, report and export, and changes are refused.</p>
+        {/if}
         <div class="editor-toolbar">
           <span>Chapter {$currentChapter} of {$project?.chapters.length ?? "?"}</span>
           <button class="whole-book-btn" on:click={runWholeBook} disabled={Boolean(activeJobId)}
@@ -1683,6 +1692,7 @@
   .whole-book-btn { font-size: var(--fs-xs); font-weight: 600; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); cursor: pointer; }
   .whole-book-btn:disabled { opacity: 0.6; cursor: not-allowed; }
   .whole-book-btn.on { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
+  .role-banner { margin: 0; padding: 6px 14px; background: var(--accent-bg); color: var(--accent); font-size: var(--fs-xs); font-weight: 600; border-bottom: 1px solid var(--border); }
   .toolbar-divider { width: 1px; height: 20px; background: var(--border-strong); }
   .grow { flex: 1; }
   .statusbar { height: 28px; background: var(--surface); border-top: 1px solid var(--border); display: flex; align-items: center; padding: 0 16px; gap: 16px; font-size: var(--fs-xs); color: var(--text-2); flex-shrink: 0; }

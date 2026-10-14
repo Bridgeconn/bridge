@@ -23,6 +23,8 @@
   let invite = "";
 
   $: isAdmin = me?.role === "project_admin";
+  // #279: assigning follows the role on each project.
+  $: canAssignAny = projects.some((p) => p.myRole === "project_admin");
 
   onMount(() => { void load(); });
 
@@ -33,7 +35,8 @@
       if (!signedIn()) { me = null; return; }
       me = await hubApi.me();
       projects = (await hubApi.projects()).projects;
-      users = me.role === "project_admin" ? (await hubApi.users()).users : [];
+      users = me.role === "project_admin" || projects.some((p) => p.myRole === "project_admin")
+        ? (await hubApi.users()).users : [];
     } catch (value) {
       error = message(value);
       if (!signedIn()) me = null;
@@ -65,6 +68,19 @@
     notice = "";
     try {
       await hubApi.assign(project.hubProjectId, chapter, userId);
+      projects = (await hubApi.projects()).projects;
+      assigning = projects.find((p) => p.hubProjectId === project.hubProjectId) ?? null;
+      notice = "Saved. Devices pick it up on their next sync.";
+    } catch (value) {
+      error = message(value);
+    }
+  }
+
+  async function setTeamRole(project: HubProject, userId: string, value: string) {
+    error = "";
+    notice = "";
+    try {
+      await hubApi.setTeamRole(project.hubProjectId, userId, value ? (value as HubRole) : null);
       projects = (await hubApi.projects()).projects;
       assigning = projects.find((p) => p.hubProjectId === project.hubProjectId) ?? null;
       notice = "Saved. Devices pick it up on their next sync.";
@@ -143,7 +159,7 @@
         <p class="muted">No book is linked to this hub yet. Link one from a desktop: Settings › Team › Link this book.</p>
       {:else}
         <table aria-label="Projects">
-          <thead><tr><th>Book</th><th>Checked</th><th>Reviewed</th><th>Aligned</th><th>Assigned to</th><th>Last activity</th>{#if isAdmin}<th></th>{/if}</tr></thead>
+          <thead><tr><th>Book</th><th>Checked</th><th>Reviewed</th><th>Aligned</th><th>Assigned to</th><th>Last activity</th>{#if canAssignAny}<th></th>{/if}</tr></thead>
           <tbody>
             {#each projects as p (p.hubProjectId)}
               <tr>
@@ -153,7 +169,7 @@
                 <td>{p.totals.alignedKnownVerseCount ? `${percent(p.totals.alignedVerseCount, p.totals.alignedKnownVerseCount)}%` : "—"}</td>
                 <td>{p.assignments.map((a) => `${a.chapter ? `ch ${a.chapter}` : "book"}: ${a.assigneeName || a.assigneeId}`).join(" · ") || "—"}</td>
                 <td>{when(p.lastActivityAt)}</td>
-                {#if isAdmin}<td><button on:click={() => (assigning = p)}>Assign…</button></td>{/if}
+                {#if canAssignAny}<td>{#if p.myRole === "project_admin"}<button on:click={() => (assigning = p)}>Assign…</button>{/if}</td>{/if}
               </tr>
             {/each}
           </tbody>
@@ -173,6 +189,20 @@
               </select>
             </label>
           {/each}
+          {#if isAdmin}
+            <h3>Roles on {assigning.bookName}</h3>
+            {#each users as user (user.userId)}
+              <label>
+                <span>{user.displayName}</span>
+                <select aria-label="Role on {assigning.bookName} for {user.displayName}"
+                  value={assigning.roles[user.userId] ?? ""}
+                  on:change={(event) => assigning && setTeamRole(assigning, user.userId, event.currentTarget.value)}>
+                  <option value="">usual role ({user.role.replace("_", " ")})</option>
+                  <option value="project_admin">project admin</option><option value="editor">editor</option><option value="reporter">reporter</option>
+                </select>
+              </label>
+            {/each}
+          {/if}
           <button on:click={() => (assigning = null)}>Done</button>
         </section>
       {/if}
