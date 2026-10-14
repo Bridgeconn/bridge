@@ -20132,3 +20132,84 @@ is shown on both findings and applied to neither. Vitest: the panel line.
 
 **Not done.** Two USFM-checker check types are built from verse text by the adapter's report parse
 (`usfm.luk_18_14_wj_f_…` on Luke) and stay unstable; an issue is proposed, not filed.
+
+## 2026-10-14 — The Language QA book stages are reused while their inputs are unchanged (#271)
+
+**What.** A warm Language QA pass no longer re-runs every book stage. Each stage's last result is kept in
+memory (per bind) under a digest of what it reads, and a decision, an idle refresh or an unrelated change
+re-runs none of them. Code: 72cfce0.
+
+**Why the pass was slow (measured first, on main at 4ef4c83).** On a scratch import of the reviewer's IRV
+Genesis (1,533 verses, ta-irv 1.3.0), a warm pass took 15.0–16.0 s after one verse edit, and 15.3 s after a
+decision or an idle invalidate. Two-thirds of it was sleep. The book stages added on 13 October (#244–#249)
+call the background worker's `proceed()` once per note or per chapter, and each call yields 20 ms:
+`note_callers` 6.0 s, `headings`, `structure` and `xrefs` 1.55 s each, plus 1 s each for the sample loop,
+the chapter loop and the indic-qa layer. With yields off, the same pass was 1.3–2.4 s. The real work was
+the indic-qa layer (`build_book` 0.3–0.8 s, `check_chapter` 0.3–0.75 s, `build_index` 0.37 s after a word
+edit, `map_findings` 0.15 s), then structure 0.2 s and names 0.1 s. A cProfile showed `lift_verse`
+called 5,344 times per pass, about 35% of it.
+
+**How.**
+- `YIELD_SLICE` (0.25 s): the chapter loops and the book stages yield once per slice of work, not once per
+  item. The per-verse scan still yields per verse, as the latency gate measured it.
+- `book_stage()` in `_scan_locked`: digest = the chapter key (rule version, pack with overrides, termbase,
+  house-style lists, lexicon) + every chapter file's sha256 + the stage's own inputs (headings, checker
+  settings via `indic_qa_adapter.checker_key`, collection names, the source file, learned fixes). Headings
+  and the header read verse keys, not text, so an edit keeps them. Structure is cached per chapter. The
+  layer is reused only while `indic_qa_adapter.is_resident` (Book words reads that checker). A stage a
+  cancellation cut short is never kept.
+- Exact savings inside the stages:
+  - `_same_index`: no `build_index` when no changed word crosses `irv_min` and the lexicon and settings
+    generations are those of the last build. Same sources, same index; classify()'s caches are still
+    cleared. hi and ml (an `on_build_index` hook) always rebuild.
+  - `lift_inline_usfm` is an `lru_cache` (4,096; the result is frozen).
+  - `build_book` reuses the lifted notes and memoizes line runs; the OV table is resolved once per pass.
+  - An unchanged chapter file is not parsed again; the language sample's detection is reused.
+  - `name_findings` memoizes each word's candidate names. Only their order depends on the counts.
+- `check_timing.Timings.cached()`: a step reused shows `{"ms": 0, "calls": 0, "cached": n}`.
+
+**Measured after** (Genesis, warm, background worker with its yields, one word-changing edit, 8 edits per
+run, findings and false positives identical to a cold pass every time):
+
+| | before | after |
+|---|---|---|
+| after one verse edit | 15.0–16.0 s | median 0.80 s on a quiet machine; 1.18–1.43 s under normal desktop load |
+| after a decision | 15.3 s | 0.13–0.31 s |
+| idle invalidate | 15.1–15.5 s | 0.09–0.44 s |
+| Philippians, after an edit | 1.6 s (2026-10-08) | 0.19 s |
+
+The spread comes from this laptop (Balanced plan, 8 logical cores, Teams/VS Code/Edge running). The pass's
+own thread CPU time for identical work ranged from 0.70 to 1.25 s between runs, and with the machine at 91%
+load an edit pass reached about 2 s. Benz asked for at least 1.2 s; it is met on a quiet machine and is at
+the line under load. What remains is the indic-qa layer re-checking the whole book after any text change:
+a line's result depends on book-wide counts, IRV sandhi habits and form use. Going lower exactly would
+need a per-line memo inside the vendored checker, which was not done.
+
+**Considered and dropped.** `gc.freeze()` after the checker loads: full collections walk its ~300,000
+objects, 85–120 ms each and about once per pass, blocking every thread. A same-process A/B (alternate
+edits frozen and thawed) gave only ~5% on the pass (median 1.34 against 1.41 s), and it is a
+process-wide change, so it is not in this commit. Proposed separately, because those pauses also stall
+foreground requests.
+
+**Not as the issue proposed.** The cache is in memory, not a `language_qa_cache` row or a workbench
+migration. On reopen the checker loads anyway (about 2 s), so a persisted copy saves little. The tests
+are in `tests/jobs/` (manager-driven, no RPC, CLAUDE.md rule 1), not `tests/service/`.
+
+**Gates.**
+- Engine `pytest -n auto`: 5,367 passed. The only failure was `test_check_job_rejects_a_second_active_job`,
+  the e4c5e9e break reported on #251. After rebasing onto 0.17.0/#273: 3,649 Language QA, jobs, pack and
+  finding-id tests passed.
+- New tests:
+  - `tests/jobs/test_language_qa_book_stages.py` (5): nothing changed re-runs no stage; an edit re-runs
+    structure for its chapter only and matches a cold pass; a heading edit leaves the text-only stages
+    alone; a rebind starts empty; the layer re-runs when its checker is no longer resident.
+  - The index skip equals a fresh `build_index()` and a from-scratch checker's findings.
+  - `cached` in `Timings`.
+- Human-benchmark gate (`--gate`): pass. Latency gate (`benchmark_language_qa.py --gate`): pass, p95
+  ping 8 ms, `verse.get` 21 ms, `verse.decide` 33 ms, `languageQa.status` 9 ms, `languageQa.inline` 25 ms.
+- `build-sidecars.ps1` + `smoke_sidecars.py`: passed, including the ta-irv indic-qa layer.
+- `npm run check` 0/0, `npm run test` 771 passed, `npm run build` ok (the `cached?` field on the timings
+  type).
+
+**Not watched.** The installed app. These numbers come from the engine in-process, with the worker's real
+pacing and a 0 s debounce. The app adds its 0.75 s debounce before the pass starts.
