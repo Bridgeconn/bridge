@@ -1,5 +1,6 @@
 import type { AiCheckReview, QaFinding, FindingCategory, NativeCheckReview } from "../types/finding";
 import type { LanguageQaCategory, LanguageQaFinding } from "../types/languageQa";
+import { graphemeBoundariesInUtf16 } from "./unicodeDiff";
 
 // Category -> CSS class matching the four-colour finding-source legend in
 // index.css (tN red, tW blue, Alignment amber, everything else = Greek Room
@@ -246,7 +247,39 @@ export function buildSegments(
     return [{ text, findingIds: [], className: null, title: "", numbers: [] }];
   }
 
-  const boundaries = new Set<number>([0, text.length]);
+  // #172. A mark's edge sits on a grapheme boundary: a span that ends between
+  // a Tamil consonant and its vowel sign (a tN/tW selection that quotes a
+  // partial form, an offset computed on another normalisation) is widened
+  // to the cluster, so no vowel sign or virama is ever rendered on its own
+  // beside a <mark> edge. The span's own offsets are not changed anywhere
+  // else; this is display only.
+  const clusters = graphemeBoundariesInUtf16(text);
+  const snapDown = (at: number) => clusters.filter((b) => b <= at).pop() ?? 0;
+  const snapUp = (at: number) => clusters.find((b) => b >= at) ?? text.length;
+  for (const span of spans) {
+    span.start = snapDown(span.start);
+    span.end = snapUp(span.end);
+  }
+
+  // The reference number of a finding is shown once, after the word its span
+  // ends in, never inside it: `அப்ப¹,²டி` wedged the numbers into the middle
+  // of அப்படி when a selection matched the first four letters. The underline
+  // still follows the span exactly; only the number's place moves to the end
+  // of the whitespace-delimited word, which is also made a segment boundary
+  // so the number has a segment to follow.
+  const wordEnd = (at: number) => {
+    let end = at;
+    while (end < text.length && !/\s/.test(text[end])) end += 1;
+    return end;
+  };
+  const numbersAt = new Map<number, Set<number>>();
+  for (const span of spans) {
+    if (span.number === undefined) continue;
+    const at = wordEnd(span.end);
+    numbersAt.set(at, (numbersAt.get(at) ?? new Set<number>()).add(span.number));
+  }
+
+  const boundaries = new Set<number>([0, text.length, ...numbersAt.keys()]);
   spans.forEach((span) => {
     boundaries.add(span.start);
     boundaries.add(span.end);
@@ -272,9 +305,7 @@ export function buildSegments(
       findingIds: Array.from(new Set(covering.map((span) => span.id))),
       className: classes.length > 0 ? classes.join(" ") : null,
       title: Array.from(new Set(covering.map((span) => span.title).filter(Boolean))).join("\n\n"),
-      numbers: Array.from(new Set(
-        covering.map((span) => span.number).filter((n): n is number => n !== undefined),
-      )).sort((a, b) => a - b),
+      numbers: Array.from(numbersAt.get(end) ?? []).sort((a, b) => a - b),
     });
   }
   return segments;

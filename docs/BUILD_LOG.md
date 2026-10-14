@@ -20507,3 +20507,32 @@ rebasing on Benz's #204/#205 Wildebeest change, the 124 overlapping tests passed
 `npm run check` 0/0, build OK, frozen `smoke_sidecars.py` passed.
 
 **Not seen on the desktop:** QA matrix M88. Two laptops on a LAN: #281.
+
+## 2026-10-14 — A finding's number follows the whole word; a mark edge sits on a grapheme boundary (#172)
+
+**What was seen.** `அப்ப¹,²டி திரும்பினாள்`: two finding numbers wedged into the middle of அப்படி.
+The mechanism was in the code, not the data: `buildSegments` cuts the verse at every span edge
+and VerseList renders a segment's numbers right after it, so a tN/tW selection that matched the
+first four letters of a word (`exactTextRanges` is a substring match, by design: tC occurrences
+are substrings) ended a segment mid-word and the numbers landed there. That split is at a
+grapheme boundary (between ப and டி), so a grapheme rule alone would not have moved it.
+
+**What changed** (`highlight.ts`, `unicodeDiff.ts`, `usfmNotes.ts`, `VerseList.svelte`; display
+only, no offset or finding changes):
+- A finding's number is shown once, after the whitespace-delimited word its span ends in. The
+  word's end becomes a segment boundary so the number has a segment to follow, and VerseList
+  renders a number after an unmarked segment too (it used to render them only after a `<mark>`).
+  A number used to repeat on every segment its span covered, and on both halves of a segment a
+  footnote marker split; it now appears exactly once.
+- Every span edge is snapped to a grapheme boundary (start down, end up) with
+  `graphemeBoundariesInUtf16`, a UTF-16 sibling of the existing `graphemeBoundariesInCodePoints`
+  over the same `Intl.Segmenter` clusters, so a mark never isolates a vowel sign or virama. The
+  underline still follows the span otherwise.
+
+**Tests.** `highlight.test.ts`: the reporter's word (mark on அப்ப, numbers after டி), a span that
+already ends at a word end, a span ending between ட and ி widened to the cluster, one number per
+finding across overlapping spans. `VerseList.test.ts`: the DOM order `அப்படி¹ `, one `<sup>`.
+
+**Gates.** `npm run check` 0/0; `npm run test` and `npm run build` as recorded on the issue. Engine
+suite skipped: frontend only. **Not run:** the desktop app at 1366x768; the verse-editor row of
+QA 05B/#156 on the next build covers it.

@@ -207,3 +207,41 @@ describe("overlapping Language QA marks", () => {
     expect(marked(segments)).toEqual([["beta", "m-tn m-term"]]);
   });
 });
+
+describe("finding numbers and word shapes (#172)", () => {
+  const qa = (id: string, start: number, end: number) => ({
+    id, chapter: "1", verse: "1", engine: "local", check: "local", status: "open", severity: "low",
+    category: "translationWords", check_type: "tw", explanation: id, evidence: [],
+    start_offset: start, end_offset: end,
+  }) as never;
+
+  it("places a number after the word its span ends in, not inside the word", () => {
+    // A tW selection that quoted the first four letters of அப்படி.
+    const text = "அப்படி திரும்பினாள்";
+    const segments = buildSegments(text, [qa("a", 0, 4), qa("b", 0, 4)]);
+    expect(segments.map((s) => [s.text, s.className, s.numbers])).toEqual([
+      ["அப்ப", "m-gr", []],
+      ["டி", null, [1, 2]],
+      [" திரும்பினாள்", null, []],
+    ]);
+  });
+
+  it("keeps the number where the span already ends at a word end", () => {
+    const segments = buildSegments("alpha beta", [qa("a", 0, 5)]);
+    expect(segments.map((s) => [s.text, s.numbers])).toEqual([["alpha", [1]], [" beta", []]]);
+  });
+
+  it("widens a mark edge that would split a Tamil grapheme to the whole cluster", () => {
+    // Offsets 0–5 of அப்படி end between ட and its vowel sign ி.
+    const text = "அப்படி வந்தாள்";
+    const segments = buildSegments(text, [qa("a", 0, 5)]);
+    expect(segments[0]).toMatchObject({ text: "அப்படி", className: "m-gr", numbers: [1] });
+    expect(segments.map((s) => s.text).join("")).toBe(text);
+  });
+
+  it("lists a number once when its span covers several segments", () => {
+    const segments = buildSegments("alpha beta gamma", [qa("outer", 0, 16), qa("inner", 6, 10)]);
+    const numbered = segments.filter((s) => s.numbers.length);
+    expect(numbered.map((s) => [s.text, s.numbers])).toEqual([["beta", [2]], [" gamma", [1]]]);
+  });
+});

@@ -1273,3 +1273,18 @@ describe("VerseList ✓ and alignment glyph (Benz, 2026-10-09)", () => {
     expect(screen.getByRole("button", { name: /Alignment partial for verse 6/ }).classList.contains("partial")).toBe(true);
   });
 });
+
+describe("finding numbers never split a word (#172)", () => {
+  it("renders the number after the whole word, with the mark still on the matched letters", () => {
+    const text = "அப்படி திரும்பினாள்.";
+    seed(text, [finding({ id: "tw-1", start_offset: 0, end_offset: 4, category: "translation_word" })]);
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    const body = document.querySelector(".vbody") as HTMLElement;
+    expect(body.querySelector("mark")?.textContent).toBe("அப்ப");
+    const sup = body.querySelector("sup.finding-num") as HTMLElement;
+    expect(sup.textContent).toBe("1");
+    // The text before the number is the whole word, not its first four letters.
+    expect(body.textContent?.startsWith("அப்படி1 ")).toBe(true);
+    expect(body.querySelectorAll("sup.finding-num")).toHaveLength(1);
+  });
+});
