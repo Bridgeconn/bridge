@@ -533,8 +533,9 @@ def test_check_job_can_cancel_and_retry(fixture_project, monkeypatch):
         return []
 
     monkeypatch.setattr(engine, "_run_verse_checks_for_project", slow_check)
+    # Wildebeest alone: no book preflight before the first verse (#252).
     started = call(engine, "checks.start", {
-        "scope": "chapter", "chapters": ["1"], "checks": ["greekroom"],
+        "scope": "chapter", "chapters": ["1"], "checks": ["wildebeest"],
     })["result"]
     assert entered.wait(timeout=1)
 
