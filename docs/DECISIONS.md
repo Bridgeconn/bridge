@@ -1117,3 +1117,23 @@ reviewer ticks it; a verse being shown as fully checked before its selected chec
 **Supersedes:** the "approved design" in which Greek Room was the one engine that re-checked
 live on focus (stated in `ReviewPanel.svelte`'s comment, never entered here).
 **Revisit when:** Greek Room gets a cache that makes a chapter run cheap enough to be automatic.
+
+## 2026-10-14 — The recall proxy's target: at most 10% still missed per abstain class with at least 20 reviewed abstains (#230)
+**Decision:** Benz accepts Revant's proposal of 2026-10-12 as it stands. For every abstain
+class with at least 20 reviewed abstains (missed, correct skip and house form together), the
+still-missed rate in `docs/LANGUAGE_QA_BENCHMARK.md` must be at most 10%. A class with fewer
+than 20 is reported, not gated. On the labels committed by 2026-10-13 (three rounds), the gated
+classes stand at:
+- `A_ai_rootnoun`: 3.3% (30 reviewed);
+- `B_ai_baremajority`: 0.0% (50 reviewed);
+- `T_theva_abstain`: 0.0% (20 reviewed).
+
+The reported classes (`D_rku_dative` 17, `E_kku_exception` 12, `split` 13,
+`H_demonstrative_houseform` 9, `G_marker` 4) are all at 0.0%.
+**Because:** the proxy is the only recall measure the labels support (2026-10-12), and a rate
+over fewer than 20 abstains moves by 5 points or more on a single label.
+**Rules out:** quoting the proxy as recall; gating a class under 20 reviewed abstains.
+**Not yet done:** the human gate (`language_qa_benchmark.py --gate`) prints the table but does
+not fail on it. Adding the check is a separate change, to be proposed.
+**Revisit when:** a labelled sample of the text itself makes real recall measurable (as
+2026-10-12).
