@@ -61,6 +61,16 @@ describe("TeamPane (#80)", () => {
     await waitFor(() => expect(api.hubSyncNow).toHaveBeenCalled());
   });
 
+  it("names a Language QA overrides conflict by what the other device switched off (#277)", async () => {
+    api.hubStatus.mockResolvedValue(status({ openConflicts: 1 }));
+    api.hubConflicts.mockResolvedValue({ hubProjectId: "p-1", conflicts: [{
+      ...conflict, table: "project_state",
+      theirPayload: { version: 1, pack: "hi-irv", document: { rules: { "hi.lex.unknown": { enabled: false } } } },
+    }] });
+    render(TeamPane);
+    expect(await screen.findByText(/Language QA checker settings \(hi-irv\): switched off hi\.lex\.unknown/)).toBeInTheDocument();
+  });
+
   it("shows the last error without blocking anything", async () => {
     api.hubStatus.mockResolvedValue(status({ sync: { pullCursor: 0, lastPushAt: null, lastPullAt: null, lastError: "The hub at http://team-hub:8765 could not be reached (refused)." } }));
     render(TeamPane);

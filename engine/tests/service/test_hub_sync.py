@@ -219,3 +219,106 @@ def test_a_days_work_of_500_decisions_syncs_well_inside_the_budget(tmp_path, hub
     assert elapsed < 30.0, f"500 decisions took {elapsed:.1f} s"
     assert len(_decisions(b)) == len(_decisions(a))
     print(f"500 decisions push+pull in-process: {elapsed:.2f} s")
+
+
+# -- #277: a book's Language QA overrides travel as a project_state row -------
+
+HINDI = "\\id GEN\n\\h Genesis\n\\c 1\n\\p\n\\v 1 वह मनूष्य गया।\n\\v 2 यह वचन ठीक है।\n"
+HINDI_METADATA = {**METADATA, "languageId": "hin", "languageName": "Hindi", "projectName": "Genesis review"}
+
+
+def _hindi_device(tmp_path, name, hub, source):
+    from tc_ai_bridge.language_qa_jobs import LanguageQaManager
+
+    engine = BridgeEngine(settings=AppSettings(path=tmp_path / name / "settings.json"))
+    engine._hub_transport = hub["transport"]
+    engine.HUB_SYNC_INTERVAL_SECONDS = 3600
+    engine._language_qa = LanguageQaManager(debounce=0, yield_seconds=0)
+    engine._configure_language_qa()
+    imported = _call(engine, "project.import", {"path": str(source), "metadata": HINDI_METADATA})
+    assert imported["success"] is True, imported
+    return engine
+
+
+def _unknown_after_pass(engine, newer_than: int = -1):
+    """The hi.lex.unknown findings of the first completed pass newer than `newer_than`."""
+    import time
+
+    deadline = time.monotonic() + 90
+    while time.monotonic() < deadline:
+        _call(engine, "ping")  # a request lets the dispatcher apply a pending rebind
+        status = engine._language_qa.status(limit=100)
+        assert status["state"] != "failed", status
+        if status["state"] == "completed" and int(status.get("generation") or 0) > newer_than:
+            return int(status["generation"]), [f for f in status["findings"] if f["rule"] == "hi.lex.unknown"]
+        time.sleep(0.02)
+    pytest.fail(f"Language QA did not complete: {engine._language_qa.status()}")
+
+
+@pytest.fixture
+def two_hindi_devices(tmp_path, hub):
+    source = tmp_path / "GEN.usfm"
+    source.write_text(HINDI, encoding="utf-8")
+    a = _hindi_device(tmp_path, "a", hub, source)
+    assert _call(a, "hub.join", {"url": HUB_URL, "joinCode": hub["admin_code"], "displayName": "Revant"})["success"]
+    assert _call(a, "hub.link")["success"]
+    code = hub["client"].post("/hub/join-codes", json={"role": "editor"},
+                              headers={"Authorization": f"Bearer {a.settings.get_hub_token()}"}).json()["joinCode"]
+    b = _hindi_device(tmp_path, "b", hub, source)
+    assert _call(b, "hub.join", {"url": HUB_URL, "joinCode": code, "displayName": "Rina"})["success"]
+    assert _call(b, "hub.link")["success"]
+    yield a, b
+    for engine in (a, b):
+        engine._language_qa.unbind()
+
+
+def _switch(engine, rule, enabled):
+    saved = _call(engine, "languageQa.checkerSettings.set",
+                  {"projectPath": str(engine.project.path), "rules": {rule: {"enabled": enabled}}})
+    assert saved["success"] is True, saved
+
+
+def _switch_off(engine, rule):
+    _switch(engine, rule, False)
+
+
+def test_a_rule_switched_off_on_one_device_is_off_on_the_other_after_sync(two_hindi_devices):
+    from tc_ai_bridge.language_packs.loader import overrides_path
+
+    a, b = two_hindi_devices
+    generation, unknown = _unknown_after_pass(b)
+    assert unknown, "the book is built to raise hi.lex.unknown"
+
+    _switch_off(a, "hi.lex.unknown")
+    assert a.hub_sync_once()["pushed"] >= 1
+    pulled = b.hub_sync_once()
+
+    assert pulled["languageQaOverrides"] == ["hi-irv"]
+    on_a = overrides_path(a.project.path, "hi-irv").read_text(encoding="utf-8")
+    assert overrides_path(b.project.path, "hi-irv").read_text(encoding="utf-8") == on_a
+    _generation, unknown = _unknown_after_pass(b, newer_than=generation)
+    assert unknown == []
+    # Nothing changed since: the next pass moves nothing either way.
+    assert a.hub_sync_once()["pushed"] == 0
+    assert b.hub_sync_once()["languageQaOverrides"] == []
+
+
+def test_two_devices_changing_the_overrides_keep_their_own_and_see_the_other(two_hindi_devices):
+    from tc_ai_bridge.language_packs.loader import overrides_path
+
+    a, b = two_hindi_devices
+    _switch_off(a, "hi.lex.unknown")
+    # A real change on B too: archaic-form is off by default, so B turns it on.
+    _switch(b, "hi.lex.archaic-form", True)
+    a.hub_sync_once()
+    b.hub_sync_once()
+    a.hub_sync_once()
+
+    on_a = overrides_path(a.project.path, "hi-irv").read_text(encoding="utf-8")
+    on_b = overrides_path(b.project.path, "hi-irv").read_text(encoding="utf-8")
+    assert "hi.lex.unknown" in on_a and "archaic-form" not in on_a
+    assert "archaic-form" in on_b and "hi.lex.unknown" not in on_b
+    [conflict] = _call(b, "hub.conflicts")["result"]["conflicts"]
+    assert conflict["table"] == "project_state"
+    assert conflict["theirPayload"]["pack"] == "hi-irv"
+    assert conflict["theirPayload"]["document"]["rules"]["hi.lex.unknown"] == {"enabled": False}

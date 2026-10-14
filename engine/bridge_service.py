@@ -94,6 +94,7 @@ from tc_ai_bridge.language_qa import lift_inline_usfm as language_qa_lift
 from tc_ai_bridge.language_packs.reference_text import ReferenceHolder, detect as detect_reference
 from tc_ai_bridge.language_packs.related_words import RelatedWords
 from tc_ai_bridge.language_packs.registry import packs_dir
+from tc_ai_bridge.language_packs.loader import OVERRIDES_PATH, load_project_overrides, overrides_path
 from tc_ai_bridge.language_packs.registry import available as available_language_packs
 from tc_ai_bridge.workbench_repository import WorkbenchConflict, WorkbenchValidationError, natural_row_id
 from tc_ai_bridge.alignment_engine import (
@@ -748,6 +749,9 @@ class BridgeEngine:
         self._collection_jobs = CollectionJobManager()
         self._housestyle_learner = HouseStyleLearner()
         self._language_qa = LanguageQaManager()
+        # #277: books whose overrides file a hub pull rewrote; the dispatcher
+        # rebinds Language QA on its next request (the pull is on the hub thread).
+        self._language_qa_rebind_paths: set[str] = set()
         # #280: a live pass keeps the dashboard's Language QA clean count current.
         self._language_qa.on_published = self._refresh_progress_language_qa
         self._ai_review_jobs = AIReviewJobManager()
@@ -976,6 +980,46 @@ class BridgeEngine:
         self._start_hub_thread()
         return {**self.hub_status(), "created": bool(linked.get("created"))}
 
+    @staticmethod
+    def _mirror_language_qa_overrides(project: TranslationCoreProject) -> list[str]:
+        """#277: every pack overrides file of `project` into its project_state
+        row, where it differs (a malformed file is left alone). Returns the
+        packs written."""
+        root = Path(project.path) / OVERRIDES_PATH
+        packs = {path.name for path in root.iterdir() if path.is_dir()} if root.is_dir() else set()
+        packs |= set(project.language_qa_overrides_states())
+        written = []
+        for pack in sorted(packs):
+            document, problems = load_project_overrides(project.path, pack)
+            if not problems and project.save_language_qa_overrides_state(pack, document):
+                written.append(pack)
+        return written
+
+    def _apply_pulled_language_qa_overrides(self, project: TranslationCoreProject) -> list[str]:
+        """#277: after a pull, write each pack's overrides file where its
+        project_state row now differs, as the dialog would have, and have the
+        dispatcher rebind Language QA on its next request (this runs on the
+        hub thread). A conflicted row is not applied by the pull, so its file
+        stays as it was. Returns the packs rewritten."""
+        rewritten = []
+        for pack, document in project.language_qa_overrides_states().items():
+            on_disk, problems = load_project_overrides(project.path, pack)
+            if not problems and (on_disk or None) == document:
+                continue
+            path = overrides_path(project.path, pack)
+            if document is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                temp = path.with_name(f".overrides-{uuid.uuid4().hex}.json")
+                temp.write_text(json.dumps(document, ensure_ascii=False, indent=1, sort_keys=True) + "\n",
+                                encoding="utf-8")
+                os.replace(temp, path)
+            rewritten.append(pack)
+        if rewritten:
+            self._language_qa_rebind_paths.add(str(project.path))
+        return rewritten
+
     def hub_sync_once(self) -> dict[str, Any]:
         """One push-and-pull for the open book, on the calling thread."""
         from tc_ai_bridge.hub_sync import HubError, sync_project
@@ -987,10 +1031,19 @@ class BridgeEngine:
         if not link or not self.settings.hub_url:
             return {"skipped": "not linked"}
         try:
+            # #277: a file written before the row existed, or by hand, travels too.
+            self._mirror_language_qa_overrides(project)
+        except Exception as exc:  # noqa: BLE001 -- never fails the sync
+            _trace(f"language QA overrides not mirrored: {exc}")
+        try:
             client = self._hub_client()
             result = sync_project(project.workbench, client, link)
         except HubError as exc:
             return {"error": str(exc)}
+        try:
+            result["languageQaOverrides"] = self._apply_pulled_language_qa_overrides(project)
+        except Exception as exc:  # noqa: BLE001
+            result["languageQaOverridesError"] = str(exc)
         try:
             # Pulled assignments change what "My work" shows (#240's cache).
             project.sync_assignments_cache()
@@ -6269,6 +6322,9 @@ class BridgeEngine:
                     path for _book, path in self.project.collection_sibling_paths())])
             except checker_settings_rpc.CheckerSettingsError as exc:
                 raise ProjectError(str(exc)) from exc
+            # #277: the same document as a project_state row, so it syncs.
+            for project in self._collection_book_projects():
+                self._mirror_language_qa_overrides(project)
             self._language_qa.bind(self.project)
             pack, _notes = project_rule_pack(self.project.path, name)
         counts = self._language_qa.rule_counts()
@@ -7647,6 +7703,14 @@ class BridgeEngine:
             self._activate_session(session)
         except Exception as exc:  # noqa: BLE001
             return EngineResponse.fail(request.id, "internal_error", f"Could not switch session: {exc}")
+        rebind_path = str(getattr(self.project, "path", "") or "")
+        if not session and rebind_path and rebind_path in self._language_qa_rebind_paths:
+            # #277: a hub pull rewrote this book's overrides file.
+            self._language_qa_rebind_paths.discard(rebind_path)
+            try:
+                self._language_qa.bind(self.project)
+            except Exception as exc:  # noqa: BLE001
+                _trace(f"language QA rebind after a pull failed: {exc}")
         try:
             return self._handle_request(request)
         finally:

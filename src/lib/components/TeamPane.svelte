@@ -10,6 +10,20 @@
 
   let status: HubStatus | null = null;
   let conflicts: HubConflict[] = [];
+
+  /** What the other device changed. A Language QA overrides row (#277) is
+   *  named for what it is: their Checker settings for a pack, with the rules
+   *  they switched off. Yours stay in the Checker settings dialog. */
+  function conflictLabel(item: HubConflict): string {
+    const payload = item.theirPayload ?? {};
+    if (item.table === "project_state" && typeof payload.pack === "string" && "document" in payload) {
+      const rules = (payload.document as { rules?: Record<string, { enabled?: boolean }> } | null)?.rules ?? {};
+      const off = Object.entries(rules).filter(([, rule]) => rule?.enabled === false).map(([id]) => id);
+      return `Language QA checker settings (${payload.pack})`
+        + (payload.document ? (off.length ? `: switched off ${off.join(", ")}` : "") : ": back to the defaults");
+    }
+    return String(payload.decision ?? item.table);
+  }
   let url = "";
   let joinCode = "";
   let displayName = "";
@@ -84,7 +98,7 @@
         {#each conflicts as item (item.id)}
           <li>
             <span><strong>{item.theirActorName || item.theirActorId || "Someone"}</strong> ·
-              {String(item.theirPayload?.decision ?? item.table)} · {when(item.theirCreatedAt)}</span>
+              {conflictLabel(item)} · {when(item.theirCreatedAt)}</span>
             <button class="small-button" disabled={busy}
               on:click={() => run("Kept your decision.", () => bridge.hubResolveConflict(item.id, "kept-mine"))}>Keep mine</button>
           </li>

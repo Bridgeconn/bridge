@@ -123,6 +123,9 @@ class ProjectSummary:
 
 
 _PARATEXT_SYNC_STATE_KEY = 'paratext_live_sync_state'
+# #277: a Language QA pack's overrides file, mirrored as a project_state row
+# per pack so it travels through the hub like any other review state.
+_LANGUAGE_QA_OVERRIDES_KEY = 'languageQaOverrides:'
 
 # Directories that held human-owned records before #76 moved those stores into
 # `bridge-workbench.sqlite3`. A project containing any of them was written by a
@@ -1050,6 +1053,42 @@ class TranslationCoreProject:
             extra_columns={'key': _PARATEXT_SYNC_STATE_KEY},
         )
         return row_id
+
+    def language_qa_overrides_states(self) -> dict[str, dict[str, Any] | None]:
+        """#277: each pack's overrides document as last written on any device,
+        {pack: document}; None is a pack whose overrides were cleared."""
+        states: dict[str, dict[str, Any] | None] = {}
+        for row in self.workbench.rows(
+            'project_state', project_id=self.workbench_identity.project_id, book_id=self.book_id,
+        ):
+            key = str(row.get('key') or '')
+            if not key.startswith(_LANGUAGE_QA_OVERRIDES_KEY):
+                continue
+            try:
+                document = json.loads(row['payload_json']).get('document')
+            except (TypeError, ValueError, AttributeError):
+                continue
+            states[key[len(_LANGUAGE_QA_OVERRIDES_KEY):]] = document if isinstance(document, dict) else None
+        return states
+
+    def save_language_qa_overrides_state(self, pack: str, document: dict[str, Any] | None) -> bool:
+        """#277: mirror one pack's overrides file into its project_state row.
+        Written only when it differs, so an unchanged file never travels; a
+        pack with no file and no row says nothing. Returns whether it wrote."""
+        document = document or None
+        current = self.language_qa_overrides_states()
+        if (pack in current and current[pack] == document) or (pack not in current and document is None):
+            return False
+        identity = self.workbench_identity
+        key = f'{_LANGUAGE_QA_OVERRIDES_KEY}{pack}'
+        self.workbench._write(
+            'project_state', natural_row_id(identity.project_id, self.book_id, key),
+            project_id=identity.project_id, book_id=self.book_id,
+            payload={'version': 1, 'pack': pack, 'document': document},
+            actor_id=identity.actor_id, device_id=identity.device_id,
+            expected_revision=None, extra_columns={'key': key},
+        )
+        return True
 
     @staticmethod
     def _validate_issue_resolution_id(resolution_id: str) -> str:
