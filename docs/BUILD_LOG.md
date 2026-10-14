@@ -20213,3 +20213,47 @@ are in `tests/jobs/` (manager-driven, no RPC, CLAUDE.md rule 1), not `tests/serv
 
 **Not watched.** The installed app. These numbers come from the engine in-process, with the worker's real
 pacing and a 0 s debounce. The app adds its 0.75 s debounce before the pass starts.
+
+## 2026-10-14 — Chapter entry reads the stored findings back; the job runs only when they are stale (#272, closes #114), 49b559d
+
+**What changed.** Entering a chapter used to start a chapter job whenever the frontend's
+`loadedChapters` did not list it, and that set is cleared on every book switch, so going A → B → A
+re-ran A's job for results already on disk. Now `activateChapter` asks `check.loadChapterFindings`
+first (`chapterEntry.ts` decides). If the stored snapshot still describes the chapter, its findings
+are shown with today's decisions applied, and a job runs only for the selected checks it does not
+cover (#251). Otherwise the chapter job runs as before. Nothing new is persisted in the frontend.
+
+**What "still describes the chapter" means.** The snapshot payload (`check_findings`, no schema
+change) now carries `checkGroups` and an `inputsFingerprint` (`_chapter_inputs_fingerprint`). The
+fingerprint hashes the file signatures (file id, mtime, size) of everything the findings were
+computed from:
+- the chapter's text and alignment files;
+- its tC `checkData` (selections, invalidated, comments, verseEdits) and Word Alignment marks;
+- the book's tN/tW index;
+- the change-log positions of the three workbench tables the alignment gap check reads (links,
+  null decisions, verdicts);
+- for a Greek Room snapshot only, the book's `.usfm` and every chapter's text, because the
+  USFM and names scans are whole-book.
+
+This is wider than the text hash the issue asked for, deliberately: an alignment save or a tC
+selection changes findings without changing text, and a text-only hash would have shown stale
+alignment findings. Decisions are not an input; they are applied on read. A snapshot written
+before #272 has no fingerprint and so counts as stale once.
+
+**The merge from #251 now respects staleness.** A run of some checks carries the other checks'
+stored findings only from a snapshot that is still current. Before, a Greek Room run after an edit
+would have carried tN findings computed from the old text. The snapshot's `checkGroups` is the
+job's groups, plus those of a current prior snapshot.
+
+**Measured** (Tamil IRV Luke, dev machine, through the protocol, new default checks): the chapter
+job is 194–267 ms on chapters 2, 6 and 22 (49–71 verses); reading back is a median of 33–38 ms,
+max 92 ms. #272's own figures for the old default were 1.9–3.3 s per chapter job.
+
+**Tests.** `tests/service/test_chapter_findings_readback.py`, 9: nothing stored is not current;
+after a job the stored ids equal the job's; a later decision shows on read; an edit, an alignment
+change or a tC selection makes the chapter stale; a pre-#272 snapshot is stale; a stale snapshot's
+findings are not carried into a partial run; a current snapshot covers the union of its runs.
+Vitest `chapterEntry.test.ts`: hit, partial hit, miss or failed read, and nothing while a job or
+Collection QA runs or the chapter is loaded.
+
+**Not seen on the desktop:** QA matrix M63.
