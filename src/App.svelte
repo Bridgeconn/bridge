@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { bridge } from "./lib/api/bridgeClient";
+  import { bridgeReference } from "./lib/navigationReference";
   import {
     formatPerfLine, perfAbort, perfBegin, perfEnd, perfInFlight, perfResponded, registerPerfRunner, setPerfSink,
   } from "./lib/perf";
@@ -124,8 +125,7 @@
   }
 
   function currentBridgeReference(): string {
-    if (!$project || !$selectedVerse) return "";
-    return `${$project.bookId.toUpperCase()} ${$currentChapter}:${$selectedVerse}`;
+    return bridgeReference($project, $currentChapter, $selectedVerse);
   }
 
   function navigationContext(): string {
@@ -1239,7 +1239,11 @@
     if (($chapterVerseNums[$currentChapter] ?? []).includes(v)) selectedVerse.set(v);
   }
 
-  $: navigationReference = currentBridgeReference();
+  // The stores are named here, not read inside a function: Svelte 4 re-runs a
+  // `$:` statement only for the names written in it, and the old
+  // `currentBridgeReference()` call never re-ran, so Bridge never published a
+  // verse change to Paratext or Logos (#110).
+  $: navigationReference = bridgeReference($project, $currentChapter, $selectedVerse);
   $: if (!navigationReference) {
     lastNavigationReference = "";
   } else if (engineStatus === "ready" && navigationReference !== lastNavigationReference) {
