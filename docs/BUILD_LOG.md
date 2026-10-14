@@ -20556,3 +20556,12 @@ No component change.
 
 **Not run:** the desktop app; the "text moves out from under the cursor" symptom is a layout one, and
 jsdom does not lay out. The #156 walk on the next build covers it (M-row to add then).
+
+## 2026-10-14 — The chapter dropdown shows the whole chapter number (#209)
+
+The top bar's chapter `<select>` had an inline `width:72px`, so "Ch 119" (and "Ch 119 ●" for an
+assigned chapter) was cut to "Ch 11" in Psalms, and the in-app text size made it worse. The select
+now sizes to its widest option with `min-width: 72px`, so one- and two-digit books keep the old
+width. One style change in `TopBar.svelte`; no logic. `npm run check` 0/0, `npm run test`, `npm run
+build` as recorded on the issue. **Not run:** the desktop app at 1366x768 with Psalms open and the
+largest text size; the #156 walk covers it, and a Psalms fixture is listed there.

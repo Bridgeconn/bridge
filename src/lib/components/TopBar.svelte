@@ -126,7 +126,9 @@
         aria-label="Previous chapter"
         on:click={() => stepChapter(-1)}
       >‹</button>
-      <select class="select" style="width:72px;" value={$currentChapter} on:change={handleChapterSelect}>
+      <!-- Sized by its widest option, not a fixed 72px: "Ch 119 ●" was cut to
+           "Ch 11" at that width, and the in-app text size makes it wider still (#209). -->
+      <select class="select chapter-select" value={$currentChapter} on:change={handleChapterSelect}>
         {#each chapters as ch}
           <option value={ch}>Ch {ch}{assignedToMe($bookAssignments, ch, $localUserId) ? " ●" : ""}</option>
         {/each}
@@ -205,6 +207,7 @@
   }
   .chapter-step:disabled { opacity: .4; cursor: not-allowed; }
   .select { height: 28px; border: 1px solid var(--border); border-radius: 6px; font-size: var(--fs-sm); padding: 0 6px; background: var(--surface); color: var(--text); flex-shrink: 0; }
+  .chapter-select { min-width: 72px; width: auto; }
   .goto { display: flex; align-items: center; gap: 6px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 0 8px; height: 28px; width: 150px; flex-shrink: 0; }
   .goto input { border: none; background: transparent; font-size: var(--fs-sm); color: var(--text); outline: none; width: 100%; }
   .grow { flex: 1; }
