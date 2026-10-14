@@ -19944,3 +19944,45 @@ the new default `["tN","tW","alignment","text","languageQa"]`.
 **Not done here.** #275 (the Wildebeest section triage and analytics read) is decided separately.
 #272 will read the stored snapshot back on chapter entry; the merge above is what keeps that
 snapshot whole across elective runs. Not seen on the desktop: QA matrix M61, M62.
+
+## 2026-10-14 — A live Language QA pass updates the dashboard's clean count (#280)
+
+**What.** #239's "Language QA clean" count moved when a check job completed and, through #239's
+decision recompute, on a Language QA decision. It did not move when a background pass after an
+edit, a scoped Use or an undo made a finding appear or disappear. The issue named decisions as the
+gap. With the new hook unwired, the test's "ignore" step still passed and its "edit" step failed,
+so edits, Use and undo were the real gap.
+
+**How.**
+- `LanguageQaManager.on_published(project_path, by_verse)` is called by the background worker
+  after it publishes a completed pass, outside its lock, so there is no extra pass. A check job's
+  `run_pass` writes the rollup itself and does not call it.
+- `BridgeEngine._refresh_progress_language_qa` builds each verse's Language QA ids (open and
+  hidden) and statuses (open, or the decision) from the pass, as the check job builds them. It
+  compares them with the rollup and writes only the verses that changed. It then recomputes the
+  totals and saves them, which refreshes the workspace cache (#239's path).
+- Only verses that already hold Language QA ids are touched (a check job ran the stage there). A
+  book never checked still reads "not checked", not "clean".
+- `TranslationCoreProject.update_progress_language_qa(chapter, verses)` replaces those verses' id
+  lists and finding rows in one transaction. The chapter row's other fields (`aiChecked`,
+  `checkedVerses`, `alignedVerseCount`) and other checks' rows are left as they were.
+
+**Measured.**
+- `tests/service/test_progress_dimensions.py`: 5 passed (new: the clean count follows an ignore
+  and an edit with no check job, and a live pass claims nothing where the stage never ran). With
+  the hook unwired, the new test fails at the edit step.
+- Latency gate, local, 50 ms default: passed twice. Gated p95 ≤ 40 ms (`languageQa.inline` 15–33 ms),
+  ping max 100–102 ms. With the hook unwired, the same run measured ping max 114 ms. One earlier run
+  straight after the full suite tripped the script's sanity assertion on ping (828 ms). Ungated
+  `verse.edit` (1.4–2.0 s) and `project.open` (0.6–1.2 s) are higher than on 2026-10-13, with or
+  without the hook.
+- Frozen pair rebuilt; `scripts/smoke_sidecars.py` passed.
+- Engine `pytest -n auto`: 5,344 passed, 3 failed, none from this change.
+  `tests/service/test_bridge_service.py::test_check_job_can_cancel_and_retry` and
+  `::test_check_job_rejects_a_second_active_job` fail on a clean checkout of c8d8c49 and pass on
+  75dd038, the commit before e4c5e9e (#251/#252), so that commit broke them. Reported to Revant on
+  #251. `tests/project_io/test_project_import.py::test_locate_rejects_a_different_book_for_missing_project`
+  passed alone.
+
+**Found, not fixed.** `common/header.missing` (#253) is anchored at the book's first verse, so in
+any book without `\h`, verse 1:1 can never count as Language QA clean.
