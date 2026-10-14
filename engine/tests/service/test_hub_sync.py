@@ -322,3 +322,63 @@ def test_two_devices_changing_the_overrides_keep_their_own_and_see_the_other(two
     assert conflict["table"] == "project_state"
     assert conflict["theirPayload"]["pack"] == "hi-irv"
     assert conflict["theirPayload"]["document"]["rules"]["hi.lex.unknown"] == {"enabled": False}
+
+
+# -- #278: row ids are the hub's once a book is linked ---------------------------
+
+def _hub_row_keys(hub, hub_id, table):
+    import json as _json
+
+    with hub["store"]._connect() as conn:
+        events = [_json.loads(row["event_json"]) for row in conn.execute(
+            "SELECT event_json FROM events WHERE hub_project_id=? ORDER BY hub_seq", (hub_id,))]
+    return [e["row_key"] for e in events if e.get("table_name") == table]
+
+
+def _linked_pair(tmp_path, hub, source):
+    a = _device(tmp_path, "a", hub, source)
+    assert _call(a, "hub.join", {"url": HUB_URL, "joinCode": hub["admin_code"], "displayName": "Revant"})["success"]
+    hub_id = _call(a, "hub.link")["result"]["linkedHubProjectId"]
+    code = hub["client"].post("/hub/join-codes", json={"role": "editor"},
+                              headers={"Authorization": f"Bearer {a.settings.get_hub_token()}"}).json()["joinCode"]
+    b = _device(tmp_path, "b", hub, source)
+    assert _call(b, "hub.join", {"url": HUB_URL, "joinCode": code, "displayName": "Rina"})["success"]
+    return a, b, hub_id, code
+
+
+def test_one_finding_decided_on_two_linked_devices_is_one_row_on_the_hub(tmp_path, hub, source):
+    """#278's acceptance: linking adopts the hub's project id (#80), so a
+    decision's row id is the same on every device. Two first decisions on one
+    finding are one row with a conflict, never two rows."""
+    a, b, hub_id, _code = _linked_pair(tmp_path, hub, source)
+    assert _call(b, "hub.link")["success"]
+    assert a.project.workbench_identity.project_id == b.project.workbench_identity.project_id == hub_id
+
+    _decide(a, "accepted")
+    _decide(b, "ignored")
+    assert set(_decisions(a)) == set(_decisions(b))
+    a.hub_sync_once()
+    b.hub_sync_once()
+    a.hub_sync_once()
+
+    keys = _hub_row_keys(hub, hub_id, "human_decisions")
+    assert len(keys) >= 1 and len(set(keys)) == 1
+    assert len(_call(b, "hub.conflicts")["result"]["conflicts"]) == 1
+
+
+def test_a_book_with_decisions_made_before_linking_is_refused_unchanged(tmp_path, hub, source):
+    """Linked after use: its rows carry its own project id and cannot be
+    matched to the hub's, so linking is refused and nothing is rewritten
+    (#278, decided 2026-10-14: no natural-key fallback)."""
+    a, b, hub_id, _code = _linked_pair(tmp_path, hub, source)
+    _decide(b, "accepted")
+    own_id = b.project.workbench_identity.project_id
+    before = _decisions(b)
+
+    refused = _call(b, "hub.link")
+
+    assert refused["success"] is False
+    assert "decisions made before linking" in refused["error"]["message"]
+    assert b.project.workbench_identity.project_id == own_id != hub_id
+    assert _decisions(b) == before
+    assert _hub_row_keys(hub, hub_id, "human_decisions") == []

@@ -1137,3 +1137,20 @@ over fewer than 20 abstains moves by 5 points or more on a single label.
 not fail on it. Adding the check is a separate change, to be proposed.
 **Revisit when:** a labelled sample of the text itself makes real recall measurable (as
 2026-10-12).
+
+## 2026-10-14 — Hub row ids: adopting the hub's project id is the mechanism; no natural-key fallback (#278)
+
+**Decision:** A book shares row ids with the hub because linking adopts the hub's project id
+(#80, `adopt_project_id`): every row is then built from it, so one decision is one row id on every
+device and two first decisions on one finding are one row with a conflict. A book that already holds
+synced-table rows under its own id is refused at link time with a plain message, and nothing is
+rewritten. There is no natural-key matching on push or pull.
+**Because:** the hub review (§3) planned `natural_row_id` to take the hub id once linked, with a
+natural-key fallback for books linked after use. Adoption delivered the first part. The fallback
+cannot be built on what is stored: row ids are one-way hashes of their natural keys, so matching
+old rows would need the natural key kept per row (a workbench v10 column) and a translation step on
+both push and pull, risk on the sync path for a case a fresh import already covers. Revant chose
+this on 2026-10-14.
+**Rules out:** linking a book after decisions were made in it; any rewrite of existing rows to new
+ids (the change log is append-only).
+**Revisit when:** a team needs to bring an in-use book onto the hub without a fresh import.
