@@ -20257,3 +20257,25 @@ Vitest `chapterEntry.test.ts`: hit, partial hit, miss or failed read, and nothin
 Collection QA runs or the chapter is loaded.
 
 **Not seen on the desktop:** QA matrix M63.
+
+## 2026-10-14 — Wildebeest results: the chapter snapshot is the store, the dead section reads go (#275), 128735f
+
+**Decision (with #252).** No `wildebeest` check-cache section. Since #251/#252 a Greek Room chapter,
+book or Collection QA run saves its Wildebeest findings in the chapter's `check_findings` snapshot.
+#251's merge keeps them through runs of other checks, and #272 drops them when the chapter's inputs
+change. That snapshot is the persisted store. Triage already read it first, so its `wildebeest`
+section read was dead and is removed. Analytics (`_local_findings_by_verse`, the report's exception
+queue) read only the section, which nothing in production ever wrote. It now takes Wildebeest
+findings from the snapshots. A verse-level Run Greek Room is interactive and not persisted, as
+before.
+
+**Bug found by the writer-and-reader test.** The Wildebeest adapter never set `chapter` or `verse`
+on its findings, so every stored Wildebeest finding said 0:0. The editor never noticed, because it
+keys findings by the verse the job ran. A report keying by the finding's own fields could never
+have matched one. `_run_verse_checks_for_project` now anchors them as `_qaissue_to_finding` does
+(the first numeric component). Analytics keys snapshot findings by the snapshot's verse key, which
+also keeps a bridged verse like `3-4` intact, and old 0:0 findings still land on their verse.
+
+**Tests.** `test_project_report_local_findings.py` seeds the snapshot instead of the dead section,
+and adds the writer-and-reader test: a Greek Room chapter job's Wildebeest finding reaches the
+report's exception queue and `triage.persisted_findings` at 1:1, and no `wildebeest` section exists.
