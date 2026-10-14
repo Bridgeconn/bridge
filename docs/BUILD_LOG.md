@@ -20037,3 +20037,52 @@ Paratext was left where it was found (MAT 1:0). Nothing was typed into Paratext.
 
 **Gates.** `npm run check` 0/0; `npm run test` 768 passed; `npm run build` ok. Frontend-only, so the
 engine suite and cargo were not run. It reaches the installed app with the next release.
+
+## 2026-10-14 — Bridge installs its own Paratext connector (#282)
+
+**What.** A translator no longer installs the Paratext connector by hand
+(`paratext_plugin/build.ps1 -Deploy` from an Administrator shell). Benz chose all three:
+both places (the installer and Settings › Connections), compiling on the user's PC, and an issue.
+
+**How.**
+- `engine/tc_ai_bridge/paratext_install.py`:
+  - finds Paratext 9 through `HKLM\SOFTWARE\WOW6432Node\Paratext\8` › `Paratext9_Full_Release_AppPath`;
+  - reads the installed version, from `connector-version.txt` or, for a hand-deployed connector, from the
+    UTF-16 `PluginVersion` string in the `.ptxplg`;
+  - compiles the three `.cs` files with `%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe` against
+    that PC's `PluginInterfaces.dll` / `CorePluginInterfaces.dll`, as `build.ps1` does;
+  - writes a PowerShell copy script and runs it through `ShellExecuteExW` "runas", which is one UAC
+    prompt; a declined prompt is reported, and nothing is installed;
+  - refuses while Paratext runs.
+- RPCs `paratext.connectorStatus` (read) and `paratext.installConnector` (write). The install runs on
+  its own thread, so the dispatcher never waits on the admin prompt (#241's lesson) and no
+  `sidecar.rs` timeout changed.
+- `bridge-engine --install-paratext-connector` for the installer, with exit codes 0 installed,
+  1 failed, 2 Paratext running, 3 declined, 4 already current and 5 no Paratext 9.
+- `bridge-engine.spec` ships the three `.cs` files.
+- Settings › Connections shows **Install Paratext connector**, or **Update … to <version>**, and polls
+  the result.
+- `src-tauri/windows/hooks.nsh` (`bundle.windows.nsis.installerHooks`): after install, if Paratext 9
+  is registered and the install is not silent, it asks the user and runs the engine flag. If Paratext
+  is open it offers Retry.
+
+**Measured on this PC (Paratext 9.5.110.1, connector 0.7.4 deployed by hand on 2026-08-17).**
+- Status found Paratext and read the hand-deployed connector as 0.7.4, so it offers no needless update.
+- The real compile produced a 24 KB assembly carrying "0.7.4".
+- The frozen engine reports `bundledVersion` 0.7.4, and `--install-paratext-connector` printed "The
+  Paratext connector 0.7.4 is installed." and exited 4.
+- `npx tauri build --bundles nsis` built `Bridge_0.16.0_x64-setup.exe` with the hook included and
+  inserted at post-install.
+
+**Gates.**
+- Engine `pytest -n auto`: 5,358 passed, 3 failed:
+  - `test_check_job_rejects_a_second_active_job` is the e4c5e9e break reported on #251;
+  - the two file-lock tests passed alone.
+- New: 12 tests in `tests/connectors/test_paratext_install.py`, including the real compile (skipped
+  without Paratext) and the generated copy script run for real against a temp folder whose path has a
+  quote; 2 in `tests/service/test_paratext_connector_install_protocol.py`.
+- `npm run check` 0/0; `npm run test` 771 passed (3 new Settings cases); `cargo test` 15 passed;
+  frozen smoke passed.
+
+**Not yet watched.** The elevated copy itself, i.e. a real UAC prompt answered and Paratext loading the
+installed connector. It needs Paratext closed and a person at the prompt.
