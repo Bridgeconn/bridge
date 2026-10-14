@@ -53,6 +53,16 @@ def _serve_args(argv: list[str]) -> dict[str, object] | None:
     }
 
 
+def _install_paratext_connector() -> int:
+    """`bridge-engine --install-paratext-connector` (#282): Bridge's installer
+    runs this from its post-install hook (src-tauri/windows/hooks.nsh) after the
+    user agrees. It compiles and installs the Paratext connector, then exits;
+    it never starts the engine."""
+    from tc_ai_bridge.paratext_install import cli
+
+    return cli()
+
+
 def _start() -> None:
     """Boot in named stages so the shell's loading screen can say what is
     slow (#233). Each stage line goes out *before* the work it names:
@@ -80,4 +90,6 @@ def _start() -> None:
 
 
 if __name__ == "__main__":
+    if "--install-paratext-connector" in sys.argv[1:]:
+        raise SystemExit(_install_paratext_connector())
     _start()

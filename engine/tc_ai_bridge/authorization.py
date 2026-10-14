@@ -147,7 +147,7 @@ _READ = (
     "correction.getVerification",
     "reviewHistory.getEntityHistory",
     "analysisJob.status", "analysisJob.getRecent", "analysisJob.getScopeStatus",
-    "paratext.getState", "issueResolution.list", "logos.getState",
+    "paratext.getState", "paratext.connectorStatus", "issueResolution.list", "logos.getState",
     "navigation.status", "navigation.poll", "navigation.bridgeChanged", "navigation.resolve",
     "users.list", "users.setCurrent",
     "assignments.list",
@@ -185,7 +185,7 @@ _WRITE = (
     "correction.verifyApplication", "correction.acknowledgeCorrected",
     "semanticReview.decideLocation", "semanticReview.decideMeaning",
     "issueResolution.save", "issueResolution.queueParatext", "issueResolution.retryParatext",
-    "paratext.setReference", "logos.setReference", "settings.set",
+    "paratext.setReference", "paratext.installConnector", "logos.setReference", "settings.set",
 )
 
 _MANAGE_PROJECTS = (

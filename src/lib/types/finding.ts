@@ -725,6 +725,24 @@ export interface DesktopConnectorState {
   [key: string]: unknown;
 }
 
+/** #282: Bridge's Paratext connector on this PC (paratext_install.py). */
+export interface ParatextConnectorStatus {
+  paratextFound: boolean;
+  paratextDir: string;
+  paratextVersion: string;
+  /** Paratext is open: the connector cannot be installed until it is closed. */
+  running: boolean;
+  installed: boolean;
+  installedVersion: string;
+  bundledVersion: string;
+  compilerFound: boolean;
+  /** "install" / "update": offer the button; "none": current; "unavailable": nothing to offer. */
+  action: "install" | "update" | "none" | "unavailable";
+  message: string;
+  /** The install in progress or last finished, run off the dispatcher thread. */
+  install: { state: "idle" | "running" | "succeeded" | "failed"; message: string };
+}
+
 export interface NavigationTargetState extends DesktopConnectorState {
   enabled: boolean;
   checking: boolean;

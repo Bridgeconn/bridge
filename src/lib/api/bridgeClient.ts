@@ -49,6 +49,7 @@ import type {
   BookProgressEntry,
   CheckJobSnapshot,
   DesktopConnectorState,
+  ParatextConnectorStatus,
   ImportJobSnapshot,
   ImportMetadata,
   ImportPreview,
@@ -359,7 +360,9 @@ export type EngineMethod =
   | "navigation.poll"
   | "navigation.resolve"
   | "navigation.status"
+  | "paratext.connectorStatus"
   | "paratext.getState"
+  | "paratext.installConnector"
   | "ping"
   | "project.delete"
   | "project.forget"
@@ -1239,6 +1242,17 @@ export const bridge = {
 
   paratextGetState(): Promise<DesktopConnectorState> {
     return call("paratext.getState");
+  },
+
+  /** #282: whether Bridge's Paratext connector is installed on this PC. */
+  paratextConnectorStatus(): Promise<ParatextConnectorStatus> {
+    return call("paratext.connectorStatus");
+  },
+
+  /** #282: start installing (or updating) the connector; returns at once, and
+   *  paratextConnectorStatus().install says how it went. One Windows admin prompt. */
+  paratextInstallConnector(): Promise<Pick<ParatextConnectorStatus, "install">> {
+    return call("paratext.installConnector");
   },
 
   navigationStatus(context?: string): Promise<NavigationSyncState> {

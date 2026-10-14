@@ -1,11 +1,11 @@
 <script lang="ts">
   import UsersPane from "./UsersPane.svelte";
   import TeamPane from "./TeamPane.svelte";
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { bridge, type EngineInfo } from "../api/bridgeClient";
   import { nudgeLanguageQa } from "../languageQaInline";
   import { manualOverrideMode, navigationStatus, project, reviewerMode } from "../stores";
-  import type { InlineConfidence, NavigationSyncState, SettingsData, TerminologyRule, UserRole } from "../types/finding";
+  import type { InlineConfidence, NavigationSyncState, ParatextConnectorStatus, SettingsData, TerminologyRule, UserRole } from "../types/finding";
   import type { HouseStyleEntry, HouseStyleListResponse, HouseStyleProposal } from "../types/houseStyle";
   import type { CheckerSettings } from "../types/languageQa";
   import CheckerSettingsDialog from "./CheckerSettingsDialog.svelte";
@@ -217,10 +217,61 @@
 
   async function refreshConnections(): Promise<void> {
     saveMessage = "";
+    void loadConnector();
     try {
       navigationStatus.set(await bridge.navigationStatus());
     } catch (e) {
       saveMessage = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  // #282: Bridge's Paratext connector on this PC. The install runs on the
+  // engine's own thread (it waits on a Windows admin prompt), so this polls.
+  const CONNECTOR_POLL_MS = 1000;
+  let connector: ParatextConnectorStatus | null = null;
+  let connectorLoaded = false;
+  let connectorBusy = false;
+  let connectorMessage = "";
+  let connectorError = false;
+  let destroyed = false;
+  onDestroy(() => { destroyed = true; });
+
+  async function loadConnector(): Promise<void> {
+    try {
+      connector = await bridge.paratextConnectorStatus();
+    } catch (e) {
+      connector = null;
+      connectorMessage = e instanceof Error ? e.message : String(e);
+      connectorError = true;
+    }
+  }
+
+  $: if (activePane === "connections" && !connectorLoaded) {
+    connectorLoaded = true;
+    void loadConnector();
+  }
+
+  async function installConnector(): Promise<void> {
+    if (connectorBusy) return;
+    connectorBusy = true;
+    connectorError = false;
+    connectorMessage = "Building the connector. Windows will ask for administrator permission to copy it into Paratext.";
+    try {
+      await bridge.paratextInstallConnector();
+      while (!destroyed) {
+        await new Promise((resolve) => setTimeout(resolve, CONNECTOR_POLL_MS));
+        connector = await bridge.paratextConnectorStatus();
+        if (connector.install.state !== "running") break;
+      }
+      if (connector && connector.install.state !== "running") {
+        connectorMessage = connector.install.message;
+        connectorError = connector.install.state === "failed";
+      }
+    } catch (e) {
+      connectorMessage = e instanceof Error ? e.message : String(e);
+      connectorError = true;
+    } finally {
+      connectorBusy = false;
     }
   }
 
@@ -546,6 +597,18 @@
           {:else if $navigationStatus.paratext.checking}Checking…
           {:else}Waiting for Paratext{/if}
         </div>
+        {#if connector && (connector.action === "install" || connector.action === "update")}
+          <div class="connector-install">
+            <span>{connector.message}{#if connector.running} Close Paratext first, then install.{/if}</span>
+            <button class="btn" on:click={installConnector} disabled={connectorBusy || connector.running}
+              title={connector.running ? "Paratext is open: close it, then click Refresh" : "Builds the connector for this computer's Paratext and asks Windows for administrator permission once"}>
+              {connectorBusy ? "Installing…" : connector.action === "update" ? `Update Paratext connector to ${connector.bundledVersion}` : "Install Paratext connector"}
+            </button>
+          </div>
+        {:else if connector && paratextNavigation && connector.action === "unavailable"}
+          <div class="connection-detail">{connector.message}</div>
+        {/if}
+        {#if connectorMessage}<div class="connector-msg" class:error={connectorError} role="status">{connectorMessage}</div>{/if}
         <label class="connection-option" class:selected={logosNavigation}>
           <input type="checkbox" bind:checked={logosNavigation} />
           <span>
@@ -867,5 +930,10 @@
   .connection-option i { width: 9px; height: 9px; border-radius: 50%; margin-top: 3px; background: var(--border-strong); }
   .connection-option i.connected { background: var(--success); }
   .connection-option i.error { background: var(--danger); }
+  .connector-install { display: flex; align-items: center; gap: 10px; margin: 0 0 10px 31px; font-size: var(--fs-2xs); color: var(--text-2); }
+  .connector-install span { flex: 1; min-width: 0; line-height: 1.35; }
+  .connector-install .btn { flex-shrink: 0; }
+  .connector-msg { margin: 0 0 10px 31px; font-size: var(--fs-2xs); line-height: 1.35; color: var(--success, #15803d); overflow-wrap: anywhere; }
+  .connector-msg.error { color: var(--danger); }
   .connection-detail { min-height: 26px; padding: 5px 8px 8px 31px; color: var(--text-3); font-size: var(--fs-2xs); line-height: 1.35; overflow-wrap: anywhere; }
 </style>

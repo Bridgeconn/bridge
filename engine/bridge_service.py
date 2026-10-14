@@ -113,6 +113,7 @@ from tc_ai_bridge.correction_verification import CorrectionVerificationService
 from tc_ai_bridge.knowledge_base import KnowledgeBaseError
 from tc_ai_bridge.paratext_connector import ParatextConnectorClient, ParatextConnectorError
 from tc_ai_bridge.logos_connector import LogosConnectorClient, LogosConnectorError
+from tc_ai_bridge import paratext_install
 from tc_ai_bridge.navigation import NavigationSyncCoordinator
 from tc_ai_bridge.models import QAIssue, TokenRef, VerseAlignment
 from tc_ai_bridge.secret_store import AppSettings
@@ -598,6 +599,9 @@ class Methods:
 
     PARATEXT_GET_STATE = "paratext.getState"
     PARATEXT_SET_REFERENCE = "paratext.setReference"
+    # #282: install Bridge's Paratext connector on this PC (paratext_install.py).
+    PARATEXT_CONNECTOR_STATUS = "paratext.connectorStatus"
+    PARATEXT_INSTALL_CONNECTOR = "paratext.installConnector"
 
     ISSUE_RESOLUTION_LIST = "issueResolution.list"
     ISSUE_RESOLUTION_SAVE = "issueResolution.save"
@@ -629,6 +633,8 @@ class BridgeEngine:
         # poll would be far too slow (real measured startup well over a second). Created
         # lazily on first use, reused for the rest of this process's life.
         self._logos_client: Optional[LogosConnectorClient] = None
+        # #282: installs Bridge's Paratext connector off the dispatcher thread.
+        self._connector_installer = paratext_install.ConnectorInstaller()
         self.greek_room = GreekRoomEngine()
         self.project: Optional[TranslationCoreProject] = None
         # #112 step two: project.open returns before the PassageSemanticRuntime
@@ -8274,6 +8280,11 @@ class BridgeEngine:
                 return EngineResponse.ok(request.id, result=self.paratext_set_reference(
                     p["reference"], p.get("originId", ""),
                 ))
+            if m == Methods.PARATEXT_CONNECTOR_STATUS:
+                return EngineResponse.ok(request.id, result=self._connector_installer.snapshot())
+            if m == Methods.PARATEXT_INSTALL_CONNECTOR:
+                # Returns at once; the install runs on its own thread (#282).
+                return EngineResponse.ok(request.id, result=self._connector_installer.start())
             if m == Methods.LOGOS_GET_STATE:
                 return EngineResponse.ok(request.id, result=self.logos_get_state())
             if m == Methods.LOGOS_SET_REFERENCE:
