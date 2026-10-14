@@ -47,4 +47,14 @@ describe("ReviewPanel Greek Room tab", () => {
     expect(await screen.findByText("Mixed script")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Run Greek Room again" })).toBeInTheDocument();
   });
+
+  it("shows an earlier decision recorded under another id, without applying it (#273)", async () => {
+    findingsByVerse.set({ "1:3": [{ id: "w2", engine: "wildebeest", check: "wildebeest", status: "open",
+      severity: "medium", category: "unicode", check_type: "wildebeest.x", explanation: "Mixed script", evidence: [],
+      unmatched_decision: { decision: "ignored", note: "", decidedAt: null, findingId: "old" } } as never] });
+    render(ReviewPanel);
+    selectedVerse.set("3");
+    expect(await screen.findByText(/An earlier decision on this item \(ignored\)/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Ignore/ })).toBeInTheDocument();
+  });
 });

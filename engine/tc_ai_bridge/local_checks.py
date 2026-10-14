@@ -7,8 +7,8 @@ from . import check_timing
 from .models import QAIssue, VerseAlignment
 from .tc_project import TranslationCoreProject
 from .plugins import PluginRegistry, ProjectLanguageContext
-from .usfm import marker_balance_issues, strip_usfm, whitespace_tokens
-from .usfm_verse import redundant_style_reopens
+from .usfm import strip_usfm, whitespace_tokens
+from .usfm_verse import balance_message, redundant_style_reopens, unbalanced_markers
 
 
 def alignment_integrity_checks(verse: VerseAlignment, target_text: str = '', target_name: str = 'Tamil', source_name: str = 'Hebrew') -> list[QAIssue]:
@@ -19,10 +19,12 @@ def alignment_integrity_checks(verse: VerseAlignment, target_text: str = '', tar
     bank_counts = Counter(x.signature for x in bank)
     for sig, n in top_counts.items():
         if n > 1:
-            issues.append(QAIssue('ALIGN_DUP_TOP', 'critical', f'{source_name} token aligned more than once', f'The same topWord identity appears in {n} alignment groups.'))
+            # group_id: the token, so two duplicated tokens never share a
+            # finding id and the count is not part of it (#273).
+            issues.append(QAIssue('ALIGN_DUP_TOP', 'critical', f'{source_name} token aligned more than once', f'The same topWord identity appears in {n} alignment groups.', group_id=sig))
     for sig, n in bottom_counts.items():
         if n > 1:
-            issues.append(QAIssue('ALIGN_DUP_BOTTOM', 'critical', f'{target_name} token aligned more than once', f'The same bottomWord identity appears in {n} alignment groups.'))
+            issues.append(QAIssue('ALIGN_DUP_BOTTOM', 'critical', f'{target_name} token aligned more than once', f'The same bottomWord identity appears in {n} alignment groups.', group_id=sig))
     overlap = set(bottom_counts) & set(bank_counts)
     if overlap:
         issues.append(QAIssue('ALIGN_BANK_OVERLAP', 'critical', f'{target_name} token both aligned and in wordBank', f'{len(overlap)} {target_name} token(s) are represented in both places.'))
@@ -105,7 +107,9 @@ def translationcore_check_issues(project: TranslationCoreProject, chapter: str, 
 
 def usfm_checks(project: TranslationCoreProject, chapter: str, verse: str) -> list[QAIssue]:
     text = project.target_verse_text(chapter, verse)
-    issues = [QAIssue('USFM_BALANCE', 'high', 'USFM marker imbalance', msg, 'local') for msg in marker_balance_issues(text)]
+    # group_id: the marker, not the counts in the message (#273).
+    issues = [QAIssue('USFM_BALANCE', 'high', 'USFM marker imbalance', balance_message(marker, opens, closes),
+                      'local', group_id=marker) for marker, opens, closes in unbalanced_markers(text)]
     # A character style closed and reopened with nothing between (#203): the
     # space inside the reopened marker is syntax, so readers glue the words
     # (`lepers\wj*\wj in` reads "lepersin"). The fix is mechanical and offered

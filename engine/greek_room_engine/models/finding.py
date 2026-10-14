@@ -96,6 +96,10 @@ class QaFinding:
     # Human review state
     status: FindingStatus = FindingStatus.OPEN
     human_comment: Optional[str] = None
+    # A decision recorded under this finding's id before #273 changed how ids
+    # are built, that could not be matched to exactly one finding: shown in
+    # the Review panel, never applied ({decision, note, decidedAt, findingId}).
+    unmatched_decision: Optional[dict[str, Any]] = None
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     resolved_at: Optional[str] = None
 

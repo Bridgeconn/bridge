@@ -439,10 +439,11 @@ class _BookReportBuilder:
 
             # A reviewer may have closed the pending/invalidated finding
             # itself through verse.decide (Ignore) -- same id
-            # _qaissue_to_finding gives it.
+            # _qaissue_to_finding gives it: each state its own since #273.
+            state_code = {"invalidated": "TC_INVALIDATED", "stale": "TC_STALE_AFTER_EDIT"}.get(status)
             local_id = stable_finding_id(
-                chapter=chapter, verse=verse, engine="translationCore",
-                check_type=check_id, disambiguator=group_id,
+                chapter=chapter, verse=verse, engine="translationCore", check_type=check_id,
+                disambiguator=f"{group_id}|{state_code}" if state_code else group_id,
             )
             decision_fields: dict[str, Any] = {}
             if not resolved:

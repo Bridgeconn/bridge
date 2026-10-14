@@ -326,6 +326,43 @@ def _categorize_qaissue(issue: QAIssue) -> FindingCategory:
     return FindingCategory.CONSISTENCY
 
 
+# #273: codes whose disambiguator was the detail text, which carries a count
+# (or sample words) and so changed whenever the count did. Now their group_id
+# (the token, the marker), or nothing for the one-per-verse ones.
+_COUNTED_DETAIL_CODES = frozenset({
+    "ALIGN_DUP_TOP", "ALIGN_DUP_BOTTOM", "ALIGN_BANK_OVERLAP", "ALIGN_UNALIGNED_TOP",
+    "ALIGN_UNALIGNED_BOTTOM", "ALIGN_TARGET_MISMATCH", "TC_COMMENTS", "TC_VERSE_EDITS", "USFM_BALANCE",
+})
+# #273: the tC states that shared TC_PENDING's id, so an Ignore on a pending
+# item also hid the later stale or invalidated warning. TC_PENDING keeps the id.
+_TC_STATE_CODES = frozenset({"TC_INVALIDATED", "TC_STALE_AFTER_EDIT"})
+
+
+def _issue_disambiguators(issue: QAIssue) -> tuple[str, str]:
+    """(the disambiguator now, the one before #273)."""
+    before = issue.group_id or issue.detail
+    if issue.code in _TC_STATE_CODES:
+        return f"{issue.group_id}|{issue.code}", before
+    if issue.code in _COUNTED_DETAIL_CODES:
+        return issue.group_id, issue.detail
+    return before, before
+
+
+def _legacy_finding_id(finding: QaFinding) -> Optional[str]:
+    """The id this finding had before #273, where that differs: set on the
+    finding when it was built (local, tC, Wildebeest) or derived from what a
+    cached one carries (the USFM checker's)."""
+    legacy = getattr(finding, "_legacy_id", None)
+    if legacy:
+        return legacy
+    if finding.engine == "usfm":
+        return _stable_finding_id(
+            chapter=str(finding.chapter), verse=str(finding.verse), engine=finding.engine,
+            check_type=finding.check_type, disambiguator=finding.explanation,
+        )
+    return None
+
+
 def _qaissue_to_finding(issue: QAIssue, *, project_id: str, book: str,
                          chapter: str, verse: str,
                          resource_versions: dict[str, str] | None = None) -> QaFinding:
@@ -333,13 +370,13 @@ def _qaissue_to_finding(issue: QAIssue, *, project_id: str, book: str,
     QaFinding shape Greek Room findings use, so the UI never has to know
     which engine produced a given finding (architecture doc §6)."""
     engine_name = issue.source or "local"
+    # disambiguates multiple issues of the same check_type in one verse
+    disambiguator, before = _issue_disambiguators(issue)
     stable_id = _stable_finding_id(
         chapter=chapter, verse=verse, engine=engine_name,
-        check_type=issue.check_id or issue.code,
-        # disambiguates multiple issues of the same check_type in one verse
-        disambiguator=issue.group_id or issue.detail,
+        check_type=issue.check_id or issue.code, disambiguator=disambiguator,
     )
-    return QaFinding(
+    finding = QaFinding(
         id=stable_id,
         project_id=project_id,
         # USFM permits verse bridges (for example 3-4) and segments (3a).
@@ -364,6 +401,15 @@ def _qaissue_to_finding(issue: QAIssue, *, project_id: str, book: str,
         original_text=issue.original_text,
         suggested_replacement=issue.suggested_replacement,
     )
+    if before != disambiguator:
+        finding._legacy_id = _stable_finding_id(  # type: ignore[attr-defined]
+            chapter=chapter, verse=verse, engine=engine_name,
+            check_type=issue.check_id or issue.code, disambiguator=before,
+        )
+        # A tC state's old id is the pending item's: a decision on it says
+        # nothing about which state it was made on, so it is never moved.
+        finding._legacy_movable = issue.code not in _TC_STATE_CODES  # type: ignore[attr-defined]
+    return finding
 
 
 class Methods:
@@ -5103,7 +5149,9 @@ class BridgeEngine:
             except OSError:
                 usfm_text = ""
             if usfm_text:
-                content_hash = hashlib.sha256(usfm_text.encode("utf-8")).hexdigest()
+                # "|ids-273": sections written before #273 hold ids built from
+                # the explanation, which embeds verse text; rebuild them once.
+                content_hash = hashlib.sha256((usfm_text + "|ids-273").encode("utf-8")).hexdigest()
                 cached_section = project.load_check_cache().get("usfm") or {}
                 if cached_section.get("contentHash") == content_hash:
                     findings = [QaFinding.from_dict(d) for d in cached_section.get("findings", [])]
@@ -5121,16 +5169,22 @@ class BridgeEngine:
                 except UsfmCheckerError as exc:
                     self._usfm_errors_by_book[book_key] = str(exc)
                     raise
+                ordinals: Counter[tuple[str, str, str]] = Counter()
                 for f in findings:
                     # Same stabilization as Greek Room findings (see
                     # run_verse_checks below) — otherwise a fresh subprocess
                     # run after an app restart would hand out new random
                     # uuid4 ids for the same underlying issues, and any
                     # decision recorded on them in a prior session could
-                    # never be matched back.
+                    # never be matched back. Keyed on the finding's order
+                    # among its verse's findings of the same type, in the
+                    # report's order, not on the explanation: that ends with
+                    # an excerpt of the verse, so any edit changed it (#273).
+                    slot = (str(f.chapter), str(f.verse), f.check_type)
+                    ordinals[slot] += 1
                     f.id = _stable_finding_id(
                         chapter=str(f.chapter), verse=str(f.verse), engine=f.engine,
-                        check_type=f.check_type, disambiguator=f.explanation,
+                        check_type=f.check_type, disambiguator=f"#{ordinals[slot]}",
                     )
                 # Persist after id stabilization so a cache hit hands back
                 # the same stable ids a fresh run would — required for prior
@@ -5493,14 +5547,21 @@ class BridgeEngine:
                     text=target_text,
                     checks=["wildebeest"],
                 )
-            for f in gr_findings:
+            occurrences: Counter[tuple[str, str]] = Counter()
+            for f in sorted(gr_findings, key=lambda g: (g.start_offset or 0, g.end_offset or 0)):
                 # Greek Room findings default to a random uuid4 id from
                 # QaFinding's dataclass default — override with a stable
-                # one keyed on the span, so the same flagged character
-                # range gets the same id across repeated check runs.
+                # one keyed on the flagged text and its occurrence among
+                # the verse's findings of the same type, so the same flagged
+                # text gets the same id across runs. Not on the offsets: an
+                # edit earlier in the verse shifts them (#273).
+                occurrences[(f.check_type, f.original_text)] += 1
                 f.id = _stable_finding_id(
-                    chapter=chapter, verse=verse, engine=f.engine,
-                    check_type=f.check_type,
+                    chapter=chapter, verse=verse, engine=f.engine, check_type=f.check_type,
+                    disambiguator=f"{f.original_text}#{occurrences[(f.check_type, f.original_text)]}",
+                )
+                f._legacy_id = _stable_finding_id(  # type: ignore[attr-defined]
+                    chapter=chapter, verse=verse, engine=f.engine, check_type=f.check_type,
                     disambiguator=f"{f.start_offset}:{f.end_offset}:{f.original_text}",
                 )
             findings.extend(gr_findings)
@@ -5511,11 +5572,17 @@ class BridgeEngine:
             with timings.step("decisions.reapply"):
                 reads["decisions"] = project.qa_decisions_for_verse(chapter, verse)
         prior_decisions = reads["decisions"]
+        legacy_ids = {id(finding): _legacy_finding_id(finding) for finding in findings}
+        legacy_counts = Counter(legacy for legacy in legacy_ids.values() if legacy)
         for finding in findings:
             # #251: which elective check this came from. Set on every run, on
             # cached book findings too (the same value each time).
             finding.check = finding_check(finding.engine, finding.category, finding.check_type)
+            finding.unmatched_decision = None
             record = prior_decisions.get(finding.id)
+            if not record:
+                record = self._carry_legacy_decision(
+                    project, chapter, verse, finding, legacy_ids[id(finding)], legacy_counts, prior_decisions)
             if record:
                 try:
                     finding.status = FindingStatus(record.get("decision", "open"))
@@ -5524,6 +5591,35 @@ class BridgeEngine:
                 finding.human_comment = record.get("note") or None
 
         return findings
+
+    @staticmethod
+    def _carry_legacy_decision(
+        project: TranslationCoreProject, chapter: str, verse: str, finding: QaFinding,
+        legacy: Optional[str], legacy_counts: Counter[str], prior_decisions: dict[str, Any],
+    ) -> Optional[dict[str, Any]]:
+        """A decision recorded under this finding's pre-#273 id (#273). Moved
+        to the new id once, as an ordinary journalled decision carrying
+        `rekeyedFrom`, only when exactly one finding of the verse had that old
+        id; otherwise left where it is and shown on the finding as
+        `unmatched_decision`, never applied. Returns the record to apply."""
+        if not legacy or legacy == finding.id:
+            return None
+        old = prior_decisions.get(legacy)
+        if not old:
+            return None
+        if not (getattr(finding, "_legacy_movable", True) and legacy_counts[legacy] == 1):
+            finding.unmatched_decision = {
+                "decision": str(old.get("decision") or ""), "note": str(old.get("note") or ""),
+                "decidedAt": old.get("modifiedTimestamp"), "findingId": legacy,
+            }
+            return None
+        issue = dict(old.get("issue") or {})
+        issue["rekeyedFrom"] = legacy
+        project.record_qa_decision(chapter, verse, finding.id, str(old.get("decision") or "open"),
+                                   str(old.get("note") or ""), issue)
+        moved = {**old, "issueKey": finding.id, "issue": issue}
+        prior_decisions[finding.id] = moved
+        return moved
 
     # -- background checking jobs -----------------------------------------
 

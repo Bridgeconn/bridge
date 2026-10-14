@@ -67,6 +67,11 @@ export interface QaFinding {
   resource_versions: Record<string, string>;
   status: FindingStatus;
   human_comment: string | null;
+  /** A decision recorded for this item under another finding id (#273: an id
+   *  built before the ids were made stable, or the pending item of a tC check
+   *  now stale or invalidated) that could not be matched to exactly this
+   *  finding. Shown, never applied. */
+  unmatched_decision?: { decision: string; note: string; decidedAt: string | null; findingId: string } | null;
   created_at: string;
   resolved_at: string | null;
 }

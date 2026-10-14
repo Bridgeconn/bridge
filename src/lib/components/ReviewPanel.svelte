@@ -31,7 +31,7 @@
   import { greekRoomVerseRunning, runVerseGreekRoom } from "../verseChecks";
   import { aiReviewRequest, aiJobActive } from "../aiReviewUi";
   import { setSidePanel } from "../editorPrefs";
-  import type { AiExplainResult, AIReviewJobSnapshot, FindingStatus } from "../types/finding";
+  import type { AiExplainResult, AIReviewJobSnapshot, FindingStatus, QaFinding } from "../types/finding";
 
   $: openFindingCount = $selectedFindings.filter((f) => f.status === "open").length;
   type DecisionSaveState = "saving" | "saved" | "error";
@@ -546,6 +546,13 @@
   // else on a finding's `engine` field (tN/tW/alignment's own QAIssue.source,
   // or "local" as its fallback) is native tC/Bridge QA, not Greek Room.
   const GREEK_ROOM_ENGINES = new Set(["wildebeest", "usfm", "names"]);
+  /** #273: an earlier decision on this item that is not applied to it. */
+  function unmatchedText(prior: NonNullable<QaFinding["unmatched_decision"]>): string {
+    const when = prior.decidedAt ? `, ${new Date(prior.decidedAt).toLocaleDateString()}` : "";
+    return `An earlier decision on this item (${prior.decision}${when}) was recorded under another finding id `
+      + "and is not applied here. Decide it again if it still holds.";
+  }
+
   function isGreekRoom(engine: string): boolean {
     return GREEK_ROOM_ENGINES.has(engine);
   }
@@ -677,6 +684,7 @@
                 {/if}
               </div>
               <p class="explain">{f.explanation}</p>
+              {#if f.unmatched_decision}<p class="unmatched" title={`Recorded under id ${f.unmatched_decision.findingId}`}>{unmatchedText(f.unmatched_decision)}</p>{/if}
             </div>
           {:else}
             <p class="none">No local QA findings.</p>
@@ -724,6 +732,7 @@
                   {/if}
                 </div>
                 <p class="explain">{f.explanation}</p>
+                {#if f.unmatched_decision}<p class="unmatched" title={`Recorded under id ${f.unmatched_decision.findingId}`}>{unmatchedText(f.unmatched_decision)}</p>{/if}
                 {#if f.evidence.length > 0}
                   <ul class="evidence">
                     {#each f.evidence as e}<li>{e.label}: {e.value}</li>{/each}
@@ -1122,6 +1131,7 @@
   .edit-inline { background: var(--accent-bg); color: var(--accent); }
   .none { font-size: var(--fs-xs); color: var(--text-3); }
   .none.failed { color: var(--danger); }
+  .unmatched { margin: 4px 0; font-size: var(--fs-2xs); color: var(--warning); }
   .greek-room-run { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 8px; }
   .run-greek-room { font-size: var(--fs-xs); font-weight: 600; padding: 3px 9px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--text); cursor: pointer; }
   .run-greek-room:disabled { opacity: 0.6; cursor: not-allowed; }
