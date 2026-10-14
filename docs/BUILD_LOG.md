@@ -20014,3 +20014,26 @@ not register" attempt did not use it.
 drawn: drawing them is #250, after the tag. The cross-reference rules (#249) are not in 0.16.0. On a frozen build
 of main, a scratch copy of Ruth with two references broken showed `xref.origin-mismatch` (2:1) and
 `xref.target-missing` (3:12). The real IRV has none (#249).
+
+## 2026-10-14 — Bridge → Paratext navigation fixed; #110's hand check done (#110)
+
+**What was wrong.** With Paratext 9.5 (plugin 0.7.4) running, the installed 0.16.0 connected and
+followed Paratext (Paratext → Bridge), but never moved Paratext. Selecting a verse in Bridge made no
+`navigation.bridgeChanged` call; the IPC was watched over WebView2's debug port. The cause:
+`App.svelte`'s `$: navigationReference = currentBridgeReference();` names no store, and Svelte 4
+re-runs a reactive statement only for the names written in it, so it ran once at mount. It dates from
+Stage 9A.4 (bcb9a7e). The engine's `currentReference` moved only when Bridge rejected a Paratext
+candidate (`navigation.resolve` carries Bridge's reference).
+
+**Fix (a732e53).** The statement now passes `$project`, `$currentChapter` and `$selectedVerse` to a pure
+`bridgeReference()` (`src/lib/navigationReference.ts`). `src/__tests__/appNavigationReference.test.ts`
+pins the statement, because jsdom cannot mount `App.svelte`.
+
+**Verified** in a dev build (`npm run tauri dev`, scratch data, IRV Tamil GEN) against the running
+Paratext. Selecting GEN 1:3 and then 1:6 in Bridge sent `navigation.bridgeChanged`, and Paratext
+reported GEN 1:3 and GEN 1:6. Moving Paratext to GEN 1:8 through the connector moved Bridge's selection
+to 1:8. Earlier on the installed 0.16.0: sync off, 0 `navigation.poll` in 10 s; on, 13; off again, 0.
+Paratext was left where it was found (MAT 1:0). Nothing was typed into Paratext.
+
+**Gates.** `npm run check` 0/0; `npm run test` 768 passed; `npm run build` ok. Frontend-only, so the
+engine suite and cargo were not run. It reaches the installed app with the next release.
