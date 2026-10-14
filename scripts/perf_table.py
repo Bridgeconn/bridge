@@ -14,7 +14,7 @@ agree to the sample.
 
     python scripts/perf_table.py                       # the installed app's log
     python scripts/perf_table.py --log path/to/engine-events.log --since 2026-10-15T09:00
-    python scripts/perf_table.py --hardware "Field laptop, i3-1115G4, 8 GB, SATA SSD, 1366x768" --json
+    python scripts/perf_table.py --hardware "Field laptop, i3-1115G4 (2 cores), 8 GB, 1366x768" --json
 
 Exit status is 0 unless --gate is given, in which case it is 1 when any
 action with at least --min-samples samples misses its budget.
