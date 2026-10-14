@@ -20338,3 +20338,19 @@ They are reported on #274, not added.
   - `tests/service/test_collection_qa_restart.py`: a new engine shows the final stage from either book, and
     a termbase rule re-runs only its book.
 - `build-sidecars.ps1` + `smoke_sidecars.py`: passed. Frontend untouched; its gates were not run.
+
+## 2026-10-14 — The window is the loading screen's colour before it paints (#276), a6787e2
+
+`tauri.conf.json` sets the window `backgroundColor` to the loading screen's `--bg` (#F3F4F6; Tauri
+2.11 takes a hex string), and `index.html` paints `html, body` the same in an inline style. That
+covers the gap between WebView2's first paint and the CSS loading. There is no dark theme, so one
+light value is right.
+
+**Seen, not assumed.** Two release builds of this tree (`tauri build --no-bundle`), one without
+the change and one with it, were each launched with `LOCALAPPDATA` redirected to scratch. A
+PowerShell helper sampled the window about every 40 ms and logged the colour at a background point
+clear of the card. Before: plain white from the first visible frame (1.33 s) to 2.75 s, so 1.4 s of
+white, then the grey loading screen, then Home (white surface) at 4.8 s. After: #F3F4F6 from the
+first visible frame (0.32 s) until Home at 3.6 s, with no white frame. Frames were checked by eye
+as well. Not yet run: the installed build at 1366x768 (QA matrix M87, beside M48), which belongs
+to the field-laptop day with the next release.
