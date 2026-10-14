@@ -20458,3 +20458,52 @@ test_wildebeest_real.py` (real, 14), `test_wildebeest_mock.py` (mock, 9),
 `tests/service/test_greek_room_unicode_protocol.py` (import → live check and job, 4, runs on either
 engine). `pattern` and `char-conflict` stay unwired as categories (#125): `pattern`'s shape is now
 verified, `char-conflict`'s is not.
+
+## 2026-10-14 — A user's role on a project, enforced in authorize() only (#279), c25b419
+
+**What.** One person can now hold two roles on two projects, for example an editor on Ruth and a
+reporter on Jonah:
+- **Storage.** Workbench **v10** lifts `team_members.user_id` and `role`. The table already
+  existed, was in `SYNCED_TABLES` and was unused. The change is additive, with no rebuild and no
+  data-preservation test, under the pre-release amendment. `tc_project.team_role/set_team_role`
+  keep one row per user per book; no row means the installation role (or, on the hub, the token
+  role) applies.
+- **Rule.** `authorization.authorize(user, project, action)` now uses the project's role for
+  every action except `manage_users`, which stays installation- or token-wide, because the user
+  list is not a project's. `effective_role` is the same rule exposed for display.
+- **Desktop.** `team.roles` (read) and `team.setRole` (manage_users); the latter writes every
+  book of the collection.
+- **Hub.**
+  - `/hub/team-roles` writes a `team_members` event on the admin's behalf, as assignments do.
+  - `/hub/projects` carries `myRole` and `roles`.
+  - `/hub/assignments`, `/hub/users` and `/sync/push` decide through `authorize()`, via a
+    `_HubProject` adapter whose `team_role` folds the hub's event log. So one rule decides on
+    the desktop, through `/rpc` and on the dashboard. `/sync/push` used to check the token role
+    only, so a per-project reporter could have pushed.
+- **UI.**
+  - **Top bar:** shows "Reporter on this project" (or the other roles).
+  - **Reporter banner:** a reporter sees a banner over the editor.
+  - **Settings › Users:** gains an "On this project" column.
+  - **Dashboard:** shows Assign… by the role on each book, and a token admin gets a per-book role
+    picker.
+  - **No controls are hidden.** A refused action still says why (DECISIONS 2026-10-14, Revant's
+    choice).
+
+**Tests.** `tests/service/test_project_roles.py`, 6:
+- `authorize` with a per-project reporter, admin, or no row.
+- **Desktop:** editor on A decides, reporter on B is refused "on this project", and
+  `effectiveRole` follows.
+- **Per-project admin:** may assign but not set roles.
+- **Clearing:** a cleared role returns the installation role.
+- **`/rpc`:** the same editor-and-reporter pair, as a token user.
+- **Dashboard:** a role set by a token admin, assigning by a per-project admin, setting roles refused
+  to them, and push refused to a per-project reporter.
+
+Version pins moved to 10 in four persistence tests. Vitest: the dashboard (two new) and Users
+(one new). The role-change notice in Users read "is now a editor"; it now picks the article.
+
+**Gates.** Full `pytest -n auto`: 5415 passed. One names-preload timing flake passed alone. After
+rebasing on Benz's #204/#205 Wildebeest change, the 124 overlapping tests passed. Vitest 780,
+`npm run check` 0/0, build OK, frozen `smoke_sidecars.py` passed.
+
+**Not seen on the desktop:** QA matrix M88. Two laptops on a LAN: #281.
