@@ -206,3 +206,101 @@ describe("AlignmentModal layout", () => {
     expect(rule(alignmentModalSource, ".column")).toMatch(/flex-shrink:\s*0/);
   });
 });
+
+describe("AlignmentModal joined columns (#207) and Undo (#122)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    project.set(projectInfo());
+    getLexiconEntry.mockResolvedValue({ segments: [] });
+    runVerseChecks.mockResolvedValue([]);
+  });
+
+  /** Both source words in one group with the joined target word. */
+  function joined(extra: Partial<AlignmentContext> = {}): AlignmentContext {
+    const base = context();
+    return context({
+      alignment: {
+        alignments: [{ topWords: base.topTokens, bottomWords: [base.bottomTokens[0]] }],
+        wordBank: [base.bottomTokens[1], base.bottomTokens[2]],
+      },
+      groups: [{ id: "G001", topIds: ["H001", "H002"], bottomIds: ["T001"] }],
+      ...extra,
+    });
+  }
+
+  it("draws a group with two source words as one column, not two columns with the same targets", async () => {
+    await open(joined());
+    expect(screen.getAllByLabelText(/^Target words aligned to/)).toHaveLength(1);
+    expect(screen.getByLabelText("Target words aligned to בְּרֵאשִׁית בָּרָא")).toBeInTheDocument();
+    expect(document.querySelectorAll(".aligned-card")).toHaveLength(1);
+  });
+
+  it("a drop on a joined column keeps every source word in the group", async () => {
+    const ctx = joined();
+    realignWords.mockResolvedValue(ctx);
+    await open(ctx);
+    await fireEvent.click(screen.getByRole("button", { name: "में" }));
+    await fireEvent.click(screen.getByLabelText("Align picked-up word to בְּרֵאשִׁית בָּרָא"));
+    await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "1", ["H001", "H002"], ["T001", "T002"], ctx.alignment));
+  });
+
+  it("Join folds a source word into the previous column, with the targets of both", async () => {
+    const ctx = context();
+    realignWords.mockResolvedValue(ctx);
+    await open(ctx);
+    await fireEvent.click(screen.getByRole("button", { name: "Join בָּרָא with the previous source word" }));
+    await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "1", ["H001", "H002"], ["T001"], ctx.alignment));
+  });
+
+  it("Join is disabled while neither column has a target word, because the engine needs one", async () => {
+    const ctx = context({
+      alignment: { alignments: [], wordBank: context().bottomTokens },
+      groups: [],
+    });
+    await open(ctx);
+    expect(screen.getByRole("button", { name: "Join בָּרָא with the previous source word" })).toBeDisabled();
+    expect(realignWords).not.toHaveBeenCalled();
+  });
+
+  it("Split takes the last source word out of a joined column", async () => {
+    const ctx = joined();
+    realignWords.mockResolvedValue(ctx);
+    await open(ctx);
+    await fireEvent.click(screen.getByRole("button", { name: "Split בָּרָא out of this column" }));
+    await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "1", ["H001"], ["T001"], ctx.alignment));
+  });
+
+  it("Undo walks back through the edits instead of toggling the newest backup", async () => {
+    const history = [
+      { id: "h3-restore", operation: "restore", timestamp: "t3" },
+      { id: "h2-realign", operation: "realign", timestamp: "t2" },
+      { id: "h1-realign", operation: "realign", timestamp: "t1" },
+    ];
+    const ctx = context({ history });
+    restoreAlignment.mockResolvedValue(ctx);
+    await open(ctx);
+    // One undo already happened (the restore row): the next press restores the older edit's backup.
+    await fireEvent.click(screen.getByRole("button", { name: "Undo last change" }));
+    await waitFor(() => expect(restoreAlignment).toHaveBeenCalledWith("1", "1", "h1-realign", ctx.alignment));
+    expect(undoAlignment).not.toHaveBeenCalled();
+  });
+
+  it("Undo restores the newest edit when nothing has been undone yet, and is disabled when everything has", async () => {
+    const fresh = context({ history: [
+      { id: "h2-realign", operation: "realign", timestamp: "t2" },
+      { id: "h1-realign", operation: "realign", timestamp: "t1" },
+    ] });
+    restoreAlignment.mockResolvedValue(fresh);
+    const first = await open(fresh);
+    await fireEvent.click(screen.getByRole("button", { name: "Undo last change" }));
+    await waitFor(() => expect(restoreAlignment).toHaveBeenCalledWith("1", "1", "h2-realign", fresh.alignment));
+    first.unmount();
+    await open(context({ history: [
+      { id: "h4-restore", operation: "restore", timestamp: "t4" },
+      { id: "h3-restore", operation: "restore", timestamp: "t3" },
+      { id: "h2-realign", operation: "realign", timestamp: "t2" },
+      { id: "h1-realign", operation: "realign", timestamp: "t1" },
+    ] }));
+    expect(screen.getByRole("button", { name: "Undo last change" })).toBeDisabled();
+  });
+});

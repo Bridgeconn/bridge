@@ -92,3 +92,48 @@ export function bottomIdsAfterDrop(context: GroupsView, topId: string, bottomId:
 export function occurrenceLabel(token: Pick<AlignmentToken, "occurrence" | "occurrences">): string {
   return `(${token.occurrence}/${token.occurrences})`;
 }
+
+/** The source ids a drop on `topId`'s column realigns: every source word of
+ *  its group, so a joined column (#207) stays joined, or the word alone. */
+export function topIdsFor(context: GroupsView, topId: string): string[] {
+  const group = groupForSource(context, topId);
+  return group && group.topIds.length > 1 ? [...group.topIds] : [topId];
+}
+
+export interface SourceColumn {
+  /** Every source id in the column: one, or the whole group's (#207). */
+  ids: string[];
+  tokens: AlignmentToken[];
+}
+
+/** The interlinear's columns in verse order: one per source word, except
+ *  that a group with several source words (split source, joined target:
+ *  `word1 word2` → `joinedword`, #207) is one column at the place of its
+ *  first word, carrying all of them. Drawing one column per source word
+ *  showed the same targets under each and a drop broke the group. */
+export function sourceColumns(context: GroupsView): SourceColumn[] {
+  const columns: SourceColumn[] = [];
+  const placed = new Set<string>();
+  for (const token of context.topTokens) {
+    if (placed.has(token.id)) continue;
+    const ids = topIdsFor(context, token.id);
+    const tokens = ids.length > 1
+      ? context.topTokens.filter((t) => ids.includes(t.id))
+      : [token];
+    tokens.forEach((t) => placed.add(t.id));
+    columns.push({ ids: tokens.map((t) => t.id), tokens });
+  }
+  return columns;
+}
+
+/** What "Undo last change" restores (#122): the newest edit not yet undone.
+ *  Each undo writes a `restore` row whose backup is the pre-undo state, and
+ *  restoring the newest backup again re-applied the change. Walking past the
+ *  leading `restore` rows, the n-th undo in a row restores the n-th newest
+ *  edit's backup. `history` is newest first. null when nothing is left. */
+export function undoTargetId(history: Array<{ id: string; operation: string }>): string | null {
+  let undone = 0;
+  while (undone < history.length && history[undone].operation === "restore") undone += 1;
+  const edits = history.filter((entry) => entry.operation !== "restore");
+  return edits[undone]?.id ?? null;
+}

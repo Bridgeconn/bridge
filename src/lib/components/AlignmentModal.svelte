@@ -12,7 +12,8 @@
   import { createPointerDrag } from "../alignmentDrag";
   import { openCrossVerse } from "../alignmentUi";
   import {
-    alignedTargetsFor, bottomIdsAfterDrop, groupForTarget, occurrenceLabel as occurrence, unaccountedTargets,
+    alignedTargetsFor, bottomIdsAfterDrop, groupForTarget, occurrenceLabel as occurrence, sourceColumns,
+    topIdsFor, unaccountedTargets, undoTargetId,
   } from "../alignmentGroups";
   import { SourceGlossCache } from "../lexiconGloss";
   import LexiconPopup from "./LexiconPopup.svelte";
@@ -177,9 +178,46 @@
     if (!context) return;
     const bottomIds = bottomIdsAfterDrop(context, sourceId, targetId);
     if (!bottomIds) return; // already in this column
+    // Every source word of the column (#207): a drop on a joined column must
+    // not split it back into one word's group.
+    const topIds = topIdsFor(context, sourceId);
     void mutate(
-      () => bridge.realignWords(chapter, verse, [sourceId], bottomIds, context!.alignment),
+      () => bridge.realignWords(chapter, verse, topIds, bottomIds, context!.alignment),
       "Alignment saved.",
+    );
+  }
+
+  // #207: a source word split into several tokens whose translation is one
+  // joined target word is one tC group with several topWords. The engine's
+  // realign has always accepted that; the surface could not ask for it.
+  // "Join" folds a column into the one before it (split source words sit
+  // side by side); "Split" takes the last source word out again, which the
+  // engine keeps as its own empty group. realign needs at least one target
+  // word, so a join of two empty columns and a split of a joined column with
+  // no target are disabled rather than refused after the click.
+  $: columns = context ? sourceColumns(context) : [];
+  function columnBottomIds(ids: string[]): string[] {
+    return context ? (alignedTargetsFor(context, ids[0]).map((t) => t.id)) : [];
+  }
+  function joinWithPrevious(index: number) {
+    if (!context || index <= 0) return;
+    const previous = columns[index - 1];
+    const current = columns[index];
+    const bottomIds = [...columnBottomIds(previous.ids), ...columnBottomIds(current.ids)];
+    if (bottomIds.length === 0) return;
+    void mutate(
+      () => bridge.realignWords(chapter, verse, [...previous.ids, ...current.ids], bottomIds, context!.alignment),
+      "Source words joined.",
+    );
+  }
+  function splitLast(index: number) {
+    if (!context) return;
+    const column = columns[index];
+    const bottomIds = columnBottomIds(column.ids);
+    if (column.ids.length < 2 || bottomIds.length === 0) return;
+    void mutate(
+      () => bridge.realignWords(chapter, verse, column.ids.slice(0, -1), bottomIds, context!.alignment),
+      "Source word split out.",
     );
   }
 
@@ -216,10 +254,17 @@
     drag.start(event, id);
   }
 
+  // #122: each undo is a `restore` row whose backup is the pre-undo state, and
+  // alignment.undo restores the newest backup, so a second press re-applied
+  // what the first undid. Undo now names the backup it wants (the newest edit
+  // not yet undone, undoTargetId) through alignment.restore; the engine path
+  // is unchanged. Disabled once every edit is undone.
+  $: undoId = context ? undoTargetId(context.history) : null;
   function undo() {
-    if (!context) return;
+    if (!context || !undoId) return;
+    const id = undoId;
     void mutate(
-      () => bridge.undoAlignment(chapter, verse, context!.alignment),
+      () => bridge.restoreAlignment(chapter, verse, id, context!.alignment),
       "Last alignment change undone.",
     );
   }
@@ -312,17 +357,45 @@
             <small>Click a word for its lexicon entry — its target words sit in the column beneath it</small>
           </div>
           <div class="interlinear" dir={context.sourceDirection}>
-          {#each context.topTokens as src (src.id)}
-            <div class="column">
-              <button
-                class="token source"
-                on:click={() => (lexiconToken = src)}
-                disabled={busy}
-                title={sourceTitle(src, glossVersion)}
-              >
-                <span>{src.word}{#if src.occurrences > 1}<span class="occ">{occurrence(src)}</span>{/if}</span>
-                {#if sourceGloss(src, glossVersion)}<small class="gloss">{sourceGloss(src, glossVersion)}</small>{/if}
-              </button>
+          {#each columns as column, index (column.ids.join("+"))}
+            {@const src = column.tokens[0]}
+            {@const label = column.tokens.map((t) => t.word).join(" ")}
+            <div class="column" class:joined={column.ids.length > 1}>
+              <div class="source-words">
+                {#if index > 0}
+                  <button
+                    type="button"
+                    class="join-x"
+                    on:click|stopPropagation={() => joinWithPrevious(index)}
+                    disabled={busy || columnBottomIds(columns[index - 1].ids).length + columnBottomIds(column.ids).length === 0}
+                    aria-label={`Join ${label} with the previous source word`}
+                    title={columnBottomIds(columns[index - 1].ids).length + columnBottomIds(column.ids).length === 0
+                      ? "Drop a target word on one of the two columns first, then join"
+                      : "Join with the previous source word: one target word for both"}
+                  >⟵</button>
+                {/if}
+                {#each column.tokens as token (token.id)}
+                  <button
+                    class="token source"
+                    on:click={() => (lexiconToken = token)}
+                    disabled={busy}
+                    title={sourceTitle(token, glossVersion)}
+                  >
+                    <span>{token.word}{#if token.occurrences > 1}<span class="occ">{occurrence(token)}</span>{/if}</span>
+                    {#if sourceGloss(token, glossVersion)}<small class="gloss">{sourceGloss(token, glossVersion)}</small>{/if}
+                  </button>
+                {/each}
+                {#if column.ids.length > 1}
+                  <button
+                    type="button"
+                    class="join-x"
+                    on:click|stopPropagation={() => splitLast(index)}
+                    disabled={busy || columnBottomIds(column.ids).length === 0}
+                    aria-label={`Split ${column.tokens[column.tokens.length - 1].word} out of this column`}
+                    title="Split the last source word out of this column"
+                  >⟶</button>
+                {/if}
+              </div>
               <div
                 class="target-cell"
                 class:drop-hover={$dragState.overColumn === src.id}
@@ -330,19 +403,19 @@
                 dir={context.targetDirection}
                 role="button"
                 tabindex="0"
-                aria-label={pickedUpId ? `Align picked-up word to ${src.word}` : `Target words aligned to ${src.word}`}
+                aria-label={pickedUpId ? `Align picked-up word to ${label}` : `Target words aligned to ${label}`}
                 on:click={() => handleColumnClick(src.id)}
                 on:keydown={(event) => (event.key === "Enter" || event.key === " ") && (event.preventDefault(), handleColumnClick(src.id))}
               >
                 {#each alignedTargetsFor(context, src.id) as item (item.id)}
-                  <div class="token target aligned-card" title={`Aligned to ${src.word}`}>
+                  <div class="token target aligned-card" title={`Aligned to ${label}`}>
                     <span class="word">{item.word}{#if item.occurrences > 1}<span class="occ">{occurrence(item)}</span>{/if}</span>
                     <button
                       type="button"
                       class="unalign-x"
                       on:click|stopPropagation={() => returnToBank(item.id)}
                       disabled={busy}
-                      aria-label={`Unalign ${item.word} from ${src.word}`}
+                      aria-label={`Unalign ${item.word} from ${label}`}
                       title="Remove from this column"
                     >×</button>
                   </div>
@@ -405,7 +478,8 @@
 
       <footer>
         <div class="history-controls">
-          <button on:click={undo} disabled={busy || context.history.length === 0}>Undo last change</button>
+          <button on:click={undo} disabled={busy || !undoId}
+            title="Steps back through your changes, one per press">Undo last change</button>
           <select bind:value={restoreId} disabled={busy || context.history.length === 0} aria-label="Alignment backup">
             {#each context.history as item}
               <option value={item.id}>{item.timestamp} · {item.operation}</option>
@@ -556,6 +630,14 @@
     color: var(--text-2); font-size: var(--fs-md); cursor: pointer; flex-shrink: 0;
   }
   .unalign-x:hover:not(:disabled) { color: var(--danger); background: var(--danger-bg); }
+  /* #207: a joined column shows every source word of its group side by side;
+     the arrow buttons join a column with the one before it or split the last
+     word out again. */
+  .source-words { display: flex; align-items: stretch; gap: 3px; width: 100%; }
+  .column.joined .source-words .token.source { width: auto; flex: 1; }
+  .join-x { border: 1px solid var(--border); background: var(--surface); color: var(--text-2); border-radius: 4px; font-size: var(--fs-xs); padding: 0 3px; cursor: pointer; line-height: 1; }
+  .join-x:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+  .join-x:disabled { opacity: 0.4; cursor: default; }
   .word-bank, .source-bank { border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
   /* The interlinear carries its own border today; inside the titled section it
      would be a second box around the same thing. */

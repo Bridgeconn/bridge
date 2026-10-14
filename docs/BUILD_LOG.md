@@ -20565,3 +20565,39 @@ now sizes to its widest option with `min-width: 72px`, so one- and two-digit boo
 width. One style change in `TopBar.svelte`; no logic. `npm run check` 0/0, `npm run test`, `npm run
 build` as recorded on the issue. **Not run:** the desktop app at 1366x768 with Psalms open and the
 largest text size; the #156 walk covers it, and a Psalms fixture is listed there.
+
+## 2026-10-14 — Align Words: joined columns for a split source word; Undo walks back; the invalid flag (#207, #122, #149)
+
+**#207, split source, joined target.** The engine's `realign` has always accepted several source
+words in one group (`realign_words(top_ids=[...])`, `alignment_engine.realign`), which is how tC
+holds `word1 word2` → `joinedword`. The surface could not ask for it: the interlinear drew one
+column per source word and every drop realigned `[that one source id]`, so a group with two source
+words showed the same targets under both columns and a drop on either broke the group into one
+word's. Now `sourceColumns` (alignmentGroups.ts) draws a group with several source words as one
+column at the place of its first word, a drop on a column realigns the whole column's ids
+(`topIdsFor`), and each column after the first has a ⟵ Join button folding it into the previous
+column with the targets of both; a joined column has a ⟶ Split button taking its last source word
+out, which the engine keeps as its own empty group. `realign` needs at least one target word, so
+Join is disabled while neither column has one (the title says to drop a target first) and Split
+while the joined column has none, rather than refused after the click.
+
+**#122, Undo.** Each undo is a `restore` history row whose backup is the pre-undo state, and
+`alignment.undo` restores the newest backup, so a second press re-applied the first's change.
+Undo now names the backup it wants through `alignment.restore`: `undoTargetId` skips the leading
+`restore` rows and takes the n-th newest edit for the n-th press in a row, and the button is
+disabled once every edit is undone. No engine change (`tc_project.py` and `bridge_service.py` are
+Revant's this week; the engine's undo keeps its old meaning for any other caller).
+
+**#149, the invalid flag.** Nothing to change on the surface: #148 already reworded the flag to
+"Marked invalid in translationCore" and put the structural issues behind their own ⚠ button, which
+shows for a verse with issues whatever its tC status. What remains is engine-side and Revant's: the
+same duplicate target token is reported twice in `_alignment_context` (per group by
+`alignment_reliability` and as a count by `bridge_service.py`), written on the issue.
+
+**Tests** (`AlignmentModal.test.ts`, 7 new): one column for a two-word group with one aligned card;
+a drop on it realigns both ids; Join sends both ids with the previous column's targets; Join
+disabled with no target on either side; Split sends the first id only; Undo after one restore
+targets the older edit, Undo on a fresh history targets the newest edit, and is disabled once all
+are undone. **Gates** as recorded on the issues. **Not run:** the desktop app; the drag path is
+real pointer events (alignmentDrag.ts, covered by its own tests) and the join buttons are plain
+clicks, but the layout of a joined column at 1366x768 belongs to the #156 walk.
