@@ -20354,3 +20354,36 @@ white, then the grey loading screen, then Home (white surface) at 4.8 s. After: 
 first visible frame (0.32 s) until Home at 3.6 s, with no white frame. Frames were checked by eye
 as well. Not yet run: the installed build at 1366x768 (QA matrix M87, beside M48), which belongs
 to the field-laptop day with the next release.
+
+## 2026-10-14 — A book's Language QA overrides travel through the hub as a project_state row (#277), 805c679
+
+**What.** The Checker settings dialog writes each pack's `overrides.json` (narrowed rules, inline off,
+abstains, the indic-qa checker settings). That file is a reviewer's decision on disk, outside the
+change log, so the hub never carried it; the #227 review deferred it to this slice. Now:
+- **On save:** `languageQa.checkerSettings.set` also writes a `project_state` row per pack (key
+  `languageQaOverrides:<pack>`, payload `{version, pack, document}`) for every materialized book it
+  wrote. The row is written only when it differs from the file, so an unchanged file never travels.
+- **Before each sync:** `hub_sync_once` mirrors the open book's files first. A file written before
+  this change, or by hand, travels too.
+- **After each pull:** any pack whose row now differs from its file has the file rewritten (atomic
+  replace, the dialog's JSON format) or removed (back to the defaults). The book is then marked for
+  a Language QA rebind. The pull runs on the hub thread, so the dispatcher does the rebind at the
+  start of its next request, the same `bind` the dialog's save does. No Language QA module was
+  touched.
+
+**Conflicts** need nothing new: two devices that both changed the overrides each keep their own
+row and file, and the other's lands in `sync_conflicts` like any row. Settings › Team names it,
+for example "Language QA checker settings (hi-irv): switched off hi.lex.unknown", and the reviewer's
+own settings are the dialog.
+
+**Tests** (`tests/service/test_hub_sync.py`, two devices through the in-process hub, a Hindi book):
+- A switches `hi.lex.unknown` off. After one sync each, B's file equals A's, and B's next Language
+  QA pass reports no `hi.lex.unknown`. The next sync moves nothing.
+- A switches it off while B switches `hi.lex.archaic-form` on. Each keeps its own file, and B's
+  conflict carries A's document.
+
+The first draft of the conflict test "switched off" a rule that is off by default. B then had no
+override at all, and A's legitimately applied: the test was wrong, not the sync. Vitest: the Team
+pane's label.
+
+**Not run:** two real laptops on a LAN; that is #281.
