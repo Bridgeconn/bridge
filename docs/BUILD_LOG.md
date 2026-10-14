@@ -20387,3 +20387,17 @@ override at all, and A's legitimately applied: the test was wrong, not the sync.
 pane's label.
 
 **Not run:** two real laptops on a LAN; that is #281.
+
+## 2026-10-14 — Hub row ids: already the hub's by adoption; link-after-use stays refused (#278), ad00702
+
+#278 asked for `natural_row_id` to take the hub project id once a book is linked, with a natural-key
+fallback for books linked after use. Checked against the code before starting: #80 already makes
+a linking device adopt the hub's project id (`project_registry.adopt_project_id` rewrites
+`.bridge/project.json`), so every row is built from the hub id and the first half holds. A book
+with rows under its own id is refused at link time. The hub folds rows by `row_key` only; no
+natural-key path exists anywhere. The fallback would need each row's natural key stored (row ids
+are one-way hashes), which is a workbench v10 column and a translation step on push and pull.
+Revant chose to close #278 as delivered (DECISIONS 2026-10-14). Two tests pin it: one finding
+decided first on two linked devices is one `row_key` in the hub's event log plus one conflict, and
+a book with a decision made before linking is refused with its id and rows unchanged and nothing
+on the hub. No code change and no migration.
