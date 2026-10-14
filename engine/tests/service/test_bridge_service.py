@@ -642,12 +642,14 @@ def test_check_job_rejects_a_second_active_job(fixture_project, monkeypatch):
         return []
 
     monkeypatch.setattr(engine, "_run_verse_checks_for_project", slow_check)
+    # Wildebeest alone: no book preflight before the first verse (#252 made
+    # "greekroom" include the USFM checker and names scans).
     first = call(engine, "checks.start", {
-        "scope": "chapter", "chapters": ["1"], "checks": ["greekroom"],
+        "scope": "chapter", "chapters": ["1"], "checks": ["wildebeest"],
     })["result"]
     assert entered.wait(timeout=1)
     second = call(engine, "checks.start", {
-        "scope": "chapter", "chapters": ["1"], "checks": ["greekroom"],
+        "scope": "chapter", "chapters": ["1"], "checks": ["wildebeest"],
     })
     assert second["success"] is False
     assert second["error"]["code"] == "job_conflict"
