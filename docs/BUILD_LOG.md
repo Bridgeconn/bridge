@@ -19986,3 +19986,31 @@ so edits, Use and undo were the real gap.
 
 **Found, not fixed.** `common/header.missing` (#253) is anchored at the book's first verse, so in
 any book without `\h`, verse 1:1 can never count as Language QA clean.
+
+## 2026-10-14 — QA 08 cross-verse sign-off on the installed 0.16.0; coverage rules on real chapters (#159, #230)
+
+**#159, the cross-verse sign-off.** The installed 0.16.0 was used (`Bridge_0.16.0_x64-setup.exe` from the release,
+installed over 0.15.0; `engine.info` 0.16.0). It ran on a scratch `LOCALAPPDATA` with a fresh import of IRV Tamil
+Genesis, window 1366x768 (viewport 1350x729). It was driven through WebView2's remote-debugging port with Playwright's
+mouse, i.e. CDP `Input.dispatchMouseEvent`, the method the #117 dev walk used. The 2026-10-13 "synthetic input did
+not register" attempt did not use it.
+- XVA-001: the toolbar opened the page on 1:1–3 from 1:2.
+- XVA-002: To = 5 widened to 1:1–5 (51/47 unmatched); chip 2 off dropped v.2 (37/34). The page has no free-text
+  search and is scoped to one chapter.
+- XVA-003 / M50: a real drag (1:2 பூமியானது → 1:1 הָאָרֶץ) and pick-then-click (1:2 ஒழுங்கற்றதாகவும் → 1:1 בָּרָא)
+  each saved a link. On disk: 2 link rows, 2 `crossVerseLink` events, 2 history rows without `backupPath`, and
+  `alignmentData/gen/1.json` byte-identical to an untouched import.
+- XVA-004 / M51: × removed one link only (`crossVerseUnlink`).
+- XVA-005: Suggest links ran offline and explained it learns from completed verses, of which there are none.
+- XVA-006: with no key, Align automatically was disabled with its reason.
+- XVA-010: after a full restart, the remaining link showed on both verses with the same tally. The change log was
+  2 links and 1 unlink, with 1 active row.
+- M59: a same-verse drag saved an ordinary tC group.
+- XVA-007/008/009 (a real provider) were not run on the desktop: the scratch data has no key. They are covered over
+  the protocol by M58, A40 and A41, and on 0.14.0 by D14.
+
+**#230, the coverage rules on real chapters.** Over stdio, the installed 0.16.0 found heading trailing punctuation
+(GEN 4:25, 36:1), mixed heading markers (JOL 2:28) and a footnote with no `\ft` (MAT 22:44). These are listed, not
+drawn: drawing them is #250, after the tag. The cross-reference rules (#249) are not in 0.16.0. On a frozen build
+of main, a scratch copy of Ruth with two references broken showed `xref.origin-mismatch` (2:1) and
+`xref.target-missing` (3:12). The real IRV has none (#249).
