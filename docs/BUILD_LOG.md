@@ -20086,3 +20086,9 @@ both places (the installer and Settings › Connections), compiling on the user'
 
 **Not yet watched.** The elevated copy itself, i.e. a real UAC prompt answered and Paratext loading the
 installed connector. It needs Paratext closed and a person at the prompt.
+
+**#282, the elevated install, watched (2026-10-14, 10:36).** With Paratext closed, `paratext.installConnector` through
+the frozen engine compiled the connector, raised one Windows administrator prompt (Benz clicked Yes), and replaced
+the hand-deployed August `.ptxplg` (22,528 bytes) with the freshly built one (24,064 bytes), writing
+`connector-version.txt` (0.7.4) beside it. Status then read installed 0.7.4, action "none". Paratext 9.5 was started
+again, loaded it, and the connector answered `connected: true` (HEB/GRK, MAT 1:0).
