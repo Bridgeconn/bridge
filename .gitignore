@@ -92,3 +92,6 @@ test-temp-*/
 benchmark/results/
 # The hub's dashboard bundle (#81), built by `npm run build:dashboard`
 dist-dashboard/
+
+# Per-user Claude Code instructions (not shared)
+CLAUDE.local.md
