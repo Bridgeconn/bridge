@@ -20092,3 +20092,43 @@ the frozen engine compiled the connector, raised one Windows administrator promp
 the hand-deployed August `.ptxplg` (22,528 bytes) with the freshly built one (24,064 bytes), writing
 `connector-version.txt` (0.7.4) beside it. Status then read installed 0.7.4, action "none". Paratext 9.5 was started
 again, loaded it, and the connector answered `connected: true` (HEB/GRK, MAT 1:0).
+
+## 2026-10-14 — Finding-id audit: stable, non-colliding ids, and old decisions moved only when unambiguous (#273), 74c0b01
+
+**The audit** is on #273 as a table (engine, check type, disambiguator, verdict). Benz's four claims
+held: tC PENDING, INVALIDATED and STALE_AFTER_EDIT for one check shared an id, so an Ignore on a
+pending item also hid its later stale or invalidated warning; ALIGN_DUP findings with the same count
+shared an id; local ids built from a detail with a count changed when the count did; Wildebeest ids
+used offsets, so an edit earlier in the verse orphaned the decision. Three more were found:
+USFM_BALANCE (counts in the message), TC_COMMENTS and TC_VERSE_EDITS (counts), and the USFM
+structural checker, whose explanation ends with an excerpt of the verse, so any edit to the verse
+changed the id.
+
+**The fix.** `_issue_disambiguators` in `bridge_service.py`: the tC states get `groupId|code`, and
+TC_PENDING keeps its id, so most existing decisions need nothing. Count-bearing codes use their
+group_id: the token signature for ALIGN_DUP (set in `local_checks`) and the marker for USFM_BALANCE
+(`usfm_verse.unbalanced_markers`, the message built from it by `balance_message`). The rest are one
+per verse and use nothing. Wildebeest uses `original_text#k`, k counting same-type findings by
+offset. The USFM checker uses `#k` in report order, and its persisted cache section is rebuilt once
+(content hash suffix `|ids-273`). `qa_report` derives the per-state tC id the same way.
+
+**Decisions under an old id.** Each changed finding knows its pre-#273 id (`_legacy_finding_id`:
+set when built, or derived from a cached USFM finding's explanation). At reapply, a decision found
+only under the old id is copied to the new id when exactly one finding of the verse had that old id.
+The copy is an ordinary `record_qa_decision` with `rekeyedFrom` in the payload; the old row stays.
+Otherwise the decision is not applied, and the finding carries `unmatched_decision`. This covers an
+old id shared by two current findings, and a tC INVALIDATED or STALE finding whose pending id holds
+a decision, which says nothing about the state it was made on. The Review panel shows it: "An
+earlier decision on this item (…) was recorded under another finding id and is not applied here."
+The wording is neutral on purpose: after #273 a pending-item decision is legitimately not applied
+to the same check's stale warning either.
+
+**Tests.** `tests/service/test_finding_ids.py`, 15: a Wildebeest decision survives an edit earlier
+in the verse; two occurrences get two ids; a local alignment decision survives a change of count;
+three tC states carry three ids, and PENDING's id is unchanged; two ALIGN_DUP tokens with the same
+count differ; six one-per-verse codes are count-free; USFM_BALANCE is keyed on the marker; an old
+Wildebeest id is re-keyed once with `rekeyedFrom`, the old row kept; a colliding old ALIGN_DUP id
+is shown on both findings and applied to neither. Vitest: the panel line.
+
+**Not done.** Two USFM-checker check types are built from verse text by the adapter's report parse
+(`usfm.luk_18_14_wj_f_…` on Luke) and stay unstable; an issue is proposed, not filed.
