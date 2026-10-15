@@ -21013,3 +21013,26 @@ whether the hidden WebView2 throttles the 30 s timer (Chromium clamps hidden pag
 1 s, which is harmless here), whether `main` flashes before its first paint on `show()`, the splash's
 corners and shadow on Windows 10 vs 11, and the cold-start number (M87 and #232 should be re-read on
 this build: the first frame is now the splash, not the grey main window).
+
+## 2026-10-15 — USFM segment and bridge findings land on their own verse (#303)
+
+**Decision (Revant).** Lettered segments (`5a`, `5b`) stay flagged as the checker reports them: "Duplicate
+verse number 5" (high) and "Verse number includes letter" (low, one per segment). A bridge (`3-4`) is valid
+and not flagged; the checker already raised nothing for it, and a test now pins that. Benz's recommendation
+to drop `duplicate_verse_number` for segments was not taken.
+
+**The bug was the anchor.** `QaFinding.verse` is an int; the chapter's keys are `5a`/`5b`. The duplicate was
+anchored at verse 5 (not a key) and the two letter findings had no verse at all (the parser never read
+`\v 5a` from the report line), so all three fell back to the chapter's first verse: the 1:1 Benz saw on
+0.18.0. Now `QaFinding.verse_ref` carries the exact reference ("5a", "3-4") with `verse` its first number;
+the adapter reads it from the checker's own line; `_usfm_anchor_verse` (bridge_service.py) matches the exact
+reference, else the number, else the first key with that number (the duplicate sits on `5a`), else the
+first verse. The usfm cache marker is `|ids-273-283-303`. The consistency block below it has the same
+first-verse fallback and was left alone. A decision recorded on these findings while they sat on verse 1
+does not follow them to `5a`/`5b` (pre-release).
+
+**Ran.** `tests/service/test_usfm_verse_segments.py` (8: the parser's references, six anchoring cases, and
+the real checker through `verse.runChecks` on a chapter keyed 1, 2, 3-4, 5a, 5b, 6). Engine `pytest -n auto`:
+5449 passed, 3 xfailed, 3 failed under parallel load (Logos helper round trip, Language QA polling
+starvation, moved-project identity), all three passing when re-run alone. Sidecars rebuilt; frozen
+`smoke_sidecars.py` passed. **Not watched:** the findings on 5a/5b in the desktop app (next build).
