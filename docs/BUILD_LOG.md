@@ -20894,3 +20894,26 @@ explanation in the Issue column; 50 `_MEI*` folders from earlier sessions sit in
 
 **Not run:** INS-001 (Benz's install), INS-002 (Start entry), INS-004 (offline), INS-006 (Benz's
 upgrade), INS-010 (uninstall), GR-11 (source/frozen only), the GR-13 collection run, PDF export.
+
+## 2026-10-15 — Greek Room count in the status bar; one wording per duplicated target token (#202, #149)
+
+**#202, the status-bar half (e1c6b46).** Benz built the Review panel's landing in 8fafd81 and asked
+for one span in `App.svelte`. It sits after "chapters approved" and reads `greekRoomChapterSummary`
+from `verseChecks.ts`: "Greek Room: not run" until a verse of the chapter has a run record, then
+"Greek Room: N open · M/K verses". It is a plain span, not a button: the Review panel's tab is local
+state, and the panel already switches to Greek Room when a run lands. Not in 0.18.0.
+
+**#149, the engine half (d1dd2ef).** `_alignment_context` appended "N target token(s) occur more than
+once in alignment data." after `structural_issues` had already listed each duplicate with its
+groups or wordBank ("target token 'x' occurs more than once (group 1 and group 2)"). `all_bottom()`
+is groups plus wordBank, which is exactly what `structural_issues` walks, so the count was always a
+second wording. It is now appended only when no per-token "target token " line exists. The
+source-side pair ("source token 'x' occurs in groups 1 and 2" and "N source token(s) occur in more
+than one alignment group") has the same shape and was left as it is: not asked for on #149.
+
+**Ran.** `tests/service/test_alignment_duplicate_issue_wording.py` failed before the fix with both
+lines and passes after. `npm run check` 0/0, `npm run test` 829 passed (79 files), `npm run build`
+ok. Engine `pytest -n auto`: 5437 passed, 3 xfailed, 1 failed:
+`test_passage_semantic_runtime.py::test_moved_project_retains_identity_but_live_copy_is_rejected`,
+which passed alone and in three runs of its whole file (37/37); it touches neither change. Smoke
+of the frozen sidecars not run: no build was made. **Not watched:** both changes in the desktop app.
