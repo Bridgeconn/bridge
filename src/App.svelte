@@ -59,7 +59,7 @@
     boxesRan, checkListLabel, coversSelection, editorCheckList, groupsOf, mergeFindings, selectedEditorChecks,
   } from "./lib/checkSelection";
   import { planChapterEntry, shouldReadStored } from "./lib/chapterEntry";
-  import { runVerseGreekRoom } from "./lib/verseChecks";
+  import { greekRoomChapterSummary, runVerseGreekRoom } from "./lib/verseChecks";
   import { projectRoles, refreshProjectRoles } from "./lib/projectRole";
   import CheckMenu from "./lib/components/CheckMenu.svelte";
   import { editingChapter, editingVerse, editSaving } from "./lib/verseEditor";
@@ -1596,6 +1596,9 @@
           {#if alignmentChapterSummary.invalid} · {alignmentChapterSummary.invalid} invalid{/if}
         </span>
         <span>{bookSummary.approvedChapters}/{bookSummary.totalChapters} chapters approved</span>
+        <span title="Greek Room on this chapter: open findings and verses checked">
+          Greek Room: {$greekRoomChapterSummary.checkedVerses === 0 ? "not run" : `${$greekRoomChapterSummary.openFindings} open · ${$greekRoomChapterSummary.checkedVerses}/${$greekRoomChapterSummary.totalVerses} verses`}
+        </span>
       {/if}
       <span class="grow" />
       {#if $project && opened}
