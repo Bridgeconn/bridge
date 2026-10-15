@@ -2603,7 +2603,9 @@ class BridgeEngine:
             issues.append(f"{len(extra)} alignment token(s) are absent from current target text.")
         if duplicate_top:
             issues.append(f"{len(duplicate_top)} source token(s) occur in more than one alignment group.")
-        if duplicate_bottom:
+        # structural_issues already names each duplicated target token and the
+        # groups (or wordBank) holding it; the bare count is only a fallback (#149).
+        if duplicate_bottom and not any(issue.startswith("target token ") for issue in issues):
             issues.append(f"{len(duplicate_bottom)} target token(s) occur more than once in alignment data.")
         target_positions = {
             token.signature: position for position, token in enumerate(expected_bottom)
