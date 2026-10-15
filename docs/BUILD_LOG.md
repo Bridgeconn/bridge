@@ -20860,3 +20860,37 @@ default stack, 70 of 70 glyphs from Segoe UI (before: Vijaya); a Tamil line unde
 letters from Vijaya and the 10 ASCII glyphs from Segoe UI. `targetFont.test.ts` now pins the
 Latin-first default and the Tamil rule (6 tests). `npm run check` 0/0, `npm run test` 829 passed,
 `npm run build` ok. **Not watched:** the installed app with this commit.
+
+## 2026-10-15 — The 0.18.0 installed-app walk: QA 01, QA 05 and QA 05A (#152, #156, #175)
+
+**How.** The installed 0.18.0 (575235b) on Benz's machine, launched on a scratch `LOCALAPPDATA`
+(imports land under the settings folder, so no real project was touched) with WebView2's debug
+port, sized to 1366x768, driven by real mouse and keyboard events over CDP. A file drop is the
+`tauri://drag-drop` webview event the OS sends; everything after it went through the import screen.
+The report's Save As dialog was filled with UI Automation. Fixtures were generated for the GR cases
+(Titus, 3 John, two broken Philemons, 2 John with `3-4`/`5a`/`5b`), plus Tamil IRV Mark for job
+timing and a copy of a real IRV Tamil Philippians project at workbench v7 for the migration case.
+The shell writes `engine-events.log` to the real profile's `org.translationcore.aibridge\logs`
+whatever `LOCALAPPDATA` says, so the walk appended lines there; nothing else of Benz's was written.
+The installed `bridge-usfm-checker.exe` was renamed for one run (CHK-015) and restored, same size.
+
+**Results** are in QA_TEST_MATRIX's new section "0.18.0 installed-app regression walk" and on the
+three cards. Passed: real engines, the Unicode and names cases, structural defects, cancel/retry,
+kill mid-job, normal shutdown with the stdin-close exit, decisions and stable ids across a relaunch
+(including `3-4` and `5a`), the report filter and CSV, the checker-missing state, and a v7 → v10
+workbench migration that kept every row and left Scripture byte-identical.
+
+**Failed, filed:** #301 (a return to Projects reopens the last dropped file's import review; a
+second drop shows the first file — `App.svelte`/`ImportScreen.svelte`), #302 (bridges and segments
+drawn after the last verse — `Object.keys` order at `App.svelte:937`), #303 (the USFM checker calls
+`5a`/`5b` a duplicate verse; a question for the maintainer), #304 (Tab in the finding menu leaves
+focus on the resize handle). **Failed, fixed on main:** every English verse in italics (#286,
+f9adccb). **Observed, not filed:** the USFM structural check reads the imported source, which verse
+edits never change, so a defect typed in through the editor is not checked until re-import; the
+alignment-gap message names the script of the verse's first foreign word ("Unaligned Malayalam
+target tokens" in an English project); typing "Tamil" in the import language search lists Old Tamil
+first; English projects are offered "Show IRV/OV occurrences"; a names finding's CSV row puts the
+explanation in the Issue column; 50 `_MEI*` folders from earlier sessions sit in TEMP.
+
+**Not run:** INS-001 (Benz's install), INS-002 (Start entry), INS-004 (offline), INS-006 (Benz's
+upgrade), INS-010 (uninstall), GR-11 (source/frozen only), the GR-13 collection run, PDF export.
