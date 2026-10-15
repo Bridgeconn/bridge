@@ -127,9 +127,23 @@ def _parse_report(text: str) -> list[dict[str, Any]]:
     version mismatch on our end). The .txt report's indentation depth to
     reach an actual issue instance varies by category (3 or 4 levels), so
     this tracks an indentation stack rather than assuming a fixed depth.
+
+    An instance line can itself end in a count -- "LUK 18:14: <verse> (2)",
+    the same problem twice in one verse -- so a line that matches a location
+    shape is an instance before it is ever tried as a header. Before #283 it
+    was taken for a header, its verse text became the subcategory (and so the
+    check type) of every later instance in the group, and it was itself lost.
+    `legacy_subcategory` is what that parse said, so a decision recorded under
+    the old check type can be carried to the new id once (#273's rule).
     """
     issues: list[dict[str, Any]] = []
     stack: list[tuple[int, str]] = []
+    legacy_stack: list[tuple[int, str]] = []
+
+    def push(target: list[tuple[int, str]], indent: int, label: str) -> None:
+        while target and target[-1][0] >= indent:
+            target.pop()
+        target.append((indent, label))
 
     for raw_line in text.splitlines():
         if not raw_line.strip():
@@ -138,16 +152,21 @@ def _parse_report(text: str) -> list[dict[str, Any]]:
         stripped = raw_line.strip()
 
         labeled = _LABELED_COUNT_RE.match(stripped)
+        is_instance = bool(_LOC_WITH_VERSE_RE.match(stripped) or _LOC_WITH_LINE_RE.match(stripped)
+                           or _LOC_FILE_ONLY_RE.match(stripped))
         if labeled:
-            while stack and stack[-1][0] >= indent:
-                stack.pop()
-            stack.append((indent, labeled.group("label").strip()))
-            continue
+            push(legacy_stack, indent, labeled.group("label").strip())
+            if not is_instance:
+                push(stack, indent, labeled.group("label").strip())
+                continue
 
         severity_label = stack[0][1].lower() if stack else ""
         severity = _SEVERITY_MAP.get(severity_label, Severity.MEDIUM)
         category = stack[1][1] if len(stack) > 1 else ""
         subcategory = stack[-1][1] if stack else "USFM issue"
+        # The line the old parse took for a header was never a finding then,
+        # so it has no earlier id to carry.
+        legacy_subcategory = subcategory if labeled else (legacy_stack[-1][1] if legacy_stack else "USFM issue")
 
         match = _LOC_WITH_VERSE_RE.match(stripped)
         if match:
@@ -155,6 +174,7 @@ def _parse_report(text: str) -> list[dict[str, Any]]:
                 "book": match.group("book"), "chapter": match.group("chapter"),
                 "verse": match.group("verse"), "detail": match.group("detail"),
                 "severity": severity, "category": category, "subcategory": subcategory,
+                "legacy_subcategory": legacy_subcategory,
             })
             continue
 
@@ -166,6 +186,7 @@ def _parse_report(text: str) -> list[dict[str, Any]]:
                 "book": match.group("book"), "chapter": match.group("chapter"),
                 "verse": verse_match.group(1) if verse_match else "",
                 "detail": detail, "severity": severity, "category": category, "subcategory": subcategory,
+                "legacy_subcategory": legacy_subcategory,
             })
             continue
 
@@ -177,6 +198,7 @@ def _parse_report(text: str) -> list[dict[str, Any]]:
                 "book": match.group("book"), "chapter": match.group("chapter"),
                 "verse": verse_match.group(1) if verse_match else "",
                 "detail": detail, "severity": severity, "category": category, "subcategory": subcategory,
+                "legacy_subcategory": legacy_subcategory,
             })
             continue
 
@@ -267,7 +289,7 @@ class UsfmAdapter(CheckAdapter):
             # subcategory label ("Duplicate verse number: Duplicate verse
             # number 1") — only prefix it when detail adds something new.
             explanation = detail if subcategory.lower() in detail.lower() else f"{subcategory}: {detail}"
-            findings.append(QaFinding(
+            finding = QaFinding(
                 project_id=project_id,
                 book=book_id,
                 chapter=int(chapter) if chapter.isdigit() else 0,
@@ -280,7 +302,12 @@ class UsfmAdapter(CheckAdapter):
                 confidence=0.8,
                 explanation=explanation.strip(": "),
                 engine_version=self.version(),
-            ))
+            )
+            if issue["legacy_subcategory"] != subcategory:
+                # The check type this finding had before #283; the dispatcher
+                # derives the old id from it to carry a decision once.
+                finding._legacy_check_type = f"usfm.{_slugify(issue['legacy_subcategory'])}"  # type: ignore[attr-defined]
+            findings.append(finding)
         return findings
 
     @staticmethod
