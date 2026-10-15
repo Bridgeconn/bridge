@@ -42,6 +42,22 @@ class ProjectError(RuntimeError):
 _RACY_NS = 2_000_000_000
 
 
+def verse_order_key(verse: str) -> tuple[int, int, str]:
+    """A chapter's verse keys in reading order (#302): `front` first, then by
+    the leading verse number, so a bridge `3-4` sits after 2 and lettered
+    segments `5a`, `5b` after 4, in that order; anything with no leading
+    number goes last, by its text. The old key put every non-digit key after
+    the last numbered verse, and the editor drew `3-4`, `5a`, `5b` after 13.
+    """
+    verse = str(verse)
+    if verse == 'front':
+        return (-1, 0, '')
+    digits = len(verse) - len(verse.lstrip('0123456789'))
+    if digits:
+        return (0, int(verse[:digits]), verse[digits:])
+    return (1, 0, verse)
+
+
 def _racy(mtime_ns: int) -> bool:
     return time.time_ns() - mtime_ns < _RACY_NS
 
@@ -429,11 +445,7 @@ class TranslationCoreProject:
 
     def verses(self, chapter: str | int) -> list[str]:
         data = self._cached_alignment_chapter(chapter)
-        def key(v: str):
-            if str(v).isdigit(): return (0, int(v))
-            if str(v) == 'front': return (-1, 0)
-            return (1, str(v))
-        return sorted((str(x) for x in data.keys()), key=key)
+        return sorted((str(x) for x in data.keys()), key=verse_order_key)
 
     def load_verse_alignment(self, chapter: str | int, verse: str | int) -> VerseAlignment:
         # from_dict builds new objects, so the cached chapter is never exposed.

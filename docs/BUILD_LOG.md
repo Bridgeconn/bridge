@@ -20917,3 +20917,34 @@ ok. Engine `pytest -n auto`: 5437 passed, 3 xfailed, 1 failed:
 `test_passage_semantic_runtime.py::test_moved_project_retains_identity_but_live_copy_is_rejected`,
 which passed alone and in three runs of its whole file (37/37); it touches neither change. Smoke
 of the frozen sidecars not run: no build was made. **Not watched:** both changes in the desktop app.
+
+## 2026-10-15 — Verse bridges and segments in reading order (#302); Tab in the finding menu returns focus (#304)
+
+**#302, cause confirmed in two places.** The 0.18.0 walk drew 2 John 1 as 1, 2, 6 … 13, 3-4, 5a, 5b.
+(1) The engine's own order was wrong: `TranslationCoreProject.verses()` sorted pure numbers first and
+every other key after them as text, so `3-4`, `5a`, `5b` came after 13 in every engine list (job
+snapshots, `chapterVerses`, anything iterating a chapter). (2) The frontend could not have kept a
+correct order anyway: App.svelte builds the list with `Object.keys(verses)`, and JavaScript puts
+integer-like keys first whatever order the map was sent in.
+**Change.** Engine: `verse_order_key` in `tc_project.py` (`front` first, then the leading verse
+number, then the rest of the key; keys with no number last) used by `verses()`. Frontend:
+`src/lib/verseOrder.ts` with the same rule, and `chapterVerseNums` in `stores.ts` puts every
+chapter's list in reading order on each `set`/`update`, so both App.svelte writers (the chapter load
+and a job snapshot) are covered without editing App.svelte, which is Revant's this week. The three
+Language QA `_verse_order` helpers are separate and unchanged.
+**Tests.** `engine/tests/project_io/test_verse_order.py` (3): the key on bridges, segments, `front`
+and unnumbered keys; `verses()` on a stub chapter. `src/lib/__tests__/verseOrder.test.ts` (4): the
+comparator, an already-ordered list kept as the same array, `Object.keys` of a bridge chapter
+through the store and `verseNums`, and a job-snapshot style `set`.
+
+**#304.** `FindingContextMenu.svelte`: Tab now closes the menu like Escape, restoring focus to where
+it was opened from, and prevents the browser's own Tab move, which had sent focus to the next
+tabbable element after the menu at the end of the page (the side panel's resize handle).
+`FindingContextMenu.test.ts` (1 new) fails on the old component and passes now.
+
+**#301** is fixed on branch `fix/301-stale-drop` for Revant to review and merge, because the fix is in
+ImportScreen.svelte, his projects-list code: the handled drop sequence moves to module scope, so a
+screen mounted after closing a book never re-inspects the last drop. Two tests there fail on the old
+component and pass with the fix. **#303** is a decision, recommendation posted on the issue.
+
+**Gates** as recorded on the issues. **Not watched:** an installed build with these changes.

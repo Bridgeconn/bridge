@@ -3,6 +3,7 @@ import { writable, derived, get, type Writable } from "svelte/store";
 import type { AiCheckReview, AlignmentWorkStatus, Assignment, NativeCheckReview, NavigationSyncState, ProjectInfo, QaFinding, VerseDisplay, VerseHeading } from "./types/finding";
 import type { LanguageQaFinding, LanguageQaFlag } from "./types/languageQa";
 import type { EngineLogEntry } from "./api/bridgeClient";
+import { inReadingOrder } from "./verseOrder";
 
 export function verseKey(chapter: string, verse: string): string {
   return `${chapter}:${verse}`;
@@ -16,8 +17,24 @@ export const project = writable<ProjectInfo | null>(null);
 export const targetLang = derived(project, (value) => (value?.targetLanguageId || "").toLowerCase() || undefined);
 export const currentChapter = writable<string>("1");
 
-// Keyed by chapter number -> list of verse numbers in that chapter.
-export const chapterVerseNums = writable<Record<string, string[]>>({});
+// Keyed by chapter number -> list of verse numbers in that chapter, always in
+// reading order (#302): every write is put in order here, because the lists
+// are built from verse maps whose object keys lost the engine's order.
+function orderedChapters(value: Record<string, string[]>): Record<string, string[]> {
+  let changed = false;
+  const out: Record<string, string[]> = {};
+  for (const [chapter, verses] of Object.entries(value)) {
+    out[chapter] = inReadingOrder(verses);
+    if (out[chapter] !== verses) changed = true;
+  }
+  return changed ? out : value;
+}
+const chapterVerseNumsBase = writable<Record<string, string[]>>({});
+export const chapterVerseNums: Writable<Record<string, string[]>> = {
+  subscribe: chapterVerseNumsBase.subscribe,
+  set: (value) => chapterVerseNumsBase.set(orderedChapters(value)),
+  update: (updater) => chapterVerseNumsBase.update((value) => orderedChapters(updater(value))),
+};
 
 // Keyed by "chapter:verse" (verseKey) so multiple chapters can coexist
 // without collisions — needed for chapter switching and "Run whole book"
