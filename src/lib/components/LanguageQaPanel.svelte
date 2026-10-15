@@ -13,7 +13,8 @@
   import { graphemeDiff } from "../utils/unicodeDiff";
   import { LANGUAGE_QA_CATEGORY_LABELS, LANGUAGE_QA_CATEGORY_MARKS } from "../utils/highlight";
   import {
-    activeLanguageQaFindingId, chapterVerseNums, currentChapter, languageQaFindingsByVerse, project, selectedVerse, verseKey,
+    activeLanguageQaFindingId, chapterVerseNums, currentChapter, languageQaFindingsByVerse, project, selectedVerse, targetLang,
+    verseKey,
   } from "../stores";
   import { editingChapter } from "../verseEditor";
   import type { LanguageQaCategory, LanguageQaFinding } from "../types/languageQa";
@@ -666,7 +667,7 @@
               {#if finding.category}<span class="category">{finding.category}</span>{/if}
               {#if finding.previouslyIgnored}<span class="recheck">Re-check</span>{/if}
               {#if finding.context}<span class="where">in {finding.context}</span>{/if}
-              <p class="evidence">{finding.originalText}</p>
+              <p class="evidence" lang={$targetLang}>{finding.originalText}</p>
               {#if finding.context === "heading" && finding.contextText}<p class="muted">Heading: {finding.contextText}</p>{/if}
               {#if finding.context === "introduction" && finding.contextText}<p class="muted">Book introduction: {finding.contextText}</p>{/if}
               <p>{finding.message}</p>
@@ -714,7 +715,7 @@
                       <tr class:added={row.status === "added"}>
                         <td><input type="checkbox" aria-label={`Tick ${row.word}`} checked={ticked.has(row.word)}
                           disabled={row.status === "added"} on:change={() => toggleTick(row.word)} /></td>
-                        <td class="word">
+                        <td class="word" lang={$targetLang}>
                           <button class="link" on:click={() => onNavigate(status?.book ?? "", row.firstRef.chapter, row.firstRef.verse)}
                             title="Open its first verse">{row.word}</button>
                         </td>
@@ -754,7 +755,7 @@
                     </button>
                     <span class="category">⚑ {flag.type}</span>
                     <span class="severity">{flag.status}</span>
-                    <p class="evidence">{flag.text}</p>
+                    <p class="evidence" lang={$targetLang}>{flag.text}</p>
                     {#if flag.note}<p>{flag.note}</p>{/if}
                     {#if flag.suggested}<p>Suggested: <b>{flag.suggested}</b></p>{/if}
                     <p class="muted">{flag.reviewer} · {new Date(flag.createdAt).toLocaleDateString()}</p>
@@ -790,7 +791,7 @@
                       <span class="category">{entry.username || "unknown"}</span>
                       <span class="severity">{new Date(entry.timestamp).toLocaleTimeString()}</span>
                       {#if entry.batchId}<span class="severity">{entry.undoes ? "undo of a change set" : "change set"}</span>{/if}
-                      <p class="evidence">{#each graphemeDiff(entry.plainBefore, entry.plainAfter) as part}{#if part.kind === "removed"}<del>{part.text}</del>{:else if part.kind === "inserted"}<ins>{part.text}</ins>{:else}{part.text}{/if}{/each}</p>
+                      <p class="evidence" lang={$targetLang}>{#each graphemeDiff(entry.plainBefore, entry.plainAfter) as part}{#if part.kind === "removed"}<del>{part.text}</del>{:else if part.kind === "inserted"}<ins>{part.text}</ins>{:else}{part.text}{/if}{/each}</p>
                     </li>
                   {/each}
                 </ol>
@@ -805,7 +806,7 @@
             {:else}
               <ul class="words">
                 {#each projectWords as entry (entry.key)}
-                  <li><span class="word">{entry.word}</span> <span class="muted">{entry.scope === "word-in-project" ? "every book" : "this book"}</span>
+                  <li><span class="word" lang={$targetLang}>{entry.word}</span> <span class="muted">{entry.scope === "word-in-project" ? "every book" : "this book"}</span>
                     <button on:click={() => removeProjectWord(entry)}>Remove</button></li>
                 {/each}
               </ul>
@@ -828,8 +829,8 @@
                 <tbody>
                   {#each learned as fix (`${fix.old} → ${fix.new}`)}
                     <tr class:forgotten={!fix.enabled || fix.count <= 0}>
-                      <td class="word">{fix.old}</td>
-                      <td class="word">{fix.new}</td>
+                      <td class="word" lang={$targetLang}>{fix.old}</td>
+                      <td class="word" lang={$targetLang}>{fix.new}</td>
                       <td>{Math.max(0, fix.count)}</td>
                       <td>{(fix.books ?? []).map((b) => b.toUpperCase()).join(", ")}</td>
                       <td>{fix.lastRef}</td>
@@ -899,7 +900,9 @@
   p { margin: 8px 0; overflow-wrap: anywhere; }
   ol { padding-left: 22px; }
   li { padding: 8px 0; border-bottom: 1px solid var(--border, #ddd); }
-  .evidence { font-size: 16px; white-space: pre-wrap; }
+  /* Target text, in the target face (#286): under --font-ui a Gurmukhi line's
+     danda was drawn from Vijaya, slanted, beside letters from Nirmala UI. */
+  .evidence { font-family: var(--font-target); font-size: 16px; white-space: pre-wrap; }
   .severity, .category { margin-left: 8px; }
   .recheck { margin-left: 8px; font-weight: 600; color: var(--warning); }
   .where { margin-left: 8px; font-style: italic; }

@@ -3,7 +3,7 @@
   import { bridge } from "../api/bridgeClient";
   import { recheckVerse } from "../verseChecks";
   import {
-    alignmentStatusByVerse, checkStatusByVerse, noteAlignmentChanged, project,
+    alignmentStatusByVerse, checkStatusByVerse, noteAlignmentChanged, project, targetLang,
     verseKey,
   } from "../stores";
   import { alignmentStatusLabel } from "../alignmentStatus";
@@ -449,6 +449,7 @@
                 class:drop-hover={$dragState.overColumn === src.id}
                 data-drop-column={src.id}
                 dir={context.targetDirection}
+                lang={$targetLang}
                 role="button"
                 tabindex="0"
                 aria-label={picked.length > 1 ? `Align ${picked.length} picked-up words to ${label}`
@@ -510,6 +511,7 @@
             class:drop-hover={$dragState.overBank !== null}
             data-drop-bank="true"
             dir={context.targetDirection}
+            lang={$targetLang}
             role="button"
             tabindex="0"
             aria-label={picked.length > 1 ? `Return ${picked.length} picked-up words to the word bank`
@@ -570,7 +572,7 @@
 {/if}
 
 {#if $dragState.tokenId && $dragState.moved}
-  <div class="drag-ghost" style="left:{$dragState.ghost.x}px; top:{$dragState.ghost.y}px;">{ghostLabel}</div>
+  <div class="drag-ghost" lang={$targetLang} style="left:{$dragState.ghost.x}px; top:{$dragState.ghost.y}px;">{ghostLabel}</div>
 {/if}
 
 <style>

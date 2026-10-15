@@ -446,3 +446,22 @@ describe("AlignmentModal several target words at once (#285)", () => {
     await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "1", ["H002"], ["T003"], ctx.alignment));
   });
 });
+
+describe("AlignmentModal target containers carry the project language (#286)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getLexiconEntry.mockResolvedValue({ segments: [] });
+    runVerseChecks.mockResolvedValue([]);
+  });
+
+  it("puts lang on every column's target cell and on the word bank, never on the source words", async () => {
+    project.set(projectInfo({ targetLanguageId: "pan" }));
+    await open();
+    const cells = [...document.querySelectorAll(".target-cell")];
+    expect(cells).toHaveLength(2);
+    for (const cell of cells) expect(cell.getAttribute("lang")).toBe("pan");
+    expect(document.querySelector(".bank-tokens")?.getAttribute("lang")).toBe("pan");
+    expect(document.querySelector(".token.source")?.closest("[lang]")).toBeNull();
+    project.set(projectInfo());
+  });
+});

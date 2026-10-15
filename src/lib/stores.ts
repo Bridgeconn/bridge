@@ -9,6 +9,11 @@ export function verseKey(chapter: string, verse: string): string {
 }
 
 export const project = writable<ProjectInfo | null>(null);
+/** The open project's language code, lower-cased, for the `lang` of every
+ *  container that shows target text (#286): index.css keys the target font
+ *  order on it. Undefined (no attribute) when there is no project or the
+ *  import recorded no code. */
+export const targetLang = derived(project, (value) => (value?.targetLanguageId || "").toLowerCase() || undefined);
 export const currentChapter = writable<string>("1");
 
 // Keyed by chapter number -> list of verse numbers in that chapter.

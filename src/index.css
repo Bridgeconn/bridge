@@ -127,6 +127,29 @@
   --font-greek: "Gentium Plus", "Noto Serif", serif;
 }
 
+/* #286: the target face in the project language's own order. Fallback is per
+   glyph, so with Vijaya first every ASCII character of a Gurmukhi, Devanagari,
+   Malayalam or Odia text -- digits, the full stop, and the danda U+0964 too --
+   was drawn from Vijaya, whose Latin is oblique, beside letters drawn from
+   Nirmala UI: Amos's "full stops in italics". (Confirmed 2026-10-15 in Edge
+   155, the WebView2 runtime's build, with this stylesheet: a lone "." under
+   --font-target came from Vijaya.) A container that carries the project's
+   language (`lang`, the import's ISO 639 code; Tamil needs no rule because
+   Vijaya is the Tamil face) puts the face that holds that script first, so
+   letters and punctuation come from one font: Nirmala UI where Windows has
+   it, else the bundled Noto face. The UI chrome keeps --font-ui. */
+:lang(pa), :lang(pan) { --font-target: "Nirmala UI", "Noto Serif Gurmukhi", var(--font-indic), var(--font-ui); }
+:lang(hi), :lang(hin), :lang(mr), :lang(mar), :lang(ne), :lang(nep), :lang(npi), :lang(sa), :lang(san) {
+  --font-target: "Nirmala UI", "Noto Serif Devanagari", var(--font-indic), var(--font-ui);
+}
+:lang(ml), :lang(mal) { --font-target: "Nirmala UI", "Noto Serif Malayalam", var(--font-indic), var(--font-ui); }
+:lang(or), :lang(ori), :lang(ory), :lang(od) { --font-target: "Nirmala UI", "Noto Serif Oriya", var(--font-indic), var(--font-ui); }
+:lang(bn), :lang(ben), :lang(as), :lang(asm) { --font-target: "Nirmala UI", "Noto Serif Bengali", var(--font-indic), var(--font-ui); }
+:lang(te), :lang(tel) { --font-target: "Nirmala UI", "Noto Serif Telugu", var(--font-indic), var(--font-ui); }
+:lang(kn), :lang(kan) { --font-target: "Nirmala UI", "Noto Serif Kannada", var(--font-indic), var(--font-ui); }
+:lang(gu), :lang(guj) { --font-target: "Nirmala UI", "Noto Serif Gujarati", var(--font-indic), var(--font-ui); }
+:lang(ur), :lang(urd) { --font-target: "Noto Nastaliq Urdu", var(--font-indic), var(--font-ui); }
+
 body { margin: 0; font-family: var(--font-ui); }
 
 mark { background: transparent; padding: 0 1px; border-bottom: 2px solid; border-radius: 0; }

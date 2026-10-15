@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
-  import { verseNums, verseTexts, verseDisplay, headingsByVerse, findingsByVerse, checkStatusByVerse, alignmentStatusByVerse, selectedVerse, selectedVerseSet, currentChapter, verseKey, nativeChecksByVerse, aiCheckReviewsByVerse, checkingProgress, languageQaFindingsByVerse, project, flagsByVerse, historyCountByVerse, activeLanguageQaFindingId, checkGroupsByVerse } from "../stores";
+  import { verseNums, verseTexts, verseDisplay, headingsByVerse, findingsByVerse, checkStatusByVerse, alignmentStatusByVerse, selectedVerse, selectedVerseSet, currentChapter, verseKey, nativeChecksByVerse, aiCheckReviewsByVerse, checkingProgress, languageQaFindingsByVerse, project, flagsByVerse, historyCountByVerse, activeLanguageQaFindingId, checkGroupsByVerse, targetLang } from "../stores";
   import { checksRunNote } from "../checkSelection";
   import { alignmentStatusLabel, isAlignmentComplete } from "../alignmentStatus";
   import { rangeBetween } from "../crossVerseRange";
@@ -1048,7 +1048,10 @@
   }
 </script>
 
-<div class="editor-scroll" bind:this={scrollContainer}>
+<!-- `lang` is the project's language (#286): index.css puts that script's face
+     first in --font-target under it, so a full stop or danda is drawn from the
+     same font as the letters beside it. -->
+<div class="editor-scroll" bind:this={scrollContainer} lang={$targetLang}>
   <div class="chapter-label">Chapter {$currentChapter}</div>
 
   {#each $verseNums as v}

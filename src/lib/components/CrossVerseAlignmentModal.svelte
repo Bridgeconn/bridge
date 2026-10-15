@@ -12,7 +12,7 @@
   import { bridge } from "../api/bridgeClient";
   import { recheckVerse } from "../verseChecks";
   import {
-    alignmentStatusByVerse, checkStatusByVerse, currentChapter, noteAlignmentChanged, verseKey, verseNums,
+    alignmentStatusByVerse, checkStatusByVerse, currentChapter, noteAlignmentChanged, targetLang, verseKey, verseNums,
   } from "../stores";
   import { alignmentStatusLabel } from "../alignmentStatus";
   import type {
@@ -842,6 +842,7 @@
                       class:drop-hover={$dragState.overColumn === columnKey}
                       data-drop-column={columnKey}
                       dir={context.targetDirection}
+                      lang={$targetLang}
                       role="button"
                       tabindex="0"
                       aria-label={pickedUpKey ? `Align picked-up word to ${src.word} in verse ${v}` : `Target words aligned to ${src.word} in verse ${v}`}
@@ -955,6 +956,7 @@
                   class:drop-hover={$dragState.overBank === v}
                   data-drop-bank={v}
                   dir={context.targetDirection}
+                  lang={$targetLang}
                   role="button"
                   tabindex="0"
                   aria-label={pickedUpKey ? `Return picked-up word to the word bank of verse ${v}` : `Word bank of verse ${v}`}
@@ -1057,7 +1059,7 @@
 {/if}
 
 {#if $dragState.tokenId && $dragState.moved}
-  <div class="drag-ghost" style="left:{$dragState.ghost.x}px; top:{$dragState.ghost.y}px;">{ghostLabel}</div>
+  <div class="drag-ghost" lang={$targetLang} style="left:{$dragState.ghost.x}px; top:{$dragState.ghost.y}px;">{ghostLabel}</div>
 {/if}
 
 <style>

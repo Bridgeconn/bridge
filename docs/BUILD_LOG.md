@@ -20702,3 +20702,57 @@ left alone; a drag from a picked word carries the selection (jsdom has no Pointe
 dispatches MouseEvents under the pointer names and stubs `elementFromPoint`); a drag from an
 unpicked word supersedes it. `alignmentDrag.test.ts` (1 new): the helper's multi-id ordering and
 no-op cases. Gates as recorded on the issue.
+
+## 2026-10-15 — Punjabi "full stops in italics": Vijaya's oblique Latin, now the script face first (#286)
+
+**Cause, confirmed on screen before any change.** Revant's reading (2026-10-15 comment) held: no
+italic rule touches verse text; the slant is font fallback. `--font-target` begins with Vijaya, a
+Tamil face whose Latin glyphs are oblique and which also carries U+0964. Chromium falls back per
+glyph, so in a Gurmukhi line the letters came from Nirmala UI (second in the list) while every
+ASCII character — digits, hyphen, full stop — *and the danda* came from Vijaya. Measured with
+Playwright on Edge 155.0.4283.45, the same Chromium build as the installed WebView2 runtime
+(155.0.4283.45), serving the built `dist/` so the app's own index.css, @font-face rules and bundled
+Noto fonts loaded exactly as in the app, with `CSS.getPlatformFontsForNode`: the Genesis
+introduction line "ਇਹ ਪੁਸਤਕ ਲਗਭਗ 1446 - 1405 ਈ. ਪੂ. ਦੇ ਵਿਚਕਾਰ ਲਿਖੀ ਗਈ।" under `var(--font-target)`
+split 27 glyphs Vijaya / 28 Nirmala UI, and a lone "." came from Vijaya. The screenshot shows the
+digits in Vijaya's italic and the closing danda as a slanted stroke. Benz's instance of the
+installed app (0.17.0) was running all morning and a second instance does not get a WebView2
+beside it (BUILD_LOG 2026-10-14), so the check was not made inside 0.18.0 itself; the engine
+build and the font set are the same, and the issue says what remains to be watched there.
+
+**Where the ASCII stops are.** The Punjabi IRV's 479 ASCII full stops are 368 after a digit in
+`\io1` outline lines and 111 after a Gurmukhi letter in `\ip` introduction paragraphs (the
+abbreviation "ਈ. ਪੂ.", B.C.); only 4 `\v` lines carry one, all in footnote references. So Amos saw
+them in a book introduction — in the verse list under `--font-target` — and the danda, the
+Punjabi full stop proper, has had the same slant in every verse since the stack was written.
+
+**Change, frontend only.** `index.css` gets per-language orders for `--font-target` under
+`:lang()`: for pa/pan, "Nirmala UI", "Noto Serif Gurmukhi", then the old chain; likewise hi (and
+mr, ne, sa), ml, or (ori, ory, od), bn/as, te, kn, gu with their Noto face, and ur with Noto
+Nastaliq Urdu first. Nirmala UI first keeps today's letterforms on Windows and supplies upright
+Latin and the danda from the same font; the Noto face is the floor where Windows' font is absent.
+Tamil has no rule: Vijaya is its face and its text is uniform today. `--font-ui` is untouched.
+`stores.ts` gets `targetLang`, the project's `targetLanguageId` lower-cased (the import's ISO 639
+code, "pan" from the language picker or a two-letter code from a tC `\id` line), and every
+container of mine that shows target text carries `lang={$targetLang}`: VerseList's
+`.editor-scroll` (the verse container), the Language QA panel's evidence paragraphs and word
+cells (the evidence also moves from the inherited UI stack to `--font-target`, since under
+`--font-ui` its danda came from Vijaya too), the Reference panel's text, and both alignment
+pages' target cells, word banks and drag ghosts. Source words carry no `lang`.
+
+**Watched after the change** with the same probe on the rebuilt `dist/`: under a `lang="pa"`
+container every one of the 55 glyphs, letters, digits, both full stops and the danda, came from
+Nirmala UI, upright; the letters are pixel-for-pixel the Nirmala UI of before.
+
+**Asked of Revant on the issue:** one `lang={$targetLang}` on the workbench container in
+`App.svelte` would cover the surfaces not in Benz's files (ReviewPanel evidence, popovers,
+FindingContextMenu, VerseHistoryPopover) in one line. **Open question for the Punjabi team,
+reported not decided:** whether the 111 "ਈ. ਪੂ." stops and the 368 outline numbers should be
+dandas or stay as they are; `pa.punct.ascii-fullstop` already reports the former.
+
+**Tests.** `targetFont.test.ts` (5): the store; the default stack still Vijaya-first with no Tamil
+rule; the pa/pan rule's order; the hi/ml/or rules and aliases; `--font-ui` unchanged.
+`VerseList.test.ts` (2): the container's `lang` from the project, none without a code.
+`AlignmentModal.test.ts` (1): target cells and bank carry it, source words do not. jsdom picks no
+platform font, so the rendered-font fact stays with the Edge probe above. Gates as recorded on
+the issue.

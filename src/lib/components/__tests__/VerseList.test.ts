@@ -1288,3 +1288,21 @@ describe("finding numbers never split a word (#172)", () => {
     expect(body.querySelectorAll("sup.finding-num")).toHaveLength(1);
   });
 });
+
+describe("the verse container carries the project language (#286)", () => {
+  beforeEach(() => seed(PHP_1_6));
+
+  it("sets lang from the project's language code, so index.css can order the target face for it", () => {
+    project.set({ path: "/p", bookId: "php", bookName: "Philippians", chapters: ["1"], targetLanguageId: "pan" } as never);
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    const container = document.querySelector(".editor-scroll") as HTMLElement;
+    expect(container.getAttribute("lang")).toBe("pan");
+    expect(verseRow().closest("[lang]")).toBe(container);
+  });
+
+  it("carries no lang when the import recorded no language code", () => {
+    project.set({ path: "/p", bookId: "php", bookName: "Philippians", chapters: ["1"] } as never);
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    expect((document.querySelector(".editor-scroll") as HTMLElement).hasAttribute("lang")).toBe(false);
+  });
+});
