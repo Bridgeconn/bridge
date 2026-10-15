@@ -121,7 +121,7 @@
 </div>
 
 <style>
-  .picker { position: absolute; inset: 0; z-index: 25; display: flex; align-items: center; justify-content: center; background: var(--surface); }
+  .picker { position: absolute; inset: 0; z-index: var(--z-startup); display: flex; align-items: center; justify-content: center; background: var(--surface); }
   .card { width: min(520px, calc(100% - 32px)); padding: 28px 32px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
   .eyebrow { color: var(--accent); font-size: var(--fs-2xs); letter-spacing: .12em; font-weight: 800; margin-bottom: 8px; }
   h1 { font-size: var(--fs-3xl); margin: 0 0 8px; color: var(--text); }
