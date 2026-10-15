@@ -63,6 +63,11 @@ class QaFinding:
     book: str = ""
     chapter: int = 0
     verse: int = 0
+    # The exact USFM verse reference when the engine knows it and it is not a
+    # bare number: a lettered segment ("5a") or a bridge ("3-4"). `verse` is
+    # then its first number. The dispatcher anchors the finding on this key
+    # (#303); empty means `verse` is the whole reference.
+    verse_ref: str = ""
     start_offset: Optional[int] = None
     end_offset: Optional[int] = None
     original_text: str = ""
