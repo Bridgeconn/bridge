@@ -40,6 +40,26 @@ describe("FindingContextMenu", () => {
     expect(close).toHaveBeenCalledTimes(1);
   });
 
+  // #304: Tab used to close the menu and leave focus wherever the browser
+  // tabbed next (the side panel's resize handle at the end of the page).
+  it("closes on Tab and returns focus to where it was opened from, like Escape", async () => {
+    const row = document.createElement("div");
+    row.tabIndex = 0;
+    row.className = "verse";
+    document.body.append(row);
+    row.focus();
+    const { component } = render(FindingContextMenu, { props: { x: 20, y: 30, actions } });
+    const close = vi.fn();
+    component.$on("close", close);
+    await waitFor(() => expect(document.activeElement).not.toBe(row));
+    const tab = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+    screen.getByRole("menu").dispatchEvent(tab);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(tab.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(row);
+    row.remove();
+  });
+
   it("dismisses on an outside pointer and clamps to the viewport", async () => {
     const { component } = render(FindingContextMenu, {
       props: { x: 99999, y: 99999, actions },
