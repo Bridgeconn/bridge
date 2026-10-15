@@ -6,7 +6,7 @@
 | Revision | 1.0 |
 | Status | Baseline draft for maintainer review |
 | Date | 2026-09-21 |
-| Product baseline | Bridge 0.14.0 |
+| Product baseline | Bridge 0.18.0 |
 | Source baseline | `main` at `c8fa74d` |
 | Primary platform | Windows x86-64 |
 | Product owner / maintainer | @RevantCI |
@@ -649,8 +649,27 @@ Bridge is a Windows desktop application built from:
 
 ### 10.2 Performance and responsiveness
 
-- `NFR-PERF-001 P1` Interactive navigation and status requests should normally
-  complete within five seconds on supported field hardware.
+- `NFR-PERF-001 P1` Interactive actions shall meet three response tiers,
+  measured at p95 over at least 20 repetitions on the field hardware named
+  below, on a real 66-book project:
+  - Tier A, instant (navigate to a verse, open a verse, select a word, open a
+    menu, toggle a panel, record a decision): a visible response within
+    100 ms, complete within 300 ms.
+  - Tier B, medium (open a project, open a chapter, generate a book report,
+    switch books): feedback within 100 ms, complete within 2 s.
+  - Tier C, heavy (import, whole-book or whole-project checks, AI jobs,
+    export): a progress bar with a working cancel within 100 ms, the rest of
+    the UI usable meanwhile, and the timing recorded under NFR-PERF-004.
+
+  The frontend records each Tier A and B action's click-to-paint and
+  click-to-complete times (`src/lib/perf.ts`) in the diagnostics log;
+  `scripts/perf_table.py` prints the p95 table that every release's notes
+  carry. Reference hardware (the field laptop Benz supplied, 2026-10-14):
+  11th Gen Intel Core i3-1115G4 at 3.00 GHz (2 cores, 4 threads), 8 GB RAM
+  (7.75 GB usable), 64-bit Windows on x64, 1366x768 display, no pen or touch.
+  Its storage type was not recorded; note it with the first table. Every table
+  names the machine it was taken on. (The assumed i3 8th generation / HDD
+  spec of the same day is superseded.)
 - `NFR-PERF-002 P1` Expensive work shall expose progress and cancellation and
   shall not block the UI for its full duration.
 - `NFR-PERF-003 P1` Large collection discovery/import shall avoid eager
@@ -833,6 +852,12 @@ The following are design direction, not current release requirements:
 Before implementation, each future item requires an issue, architecture review,
 privacy/offline analysis, acceptance criteria, and an explicit decision about
 which current requirements it may affect.
+
+`FUTURE-001`, `FUTURE-002` and `FUTURE-003` were moved into v1 scope on
+2026-10-12 by the maintainer's decision (`docs/DECISIONS.md` 2026-10-12, #226;
+issues #45 and #46 under milestone 1). The architecture review this section
+requires is #227, before #79 starts. The offline requirements above are not
+relaxed: the hub is a sync peer the desktop never waits on.
 
 ## 15. Change control
 

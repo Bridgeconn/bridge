@@ -548,9 +548,12 @@ def load_human_rounds(path: Path) -> tuple[list[dict[str, Any]], dict[str, dict[
     IRV copy in every round; a verse labelled twice must read the same."""
     labels: list[dict[str, Any]] = []
     verses: dict[str, dict[str, dict[str, str]]] = defaultdict(lambda: defaultdict(dict))
+    superseded = load_superseded(path)
     for file in human_label_files(path):
         round_name = file.parent.name
-        labels += [{**label, "round": round_name} for label in load_human_labels(file)]
+        for label in load_human_labels(file):
+            reason = superseded.get((round_name, label.get("id")))
+            labels.append({**label, "round": round_name, **({"superseded": reason} if reason else {})})
         for book, chapters in load_human_verses(human_verses_path(file)).items():
             for chapter, items in chapters.items():
                 for verse, text in items.items():
@@ -559,6 +562,20 @@ def load_human_rounds(path: Path) -> tuple[list[dict[str, Any]], dict[str, dict[
                         raise ValueError(f"{book.upper()} {chapter}:{verse} differs between rounds")
                     verses[book][chapter][verse] = text
     return labels, {book: dict(chapters) for book, chapters in verses.items()}
+
+
+def load_superseded(path: Path) -> dict[tuple[str, str], str]:
+    """(round, label id) -> why, from `superseded.json` beside the rounds.
+    A committed label is never edited or removed (it is the reviewer's data).
+    When a later decision replaces one verdict -- the reviewer ruling the
+    other way on the same shape in a later round, recorded in DECISIONS.md --
+    it is listed here, and the scorer reports it instead of scoring it."""
+    path = Path(path)
+    file = (path if path.is_dir() else path.parent.parent) / "superseded.json"
+    if not file.exists():
+        return {}
+    rows = json.loads(file.read_text(encoding="utf-8"))["labels"]
+    return {(row["round"], row["id"]): f"{row['reason']} ({row['decision']})" for row in rows}
 
 
 def human_verses_path(labels_path: Path) -> Path:
@@ -578,8 +595,12 @@ def load_human_verses(path: Path) -> dict[str, dict[str, dict[str, str]]]:
 
 def human_label_verses(labels: list[dict[str, Any]], irv_dir: Path) -> list[dict[str, str]]:
     """The imported text of every verse a label points at, from the IRV SFM,
-    so the human gate can run where the corpus is not available (CI)."""
-    wanted = sorted({(r["book"], r["ch"], r["v"]) for r in labels if r.get("book")},
+    so the human gate can run where the corpus is not available (CI). Only
+    the kinds the scorer reads: a round-3 `candidate` (a structure check with
+    no rule yet) may sit on a heading, and a `wordlist` row is the reviewer's
+    own list, not a place in a verse."""
+    wanted = sorted({(r["book"], r["ch"], r["v"]) for r in labels
+                     if r.get("book") and r.get("kind") not in {"candidate", "wordlist"}},
                     key=lambda k: (k[0], int(k[1]), k[2]))
     books = {w[0] for w in wanted}
     by_book: dict[str, dict[str, dict[str, str]]] = {}
@@ -631,10 +652,15 @@ def human_score(labels: list[dict[str, Any]], scans: dict[str, dict[str, Any]],
     per_round: dict[str, dict[str, Counter]] = defaultdict(lambda: defaultdict(Counter))
     proxies: dict[str, Counter] = defaultdict(Counter)
     mismatches: list[str] = []
+    superseded: list[str] = []
     for label in labels:
         kind = label.get("kind")
         if kind not in {"flagged", "abstained", "split"}:
             continue  # word rows (sheet 3) judge list membership, not a finding
+        if label.get("superseded"):
+            superseded.append(f"{label.get('round', '')} {label['id']} {label['book'].upper()} {label['ch']}:{label['v']} "
+                              f"({label.get('rule', '')}): {label['superseded']}")
+            continue  # a later decision replaced this verdict; the label itself stays as it was
         round_name = label.get("round", "")
         where = f"{round_name + ' ' if round_name else ''}{label['id']} {label['book'].upper()} {label['ch']}:{label['v']}"
         text = verses.get(label["book"], {}).get(label["ch"], {}).get(label["v"])
@@ -714,7 +740,7 @@ def human_score(labels: list[dict[str, Any]], scans: dict[str, dict[str, Any]],
     rounds = sorted({label.get("round", "") for label in labels} - {""})
     return {"packVersion": pack_version_label(pack), "labels": len(labels), "rounds": rounds,
             "books": sorted(scans), "rules": rules_out, "recallProxies": proxies_out,
-            "mismatches": mismatches}
+            "mismatches": mismatches, "superseded": superseded}
 
 
 # ---- (b) a whole population labelled (DECISIONS.md 2026-09-29) -------------
@@ -918,6 +944,9 @@ def human_markdown(result: dict[str, Any]) -> str:
                   "collection confirmed, none wrong):", ""]
         lines += [f"- `{rule}`: {c['confirmed']} of {c['total']} confirmed" + ("" if c["current"] else " (stale)")
                   for rule, c in sorted(covered.items())]
+    if result.get("superseded"):
+        lines += ["", "Labels superseded by a later decision (`benchmark/human/superseded.json`; kept, not scored):", ""]
+        lines += [f"- {row}" for row in result["superseded"]]
     if result["mismatches"]:
         lines += ["", "Labels not scored: " + "; ".join(result["mismatches"])]
     return "\n".join(lines)

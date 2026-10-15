@@ -7,7 +7,7 @@
  "confidence": "medium",
  "inline": true,
  "title": {
-  "ta": "வல்லினம் மிகுதல் — விதம்",
+  "ta": "வல்லினம் மிகுதல் — விதம் குறிக்கும் வினையடை",
   "en": "Vallinam doubling after a manner adverb"
  },
  "message": {
@@ -72,7 +72,7 @@
    },
    "confidence": "medium",
    "message": {
-    "en": "தான்: பிரதிப்பெயர் என்றால் பிரித்து ஒற்றுடன்; ஒட்டுச்சொல் என்றால் ஒட்டி. \"{fix}\" if தான் is the pronoun (he, himself); \"{alternative}\" if it is the clitic (only, indeed)."
+    "en": "தான்: பிரதிப்பெயர் என்றால் பிரித்து ஒற்றுடன்; இடைச்சொல் என்றால் ஒட்டி. \"{fix}\" if தான் is the pronoun (he, himself); \"{alternative}\" if it is the clitic (only, indeed)."
    },
    "rationale": "pronoun: separate, doubled",
    "alternatives": [

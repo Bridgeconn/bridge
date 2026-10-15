@@ -15,7 +15,6 @@ LANGUAGE_QA_MEDIUM_ADVISORY = 50
 from .psalms_qa import analyze_psalm_chapter
 from .knowledge_base import TranslationHelpsKnowledgeBase
 from .git_service import GitService
-from .team import TeamWorkflow
 
 
 def publication_gate(project) -> dict[str, Any]:
@@ -92,7 +91,7 @@ class ReportService:
         decisions=self.project.project_decisions(); discussions=[d for d in decisions if d.get('decision')=='needs_discussion']
         try: provenance=TranslationHelpsKnowledgeBase(self.project).provenance_manifest()
         except Exception as e: provenance={'error':str(e)}
-        git=GitService(self.project.path).status(); team=TeamWorkflow(self.project.companion_dir(),self.project.book_id).config()
+        git=GitService(self.project.path).status()
         severity=Counter(str(q.get('severity','medium')).lower() for q in qa)
         return {
             'schemaVersion':2,'generatedTimestamp':datetime.now(timezone.utc).isoformat().replace('+00:00','Z'),
@@ -100,7 +99,7 @@ class ReportService:
             'scan':scan,'exceptionQueue':queue,'terminology':terms,'qaFindings':qa,'checkReviews':checks,
             'qaSeverityCounts':dict(severity),'needsDiscussion':discussions,'psalms':psalms,
             'knowledgeBaseProvenance':provenance,'git':{'available':git.available,'repository':git.repository,'branch':git.branch,'dirty':git.dirty},
-            'team':team,'metrics':self._metrics(),
+            'metrics':self._metrics(),
             'languageQa':language_qa,
             'publicationGate':{**self._publication_gate(scan,queue,qa,discussions,language_qa,self.language_qa_medium_advisory),
                                # What an export would be blocked by: the same function export consults.

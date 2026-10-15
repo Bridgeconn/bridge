@@ -295,7 +295,8 @@ NAME_RARE_BOOK_MAX = 2    # a spelling this rare in the book, near an approved n
 def name_findings(book: str, counts: dict[str, int], first_seen: dict[str, tuple], names: frozenset,
                   *, rule_fields: Any, suggestion: Any, rule_version: str,
                   corpus_count: Callable[[str], int] | None = None,
-                  distance: Callable[[str, str], float]) -> list[dict[str, Any]]:
+                  distance: Callable[[str, str], float],
+                  memo: dict[str, list[tuple[float, str]]] | None = None) -> list[dict[str, Any]]:
     """`name.minority-spelling` (layered-rules 6.2): a word rare in the book
     that is within NAME_MAX_DISTANCE of a proper noun the project approved
     (house-style list properNouns), suggested as that name. The approved list
@@ -305,7 +306,11 @@ def name_findings(book: str, counts: dict[str, int], first_seen: dict[str, tuple
     A word the corpus uses commonly (`corpus_count` >= COMMON_MIN) is never a
     misspelt name: a short name sits one letter from ordinary words (சேத்து
     against காத்து, செத்து, சேர்த்து, பத்து, சொத்து), and those are words, not
-    variants. The same rule the lexicon keeps: a common word is never marked wrong."""
+    variants. The same rule the lexicon keeps: a common word is never marked wrong.
+
+    `memo`, word -> its (distance, name) candidates, may be kept across calls
+    with the same `names`, `corpus_count` and `distance` (#271): a word's
+    candidates do not depend on the book's counts, only their order does."""
     from .language_packs.lexicon import COMMON_MIN, deletion_keys
     from .language_packs.indic.confusion import clusters
     if not names:
@@ -318,12 +323,17 @@ def name_findings(book: str, counts: dict[str, int], first_seen: dict[str, tuple
     for word in sorted(counts):
         if word in names or counts[word] > NAME_RARE_BOOK_MAX or word not in first_seen:
             continue
-        if corpus_count is not None and corpus_count(word) >= COMMON_MIN:
-            continue
-        near = set().union(*(buckets.get(k, set()) for k in {word, *deletion_keys(word)}))
-        ranked = sorted((distance(word, name), -counts.get(name, 0), name) for name in near)
-        ranked = [r for r in ranked if r[0] <= (NAME_SHORT_MAX_DISTANCE if len(clusters(r[2])) <= NAME_SHORT_CLUSTERS
-                                                else NAME_MAX_DISTANCE)]
+        close = memo.get(word) if memo is not None else None
+        if close is None:
+            close = []
+            if corpus_count is None or corpus_count(word) < COMMON_MIN:
+                near = set().union(*(buckets.get(k, set()) for k in {word, *deletion_keys(word)}))
+                close = [(d, name) for d, name in ((distance(word, name), name) for name in near)
+                         if d <= (NAME_SHORT_MAX_DISTANCE if len(clusters(name)) <= NAME_SHORT_CLUSTERS
+                                  else NAME_MAX_DISTANCE)]
+            if memo is not None:
+                memo[word] = close
+        ranked = sorted((d, -counts.get(name, 0), name) for d, name in close)
         if not ranked:
             continue
         chapter, verse, start, end, original, text_hash = first_seen[word]

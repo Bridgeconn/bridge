@@ -77,3 +77,19 @@ export function visualContextSegments(
     insertion: startCodePoint === endCodePoint,
   };
 }
+
+/**
+ * Grapheme-cluster boundaries as UTF-16 string indices, `0` and `text.length`
+ * included: the same clusters as graphemeBoundariesInCodePoints, for callers
+ * that slice JS strings (buildSegments). A mark edge snapped to one of these
+ * never leaves a vowel sign or virama on its own (#172).
+ */
+export function graphemeBoundariesInUtf16(text: string): number[] {
+  const result = [0];
+  let cursor = 0;
+  for (const cluster of graphemes(text)) {
+    cursor += cluster.length;
+    result.push(cursor);
+  }
+  return result;
+}

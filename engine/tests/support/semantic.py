@@ -73,7 +73,7 @@ def semantic_runtime(
         lines.extend(f"\\v {ref} OLD IMPORTED" for ref in verses)
     (root / f"{lower}.usfm").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return PassageSemanticRuntime(
-        TranslationCoreProject(root), f"{project_prefix}-{book}-{language}-{tmp_path.name}",
+        TranslationCoreProject(root), f"{project_prefix}-{book}-{language}-{tmp_path.name}", actor_id="Reviewer"
     )
 
 

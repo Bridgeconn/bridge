@@ -1,5 +1,6 @@
-import { writable, derived, get } from "svelte/store";
-import type { AiCheckReview, AlignmentWorkStatus, NativeCheckReview, NavigationSyncState, ProjectInfo, QaFinding, VerseDisplay, VerseHeading } from "./types/finding";
+import { perfBegin, perfEnd, perfInFlight } from "./perf";
+import { writable, derived, get, type Writable } from "svelte/store";
+import type { AiCheckReview, AlignmentWorkStatus, Assignment, NativeCheckReview, NavigationSyncState, ProjectInfo, QaFinding, VerseDisplay, VerseHeading } from "./types/finding";
 import type { LanguageQaFinding, LanguageQaFlag } from "./types/languageQa";
 import type { EngineLogEntry } from "./api/bridgeClient";
 
@@ -8,6 +9,11 @@ export function verseKey(chapter: string, verse: string): string {
 }
 
 export const project = writable<ProjectInfo | null>(null);
+/** The open project's language code, lower-cased, for the `lang` of every
+ *  container that shows target text (#286): index.css keys the target font
+ *  order on it. Undefined (no attribute) when there is no project or the
+ *  import recorded no code. */
+export const targetLang = derived(project, (value) => (value?.targetLanguageId || "").toLowerCase() || undefined);
 export const currentChapter = writable<string>("1");
 
 // Keyed by chapter number -> list of verse numbers in that chapter.
@@ -27,7 +33,22 @@ export const headingsByVerse = writable<Record<string, VerseHeading[]>>({});
 export const findingsByVerse = writable<Record<string, QaFinding[]>>({});
 export type CheckStatus = "pending" | "succeeded" | "failed" | "cancelled";
 export const checkStatusByVerse = writable<Record<string, CheckStatus>>({});
+/** The finding groups that have run on each verse since it was opened or last
+ *  edited (#251): what the verse-number title lists, and whether the ✓ can
+ *  show (checkSelection.coversSelection). */
+export const checkGroupsByVerse = writable<Record<string, string[]>>({});
 export const alignmentStatusByVerse = writable<Record<string, AlignmentWorkStatus>>({});
+/** How many times each verse's alignment has been written this session, keyed
+ *  by verseKey (#291). Every frontend alignment writer -- an Align Words save,
+ *  unalign, undo, restore, a null decision, a cross-verse link or unlink, an
+ *  automatic pass, and a verse text edit, which reshapes the groups -- calls
+ *  noteAlignmentChanged. A reader that keeps its own copy of a verse's
+ *  alignment (the Source text panel) re-reads the verse when its count moves.
+ *  The status is not a change signal: most edits leave it as it was. */
+export const alignmentRevisionByVerse = writable<Record<string, number>>({});
+export function noteAlignmentChanged(key: string): void {
+  alignmentRevisionByVerse.update((values) => ({ ...values, [key]: (values[key] ?? 0) + 1 }));
+}
 export const nativeChecksByVerse = writable<Record<string, NativeCheckReview[]>>({});
 export const aiCheckReviewsByVerse = writable<Record<string, AiCheckReview[]>>({});
 // Populated only by languageQaInline.ts (started from App.svelte) from the
@@ -70,7 +91,27 @@ export function manualOverrideMode(allowed: boolean): ReviewerMode {
 // switching back to a chapter you've already visited doesn't re-fetch.
 export const loadedChapters = writable<Record<string, boolean>>({});
 
-export const selectedVerse = writable<string | null>(null);
+// #232: a verse selection is Tier A's "navigate to a verse", wherever the
+// click came from (the list, the keyboard, a finding, a bookmark), so it is
+// timed here at the store rather than at any one caller. A selection made
+// while a chapter or a book is opening belongs to that opening's sample.
+const selectedVerseStore = writable<string | null>(null);
+let selectedVerseValue: string | null = null;
+selectedVerseStore.subscribe((value) => { selectedVerseValue = value; });
+function setSelectedVerse(value: string | null): void {
+  const timed = value !== selectedVerseValue && value !== null
+    && !perfInFlight("chapter.open") && !perfInFlight("book.switch") && !perfInFlight("project.open");
+  if (timed) perfBegin("verse.navigate", value ?? "");
+  selectedVerseStore.set(value);
+  if (timed) void perfEnd("verse.navigate");
+}
+export const selectedVerse: Writable<string | null> = {
+  subscribe: selectedVerseStore.subscribe,
+  set: setSelectedVerse,
+  update(fn: (value: string | null) => string | null) {
+    setSelectedVerse(fn(selectedVerseValue));
+  },
+};
 /** Ctrl/Shift-click multi-selection in the verse list (#118), feeding the
  *  Cross-verse alignment range picker. `selectedVerse` stays the single
  *  active verse; this is a separate, chapter-scoped set of verse strings. */
@@ -87,7 +128,9 @@ export function resetBookState(): void {
   headingsByVerse.set({});
   findingsByVerse.set({});
   checkStatusByVerse.set({});
+  checkGroupsByVerse.set({});
   alignmentStatusByVerse.set({});
+  alignmentRevisionByVerse.set({});
   nativeChecksByVerse.set({});
   aiCheckReviewsByVerse.set({});
   languageQaFindingsByVerse.set({});
@@ -97,7 +140,18 @@ export function resetBookState(): void {
   loadedChapters.set({});
   selectedVerse.set(null);
   selectedVerseSet.set([]);
+  bookAssignments.set([]);
   checkingProgress.set({ running: false, percent: 0, label: "", jobId: "", state: "idle", error: "", scope: "chapter" });
+}
+
+/** #240: is `chapter` of the open book mine? A chapter assignment wins over
+ *  a whole-book one; "" asks about the book. */
+export function assignedToMe(assignments: Assignment[], chapter: string, me: string): boolean {
+  if (!me) return false;
+  const own = assignments.find((a) => a.chapter === chapter);
+  if (own) return own.assigneeId === me;
+  const book = assignments.find((a) => a.chapter === "");
+  return Boolean(book && book.assigneeId === me);
 }
 
 export interface CheckingProgress {
@@ -114,6 +168,10 @@ export const checkingProgress = writable<CheckingProgress>({
   running: false, percent: 0, label: "", jobId: "", state: "idle", error: "", scope: "chapter",
 });
 
+/** #240: the open book's assignments and who is signed in, so the chapter
+ *  list can mark the chapters that are "my work". Reset with the book. */
+export const bookAssignments = writable<Assignment[]>([]);
+export const localUserId = writable<string>("");
 export const settingsOpen = writable(false);
 export const exportOpen = writable(false);
 export const diagnosticsOpen = writable(false);

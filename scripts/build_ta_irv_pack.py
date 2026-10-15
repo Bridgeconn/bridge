@@ -53,7 +53,7 @@ PACK_DIR = REPO / "engine" / "language_packs" / "ta-irv"
 # data-driven kinds: lexicon-lookup, sign-sequence, ...) is not built here and
 # is kept as it is, after the built ones, in its existing order.
 BUILT_KINDS = {"token-context", "regex"}
-PACK_VERSION = "1.1.0"
+PACK_VERSION = "1.3.0"
 HUMAN_LABELS = REPO / "benchmark" / "human"  # every review round under it
 HARD = ["க", "ச", "த", "ப"]
 EXAMPLES = 12
@@ -72,7 +72,7 @@ CLITICS_AND_QUOTATIVES = ["கூட", "மட்டும்", "போல", "�
 # doubling (பெட்டிக்குத் தான், தேவனுக்குத் தான், அதைத் தான்); round 1 says the
 # CLITIC தான் is written fused (அதைத்தான்). So both are offered, pronoun first.
 TAN = {"next": {"lexical": ["தான்"]}, "confidence": "medium",
-       "message": {"en": 'தான்: பிரதிப்பெயர் என்றால் பிரித்து ஒற்றுடன்; ஒட்டுச்சொல் என்றால் ஒட்டி. '
+       "message": {"en": 'தான்: பிரதிப்பெயர் என்றால் பிரித்து ஒற்றுடன்; இடைச்சொல் என்றால் ஒட்டி. '
                          '"{fix}" if தான் is the pronoun (he, himself); "{alternative}" if it is the '
                          'clitic (only, indeed).'},
        "rationale": "pronoun: separate, doubled",
@@ -246,7 +246,7 @@ def definitions(acc_roots, dat_roots, reviewed: dict[str, set[str]]) -> list[dic
                 "B1 (BUILD_LOG 2026-09-22). IRV doubles after அந்த 89%, இந்த 84%, எந்த 86% of hard-initial "
                 "contexts. v2: the per-trigger house-form stems (தேச-, தண்-, தரி-, திர-, தீங-, தூண-) are gone -- "
                 f"the reviewer found all 9 sampled to be real errors. {review}"),
-        missing("sandhi.vallinam.manner-adverb", "வல்லினம் மிகுதல் — விதம்", "Vallinam doubling after a manner adverb",
+        missing("sandhi.vallinam.manner-adverb", "வல்லினம் மிகுதல் — விதம் குறிக்கும் வினையடை", "Vallinam doubling after a manner adverb",
                 {"lexical": MANNER},
                 f"B2 (BUILD_LOG 2026-09-23). IRV doubles after அப்படி 97%, இப்படி 92%, எப்படி 87%. v2: as the "
                 f"demonstrative rule, no per-trigger stems. {review}"),
@@ -290,7 +290,7 @@ def definitions(acc_roots, dat_roots, reviewed: dict[str, set[str]]) -> list[dic
         {
             "id": "sandhi.clitic.fused", "version": 3, "enabled": False,
             "category": "word-joining", "severity": "low", "confidence": "low", "inline": False,
-            "title": {"ta": "இடைச்சொல் — சேர்த்து எழுதுதல்", "en": "Clitic written apart"},
+            "title": {"ta": "இடைச்சொல் பிரித்து எழுதப்பட்டது", "en": "Clitic written apart"},
             "message": {"en": '"{word} {next}" is normally written as one word, "{fix}". Verify before editing.'},
             "rationale": "தான் is a clitic: written fused, with the linking consonant",
             "match": {"type": "token-context", "gap": "whitespace", "link": "any",
@@ -319,7 +319,7 @@ def definitions(acc_roots, dat_roots, reviewed: dict[str, set[str]]) -> list[dic
         {
             "id": "typo.divine-name.dative-stem", "version": 1,
             "category": "typo", "severity": "high", "confidence": "high", "inline": False,
-            "title": {"ta": "யெகோவா — நான்காம் வேற்றுமை அடி", "en": "Divine name: dative stem"},
+            "title": {"ta": "யெகோவா — நான்காம் வேற்றுமை அடிச்சொல்", "en": "Divine name: dative stem"},
             "message": {"en": '"{span}" builds the dative without the -வு- stem; "{fix}" is expected. Verify before editing.'},
             "rationale": "The dative of யெகோவா is யெகோவாவுக்கு",
             "match": {"type": "regex", "on": "visible", "pattern": "யெகோவாக்க"},
@@ -343,7 +343,7 @@ def definitions(acc_roots, dat_roots, reviewed: dict[str, set[str]]) -> list[dic
         {
             "id": "typo.participle.sentence-final", "version": 1,
             "category": "typo", "severity": "low", "confidence": "medium", "inline": False,
-            "title": {"ta": "-ந்து வாக்கிய இறுதியில்", "en": "Adverbial participle ends the sentence"},
+            "title": {"ta": "-ந்து வினையெச்சம் வாக்கிய இறுதியில்", "en": "Adverbial participle ends the sentence"},
             "message": {"en": '"{span}" ends the sentence as an adverbial participle; the finite "{fix}" is '
                               'expected. Verify before editing.'},
             "rationale": "A sentence ends in a finite verb; a -ந்து participle needs a verb after it",
@@ -363,7 +363,7 @@ def definitions(acc_roots, dat_roots, reviewed: dict[str, set[str]]) -> list[dic
         {
             "id": "integrity.digits-in-text", "version": 1, "enabled": False,
             "category": "typo", "layer": "integrity", "severity": "low", "confidence": "low", "inline": False,
-            "title": {"ta": "எண்கள் வசனத்தில்", "en": "Digits in verse text"},
+            "title": {"ta": "வசன உரையில் எண்கள்", "en": "Digits in verse text"},
             "message": {"en": 'Digits "{span}" in verse text; check the project\'s numeral policy.'},
             "rationale": "Numeral policy",
             "match": {"type": "regex", "on": "visible", "pattern": r"\p{Nd}+"},
@@ -375,7 +375,7 @@ def definitions(acc_roots, dat_roots, reviewed: dict[str, set[str]]) -> list[dic
         {
             "id": "integrity.space-before-note-end", "version": 2,
             "category": "usfm", "severity": "low", "confidence": "medium", "inline": False,
-            "title": {"ta": "குறிப்பு முடிவுக்கு முன் இடைவெளி (குறியீட்டு வடிவமைப்பு)",
+            "title": {"ta": "குறிப்பின் இறுதிக் குறிக்கு முன் இடைவெளி (குறியீட்டு வடிவமைப்பு)",
                       "en": "Markup: space before a note's end marker"},
             "message": {"en": "Markup formatting, not a text error: a space before the closing note marker. "
                               "Removing it does not change the verse text."},

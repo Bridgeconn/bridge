@@ -274,7 +274,7 @@
 </div>
 
 <style>
-  .overlay { position: fixed; inset: 0; z-index: 60; display: flex; background: rgba(15, 20, 26, 0.45); }
+  .overlay { position: fixed; inset: 0; z-index: var(--z-dialog-over-dialog); display: flex; background: rgba(15, 20, 26, 0.45); }
   .dialog { width: min(92vw, 40rem); max-height: calc(100vh - 3rem); margin: 1.5rem auto auto; display: flex;
     flex-direction: column; background: var(--surface); color: var(--text); border: 1px solid var(--border);
     border-radius: 10px; box-shadow: 0 12px 40px rgba(0, 0, 0, .2); box-sizing: border-box; overflow: hidden; }

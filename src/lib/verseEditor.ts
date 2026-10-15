@@ -9,11 +9,13 @@ import { get, writable } from "svelte/store";
 import { bridge } from "./api/bridgeClient";
 import { decideLanguageQaFinding } from "./findingActions";
 import { nudgeLanguageQa } from "./languageQaInline";
+import { editorCheckList } from "./checkSelection";
+import { recheckVerse } from "./verseChecks";
 import type { QaFinding, VerseDisplay } from "./types/finding";
 import type { LanguageQaFinding, LanguageQaSuggestion } from "./types/languageQa";
 import type { CorrectionApplicationIntent } from "./types/correctionReview";
 import {
-  alignmentStatusByVerse, checkStatusByVerse, checkingProgress, findingsByVerse, historyCountByVerse,
+  alignmentStatusByVerse, checkStatusByVerse, checkingProgress, historyCountByVerse, noteAlignmentChanged,
   nativeChecksByVerse, aiCheckReviewsByVerse, languageQaFindingsByVerse, verseDisplay, verseKey, verseTexts,
 } from "./stores";
 
@@ -50,6 +52,9 @@ export function refreshVerseTextFromApplication(
   // the reader falls back to the raw string until the chapter reloads.
   setDisplay(key, isVerseDisplay(edit.display) ? edit.display : undefined);
   alignmentStatusByVerse.update((values) => ({ ...values, [key]: "invalid" }));
+  // New text reshapes the verse's groups, so its alignment readers re-read
+  // it (#291); "invalid" to "invalid" would not tell them.
+  noteAlignmentChanged(key);
   bumpHistoryCount(key);
   return key;
 }
@@ -229,6 +234,11 @@ export async function saveVerseEdit({ optimistic = false }: { optimistic?: boole
     undo = null;
     nudgeLanguageQa();  // the edit started a new Language QA pass
     bumpHistoryCount(key);
+    // The engine has the new text, so its groups for the verse changed: the
+    // Source text panel re-reads it (#291). Not before the engine answers --
+    // an optimistic text is not yet what alignment.get would describe -- and
+    // not on a refused save, which leaves the engine's alignment as it was.
+    noteAlignmentChanged(key);
     editWarnings.set(editResult.warnings?.length ? { key, warnings: editResult.warnings } : null);
     if (!optimistic) {
       showVerseText(key, text, editResult.display);
@@ -241,9 +251,10 @@ export async function saveVerseEdit({ optimistic = false }: { optimistic?: boole
     recheckingKey.set(key);
     recheckedKey.set("");
     checkStatusByVerse.update((map) => ({ ...map, [key]: "pending" }));
-    const findings = await bridge.runVerseChecks(chapter, verse, ["local", "greekroom"]);
-    findingsByVerse.update((map) => ({ ...map, [key]: findings }));
-    checkStatusByVerse.update((map) => ({ ...map, [key]: "succeeded" }));
+    // The reviewer's selected checks (#251); Greek Room only if ticked (#252).
+    // Every earlier finding was about the old text, so the run replaces them
+    // all; Language QA re-runs through its own pass (nudged above).
+    await recheckVerse(chapter, verse, editorCheckList(), { replace: true });
     recheckingKey.set("");
     recheckedKey.set(key);
     onSaved?.({

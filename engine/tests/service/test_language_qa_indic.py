@@ -81,7 +81,9 @@ def test_every_indic_qa_finding_is_drawn_by_default_while_inline_stays_the_revie
     result = drawn(engine, project)
     indic = {f["id"] for f in listed["findings"] if f["ruleId"].startswith("hi-irv/")}
     assert indic and indic <= {f["id"] for f in result["findings"]}
-    assert all(f["drawn"] for f in result["findings"]) and all(f["drawn"] for f in listed["findings"])
+    # a book-header finding (#253) is never drawn: it is not in the verse text
+    assert all(f["drawn"] for f in result["findings"]) and all(
+        f["drawn"] for f in listed["findings"] if f.get("context") != "introduction")
     # The reviewed flag is untouched: the CI human gate reads it.
     assert not any(f["inline"] for f in result["findings"] if f["ruleId"].startswith("hi-irv/"))
     assert "hi.lex.known-misspelling" not in result["inlineRules"]

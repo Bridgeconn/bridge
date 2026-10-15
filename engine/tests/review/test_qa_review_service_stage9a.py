@@ -99,7 +99,7 @@ def _project(
         lines.extend(f"\\v {verse} OLD IMPORTED" for verse in verses)
     (root / "php.usfm").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return PassageSemanticRuntime(
-        TranslationCoreProject(root), f"stage9a-{language}-{tmp_path.name}")
+        TranslationCoreProject(root), f"stage9a-{language}-{tmp_path.name}", actor_id="Reviewer")
 
 
 def _run(

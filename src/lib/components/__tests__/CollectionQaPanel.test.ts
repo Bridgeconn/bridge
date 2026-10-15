@@ -77,7 +77,7 @@ describe("CollectionQaPanel", () => {
       books: [book("rut", { state: "running" }), book("gen")] }));
     render(CollectionQaPanel, { props: { bookCount: 2 } });
     await fireEvent.click(await screen.findByRole("button", { name: "Run QA on all 2 books" }));
-    expect(collectionRunChecks).toHaveBeenCalledWith(["local", "greekroom", "languageQa"], false);
+    expect(collectionRunChecks).toHaveBeenCalledWith(["tN", "tW", "alignment", "text", "languageQa", "greekroom"], false);
     await waitFor(() => expect(get(collectionQaRunning)).toBe(true));
     expect(screen.getByRole("button", { name: "Pause after this book" })).toBeInTheDocument();
     for (const button of screen.getAllByRole("button", { name: "Open book" })) expect(button).toBeDisabled();

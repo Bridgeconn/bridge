@@ -20,8 +20,13 @@ from . import terminology
 from .housestyle import bundled_seed, house_style, name_findings, preferences_from, with_seed
 from .language_packs import PackError, default_pack, load_project_overrides, loaded_pack
 from .language_packs import indic_qa_adapter
-from .language_qa_drawn import InlinePolicy, drawn_rule_names, gated_rules, is_drawn, with_drawn
+from .language_qa_drawn import InlinePolicy, drawn_rule_names, gated_rules, is_drawn, served, with_drawn
 from .language_qa_learned import learned_findings
+from .language_qa_headings import heading_findings
+from .language_qa_notes import caller_findings
+from .language_qa_structure import structure_findings
+from .language_qa_header import book_source_text, header_findings
+from .language_qa_xrefs import collection_names, xref_findings
 from .language_packs.indic import ConfusionSet
 from .language_packs.lexicon import lexicon_findings, lexicon_fingerprint
 from .language_packs.loader import apply_overrides
@@ -41,6 +46,12 @@ REFRESH_SECONDS = 15.0
 # Rescanned chapters are written in one workbench transaction per this many
 # (one fsync'd commit per chapter more than doubled a first Psalms pass).
 FLUSH_CHAPTERS = 50
+# The background worker yields once per this much work in the chapter loops and
+# the book stages, not once per item: a stage that asked per note slept 20 ms
+# per note, 6 s of a Genesis pass (#271). The per-verse scan still yields per
+# verse, as the latency gate measured it; a foreground request meanwhile still
+# gets the interpreter every switch interval (5 ms).
+YIELD_SLICE = 0.25
 
 
 def _may_concern_language_qa(decision: dict[str, Any]) -> bool:
@@ -270,6 +281,12 @@ def verse_hash(text: Any) -> str:
     return hashlib.sha256(raw.encode("utf-8", errors="surrogatepass")).hexdigest()
 
 
+def _digest(value: Any) -> str:
+    """A book stage's input digest (#271): sha1 of the value as canonical JSON."""
+    return hashlib.sha1(json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
+                        .encode("utf-8", errors="surrogatepass")).hexdigest()
+
+
 def chapter_cache_key(language_pack: str, pack_fingerprint: str, raw_terms: Any, lists_fingerprint: str = "",
                       lexicon: str = "") -> str:
     """What a cached verse result depends on besides its own text: the
@@ -406,8 +423,8 @@ class LanguageQaManager:
         self._decisions_loader: Callable[[], list[dict[str, Any]]] | None = None
         self._housestyle_loader: Callable[[], list[dict[str, Any]]] | None = None
         self._summary: dict[str, Any] = {"state": "idle", "findings": [], "limitations": []}
-        # The user's inline threshold, and the indic-qa rules of the last pass it
-        # decides (language_qa_drawn). Applied per request: never in a pass.
+        # The user's inline threshold, and the rules of the last pass it decides
+        # (language_qa_drawn). Applied per request: never in a pass.
         self._policy = InlinePolicy()
         self._gated: dict[str, dict[str, Any]] = {}
         # The reviewer's learned fixes (workbench v6), read on every pass so a
@@ -416,6 +433,20 @@ class LanguageQaManager:
         self._learned_on = True
         # The last completed pass's word counts, for the panel's Book words list.
         self._book_words: dict[str, Any] = {}
+        # #271: each book stage's last result, keyed on a digest of everything
+        # it reads (the book's chapter files, headings, pack, termbase, lists,
+        # names, learned fixes...), so a pass after a decision or an unrelated
+        # change re-runs none of them. In memory, per bind.
+        self._book_stages: dict[str, Any] = {}
+        # Chapter file path -> (sha256, verses) of its last read (#271).
+        self._parsed: dict[str, tuple[str, dict[str, Any]]] = {}
+        # (digest of the language sample, its detect_language answer) (#271).
+        self._detected: tuple[str, dict[str, Any]] | None = None
+        # #280: called with (project path, by_verse) after the background
+        # worker publishes a completed pass, outside the lock, so the book's
+        # progress rollup can follow a live pass. A check job's run_pass
+        # writes the rollup itself and does not call it.
+        self.on_published: Callable[[str, dict[str, dict[str, Any]]], None] | None = None
 
     def configure(self, *, inline_precision: Any = 0, inline_confidence: Any = "low",
                   learned_fixes: bool = True) -> None:
@@ -461,6 +492,9 @@ class LanguageQaManager:
             self._pack_name = None
             self._gated = {}
             self._book_words = {}
+            self._book_stages = {}
+            self._parsed = {}
+            self._detected = None
             self._cache = {}
             self._cache_loaded = False
             self._by_verse = {}
@@ -494,6 +528,9 @@ class LanguageQaManager:
             self._pack_name = None
             self._gated = {}
             self._book_words = {}
+            self._book_stages = {}
+            self._parsed = {}
+            self._detected = None
             self._generation += 1
             self._wake.set()
             self._cache = {}
@@ -512,7 +549,10 @@ class LanguageQaManager:
         """Something in `chapter` changed (an edit, a decision): run a pass.
         Nothing is discarded. The pass rescans only verses whose text hash
         changed (a live edit rescans just the edited verse), and it applies
-        decisions afresh, so a decision rescans nothing."""
+        decisions afresh, so a decision rescans nothing. A book stage re-runs
+        only when something it reads changed (#271): after a decision, none;
+        after an edit, those that read verse text, structure only for the
+        edited chapter."""
         with self._lock:
             self._schedule()
 
@@ -600,8 +640,8 @@ class LanguageQaManager:
 
     def inline(self, *, chapter: str | None = None) -> dict[str, Any]:
         """Every finding drawn in the text, for one chapter or the whole book --
-        not paged. Drawn means reviewed-inline, or an indic-qa finding the
-        user's threshold lets through (language_qa_drawn). The verse marks are
+        not paged. Drawn means reviewed-inline, or any other finding the
+        user's threshold lets through (language_qa_drawn, #250). The verse marks are
         drawn from this; status() is a page for the panel's list, and a page
         cannot back marks (a book with more findings than one page lost marks
         past it). Still bounded: the summary itself never holds more than
@@ -609,7 +649,7 @@ class LanguageQaManager:
         MAX_VERSE_FINDINGS.
 
         The findings are picked under the lock and copied after it is released.
-        Since every indic-qa finding is drawn by default, a chapter's copy can
+        Since every finding is drawn by default, a chapter's copy can
         be large, and verse.decide and the pass wait on the same lock. That is
         safe because a published finding is never changed in place: a pass
         replaces `_summary` whole, and `update()` touches only top-level keys."""
@@ -630,7 +670,7 @@ class LanguageQaManager:
                 "ruleVersion": RULE_VERSION, "chapter": wanted,
                 "inlineRules": list(self._inline_rules()), "drawnRules": self._drawn_rules(),
             }
-        result["findings"] = [{**copy.deepcopy(f), "drawn": True} for f in findings]
+        result["findings"] = [served(copy.deepcopy(f), gated, policy) for f in findings]
         return result
 
     def rule_counts(self) -> dict[str, int]:
@@ -726,7 +766,11 @@ class LanguageQaManager:
         return not self._cancelled(generation)
 
     @staticmethod
-    def _read(path: Path) -> tuple[dict[str, Any], tuple[int, int], str]:
+    def _read(path: Path, parsed: dict[str, tuple[str, dict[str, Any]]] | None = None,
+              ) -> tuple[dict[str, Any], tuple[int, int], str]:
+        """(verses, (mtime, size), sha256 of the bytes). `parsed`: path ->
+        (sha256, verses) of earlier reads; a file whose bytes are unchanged is
+        not parsed again (#271), and the dict returned is shared, never edited."""
         before = path.stat()
         with path.open("rb") as stream:
             raw = stream.read(MAX_CHAPTER_BYTES + 1)
@@ -736,6 +780,11 @@ class LanguageQaManager:
         signature = (after.st_mtime_ns, after.st_size)
         if signature != (before.st_mtime_ns, before.st_size):
             raise ValueError("Chapter changed while being read; waiting for the next pass.")
+        sha = hashlib.sha256(raw).hexdigest()
+        known = parsed.get(str(path)) if parsed is not None else None
+        if known is not None and known[0] == sha:
+            return known[1], signature, sha
+
         def unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
             data: dict[str, Any] = {}
             for key, value in pairs:
@@ -747,7 +796,9 @@ class LanguageQaManager:
         data = json.loads(raw.decode("utf-8-sig"), object_pairs_hook=unique_keys)
         if not isinstance(data, dict):
             raise ValueError("Chapter must contain a verse-keyed JSON object.")
-        return data, signature, hashlib.sha256(raw).hexdigest()
+        if parsed is not None:
+            parsed[str(path)] = (sha, data)
+        return data, signature, sha
 
     def _scan(self, generation: int, context: tuple[str, str, str, Path, str], *,
               cancelled: Callable[[], bool] | None = None, yielding: bool = True,
@@ -789,7 +840,25 @@ class LanguageQaManager:
                 return not cancelled()
             return self._yield(generation) if yielding else not self._cancelled(generation)
 
+        def still() -> bool:
+            """Not cancelled; never yields."""
+            return not cancelled() if cancelled is not None else not self._cancelled(generation)
+
+        yielded = [time.monotonic()]
+
+        def paced() -> bool:
+            """proceed() for the chapter loops and the book stages: yields at
+            most once per YIELD_SLICE of work, and between yields only checks
+            for cancellation."""
+            if cancelled is not None or not yielding or time.monotonic() - yielded[0] >= YIELD_SLICE:
+                carry_on = proceed()
+                yielded[0] = time.monotonic()
+                return carry_on
+            return still()
+
         source_signature = self._chapter_signature(directory)
+        with self._lock:
+            parsed = self._parsed if self._context == context else {}
         candidates = (p for p in directory.glob("*.json") if p.stem.isdecimal())
         paths = sorted(itertools.islice(candidates, MAX_CHAPTERS + 1), key=lambda p: int(p.stem))
         limitations: list[str] = []
@@ -805,10 +874,10 @@ class LanguageQaManager:
         phase.__enter__()
         sample = ""
         for path in paths:
-            if not proceed():
+            if not paced():
                 return None
             try:
-                data, _, _ = self._read(path)
+                data, _, _ = self._read(path, parsed)
                 for verse, text in itertools.islice(data.items(), MAX_CHAPTER_VERSES):
                     if isinstance(text, str) and verse[:1].isdigit() and len(text) <= MAX_VERSE_CHARS:
                         lifted, _ = lift_inline_usfm(text)
@@ -820,7 +889,17 @@ class LanguageQaManager:
                 pass  # Main pass reports the exact chapter error.
             if len(sample) >= 20_000:
                 break
-        detection = resolve_language(detect_language(sample, declared), setting)
+        # The sample is the book's opening text, so a later edit rarely moves
+        # it; the same sample and declaration decide the same (#271).
+        detected_key = _digest([sample, declared])
+        with self._lock:
+            known = self._detected if self._context == context else None
+        if known is None or known[0] != detected_key:
+            known = (detected_key, detect_language(sample, declared))
+            with self._lock:
+                if self._context == context:
+                    self._detected = known
+        detection = resolve_language(copy.deepcopy(known[1]), setting)
         phase.__exit__(None, None, None)
         phase = timings.step("lqa.loaders")  # terminology, decisions, learned fixes, house style
         phase.__enter__()
@@ -959,10 +1038,13 @@ class LanguageQaManager:
         # dropped where the pack or the common rules already flagged the same
         # place: chapter:verse -> [(start, end, category)] of every raw finding.
         book_headings: dict[str, dict[str, list[dict[str, Any]]]] = {}
+        chapter_verses: dict[str, list[str]] = {}  # chapter -> verse keys, for heading.missing
+        chapter_texts: dict[str, dict[str, Any]] = {}  # chapter -> stored verses, for note.caller-mixed
         flagged: dict[str, list[tuple[int, int, str]]] = {}
+        chapter_sha: dict[str, str] = {}  # chapter -> sha256 of its file, for the book stages' keys
         completed = 0
         for completed, path in enumerate(paths):
-            if not proceed():
+            if not paced():
                 return None
             with self._lock:
                 if cancelled is None and self._cancelled(generation):
@@ -973,13 +1055,16 @@ class LanguageQaManager:
             chapter_limitations: list[str] = []
             try:
                 with timings.step("lqa.chapter_read"):
-                    data, signature, _ = self._read(path)
+                    data, signature, chapter_sha[chapter] = self._read(path, parsed)
                     if book_checker or learned:
                         book_text[chapter] = data
-                    if layer:
-                        headings = _read_headings(path.with_name(f"{chapter}.headings.json"), chapter_limitations)
-                        if headings:
-                            book_headings[chapter] = headings
+                    chapter_verses[chapter] = list(data)
+                    chapter_texts[chapter] = data  # for the book-level caller check (#246)
+                    # Every pack reads the headings now: the heading rules
+                    # (#244) run for all; the layer reads them too.
+                    headings = _read_headings(path.with_name(f"{chapter}.headings.json"), chapter_limitations)
+                    if headings:
+                        book_headings[chapter] = headings
                 cached = cache.get(chapter)
                 cached_verses = cached["verses"] if cached and cached.get("key") == key else {}
                 verses: dict[str, Any] = {}
@@ -1075,20 +1160,60 @@ class LanguageQaManager:
         elif wordlist is not None and len(book_counts) > wordlist.params["maxTerms"]:
             limitations.append("Wordlist audit skipped: too many distinct words to compare.")
         else:
-            with timings.step("lqa.book.lexicon_audit" if lexicon is not None else "lqa.book.wordlist_audit"):
-                audit = (lexicon_findings(book, book_counts, book_first_seen, lexicon, pack=rule_pack,
-                                          rule_fields=rule_fields, suggestion=suggestion)
-                         if lexicon is not None else
-                         wordlist_findings(book, book_counts, book_first_seen, pack=rule_pack, rule=wordlist)
-                         if wordlist is not None else [])
+            # #271: every book stage below is a function of what it reads, so
+            # each is reused while a digest of those inputs is unchanged: the
+            # text digest covers every chapter file read, and `key` the rule
+            # version, the pack (overrides included), the termbase, the
+            # house-style lists and the lexicon. A stage a cancellation cut
+            # short is never kept.
+            with self._lock:
+                stages = self._book_stages if self._context == context else {}
+            text_fp = _digest(sorted(chapter_sha.items()))
+            headings_fp = _digest(book_headings)
+
+            def book_stage(name: str, inputs: list[Any], compute: Callable[[], Any], *, timed: bool = True,
+                           text: bool = True, valid: Callable[[], bool] = lambda: True) -> Any:
+                """compute() -> (findings, notes), or None when stopped; the
+                last result instead while the inputs' digest is unchanged and
+                `valid()`. `text=False`: a stage that never reads verse text
+                (its verse keys are among `inputs`). Lists come back as copies:
+                the pass extends them."""
+                digest = _digest([key, text_fp if text else "", *inputs])
+                hit = stages.get(name)
+                if hit is not None and hit[0] == digest and valid():
+                    timings.cached(name)
+                    return list(hit[1]), list(hit[2])
+                if timed:
+                    with timings.step(name):
+                        out = compute()
+                else:
+                    out = compute()
+                if out is None:
+                    return None
+                found, notes = out
+                if still():
+                    stages[name] = (digest, list(found), list(notes))
+                return list(found), list(notes)
+
+            audit = book_stage("lqa.book.lexicon_audit" if lexicon is not None else "lqa.book.wordlist_audit",
+                               [], lambda: (
+                lexicon_findings(book, book_counts, book_first_seen, lexicon, pack=rule_pack,
+                                 rule_fields=rule_fields, suggestion=suggestion)
+                if lexicon is not None else
+                wordlist_findings(book, book_counts, book_first_seen, pack=rule_pack, rule=wordlist)
+                if wordlist is not None else [], []))[0]
             checked_book: tuple[list[dict[str, Any]], list[str]] | None = ([], [])
             if book_checker:
                 try:
-                    checked_book = indic_qa_adapter.profile_findings(
-                        rule_pack, book, book_text, lift=lift_inline_usfm, max_verse_chars=MAX_VERSE_CHARS,
-                        finding_id=stable_finding_id, rule_fields=rule_fields, text_hash=text_hash,
-                        crossing_note=CROSSING_LIMITATION, proceed=proceed,
-                        headings=book_headings if layer else None)
+                    # Not timed here: the adapter records its own lqa.indicqa.* steps.
+                    checked_book = book_stage(
+                        "lqa.indicqa.book", [headings_fp if layer else "", indic_qa_adapter.checker_key(rule_pack)],
+                        lambda: indic_qa_adapter.profile_findings(
+                            rule_pack, book, book_text, lift=lift_inline_usfm, max_verse_chars=MAX_VERSE_CHARS,
+                            finding_id=stable_finding_id, rule_fields=rule_fields, text_hash=text_hash,
+                            crossing_note=CROSSING_LIMITATION, proceed=paced,
+                            headings=book_headings if layer else None),
+                        timed=False, valid=lambda: indic_qa_adapter.is_resident(rule_pack, book))
                 except Exception as exc:  # the vendored checker must never fail the pass
                     checked_book = [], [f"{rule_pack.name} {'OV dictionary ' if layer else ''}checks failed; "
                                         f"{'the pack' if layer else 'common'} checks only: "
@@ -1099,12 +1224,17 @@ class LanguageQaManager:
             if profile:
                 audit += checked_book[0]
             if rule_pack is not None:
-                with timings.step("lqa.book.names"):
-                    audit += name_findings(book, book_counts, book_first_seen,
-                                           style.lists.get("housestyle.properNouns", frozenset()),
-                                           rule_fields=rule_fields, suggestion=suggestion, rule_version=RULE_VERSION,
-                                           corpus_count=lexicon.count if lexicon is not None else None,
-                                           distance=(rule_pack.confusion() or PLAIN_DISTANCE).distance)
+                # A word's candidate names hold while the approved names, the
+                # lexicon and the pack (all in `key`) do; only their order
+                # follows the counts.
+                if stages.get("names.memo", (None,))[0] != key:
+                    stages["names.memo"] = (key, {})
+                audit += book_stage("lqa.book.names", [], lambda: (name_findings(
+                    book, book_counts, book_first_seen, style.lists.get("housestyle.properNouns", frozenset()),
+                    rule_fields=rule_fields, suggestion=suggestion, rule_version=RULE_VERSION,
+                    corpus_count=lexicon.count if lexicon is not None else None,
+                    distance=(rule_pack.confusion() or PLAIN_DISTANCE).distance,
+                    memo=stages["names.memo"][1]), []))[0]
             if layer:
                 with timings.step("lqa.book.layer_dedupe"):
                     for finding in audit:
@@ -1117,10 +1247,44 @@ class LanguageQaManager:
                     # findings the pack or common rules had already raised.
                     for _ in range(len(checked_book[0]) - len(kept)):
                         timings.add("lqa.book.layer_dropped_as_duplicate", 0.0)
-            with timings.step("lqa.book.learned"):
-                audit += learned_findings(book, book_text, learned, fixes=learned_fixes, max_verse_chars=MAX_VERSE_CHARS,
-                                          finding_id=stable_finding_id, rule_fields=rule_fields, suggestion=suggestion,
-                                          text_hash=text_hash, rule_version=RULE_VERSION)
+            audit += book_stage("lqa.book.headings", [headings_fp, chapter_verses], lambda: (
+                heading_findings(book, book_headings, chapter_verses, proceed=paced), []), text=False)[0]
+            # Structure is checked chapter by chapter (a quote, a stanza and an
+            # acrostic never cross one), so an edit re-runs one chapter of it.
+            structure = stages.setdefault("lqa.book.structure", {})
+            for chapter in sorted(chapter_texts, key=lambda c: int(c) if c.isdigit() else 0):
+                if not paced():
+                    return None
+                digest = _digest([key, chapter_sha.get(chapter, ""), book_headings.get(chapter, {})])
+                hit = structure.get(chapter)
+                if hit is not None and hit[0] == digest:
+                    timings.cached("lqa.book.structure")
+                    audit += hit[1]
+                    continue
+                with timings.step("lqa.book.structure"):
+                    found = structure_findings(book, {chapter: chapter_texts[chapter]},
+                                               {chapter: book_headings[chapter]} if chapter in book_headings else {})
+                structure[chapter] = (digest, found)
+                audit += found
+            audit += book_stage("lqa.book.note_callers", [], lambda: (
+                caller_findings(book, chapter_texts, proceed=paced), []))[0]
+            names: dict[str, str] = {}
+            try:
+                names = collection_names(context[0])
+                audit += book_stage("lqa.book.xrefs", [names], lambda: (
+                    xref_findings(book, chapter_texts, names, proceed=paced), []))[0]
+            except Exception as exc:  # a sibling's files must never fail the pass
+                limitations.append(f"Cross-reference targets not checked: {type(exc).__name__}: {exc}")
+            try:
+                source = book_source_text(context[0])
+                audit += book_stage("lqa.book.header", [_digest(source), names, chapter_verses], lambda: (
+                    header_findings(book, source, chapter_verses, names), []), text=False)[0]
+            except Exception as exc:  # the preserved source must never fail the pass
+                limitations.append(f"Book header not checked: {type(exc).__name__}: {exc}")
+            audit += book_stage("lqa.book.learned", [learned, sorted(learned_fixes.items())], lambda: (
+                learned_findings(book, book_text, learned, fixes=learned_fixes, max_verse_chars=MAX_VERSE_CHARS,
+                                 finding_id=stable_finding_id, rule_fields=rule_fields, suggestion=suggestion,
+                                 text_hash=text_hash, rule_version=RULE_VERSION), []))[0]
             # Decisions and house style first, then the room: when the book's
             # findings would pass the limit, the least certain book-stage
             # findings give way (low-confidence unknown words before a typo
@@ -1347,12 +1511,22 @@ class LanguageQaManager:
             with self._lock:
                 if generation != self._generation:
                     continue
+                published = None
                 if result is not None:
                     source_signature = result.pop("_sourceSignature", None)
                     result["elapsedSeconds"] = round(time.monotonic() - started, 3)
                     self._summary = result
                     if source_signature is not None:
                         self._source_signature = source_signature
+                    if result.get("state") == "completed" and context is not None:
+                        published = (context[0], self._by_verse)
                 self._last_scan = time.monotonic()
                 self._thread = None
-                return
+            if published is not None and self.on_published is not None:
+                # A published by_verse is replaced whole by the next pass,
+                # never changed in place, so it is read here without the lock.
+                try:
+                    self.on_published(*published)
+                except Exception:  # noqa: BLE001 -- bookkeeping never fails a pass
+                    pass
+            return

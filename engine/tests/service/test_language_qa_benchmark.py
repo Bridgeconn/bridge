@@ -215,6 +215,43 @@ def test_human_precision_counts_only_labelled_findings(benchmark):
     assert "| `ta-irv/sandhi.vallinam.demonstrative` |" in table and "Recall proxies" in table
 
 
+def test_a_superseded_label_is_listed_and_not_scored(benchmark):
+    """R5 is a human-confirmed finding the engine does not produce (a lost
+    TP). Superseded by a later decision, it is reported, not scored."""
+    labels, scans, verses = _human_inputs(benchmark)
+    labels = [{**label, "round": "r1", "superseded": "a later round ruled otherwise (DECISIONS)"}
+              if label["id"] == "R5" else label for label in labels]
+    result = bench.human_score(labels, scans, verses)
+    assert result["rules"]["ta-irv/sandhi.vallinam.demonstrative"]["lost_tp"] == 0
+    assert result["superseded"] == ["r1 R5 RUT 1:7 (ta-irv/sandhi.vallinam.demonstrative): "
+                                    "a later round ruled otherwise (DECISIONS)"]
+    assert "Labels superseded by a later decision" in bench.human_markdown(result)
+
+
+def test_superseded_json_tags_its_label_and_leaves_the_rest(tmp_path):
+    folder = tmp_path / "r1"
+    folder.mkdir()
+    rows = [{"id": "A", "kind": "flagged", "book": "rut", "ch": "1", "v": "1"},
+            {"id": "B", "kind": "flagged", "book": "rut", "ch": "1", "v": "1"}]
+    (folder / "human_labels.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    (folder / "verses.jsonl").write_text(json.dumps({"book": "rut", "chapter": "1", "verse": "1", "text": "x"}) + "\n",
+                                         encoding="utf-8")
+    (tmp_path / "superseded.json").write_text(json.dumps({"labels": [
+        {"round": "r1", "id": "B", "reason": "ruled otherwise", "decision": "DECISIONS 2026-10-13"}]}), encoding="utf-8")
+    labels, _ = bench.load_human_rounds(tmp_path)
+    assert [label.get("superseded") for label in labels] == [None, "ruled otherwise (DECISIONS 2026-10-13)"]
+
+
+def test_the_verse_list_skips_candidate_and_word_list_rows(tmp_path):
+    """Round 3: a structure candidate may sit on a heading, and a word-list row
+    is the reviewer's own list; neither is a verse the scorer reads."""
+    (tmp_path / "RUT.SFM").write_text(SFM, encoding="utf-8")
+    labels = [{"kind": "flagged", "book": "rut", "ch": "1", "v": "1"},
+              {"kind": "candidate", "book": "rut", "ch": "1", "v": "heading"},
+              {"kind": "wordlist", "book": "rut", "ch": "1", "v": "9"}]
+    assert [(r["chapter"], r["verse"]) for r in bench.human_label_verses(labels, tmp_path)] == [("1", "1")]
+
+
 def test_human_gate_decides_inline_on_precision_and_sample_size(benchmark):
     labels, scans, verses = _human_inputs(benchmark)
     result = bench.human_score(labels, scans, verses)
@@ -269,7 +306,7 @@ def test_every_round_anchors_and_the_rounds_load_together():
     rounds = {}
     for label in labels:
         rounds[label["round"]] = rounds.get(label["round"], 0) + 1
-    assert rounds == {"2026-09-28": 598, "2026-09-29": 220}
+    assert rounds == {"2026-09-28": 598, "2026-09-29": 220, "2026-10-13": 376}
     for label in labels:
         if label["kind"] in {"flagged", "split"}:
             text = verses[label["book"]][label["ch"]][label["v"]]

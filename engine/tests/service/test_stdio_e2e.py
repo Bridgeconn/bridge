@@ -23,8 +23,16 @@ class Sidecar:
             text=True,
             encoding="utf-8",
         )
-        ready = self._read()
-        assert ready["id"] == "__ready__"
+        # The stage lines (#233) come first, each before the work it names;
+        # the ready line ends the boot. Anything else on stdout before ready
+        # is a protocol corruption, not a response, so it fails here.
+        self.stages: list[str] = []
+        while True:
+            frame = self._read()
+            if frame["id"] == "__ready__":
+                break
+            assert frame["id"] == "__stage__", frame
+            self.stages.append(frame["result"]["stage"])
         self.sequence = 0
 
     def _read(self) -> dict:
@@ -159,5 +167,18 @@ def test_uroman_loads_after_ready_and_engine_info_does_not_wait_for_it():
             time.sleep(0.25)
             names = sidecar.request("engine.info", {})["result"]["greekRoom"]["adapters"]["names"]
         assert names["state"] == "loaded", names
+    finally:
+        sidecar.close()
+
+
+def test_startup_stage_lines_precede_the_ready_line():
+    """main.py reports "modules" before importing bridge_service and
+    "engine" before constructing BridgeEngine (#233); the shell turns them
+    into the loading screen's status line. Order matters: a stage after
+    the work it names would describe the past."""
+    sidecar = Sidecar()
+    try:
+        assert sidecar.stages == ["modules", "engine"]
+        assert sidecar.request("ping", {})["result"]["pong"] is True
     finally:
         sidecar.close()

@@ -171,8 +171,11 @@ At the end of Stage 9A:
 - the Stage 9A review UI has **never been observed rendering a populated
   queue in the desktop app**; jsdom cannot lay out or paint, so small-screen
   behaviour at 1366x768 is asserted structurally only
-- reviewer identity is the single local string `"human"`; `TeamWorkflow` in
-  `team.py` is not wired into semantic review records
+- ~~reviewer identity is the single local string `"human"`; `TeamWorkflow` in
+  `team.py` is not wired into semantic review records~~ — since #78 every
+  human write is stamped with the stable `user_id`; since #236 the three roles
+  and `authorize()` live in `tc_ai_bridge/authorization.py`, and `team.py` is
+  deleted (#111). Rows written as `"human"` stay as they are.
 - ~~no final Alignment Review UI~~ — built in Stage 9A (review only; see
   the unverified-click-through caveat in the Stage 9A record above)
 - no Scripture Burrito export

@@ -1,14 +1,16 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import UsersPane from "./UsersPane.svelte";
+  import TeamPane from "./TeamPane.svelte";
+  import { onDestroy, onMount } from "svelte";
   import { bridge, type EngineInfo } from "../api/bridgeClient";
   import { nudgeLanguageQa } from "../languageQaInline";
   import { manualOverrideMode, navigationStatus, project, reviewerMode } from "../stores";
-  import type { InlineConfidence, NavigationSyncState, SettingsData, TerminologyRule } from "../types/finding";
+  import type { InlineConfidence, NavigationSyncState, ParatextConnectorStatus, SettingsData, TerminologyRule, UserRole } from "../types/finding";
   import type { HouseStyleEntry, HouseStyleListResponse, HouseStyleProposal } from "../types/houseStyle";
   import type { CheckerSettings } from "../types/languageQa";
   import CheckerSettingsDialog from "./CheckerSettingsDialog.svelte";
 
-  type Pane = "ai" | "quality" | "connections" | "resources" | "terminology" | "languageQa" | "security";
+  type Pane = "ai" | "quality" | "connections" | "resources" | "terminology" | "languageQa" | "security" | "users" | "team";
 
   export let onClose: () => void;
   export let initialPane: Pane = "ai";
@@ -28,8 +30,9 @@
   let logosNavigation = false;
   let reviewerName = "";
   let reviewerNameUpdatedAt = "";
+  let localUserRole: UserRole = "project_admin";
   let engineInfo: EngineInfo | null = null;
-  // Settings > Language QA: which indic-qa findings are drawn in the text.
+  // Settings > Language QA: which findings are drawn in the text (#250).
   // App-level (a reviewer's tolerance), applied by the engine per request.
   let inlinePrecision = 0;
   let inlineConfidence: InlineConfidence = "low";
@@ -105,6 +108,7 @@
       logosNavigation = s.logosNavigation;
       reviewerName = s.reviewerName || "";
       reviewerNameUpdatedAt = s.reviewerNameUpdatedAt || "";
+      localUserRole = s.localUserRole ?? "project_admin";
       inlinePrecision = s.languageQaInlinePrecision ?? 0;
       inlineConfidence = s.languageQaInlineConfidence ?? "low";
       learnedFixes = s.languageQaLearnedFixes ?? true;
@@ -213,10 +217,61 @@
 
   async function refreshConnections(): Promise<void> {
     saveMessage = "";
+    void loadConnector();
     try {
       navigationStatus.set(await bridge.navigationStatus());
     } catch (e) {
       saveMessage = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  // #282: Bridge's Paratext connector on this PC. The install runs on the
+  // engine's own thread (it waits on a Windows admin prompt), so this polls.
+  const CONNECTOR_POLL_MS = 1000;
+  let connector: ParatextConnectorStatus | null = null;
+  let connectorLoaded = false;
+  let connectorBusy = false;
+  let connectorMessage = "";
+  let connectorError = false;
+  let destroyed = false;
+  onDestroy(() => { destroyed = true; });
+
+  async function loadConnector(): Promise<void> {
+    try {
+      connector = await bridge.paratextConnectorStatus();
+    } catch (e) {
+      connector = null;
+      connectorMessage = e instanceof Error ? e.message : String(e);
+      connectorError = true;
+    }
+  }
+
+  $: if (activePane === "connections" && !connectorLoaded) {
+    connectorLoaded = true;
+    void loadConnector();
+  }
+
+  async function installConnector(): Promise<void> {
+    if (connectorBusy) return;
+    connectorBusy = true;
+    connectorError = false;
+    connectorMessage = "Building the connector. Windows will ask for administrator permission to copy it into Paratext.";
+    try {
+      await bridge.paratextInstallConnector();
+      while (!destroyed) {
+        await new Promise((resolve) => setTimeout(resolve, CONNECTOR_POLL_MS));
+        connector = await bridge.paratextConnectorStatus();
+        if (connector.install.state !== "running") break;
+      }
+      if (connector && connector.install.state !== "running") {
+        connectorMessage = connector.install.message;
+        connectorError = connector.install.state === "failed";
+      }
+    } catch (e) {
+      connectorMessage = e instanceof Error ? e.message : String(e);
+      connectorError = true;
+    } finally {
+      connectorBusy = false;
     }
   }
 
@@ -448,6 +503,8 @@
       <button class="nav-item" class:active={activePane === "terminology"} on:click={() => (activePane = "terminology")}>Terminology</button>
       <button class="nav-item" class:active={activePane === "languageQa"} on:click={() => (activePane = "languageQa")}>Language QA</button>
       <button class="nav-item" class:active={activePane === "security"} on:click={() => (activePane = "security")}>Security</button>
+      <button class="nav-item" class:active={activePane === "users"} on:click={() => (activePane = "users")}>Users</button>
+      <button class="nav-item" class:active={activePane === "team"} on:click={() => (activePane = "team")}>Team</button>
       {#if engineInfo}
         <div class="about-version" title="What this window is actually running, not what Windows says was installed">
           Bridge {engineInfo.bridgeVersion} · Schema v{engineInfo.companionSchemaVersion}
@@ -540,6 +597,18 @@
           {:else if $navigationStatus.paratext.checking}Checking…
           {:else}Waiting for Paratext{/if}
         </div>
+        {#if connector && (connector.action === "install" || connector.action === "update")}
+          <div class="connector-install">
+            <span>{connector.message}{#if connector.running} Close Paratext first, then install.{/if}</span>
+            <button class="btn" on:click={installConnector} disabled={connectorBusy || connector.running}
+              title={connector.running ? "Paratext is open: close it, then click Refresh" : "Builds the connector for this computer's Paratext and asks Windows for administrator permission once"}>
+              {connectorBusy ? "Installing…" : connector.action === "update" ? `Update Paratext connector to ${connector.bundledVersion}` : "Install Paratext connector"}
+            </button>
+          </div>
+        {:else if connector && paratextNavigation && connector.action === "unavailable"}
+          <div class="connection-detail">{connector.message}</div>
+        {/if}
+        {#if connectorMessage}<div class="connector-msg" class:error={connectorError} role="status">{connectorMessage}</div>{/if}
         <label class="connection-option" class:selected={logosNavigation}>
           <input type="checkbox" bind:checked={logosNavigation} />
           <span>
@@ -660,12 +729,12 @@
         <h3>Language QA</h3>
         <p class="desc">Offline spelling, punctuation and consistency checks of the target text. Nothing here changes Scripture text.</p>
         <h3 class="sub">Drawn in the text</h3>
-        <p class="desc">indic-qa findings (Punjabi, Malayalam, Hindi, Odia, and the Tamil OV layer) are underlined in the verse text unless this threshold hides them. Hidden ones stay in the Language QA panel. A rule reviewers have not labelled has no measured precision and always passes the slider. Rules reviewed as inline are always drawn.</p>
+        <p class="desc">Every Language QA finding is underlined in the verse text unless this threshold hides it, and right-clicking it offers the fix. Hidden ones stay in the Language QA panel. A rule reviewers have not labelled has no measured precision and always passes the slider. Rules reviewed as inline (at least 90% confirmed) are always drawn.</p>
         <div class="field">
           <label for="lqa-precision">Minimum measured precision: {inlinePrecision}%</label>
           <input id="lqa-precision" type="range" min="0" max="100" step="5" bind:value={inlinePrecision}
             aria-valuetext={inlinePrecision === 0 ? "0: draw every finding" : `${inlinePrecision} percent`} />
-          <div class="hint">{inlinePrecision === 0 ? "Every indic-qa finding is drawn." : `Rules reviewers confirmed less than ${inlinePrecision}% of the time are listed, not drawn.`}</div>
+          <div class="hint">{inlinePrecision === 0 ? "Every finding is drawn." : `Rules reviewers confirmed less than ${inlinePrecision}% of the time are listed, not drawn.`}</div>
         </div>
         <div class="field">
           <label for="lqa-confidence">Lowest rule confidence drawn</label>
@@ -792,6 +861,10 @@
             {#if houseStyleMessage}<span class="save-msg">{houseStyleMessage}</span>{/if}
           </div>
         {/if}
+      {:else if activePane === "users"}
+        <UsersPane myRole={localUserRole} />
+      {:else if activePane === "team"}
+        <TeamPane />
       {:else if activePane === "security"}
         <h3>Security & privacy</h3>
         <p class="desc">Project data and Greek Room findings never leave this machine unless you explicitly use AI explain.</p>
@@ -802,8 +875,12 @@
 </div>
 
 <style>
-  .modal-overlay { position: absolute; inset: 0; background: rgba(15, 20, 26, 0.45); display: flex; align-items: center; justify-content: center; z-index: 30; }
-  .settings-modal { width: 640px; height: 480px; background: var(--surface); border-radius: 14px; display: flex; overflow: hidden; position: relative; }
+  /* --z-dialog (#288): above the floating Language QA panel, which covered
+     this dialog at a hand-picked 30. 1.5x the old 640x480, capped at 80% of
+     the window (960x614 on a 1366x768 laptop); the nav keeps its width and
+     the pane scrolls inside. */
+  .modal-overlay { position: absolute; inset: 0; background: rgba(15, 20, 26, 0.45); display: flex; align-items: center; justify-content: center; z-index: var(--z-dialog); }
+  .settings-modal { width: min(960px, 80vw); height: min(720px, 80vh); background: var(--surface); border-radius: 14px; display: flex; overflow: hidden; position: relative; }
   .close-btn { position: absolute; top: 10px; right: 10px; z-index: 2; width: 28px; height: 28px; border-radius: 6px; border: none; background: transparent; color: var(--text-2); font-size: var(--fs-lg); cursor: pointer; }
   .close-btn:hover { background: var(--surface-2); }
   .settings-nav { width: 170px; background: var(--surface-2); border-right: 1px solid var(--border); padding: 14px 8px; flex-shrink: 0; display: flex; flex-direction: column; }
@@ -857,5 +934,10 @@
   .connection-option i { width: 9px; height: 9px; border-radius: 50%; margin-top: 3px; background: var(--border-strong); }
   .connection-option i.connected { background: var(--success); }
   .connection-option i.error { background: var(--danger); }
+  .connector-install { display: flex; align-items: center; gap: 10px; margin: 0 0 10px 31px; font-size: var(--fs-2xs); color: var(--text-2); }
+  .connector-install span { flex: 1; min-width: 0; line-height: 1.35; }
+  .connector-install .btn { flex-shrink: 0; }
+  .connector-msg { margin: 0 0 10px 31px; font-size: var(--fs-2xs); line-height: 1.35; color: var(--success, #15803d); overflow-wrap: anywhere; }
+  .connector-msg.error { color: var(--danger); }
   .connection-detail { min-height: 26px; padding: 5px 8px 8px 31px; color: var(--text-3); font-size: var(--fs-2xs); line-height: 1.35; overflow-wrap: anywhere; }
 </style>

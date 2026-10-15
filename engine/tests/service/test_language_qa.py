@@ -488,11 +488,12 @@ def test_vallinam_b1_b2_b3_regression_is_unaffected_by_b4():
 
 def test_other_scan_text_rules_default_suggested_replacement_to_none():
     # add()'s new parameter defaults to None for every rule that doesn't
-    # explicitly pass one -- only தமிழ்.vallinam-missing does today.
+    # explicitly pass one -- tamil.vallinam-missing, and spacing.extra since
+    # revision 2 (its fix: one space; tested in test_language_qa_spacing_extra).
     result = scan("மெல்ல மெல்ல தமிழ்a  ,,,")
     assert result["findings"]
     for finding in result["findings"]:
-        if finding["rule"] != "tamil.vallinam-missing":
+        if finding["rule"] not in {"tamil.vallinam-missing", "spacing.extra"}:
             assert finding["suggestedReplacement"] is None, finding
 
 
@@ -758,8 +759,8 @@ def test_results_persist_across_reopen_and_a_live_edit_rescans_only_that_verse(f
         assert _r["success"], _r
         edited = wait(engine._language_qa)
         assert edited["scannedVerses"] == 1 and edited["reusedChapters"] == 1
-        assert [f["rule"] for f in edited["findings"] if (f["chapter"], f["verse"]) == ("1", "1")] == [
-            "tamil.vallinam-missing"]
+        assert [f["rule"] for f in edited["findings"] if (f["chapter"], f["verse"]) == ("1", "1")
+                and f.get("context") != "introduction"] == ["tamil.vallinam-missing"]  # the bare fixture USFM has no book header: header.missing (#253) is set aside
     finally:
         engine._language_qa.unbind()
 
@@ -870,7 +871,7 @@ def test_an_ignore_under_an_older_pack_version_comes_back_for_rechecking(vallina
     assert back["previouslyIgnored"] is True and after["recheckCount"] == 1
     recheck = status_view(engine, project, "recheck")
     assert [f["id"] for f in recheck["findings"]] == [finding["id"]]
-    assert [f["id"] for f in engine._language_qa.inline()["findings"]] == [finding["id"]]
+    assert [f["id"] for f in engine._language_qa.inline()["findings"] if f.get("previouslyIgnored")] == [finding["id"]]
     # Deciding it again under the current version suppresses it again.
     decide(engine, finding, "ignored", **phase1_issue(finding))
     again = wait(engine._language_qa)
@@ -1310,9 +1311,9 @@ def test_book_limits_and_status_page_are_bounded(tmp_path):
 
 def _three_chapter_project(root, verses_per_chapter=60):
     # Every verse yields one inline finding (the dative வல்லினம் rule,
-    # "அவனுக்கு பதில்", inline on its human precision) and one panel-only
-    # finding (punctuation.repeated, the ",,"), so the book holds 180 inline
-    # findings -- well past one 100-finding page.
+    # "அவனுக்கு பதில்", inline on its human precision) and one finding that is
+    # not reviewed inline (punctuation.repeated, the ",,"), so the book holds
+    # 360 findings, all drawn by default (#250) -- well past one 100-finding page.
     project = project_at(root, verses={str(n): "அவனுக்கு பதில்,," for n in range(1, verses_per_chapter + 1)})
     for chapter in ("2", "3"):
         (project.book_dir / f"{chapter}.json").write_text(json.dumps(
@@ -1332,22 +1333,23 @@ def test_inline_returns_a_whole_chapter_past_the_status_page(tmp_path):
     assert {f["chapter"] for f in page["findings"]} == {"1"}
     # Chapter 3 lies entirely past that page, and inline still returns all of it.
     inline = manager.inline(chapter="3")
-    assert len(inline["findings"]) == 60
+    assert len(inline["findings"]) == 120
     assert {f["chapter"] for f in inline["findings"]} == {"3"}
-    assert {f["rule"] for f in inline["findings"]} == {"tamil.vallinam-missing"}
+    assert {f["rule"] for f in inline["findings"]} == {"tamil.vallinam-missing", "punctuation.repeated"}
     assert inline["chapter"] == "3" and inline["state"] == "completed"
     assert inline["generation"] == status["generation"]
 
 
-def test_inline_without_a_chapter_returns_the_whole_book_and_only_inline_rules(tmp_path):
+def test_inline_without_a_chapter_returns_the_whole_book(tmp_path):
     manager = LanguageQaManager(debounce=0, yield_seconds=0)
     manager.bind(_three_chapter_project(tmp_path))
     wait(manager)
     inline = manager.inline()
-    assert len(inline["findings"]) == 180
-    assert all(f["inline"] for f in inline["findings"])
+    assert len(inline["findings"]) == 360
+    assert all(f["drawn"] for f in inline["findings"])
     drawn = inline_rule_names(ta_pack())
-    assert {f["rule"] for f in inline["findings"]} <= set(drawn)
+    # The reviewed flag is untouched: only the reviewed rules carry it.
+    assert {f["rule"] for f in inline["findings"] if f["inline"]} == {"tamil.vallinam-missing"} <= set(drawn)
     assert inline["chapter"] is None
     # The drawn rules: the in-code INLINE_RULES plus the pack's inline rules
     # (inline on human-labelled precision, DECISIONS.md 2026-09-28).
@@ -1405,10 +1407,12 @@ FINDING_FIELDS = {"id", "book", "chapter", "verse", "rule", "severity", "start",
 
 
 def assert_finding_shape(finding):
-    # A served finding (status, inline, verse) adds exactly one field: `drawn`,
-    # the user's inline threshold applied to it (language_qa_drawn). A producer's
-    # finding (scan_text) has the shape below and nothing more.
-    assert set(finding) - {"drawn"} == FINDING_FIELDS, (set(finding) - {"drawn"}) ^ FINDING_FIELDS
+    # A served finding (status, inline, verse) adds exactly three fields:
+    # `drawn`, the user's inline threshold applied to it, and its rule's measured
+    # reviewer precision and label count (language_qa_drawn.served, #250). A
+    # producer's finding (scan_text) has the shape below and nothing more.
+    served = {"drawn", "rulePrecision", "ruleLabelled"}
+    assert set(finding) - served == FINDING_FIELDS, (set(finding) - served) ^ FINDING_FIELDS
     assert isinstance(finding.get("drawn", False), bool)
     pack = ta_pack()
     pack_rule = pack.by_id(finding["ruleId"].split("/", 1)[1]) if finding["ruleId"].startswith("ta-irv/") else None
@@ -1467,12 +1471,21 @@ def test_terminology_and_wordlist_findings_have_the_layered_shape(tmp_path):
     assert by_text["தமிழ"]["layer"] == "lexicon" and by_text["தமிழ"]["inline"] is False
 
 
-def test_inline_rpc_filters_on_the_findings_own_flag(tmp_path):
+def test_inline_draws_every_finding_by_default_and_the_threshold_never_hides_a_reviewed_one(tmp_path):
+    # #250: a rule not reviewed inline (punctuation.repeated, medium confidence,
+    # unlabelled) is drawn by default and hidden by the confidence floor; the
+    # reviewed-inline வல்லினம் rule stays drawn whatever the threshold.
     manager = LanguageQaManager(debounce=0, yield_seconds=0)
     manager.bind(project_at(tmp_path, verses={"1": "அவனுக்கு பதில் சொன்னான்,,"}))
     wait(manager)
+    by_rule = {f["rule"]: f for f in manager.inline()["findings"]}
+    assert set(by_rule) == {"tamil.vallinam-missing", "punctuation.repeated"}
+    assert by_rule["tamil.vallinam-missing"]["inline"] and not by_rule["punctuation.repeated"]["inline"]
+    assert (by_rule["punctuation.repeated"]["rulePrecision"], by_rule["punctuation.repeated"]["ruleLabelled"]) == (None, 0)
+    manager.configure(inline_precision=100, inline_confidence="high")
     assert [f["rule"] for f in manager.inline()["findings"]] == ["tamil.vallinam-missing"]
-    assert all(f["inline"] for f in manager.inline()["findings"])
+    listed = manager.status(limit=100)["findings"]
+    assert {f["rule"]: f["drawn"] for f in listed} == {"tamil.vallinam-missing": True, "punctuation.repeated": False}
 
 
 def test_inline_rpc_is_project_guarded_and_validates_chapter(fixture_project):
@@ -1506,9 +1519,11 @@ def test_real_dispatcher_auto_open_edit_and_project_guard(fixture_project):
         assert not wrong["success"]
         _r = call(engine, "verse.edit", {"chapter": "1", "verse": "1", "newText": "தமிழ் �"})
         assert _r["success"], _r
-        assert wait(engine._language_qa)["totalFindings"] == 1
+        verse_findings = [f for f in wait(engine._language_qa)["findings"] if f.get("context") != "introduction"]
+        assert len(verse_findings) == 1  # the bare fixture USFM has no book header: header.missing (#253) is set aside
         response = call(engine, "languageQa.status", {"projectPath": str(fixture_project), "limit": 10})
-        assert response["result"]["findings"][0]["rule"] == "unicode.corruption"
+        assert [f for f in response["result"]["findings"]
+                if f.get("context") != "introduction"][0]["rule"] == "unicode.corruption"
         _r = call(engine, "ping")
         assert _r["success"], _r
     finally:

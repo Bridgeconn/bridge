@@ -29,3 +29,26 @@ export function suggestionTag(s: LanguageQaSuggestion): string {
   return [s.kind ? s.kind.replace(/_/g, " ") : "", s.freq !== undefined ? String(s.freq) : ""]
     .filter(Boolean).join(" · ");
 }
+
+/**
+ * The lines of the editor menu's "Why" (#250): what was found, how far
+ * reviewers have confirmed the rule, why it is drawn, and the reason for the
+ * first fix. A reviewed-inline rule is always drawn; any other is drawn
+ * because the Settings › Language QA threshold lets it through
+ * (language_qa_drawn.py). `rulePrecision` is absent from an older engine.
+ */
+export function findingWhy(finding: LanguageQaFinding): string[] {
+  const measured = finding.rulePrecision != null && (finding.ruleLabelled ?? 0) > 0
+    ? `Reviewers confirmed ${Math.round(finding.rulePrecision * 100)}% of ${finding.ruleLabelled} labelled findings of this rule.`
+    : "No reviewer has labelled findings of this rule yet.";
+  const fix = orderedSuggestions(finding).find((s) => s.rationale)?.rationale;
+  return [
+    finding.message,
+    measured,
+    finding.inline
+      ? "Reviewed inline (at least 90% confirmed): always underlined."
+      : `Underlined because your Settings › Language QA threshold lets it through (rule confidence: ${finding.confidence}).`,
+    ...(fix ? [`Fix: ${fix}`] : []),
+    `Rule: ${finding.ruleId}`,
+  ].filter(Boolean);
+}

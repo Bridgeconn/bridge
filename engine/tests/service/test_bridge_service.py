@@ -533,8 +533,9 @@ def test_check_job_can_cancel_and_retry(fixture_project, monkeypatch):
         return []
 
     monkeypatch.setattr(engine, "_run_verse_checks_for_project", slow_check)
+    # Wildebeest alone: no book preflight before the first verse (#252).
     started = call(engine, "checks.start", {
-        "scope": "chapter", "chapters": ["1"], "checks": ["greekroom"],
+        "scope": "chapter", "chapters": ["1"], "checks": ["wildebeest"],
     })["result"]
     assert entered.wait(timeout=1)
 
@@ -580,8 +581,8 @@ def test_live_greek_room_and_status_stay_responsive_during_check_preparation(
 ):
     """A first-time raw-book preflight holds the tN/tW checker lock.
 
-    ReviewPanel immediately asks for a Greek-Room-only live check.  That request
-    must not queue behind resource/USFM/names preparation on the synchronous
+    A verse's Run Greek Room (#252; until then a live check on selection) must
+    not queue behind resource/USFM/names preparation on the synchronous
     stdio dispatcher, otherwise checks.status and check.listForVerse behind it
     both hit their 30-second desktop timeout.
     """
@@ -642,12 +643,14 @@ def test_check_job_rejects_a_second_active_job(fixture_project, monkeypatch):
         return []
 
     monkeypatch.setattr(engine, "_run_verse_checks_for_project", slow_check)
+    # Wildebeest alone: no book preflight before the first verse (#252 made
+    # "greekroom" include the USFM checker and names scans).
     first = call(engine, "checks.start", {
-        "scope": "chapter", "chapters": ["1"], "checks": ["greekroom"],
+        "scope": "chapter", "chapters": ["1"], "checks": ["wildebeest"],
     })["result"]
     assert entered.wait(timeout=1)
     second = call(engine, "checks.start", {
-        "scope": "chapter", "chapters": ["1"], "checks": ["greekroom"],
+        "scope": "chapter", "chapters": ["1"], "checks": ["wildebeest"],
     })
     assert second["success"] is False
     assert second["error"]["code"] == "job_conflict"

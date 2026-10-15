@@ -103,7 +103,7 @@
 </div>
 
 <style>
-  .popover { position: fixed; z-index: 10000; width: 420px; max-width: calc(100vw - 16px); max-height: min(70vh, 520px);
+  .popover { position: fixed; z-index: var(--z-popover); width: 420px; max-width: calc(100vw - 16px); max-height: min(70vh, 520px);
     overflow-y: auto; box-sizing: border-box; padding: 10px 12px; border: 1px solid var(--border-strong);
     border-radius: 8px; background: var(--surface); color: var(--text); box-shadow: 0 10px 28px rgba(15, 23, 42, .22);
     font-size: var(--fs-xs); outline: none; }

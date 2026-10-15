@@ -53,6 +53,10 @@ export interface QaFinding {
   original_text: string;
   engine: string;
   check_type: string;
+  /** The elective check that produced it (#251): "tN", "tW", "tc",
+   *  "alignment", "text", "usfm", "names" or "wildebeest". A run of some
+   *  checks replaces only those checks' findings (checkSelection.ts). */
+  check?: string;
   category: FindingCategory;
   severity: Severity;
   confidence: number;
@@ -63,6 +67,11 @@ export interface QaFinding {
   resource_versions: Record<string, string>;
   status: FindingStatus;
   human_comment: string | null;
+  /** A decision recorded for this item under another finding id (#273: an id
+   *  built before the ids were made stable, or the pending item of a tC check
+   *  now stale or invalidated) that could not be matched to exactly this
+   *  finding. Shown, never applied. */
+  unmatched_decision?: { decision: string; note: string; decidedAt: string | null; findingId: string } | null;
   created_at: string;
   resolved_at: string | null;
 }
@@ -165,7 +174,11 @@ export interface VerseAlignment {
   wordBank: TokenRef[];
 }
 
-export type AlignmentWorkStatus = "complete" | "partial" | "untouched" | "invalid";
+/** translationCore's untouched / partial / complete, Bridge's invalid, and
+ * `complete_cross_verse` (#228): not tC-complete, but every remaining gap is
+ * closed by an active cross-verse link or a null decision. The verse ✓
+ * accepts it; export does not change. */
+export type AlignmentWorkStatus = "complete" | "complete_cross_verse" | "partial" | "untouched" | "invalid";
 
 export interface AlignmentToken extends TokenRef {
   id: string;
@@ -202,6 +215,7 @@ export interface AlignmentHistoryEntry {
 
 export interface AlignmentCounts {
   complete: number;
+  complete_cross_verse: number;
   partial: number;
   untouched: number;
   invalid: number;
@@ -512,9 +526,11 @@ export interface AutoAlignVerdict {
 }
 
 /** #221: the chapter / book job over overlapping windows. */
+export type AutoAlignScope = "chapter" | "book" | "window";
+
 export interface AutoAlignJobStatus {
   jobId: string;
-  scope: "chapter" | "book";
+  scope: AutoAlignScope;
   apply: boolean;
   state: "queued" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled";
   stage: string;
@@ -524,10 +540,20 @@ export interface AutoAlignJobStatus {
   windowsFailed: number;
   percent: number;
   currentWindow: { chapter: string; verses: string[] } | null;
+  /** #242: the provider call in flight for the current window (`number` 1 or
+   * 2 while a pass is being asked, null while reconciling or writing, when
+   * `stage` says which). Null between windows. */
+  currentPass: { number: number | null; of: number; direction: string; stage: string } | null;
+  /** #242: the full window result, only for a window-scoped job once it has
+   * succeeded; the chapter summary leaves out suggestions and contexts. */
+  windowResult: AutoAlignWindowResult | null;
   /** Counts by verdict, e.g. { ALIGNED_CLEAN: 24, NEEDS_REVIEW: 6 }. */
   verdictCounts: Record<string, number>;
   verdicts: Record<string, AutoAlignVerdictKind>;
   usage: { calls: number; totalTokens: number; estimatedCostUSD: number };
+  /** Per window, keyed "chapter:first-last": a failed window's `error` is the
+   * provider's own text, while `error` below only counts failed windows. */
+  results?: Record<string, { chapter: string; verses: string[]; status: "succeeded" | "failed"; error: string | null }>;
   error: string | null;
   unavailable: { reason: string; message: string } | null;
   resumeOf: string;
@@ -537,7 +563,7 @@ export interface AutoAlignJobStatus {
 
 /** What a job would cost, worked out offline before the click. */
 export interface AutoAlignEstimate {
-  scope: "chapter" | "book";
+  scope: AutoAlignScope;
   chapters: string[];
   windows: number;
   calls: number;
@@ -704,6 +730,24 @@ export interface DesktopConnectorState {
   [key: string]: unknown;
 }
 
+/** #282: Bridge's Paratext connector on this PC (paratext_install.py). */
+export interface ParatextConnectorStatus {
+  paratextFound: boolean;
+  paratextDir: string;
+  paratextVersion: string;
+  /** Paratext is open: the connector cannot be installed until it is closed. */
+  running: boolean;
+  installed: boolean;
+  installedVersion: string;
+  bundledVersion: string;
+  compilerFound: boolean;
+  /** "install" / "update": offer the button; "none": current; "unavailable": nothing to offer. */
+  action: "install" | "update" | "none" | "unavailable";
+  message: string;
+  /** The install in progress or last finished, run off the dispatcher thread. */
+  install: { state: "idle" | "running" | "succeeded" | "failed"; message: string };
+}
+
 export interface NavigationTargetState extends DesktopConnectorState {
   enabled: boolean;
   checking: boolean;
@@ -753,12 +797,47 @@ export interface ProjectInfo {
   };
   importedProjects?: ImportedProject[];
   passageSemantic?: {
-    state: "NO_PROJECT" | "READY" | "UNAVAILABLE" | "RECOVERY_REQUIRED";
+    /** BUILDING: the runtime is being built on a worker after project.open returned (#112). */
+    state: "NO_PROJECT" | "BUILDING" | "READY" | "UNAVAILABLE" | "RECOVERY_REQUIRED";
     available: boolean;
     readOnly: boolean;
     error?: string;
     [key: string]: unknown;
   };
+}
+
+export type ImportJobState = "queued" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled";
+
+/** What project.import.start returned: the written and registered books. The
+ * client opens `primaryProjectPath` itself with project.open. */
+export interface ImportJobResult {
+  sourcePath: string;
+  kind: ImportPreview["kind"];
+  projectName: string;
+  bibleName: string;
+  primaryProjectPath: string;
+  projects: ImportedProject[];
+}
+
+/** One poll of the background import (#231). `phaseLabel` is the engine's
+ * own wording for the phase; `chapter`/`chapterCount` are set only while the
+ * first book is being normalised. */
+export interface ImportJobSnapshot {
+  jobId: string;
+  sourcePath: string;
+  state: ImportJobState;
+  phase: string;
+  phaseLabel: string;
+  totalBooks: number;
+  completedBooks: number;
+  currentBook: string | null;
+  chapter: number | null;
+  chapterCount: number | null;
+  percent: number;
+  result: ImportJobResult | null;
+  error: string | null;
+  createdAt: string;
+  finishedAt: string | null;
 }
 
 export interface ImportBook {
@@ -819,6 +898,33 @@ export interface DuplicateAssessment {
   collectionFingerprint: string;
 }
 
+/** #236/#237: the three roles of requirement 4. */
+export type UserRole = "project_admin" | "editor" | "reporter";
+/** team.roles (#279): each user's role on the open project (null: their
+ *  installation role applies), and the signed-in user's role there. */
+export interface TeamRoles {
+  users: Array<{ userId: string; displayName: string; installationRole: UserRole; projectRole: UserRole | null }>;
+  effectiveRole: UserRole;
+  projectRole: UserRole | null;
+}
+
+/** One row of the workspace's users table (#237). `current` marks the user
+ * this installation is signed in as. */
+export interface WorkspaceUser {
+  userId: string;
+  displayName: string;
+  role: UserRole;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+  current: boolean;
+}
+
+export interface UsersList {
+  users: WorkspaceUser[];
+  currentUserId: string;
+}
+
 export interface RegisteredProject {
   projectId: string;
   collectionId?: string;
@@ -833,6 +939,18 @@ export interface RegisteredProject {
   bibleName?: string;
   lastOpenedAt?: string;
   bookCount?: number;
+  /** #238: the name the reviewer gave the project in the list (the import's
+   * `projectName` stays beside it); set when archived; who opened it last,
+   * as the stable user id and as the display name the workspace knows. */
+  displayName?: string;
+  archivedAt?: string;
+  lastOpenedBy?: string;
+  lastOpenedByName?: string;
+  /** #238: the cached totals summed over the collection's books, or null
+   * when no book has a rollup yet. */
+  progress?: (Omit<BookProgressSummary, "findingCount" | "approvedFindingCount" | "updatedAt"> & {
+    booksWithProgress: number;
+  }) | null;
 }
 
 export interface ImportedProject {
@@ -856,6 +974,15 @@ export interface BookProgressSummary {
   reviewedVerseCount: number;
   findingCount: number;
   approvedFindingCount: number;
+  /** #239: verses whose alignment ✓ would show (tC-complete or complete via
+   * cross-verse), over the verses of the chapters any writer has counted.
+   * Absent on a rollup written before 0.17. */
+  alignedVerseCount?: number;
+  alignedKnownVerseCount?: number;
+  /** #239: verses the Language QA stage scanned, and those of them with no
+   * finding still open. */
+  languageQaCheckedVerseCount?: number;
+  languageQaCleanVerseCount?: number;
   updatedAt: string | null;
 }
 
@@ -867,6 +994,53 @@ export interface BookProgressEntry {
   missing: boolean;
   /** null = lazy sibling never opened, or a materialized book never checked yet. */
   progress: BookProgressSummary | null;
+  /** #240: who this book, or its chapters, is assigned to; from the workspace cache. */
+  assignments?: Assignment[];
+}
+
+/** #80: this device's view of the team hub. */
+export interface HubStatus {
+  joined: boolean;
+  url: string;
+  identity: { userId?: string; displayName?: string; role?: UserRole };
+  linkedHubProjectId: string;
+  sync: { pullCursor: number; lastPushAt: string | null; lastPullAt: string | null; lastError: string | null } | null;
+  openConflicts: number;
+  syncing: boolean;
+}
+
+/** #80: another device's change to a row this device also changed. Kept,
+ *  never applied; settling it marks it. */
+export interface HubConflict {
+  id: number;
+  eventId: string;
+  table: string;
+  rowKey: string;
+  baseRevision: number | null;
+  localRevision: number | null;
+  reason: string;
+  theirActorId: string;
+  theirActorName: string;
+  theirCreatedAt: string;
+  theirPayload: Record<string, unknown>;
+  receivedAt: string;
+  resolvedAt: string | null;
+  resolution: string | null;
+}
+
+/** One assignment (#240): `chapter` is "" for the whole book. */
+export interface Assignment {
+  chapter: string;
+  assigneeId: string;
+  assigneeName: string;
+  assignedBy: string;
+  assignedAt: string;
+}
+
+export interface AssignmentsList {
+  bookId: string;
+  path: string;
+  assignments: Assignment[];
 }
 
 export type VerseNoteKind = "footnote" | "xref";
@@ -1147,12 +1321,23 @@ export interface CheckJobLanguageQa {
   limitations: string[];
 }
 
+/** check.loadChapterFindings (#272). */
+export interface StoredChapterFindings {
+  chapter: string;
+  current: boolean;
+  checkGroups: string[];
+  verses: Record<string, QaFinding[]>;
+}
+
 export interface CheckJobSnapshot {
   jobId: string;
   scope: "chapter" | "book";
   projectPath: string;
   state: CheckJobState;
   checks: string[];
+  /** The finding groups this job refreshes (#251), "languageQa" included when
+   *  it ran; a verse's findings of any other group are kept. */
+  checkGroups?: string[];
   chapters: string[];
   chapterVerses: Record<string, string[]>;
   totalVerses: number;
@@ -1174,8 +1359,9 @@ export interface CheckJobSnapshot {
   finishedAt: string | null;
   languageQa?: CheckJobLanguageQa;
   /** Wall clock per stage ("stage:QA") and per engine ("greekroom.wildebeest"),
-   *  slowest first; measurement only (engine check_timing, 2026-10-08). */
-  timings?: Record<string, { ms: number; calls: number }>;
+   *  slowest first; measurement only (engine check_timing, 2026-10-08).
+   *  `cached`: times the step was reused from a cache instead of run (#271). */
+  timings?: Record<string, { ms: number; calls: number; cached?: number }>;
   elapsedSeconds?: number;
 }
 
@@ -1251,6 +1437,10 @@ export interface SettingsData {
    *  rename re-labels the rows you already wrote instead of splitting your
    *  history between two apparent actors. */
   localUserId: string;
+  /** #236: the signed-in user's role; #237: true when the startup picker
+   *  must be shown (several active users and none chosen yet). */
+  localUserRole?: UserRole;
+  needsUserChoice?: boolean;
   reviewerMode: "basic" | "advanced";
   paratextUsername: string;
   paratextNavigation: boolean;
@@ -1258,9 +1448,10 @@ export interface SettingsData {
   /** Report screen: hide findings AI triage rated this likely (50-100) to be
    * a false positive. 0 means off. Default 90. */
   triageHideThreshold: number;
-  /** Settings > Language QA: an indic-qa finding is drawn in the text only
-   * when its rule's measured reviewer precision is at least this (0-100; a
-   * rule nobody labelled always passes). 0, the default, draws them all. */
+  /** Settings > Language QA: a finding whose rule is not reviewed inline is
+   * drawn in the text only when its rule's measured reviewer precision is at
+   * least this (0-100; a rule nobody labelled always passes). 0, the default,
+   * draws them all (#250). */
   languageQaInlinePrecision: number;
   /** The lowest rule confidence drawn in the text. Default "low" (every rule). */
   languageQaInlineConfidence: InlineConfidence;

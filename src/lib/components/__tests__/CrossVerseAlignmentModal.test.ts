@@ -3,10 +3,11 @@ import { render, screen, fireEvent, waitFor, within } from "@testing-library/sve
 import { get } from "svelte/store";
 import CrossVerseAlignmentModal from "../CrossVerseAlignmentModal.svelte";
 import {
-  alignmentStatusByVerse, chapterVerseNums, checkStatusByVerse, currentChapter, findingsByVerse,
+  alignmentRevisionByVerse, alignmentStatusByVerse, chapterVerseNums, checkStatusByVerse, checkGroupsByVerse,
+  currentChapter, findingsByVerse,
 } from "../../stores";
 import type {
-  AlignmentContext, AlignmentRange, AlignmentToken, AutoAlignWindowResult, CrossVerseLink, CrossVerseLinkResult,
+  AlignmentContext, AlignmentRange, AlignmentToken, AutoAlignJobStatus, AutoAlignWindowResult, CrossVerseLink, CrossVerseLinkResult,
 } from "../../types/finding";
 
 const {
@@ -71,7 +72,7 @@ function context(verse: string, sources: string[], targets: string[], aligned: n
     sourceAvailable: true, sourceMessage: "",
     sourceDirection: "ltr", targetDirection: "ltr",
     issues: [], canComplete: false, history: [],
-    chapterStatus: { complete: 1, partial: 1, untouched: 2, invalid: 0 },
+    chapterStatus: { complete: 1, complete_cross_verse: 0, partial: 1, untouched: 2, invalid: 0 },
     gaps: {
       sourceUnmatched: groups.filter((g) => g.bottomIds.length === 0).length,
       targetUnmatched: targets.length - aligned,
@@ -128,7 +129,9 @@ function seed() {
   chapterVerseNums.set({ "1": ["1", "2", "3-4", "5"] });
   currentChapter.set("1");
   alignmentStatusByVerse.set({});
+  alignmentRevisionByVerse.set({});
   checkStatusByVerse.set({});
+  checkGroupsByVerse.set({});
   findingsByVerse.set({});
 }
 
@@ -221,13 +224,16 @@ describe("CrossVerseAlignmentModal", () => {
 
   it("a same-verse drop realigns through alignment.realign, resending the column's existing words, then reruns local checks", async () => {
     realignWords.mockResolvedValue({ ...V2, status: "complete", gaps: { sourceUnmatched: 0, targetUnmatched: 0 } });
+    // Every selected check has run on the verse (#251): re-running only the
+    // alignment checks keeps its ✓.
+    checkGroupsByVerse.set({ "1:2": ["tN", "tW", "tc", "alignment", "text", "languageQa"] });
     await renderPage("2");
     // Click-to-pick-up is the same one-step drop the pointer drag delivers.
     await pickUp("was", "2");
     await fireEvent.click(screen.getByLabelText(/Align picked-up word to λόγος in verse 2/));
     await waitFor(() => expect(realignWords).toHaveBeenCalledTimes(1));
     expect(realignWords).toHaveBeenCalledWith("1", "2", ["H001"], ["T001", "T002"], V2.alignment);
-    await waitFor(() => expect(runVerseChecks).toHaveBeenCalledWith("1", "2", ["alignment", "greekroom"]));
+    await waitFor(() => expect(runVerseChecks).toHaveBeenCalledWith("1", "2", ["alignment"]));
     expect(get(alignmentStatusByVerse)["1:2"]).toBe("complete");
     expect(get(checkStatusByVerse)["1:2"]).toBe("succeeded");
     expect(get(findingsByVerse)["1:2"]).toEqual([{ id: "f1" }]);
@@ -247,8 +253,8 @@ describe("CrossVerseAlignmentModal", () => {
       { chapter: "1", verse: "2", bottomId: "T002" },
     );
     expect(realignWords).not.toHaveBeenCalled();
-    await waitFor(() => expect(runVerseChecks).toHaveBeenCalledWith("1", "3-4", ["alignment", "greekroom"]));
-    await waitFor(() => expect(runVerseChecks).toHaveBeenCalledWith("1", "2", ["alignment", "greekroom"]));
+    await waitFor(() => expect(runVerseChecks).toHaveBeenCalledWith("1", "3-4", ["alignment"]));
+    await waitFor(() => expect(runVerseChecks).toHaveBeenCalledWith("1", "2", ["alignment"]));
     expect(await screen.findByText(/Cross-verse link saved/)).toBeInTheDocument();
 
     // The source row shows where the token is realized ...
@@ -264,6 +270,8 @@ describe("CrossVerseAlignmentModal", () => {
     const strip = screen.getByLabelText("Verse verdicts");
     expect(within(strip).getByText(/Range: 1 source · 2 target unmatched/)).toBeInTheDocument();
     expect(get(alignmentStatusByVerse)["1:2"]).toBe("partial");
+    // Both ends of the link count as written (#291); neither verse's status moved.
+    expect(get(alignmentRevisionByVerse)).toEqual({ "1:3-4": 1, "1:2": 1 });
   });
 
   it("the × on a linked chip or an accounted word removes the link through alignment.crossVerse.unlink", async () => {
@@ -305,7 +313,7 @@ describe("CrossVerseAlignmentModal", () => {
     await renderPage("2");
     await fireEvent.click(screen.getByRole("button", { name: "Unalign God from θεός" }));
     await waitFor(() => expect(unalignWords).toHaveBeenCalledWith("1", "1", ["T001"], V1.alignment));
-    await waitFor(() => expect(runVerseChecks).toHaveBeenCalledWith("1", "1", ["alignment", "greekroom"]));
+    await waitFor(() => expect(runVerseChecks).toHaveBeenCalledWith("1", "1", ["alignment"]));
   });
 
   it("clicking a verse in the verdict strip filters both columns to that verse's gaps", async () => {
@@ -411,7 +419,7 @@ describe("CrossVerseAlignmentModal", () => {
         { chapter: "1", verse: "3-4", topId: "H001" },
         { chapter: "1", verse: "2", bottomId: "T002" },
       ));
-      await waitFor(() => expect(runVerseChecks).toHaveBeenCalledWith("1", "3-4", ["alignment", "greekroom"]));
+      await waitFor(() => expect(runVerseChecks).toHaveBeenCalledWith("1", "3-4", ["alignment"]));
     });
 
     it("an ambiguous proposal has no one-click accept", async () => {
@@ -511,7 +519,7 @@ describe("CrossVerseAlignmentModal", () => {
       autoAlignWindow.mockResolvedValue(after());
       await renderPage("2");
       await fireEvent.click(await screen.findByRole("button", { name: /Align automatically/ }));
-      await waitFor(() => expect(autoAlignWindow).toHaveBeenCalledWith("1", ["1", "2", "3-4"]));
+      await waitFor(() => expect(autoAlignWindow).toHaveBeenCalledWith("1", ["1", "2", "3-4"], true, expect.any(Function)));
       const strip = screen.getByLabelText("Verse verdicts");
       expect(await within(strip).findByText(/✓ Aligned/)).toBeInTheDocument();
       expect(within(strip).getAllByText(/Needs review/).length).toBeGreaterThan(0);
@@ -527,7 +535,7 @@ describe("CrossVerseAlignmentModal", () => {
       expect(screen.getAllByText("ai").length).toBeGreaterThan(0);
       expect(screen.getByText(/Last run: 2 requests · 41,280 tokens/)).toBeInTheDocument();
       // Every verse was rechecked so the editor's findings are current.
-      await waitFor(() => expect(runVerseChecks).toHaveBeenCalledWith("1", "2", ["alignment", "greekroom"]));
+      await waitFor(() => expect(runVerseChecks).toHaveBeenCalledWith("1", "2", ["alignment"]));
     });
 
     it("is disabled with the reason when no key is configured, and for a range it cannot take", async () => {
@@ -586,6 +594,66 @@ describe("CrossVerseAlignmentModal", () => {
       await renderPage("2");
       await fireEvent.click(await screen.findByRole("button", { name: /Align automatically/ }));
       expect(await screen.findByText(/No OpenAI-compatible API key is configured/)).toBeInTheDocument();
+    });
+
+    /** A window-job status as the engine reports it (#242). */
+    function status(over: Partial<AutoAlignJobStatus> = {}): AutoAlignJobStatus {
+      return {
+        jobId: "j1", scope: "window", apply: true, state: "running", stage: "", chapters: ["1"], windowsTotal: 1,
+        windowsDone: 0, windowsFailed: 0, percent: 0, currentWindow: { chapter: "1", verses: ["1", "2", "3-4"] },
+        currentPass: null, windowResult: null, verdictCounts: {}, verdicts: {},
+        usage: { calls: 0, totalTokens: 0, estimatedCostUSD: 0 }, error: null, unavailable: null, resumeOf: "",
+        createdAt: "", finishedAt: null, ...over,
+      };
+    }
+
+    it("the button shows the pass the job status reports, not a timer (#243)", async () => {
+      let report: (s: AutoAlignJobStatus) => void = () => {};
+      let finish: (r: AutoAlignWindowResult) => void = () => {};
+      autoAlignWindow.mockImplementation((_c: string, _v: string[], _a: boolean, onProgress: (s: AutoAlignJobStatus) => void) => {
+        report = onProgress;
+        return new Promise((resolve) => { finish = resolve; });
+      });
+      await renderPage("2");
+      await fireEvent.click(await screen.findByRole("button", { name: /Align automatically/ }));
+      expect(await screen.findByText("Starting…")).toBeInTheDocument();
+      report(status({ currentPass: { number: 1, of: 2, direction: "source-first", stage: "" } }));
+      expect(await screen.findByText("Aligning… pass 1 of 2")).toBeInTheDocument();
+      report(status({ currentPass: { number: 2, of: 2, direction: "target-first", stage: "" } }));
+      expect(await screen.findByText("Aligning… pass 2 of 2")).toBeInTheDocument();
+      report(status({ currentPass: { number: null, of: 2, direction: "", stage: "reconcile" } }));
+      expect(await screen.findByText("Comparing the two passes…")).toBeInTheDocument();
+      finish(after());
+      expect(await screen.findByRole("button", { name: /Align again/ })).toBeInTheDocument();
+    });
+
+    it("a provider timeout says nothing was changed, with the raw text one click away, and leaves the page usable", async () => {
+      autoAlignWindow.mockImplementation(async (_c: string, _v: string[], _a: boolean, onProgress: (s: AutoAlignJobStatus) => void) => {
+        onProgress(status({
+          state: "failed", windowsDone: 1, windowsFailed: 1, error: "1 window(s) failed.",
+          results: { "1:1-3-4": { chapter: "1", verses: ["1", "2", "3-4"], status: "failed", error: "The read operation timed out" } },
+        }));
+        throw new Error("1 window(s) failed.");
+      });
+      await renderPage("2");
+      await fireEvent.click(await screen.findByRole("button", { name: /Align automatically/ }));
+      const alert = await screen.findByRole("alert");
+      expect(alert.textContent).toContain("The AI provider did not answer within 4 minutes; nothing was changed.");
+      expect(alert.textContent).not.toContain("1 window(s) failed.");
+      const details = within(alert).getByText("Show details").closest("details") as HTMLDetailsElement;
+      expect(details.open).toBe(false);
+      expect(within(details).getByText("The read operation timed out")).toBeInTheDocument();
+      await waitFor(() => expect(screen.getByRole("button", { name: /Align automatically/ })).toBeEnabled());
+      expect(screen.getByRole("button", { name: /Suggest links/ })).toBeEnabled();
+    });
+
+    it("an error with no plain wording is shown as it is, with no details", async () => {
+      autoAlignWindow.mockRejectedValue(new Error("Verse/project data changed while AI was preparing alignment"));
+      await renderPage("2");
+      await fireEvent.click(await screen.findByRole("button", { name: /Align automatically/ }));
+      const alert = await screen.findByRole("alert");
+      expect(alert.textContent).toContain("Verse/project data changed while AI was preparing alignment");
+      expect(within(alert).queryByText("Show details")).toBeNull();
     });
 
     it("loads the stored verdict of a verse an earlier pass ran on", async () => {

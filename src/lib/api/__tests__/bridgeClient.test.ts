@@ -26,7 +26,7 @@ describe("bridgeClient over engine_call", () => {
     expect(tauriInvoke).toHaveBeenCalledTimes(1);
     expect(tauriInvoke).toHaveBeenCalledWith("engine_call", {
       method: "project.open",
-      params: { path: "C:/projects/rut", projectId: "project-1" },
+      params: { path: "C:/projects/rut", projectId: "project-1", prepareInBackground: true },
     });
     expect(info).toEqual({ bookId: "rut" });
   });

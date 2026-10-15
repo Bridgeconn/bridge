@@ -43,15 +43,21 @@ class EngineRequest:
     id: str
     method: str
     params: dict[str, Any] = field(default_factory=dict)
+    # #79: which project session the request runs in. "" is the default
+    # session, the one the desktop's stdio loop always uses, so the desktop
+    # never sends it. A hub client names its own session so two clients on
+    # two projects never clobber each other's open project.
+    session: str = ""
 
     @staticmethod
     def from_json(raw: str) -> "EngineRequest":
-        d = json.loads(raw)
-        return EngineRequest(id=d["id"], method=d["method"], params=d.get("params", {}))
+        return EngineRequest.from_dict(json.loads(raw))
 
     @staticmethod
     def from_dict(d: dict[str, Any]) -> "EngineRequest":
-        return EngineRequest(id=d["id"], method=d["method"], params=d.get("params", {}))
+        return EngineRequest(
+            id=d["id"], method=d["method"], params=d.get("params", {}), session=str(d.get("session") or ""),
+        )
 
 
 @dataclass

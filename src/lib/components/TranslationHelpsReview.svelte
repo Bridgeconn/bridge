@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { bridge } from "../api/bridgeClient";
+  import { recheckVerse } from "../verseChecks";
   import {
-    aiCheckReviewsByVerse, checkStatusByVerse, currentChapter, findingsByVerse, nativeChecksByVerse,
+    aiCheckReviewsByVerse, currentChapter, nativeChecksByVerse,
     allowManualOverride, selectedVerse, verseDisplay, verseKey, verseTexts,
   } from "../stores";
   import type {
@@ -320,13 +321,9 @@
     if (rows.length === 0) rows = [{ text: "", occurrence: 1, occurrences: 0 }];
   }
 
-  async function refreshLocalFindings(operationChapter: string, operationVerse: string, operationKey: string): Promise<void> {
-    const local = await bridge.runVerseChecks(operationChapter, operationVerse, ["local"]);
-    findingsByVerse.update((values) => {
-      const live = (values[operationKey] ?? []).filter((finding) => finding.engine === "wildebeest");
-      return { ...values, [operationKey]: [...live, ...local] };
-    });
-    checkStatusByVerse.update((values) => ({ ...values, [operationKey]: "succeeded" }));
+  async function refreshLocalFindings(operationChapter: string, operationVerse: string): Promise<void> {
+    // tN and tW only; the verse's other findings are kept (#251).
+    await recheckVerse(operationChapter, operationVerse, ["tN", "tW"]);
   }
 
   async function saveSelection(check: NativeCheckReview): Promise<void> {
@@ -368,7 +365,7 @@
         mutationNotice = `${toolLabel(check)} selection saved.`;
       }
       try {
-        await refreshLocalFindings(operationChapter, operationVerse, operationKey);
+        await refreshLocalFindings(operationChapter, operationVerse);
       } catch (error) {
         if (key === operationKey) mutationNotice = `Selection saved, but local findings could not refresh: ${error instanceof Error ? error.message : String(error)}`;
       }
@@ -407,7 +404,7 @@
         mutationNotice = `${toolLabel(check)} selection cleared.`;
       }
       try {
-        await refreshLocalFindings(operationChapter, operationVerse, operationKey);
+        await refreshLocalFindings(operationChapter, operationVerse);
       } catch (error) {
         if (key === operationKey) mutationNotice = `Selection cleared, but local findings could not refresh: ${error instanceof Error ? error.message : String(error)}`;
       }
@@ -490,7 +487,7 @@
         onStateChanged();
       }
       try {
-        await refreshLocalFindings(operationChapter, operationVerse, operationKey);
+        await refreshLocalFindings(operationChapter, operationVerse);
       } catch (error) {
         mutationNotice = `AI proposal applied, but local findings could not refresh: ${error instanceof Error ? error.message : String(error)}`;
       }

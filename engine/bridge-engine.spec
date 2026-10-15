@@ -52,6 +52,12 @@ a = Analysis(
         # to PyInstaller's static import analysis, so it must be listed explicitly or
         # a frozen build ships with no Logos bridge helper at all (Phase 7).
         ('logos_connector', 'logos_connector'),
+        # #282: the Paratext connector's C# source, compiled on the user's PC by
+        # tc_ai_bridge/paratext_install.py (paratext_plugin/README.md). Only the
+        # three sources: the plugin is built against that PC's own Paratext.
+        ('../paratext_plugin/AiBridgeConnectorPlugin.cs', 'paratext_plugin'),
+        ('../paratext_plugin/NamedPipeBridgeServer.cs', 'paratext_plugin'),
+        ('../paratext_plugin/BridgeProtocol.cs', 'paratext_plugin'),
         # indic-qa's checker core (vendor/indic-qa/NOTICE.md): imported in-process
         # through sys.path by tc_ai_bridge/language_packs/indic_qa_vendor.py, so
         # invisible to import analysis, like versification. ~0.6 MB of Python;
@@ -78,7 +84,8 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # The hub's HTTP server (#79) is a pip extra, never in the desktop sidecar.
+    excludes=['bridge_server', 'fastapi', 'starlette', 'uvicorn'],
     noarchive=False,
     optimize=0,
 )

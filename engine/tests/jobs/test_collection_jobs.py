@@ -7,7 +7,7 @@ import time
 import pytest
 
 from bridge_service import BridgeEngine
-from collection_jobs import CollectionJobConflict, CollectionJobManager, CollectionJobSpec
+from collection_jobs import HASH_COVERS, CollectionJobConflict, CollectionJobManager, CollectionJobSpec
 from tc_ai_bridge.language_qa_jobs import LanguageQaManager
 from tc_ai_bridge.project_import import collection_qa_runs
 from tests.support.projects import _write_minimal_book, call
@@ -44,6 +44,7 @@ def test_runs_every_book_in_order_records_each_and_runs_the_final_stage_once():
     assert snapshot["state"] == "succeeded" and ran == ["rut", "gen", "exo"]
     assert [r["bookId"] for r in recorded] == ["rut", "gen", "exo"]
     assert recorded[0]["contentHash"] == "h-rut" and recorded[0]["findingsByCategory"] == {"sandhi": 1}
+    assert recorded[0]["hashCovers"] == HASH_COVERS
     assert finals == [["rut", "gen", "exo"]] and snapshot["finalStage"] == {"ok": True}
     assert all(b["state"] == "done" and b["elapsedSeconds"] is not None for b in snapshot["books"])
 
@@ -51,8 +52,8 @@ def test_runs_every_book_in_order_records_each_and_runs_the_final_stage_once():
 def test_resumes_by_skipping_books_whose_content_is_unchanged():
     ran = []
     previous = {"rut": {"state": "done", "contentHash": "h-rut", "checks": ["languageQa"],
-                        "findingsByCategory": {"typo": 2}},
-                "gen": {"state": "done", "contentHash": "old", "checks": ["languageQa"]}}
+                        "findingsByCategory": {"typo": 2}, "hashCovers": HASH_COVERS},
+                "gen": {"state": "done", "contentHash": "old", "checks": ["languageQa"], "hashCovers": HASH_COVERS}}
     manager = CollectionJobManager()
     started = manager.start(
         CollectionJobSpec("/x/rut", books("rut", "gen"), ("languageQa",), previous_runs=previous),
@@ -62,9 +63,12 @@ def test_resumes_by_skipping_books_whose_content_is_unchanged():
     assert ran == ["gen"]  # rut unchanged since its last completed run; gen changed
     assert [b["state"] for b in snapshot["books"]] == ["skipped", "done"]
     assert snapshot["books"][0]["findingsByCategory"] == {"typo": 2}
-    # A previous run with fewer checks does not count; nor does force.
+    # A previous run with fewer checks does not count; nor does force; nor does a
+    # run recorded when the hash covered less (#274: chapter files only).
+    older = {"rut": {k: v for k, v in previous["rut"].items() if k != "hashCovers"}}
     for spec in (CollectionJobSpec("/x/rut", books("rut"), ("languageQa", "local"), previous_runs=previous),
-                 CollectionJobSpec("/x/rut", books("rut"), ("languageQa",), previous_runs=previous, force=True)):
+                 CollectionJobSpec("/x/rut", books("rut"), ("languageQa",), previous_runs=previous, force=True),
+                 CollectionJobSpec("/x/rut", books("rut"), ("languageQa",), previous_runs=older)):
         ran.clear()
         wait_done(manager, manager.start(spec, run_book=lambda book, cancel: ran.append(1) or {"state": "succeeded"},
                                          record_run=lambda e: None, book_hash=lambda b: "h-rut")["jobId"])
@@ -197,3 +201,59 @@ def test_checks_start_is_refused_while_a_collection_run_is_active(three_book_col
         release.set()
     finally:
         engine._language_qa.unbind()
+
+
+# ---- what a recorded run is keyed by (#274) ----------------------------------------
+
+def test_the_content_hash_moves_with_every_input_a_books_checks_read(tmp_path, monkeypatch):
+    """A pack bump, overrides or checker settings, the termbase, the Language QA
+    setting, a headings file or an alignment file each make an unchanged-text
+    book run again: each changes book_content_hash, and putting it back restores it."""
+    from collection_jobs import book_content_hash
+    from tc_ai_bridge.language_packs import registry
+    from tc_ai_bridge.tc_project import TranslationCoreProject
+    root = tmp_path / "rut"
+    _write_minimal_book(root, "rut", "அந்த காகம் பறந்தது.")
+    packs = tmp_path / "packs"
+    (packs / "ta-irv").mkdir(parents=True)
+    (packs / "ta-irv" / "pack.json").write_text(json.dumps({"version": "1.3.0"}), encoding="utf-8")
+    monkeypatch.setattr(registry, "packs_dir", lambda: packs)
+    monkeypatch.setattr(registry, "available", lambda: [{"language": "ta", "name": "Tamil", "pack": "ta-irv"}])
+    base = book_content_hash(root, "rut")
+    assert base and book_content_hash(root, "rut") == base
+
+    def changes(path, text):
+        before = path.read_bytes() if path.is_file() else None
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        moved = book_content_hash(root, "rut") != base
+        path.unlink() if before is None else path.write_bytes(before)
+        assert book_content_hash(root, "rut") == base
+        return moved
+
+    assert changes(packs / "ta-irv" / "pack.json", json.dumps({"version": "1.4.0"}))
+    overrides = root / ".apps" / "translationCoreAI" / "language-packs" / "ta-irv" / "overrides.json"
+    assert changes(overrides, json.dumps({"checker": {"sandhi": {"dangling": False}}}))
+    assert changes(root / "rut" / "1.headings.json", json.dumps({"1": [{"tag": "s", "text": "காகம்"}]}))
+    alignment = root / ".apps" / "translationCore" / "alignmentData" / "rut" / "1.json"
+    assert changes(alignment, json.dumps({"1": {"alignments": [], "wordBank": [{"word": "x"}]}}))
+    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    assert changes(root / "manifest.json", json.dumps({**manifest, "language_qa": {"pack": "off"}}))
+    project = TranslationCoreProject(root)
+    with_workbench = book_content_hash(root, "rut")
+    project.record_terminology_rule("crow", approved_renderings=["காகம்"])
+    assert book_content_hash(root, "rut") != with_workbench
+
+
+def test_a_recorded_run_reaches_every_siblings_collection_file(three_book_collection):
+    """#274: qaRuns and qaFinalStage are the collection's, so whichever book is
+    opened next reads the same runs."""
+    from tc_ai_bridge.project_import import record_collection_qa_run
+    record_collection_qa_run(three_book_collection, {"bookId": "gen", "state": "done", "contentHash": "h"})
+    record_collection_qa_run(three_book_collection, {}, final_stage={"completedAt": "now"})
+    for name in ("rut", "gen", "exo"):
+        data = json.loads((three_book_collection.parent / name / ".bridge" / "collection.json").read_text(
+            encoding="utf-8"))
+        assert [r["bookId"] for r in data["qaRuns"]] == ["gen"] and data["qaFinalStage"] == {"completedAt": "now"}
+        assert [p["bookId"] for p in data["projects"]] == ["rut", "gen", "exo"]  # the rest of the file kept
+        assert set(collection_qa_runs(three_book_collection.parent / name)) == {"gen"}

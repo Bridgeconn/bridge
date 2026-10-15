@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, onMount, tick } from "svelte";
+  import { perfBegin, perfEnd } from "../perf";
 
   interface FindingMenuAction {
     id: string;
@@ -13,7 +14,8 @@
     // menu or a submenu.
     submenu?: FindingMenuAction[];
     // A line of text, not an item (the word and what was found): never
-    // focusable, never dispatched. `tag` is its second, muted line.
+    // focusable, never dispatched. `tag` is its second, muted line. A submenu
+    // of header lines only is a text flyout (the Language QA "Why", #250).
     header?: boolean;
     // Shown on the item, right-aligned and muted ("vowel length · 412"), as
     // the indic-qa editor shows a suggestion's kind and frequency.
@@ -25,6 +27,11 @@
     // is "here". ArrowRight / ArrowLeft move across them.
     scopes?: { id: string; label: string; title?: string }[];
   }
+
+  // #232 (Tier A): the menu is created inside the click that opened it and
+  // is "open" at the paint after mount.
+  perfBegin("menu.open", "finding");
+  onMount(() => { void perfEnd("menu.open"); });
 
   export let x = 0;
   export let y = 0;
@@ -96,7 +103,8 @@
     submenuAnchor = button;
     await tick();
     positionSubmenu(button);
-    firstEnabled(submenuEl)?.focus();
+    // A text flyout has no item: focus it, so Escape and Left still close it.
+    (firstEnabled(submenuEl) ?? submenuEl)?.focus();
   }
 
   function choose(action: FindingMenuAction, event: Event): void {
@@ -278,10 +286,12 @@
 {#if openSubmenuId}
   {@const parentAction = actions.find((a) => a.id === openSubmenuId)}
   {#if parentAction?.submenu?.length}
+    {@const textOnly = parentAction.submenu.every((sub) => sub.header)}
     <div
       bind:this={submenuEl}
       class="finding-menu submenu"
-      role="menu"
+      class:text-flyout={textOnly}
+      role={textOnly ? "note" : "menu"}
       tabindex="-1"
       aria-label={parentAction.label}
       style:left="{submenuLeft}px"
@@ -290,13 +300,17 @@
       on:contextmenu|preventDefault
     >
       {#each parentAction.submenu as sub (sub.id)}
-        <button
-          type="button"
-          role="menuitem"
-          disabled={sub.disabled}
-          title={sub.title}
-          on:click={() => chooseSub(sub)}
-        ><span>{sub.label}</span></button>
+        {#if sub.header}
+          <p class="note-line" class:target={sub.target}>{sub.label}</p>
+        {:else}
+          <button
+            type="button"
+            role="menuitem"
+            disabled={sub.disabled}
+            title={sub.title}
+            on:click={() => chooseSub(sub)}
+          ><span>{sub.label}</span></button>
+        {/if}
       {/each}
     </div>
   {/if}
@@ -305,7 +319,7 @@
 <style>
   .finding-menu {
     position: fixed;
-    z-index: 10000;
+    z-index: var(--z-popover);
     box-sizing: border-box;
     min-width: 14rem;
     max-width: min(34rem, calc(100vw - 16px));
@@ -320,6 +334,11 @@
   }
 
   .finding-menu.submenu { min-width: 9rem; }
+  .finding-menu.text-flyout { max-width: min(24rem, calc(100vw - 16px)); }
+  .finding-menu.text-flyout:focus { outline: none; }
+  .note-line { margin: 0; padding: 0.3rem 0.6rem; font-size: var(--fs-sm); line-height: 1.4;
+    color: var(--text-2, #475569); overflow-wrap: anywhere; }
+  .note-line:first-child { color: var(--text, #111827); }
 
   button {
     display: flex;

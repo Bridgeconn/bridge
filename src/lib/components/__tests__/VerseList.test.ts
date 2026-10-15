@@ -32,7 +32,7 @@ import {
   verseTexts,
   verseDisplay,
   findingsByVerse,
-  checkStatusByVerse,
+  checkStatusByVerse, checkGroupsByVerse,
   checkingProgress,
   alignmentStatusByVerse,
   nativeChecksByVerse,
@@ -95,6 +95,7 @@ function seed(text: string, findings: QaFinding[] = []): void {
   headingsByVerse.set({});
   findingsByVerse.set({ [verseKey("1", "6")]: findings });
   checkStatusByVerse.set({});
+  checkGroupsByVerse.set({});
   alignmentStatusByVerse.set({});
   nativeChecksByVerse.set({});
   aiCheckReviewsByVerse.set({});
@@ -311,14 +312,14 @@ describe("VerseList footnote handling", () => {
 
     it("offers no Use item when the finding has no suggestion", async () => {
       expect((await openMenu({ suggestions: [] })).map(([label]) => label)).toEqual(["Ignore this occurrence", "Book", "Project", "Ignore this rule▸", "Mark as false positive",
-          "Flag for review…", "Copy word", "Search in this book", "Show IRV occurrences…", "Show OV occurrences…", "Edit…"]);
+          "Why is this flagged?▸", "Flag for review…", "Copy word", "Search in this book", "Show IRV occurrences…", "Show OV occurrences…", "Edit…"]);
     });
 
     it("offers one Use item, with Chapter and Book on its row and the rationale as its tooltip", async () => {
       const items = await openMenu();
       expect(items[0]).toEqual(['Use "அந்தக் காகம்"', "test rationale"]);
       expect(items.map(([label]) => label)).toEqual(['Use "அந்தக் காகம்"', "Chapter", "Book", "Ignore this occurrence", "Book", "Project", "Ignore this rule▸", "Mark as false positive",
-          "Flag for review…", "Copy word", "Search in this book", "Show IRV occurrences…", "Show OV occurrences…", "Edit…"]);
+          "Why is this flagged?▸", "Flag for review…", "Copy word", "Search in this book", "Show IRV occurrences…", "Show OV occurrences…", "Edit…"]);
       // The word and what was found head the menu, as in the indic-qa editor: text, not an item.
       expect(screen.getByRole("menu").textContent).toContain("“அந்த காகம்”");
     });
@@ -447,6 +448,59 @@ describe("VerseList footnote handling", () => {
       }
     });
 
+    it("Why shows what was found, how far reviewers confirmed the rule, and why it is underlined", async () => {
+      await openMenu({ inline: false, drawn: true, rulePrecision: 0.874, ruleLabelled: 38 });
+      await fireEvent.click(screen.getByRole("menuitem", { name: "Why is this flagged?" }));
+      const lines = Array.from(screen.getByRole("note").querySelectorAll("p")).map((p) => p.textContent);
+      expect(lines).toEqual([
+        "Possible missing வல்லினம்.",
+        "Reviewers confirmed 87% of 38 labelled findings of this rule.",
+        "Underlined because your Settings › Language QA threshold lets it through (rule confidence: medium).",
+        "Fix: test rationale",
+        "Rule: ta-irv/tamil.vallinam-missing",
+      ]);
+      expect(decideVerse).not.toHaveBeenCalled();
+      expect(editVerse).not.toHaveBeenCalled();
+    });
+
+    it("Why says a reviewed-inline rule is always underlined, and an unlabelled one is unlabelled", async () => {
+      await openMenu({ inline: true, rulePrecision: null, ruleLabelled: 0, suggestions: [] });
+      await fireEvent.click(screen.getByRole("menuitem", { name: "Why is this flagged?" }));
+      const text = screen.getByRole("note").textContent ?? "";
+      expect(text).toContain("No reviewer has labelled findings of this rule yet.");
+      expect(text).toContain("Reviewed inline (at least 90% confirmed): always underlined.");
+      expect(text).not.toContain("Fix:");
+    });
+
+    // #250: every kind is drawn behind the slider, and every drawn kind gets
+    // the same complete menu: its Use items, Ignore, False positive and Why.
+    it.each([
+      ["typo (lexicon)", "tamil.wordlist-variant"],
+      ["spacing", "spacing.extra"],
+      ["unicode", "unicode.corruption"],
+      ["termbase", "terminology.deprecated-form"],
+      ["sandhi", "tamil.vallinam-missing"],
+    ])("a drawn %s finding that is not reviewed inline has the full menu", async (_kind, rule) => {
+      seed("அந்த காகம் பறந்தது.");
+      languageQaFindingsByVerse.set({ "1:6": [lqaFinding({ rule, inline: false, drawn: true })] });
+      render(VerseList, { props: { onSelect: vi.fn() } });
+      const mark = document.querySelector('[data-verse-key="1:6"] mark[class*="m-lqa"], [data-verse-key="1:6"] mark.m-term');
+      expect(mark, rule).not.toBeNull();
+      await fireEvent.contextMenu(mark as HTMLElement);
+      const labels = screen.getAllByRole("menuitem").map((item) => item.textContent);
+      for (const label of ['Use "அந்தக் காகம்"', "Chapter", "Ignore this occurrence", "Mark as false positive",
+        "Why is this flagged?▸"]) {
+        expect(labels, `${rule}: ${label}`).toContain(label);
+      }
+    });
+
+    it("a finding the engine did not draw has no mark and so no menu", () => {
+      seed("அந்த காகம் பறந்தது.");
+      languageQaFindingsByVerse.set({ "1:6": [lqaFinding({ rule: "spacing.extra", inline: false, drawn: false })] });
+      render(VerseList, { props: { onSelect: vi.fn() } });
+      expect(document.querySelector('[data-verse-key="1:6"] mark[class*="m-lqa"]')).toBeNull();
+    });
+
     it("the verse menu opens this verse's Language QA history", async () => {
       languageQaHistory.mockResolvedValue({ chapter: "1", verse: "6", findingId: null, entries: [] });
       project.set({ path: "C:/project" } as never);
@@ -501,7 +555,7 @@ describe("VerseList footnote handling", () => {
       .toHaveAttribute("title", expect.stringContaining("proposed correction"));
     await fireEvent.click(screen.getByRole("menuitem", { name: "Accept finding" }));
     expect(editVerse).toHaveBeenCalledWith("1", "6", "omega beta");
-    expect(runVerseChecks).toHaveBeenCalledWith("1", "6", ["local", "greekroom"]);
+    expect(runVerseChecks).toHaveBeenCalledWith("1", "6", ["tN", "tW", "alignment", "text"]);
   });
 
   it("does not accept a correction that could not be applied", async () => {
@@ -1169,7 +1223,7 @@ describe("VerseList right-click, ring and notices (#236)", () => {
 });
 
 describe("VerseList ✓ and alignment glyph (Benz, 2026-10-09)", () => {
-  function clearVerse(alignment: "complete" | "partial" | "untouched" | "invalid", findings: QaFinding[] = []): void {
+  function clearVerse(alignment: "complete" | "complete_cross_verse" | "partial" | "untouched" | "invalid", findings: QaFinding[] = []): void {
     seed("alpha beta", findings);
     checkStatusByVerse.set({ [verseKey("1", "6")]: "succeeded" });
     alignmentStatusByVerse.set({ [verseKey("1", "6")]: alignment });
@@ -1182,6 +1236,17 @@ describe("VerseList ✓ and alignment glyph (Benz, 2026-10-09)", () => {
     expect(number().textContent).toContain("✓");
     expect(number().getAttribute("title")).toBe("Checked: no open findings, alignment complete");
     expect(verseRow().classList.contains("approved")).toBe(true);
+  });
+
+  it("ticks a verse completed through a cross-verse link or a null decision, and says so (#228)", async () => {
+    clearVerse("complete_cross_verse");
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    expect(number().textContent).toContain("✓");
+    expect(number().getAttribute("title")).toBe("Checked: no open findings, alignment complete (cross-verse)");
+    expect(verseRow().classList.contains("approved")).toBe(true);
+    const glyph = screen.getByLabelText(/Open Align Words/) as HTMLElement;
+    expect(glyph).toHaveClass("complete_cross_verse");
+    expect(glyph.getAttribute("title")).toContain("Alignment: complete (cross-verse)");
   });
 
   it.each([
@@ -1206,5 +1271,38 @@ describe("VerseList ✓ and alignment glyph (Benz, 2026-10-09)", () => {
     clearVerse("partial");
     render(VerseList, { props: { onSelect: vi.fn() } });
     expect(screen.getByRole("button", { name: /Alignment partial for verse 6/ }).classList.contains("partial")).toBe(true);
+  });
+});
+
+describe("finding numbers never split a word (#172)", () => {
+  it("renders the number after the whole word, with the mark still on the matched letters", () => {
+    const text = "அப்படி திரும்பினாள்.";
+    seed(text, [finding({ id: "tw-1", start_offset: 0, end_offset: 4, category: "translation_word" })]);
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    const body = document.querySelector(".vbody") as HTMLElement;
+    expect(body.querySelector("mark")?.textContent).toBe("அப்ப");
+    const sup = body.querySelector("sup.finding-num") as HTMLElement;
+    expect(sup.textContent).toBe("1");
+    // The text before the number is the whole word, not its first four letters.
+    expect(body.textContent?.startsWith("அப்படி1 ")).toBe(true);
+    expect(body.querySelectorAll("sup.finding-num")).toHaveLength(1);
+  });
+});
+
+describe("the verse container carries the project language (#286)", () => {
+  beforeEach(() => seed(PHP_1_6));
+
+  it("sets lang from the project's language code, so index.css can order the target face for it", () => {
+    project.set({ path: "/p", bookId: "php", bookName: "Philippians", chapters: ["1"], targetLanguageId: "pan" } as never);
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    const container = document.querySelector(".editor-scroll") as HTMLElement;
+    expect(container.getAttribute("lang")).toBe("pan");
+    expect(verseRow().closest("[lang]")).toBe(container);
+  });
+
+  it("carries no lang when the import recorded no language code", () => {
+    project.set({ path: "/p", bookId: "php", bookName: "Philippians", chapters: ["1"] } as never);
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    expect((document.querySelector(".editor-scroll") as HTMLElement).hasAttribute("lang")).toBe(false);
   });
 });

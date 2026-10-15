@@ -13,7 +13,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from xml.etree import ElementTree
 
 from .original_language_resources import (
@@ -26,6 +26,32 @@ from .tc_project import ProjectError, TranslationCoreProject, _write_json_atomic
 from .usfm import whitespace_tokens
 from .usfm_parser import UsfmParseError, identify_usfm, parse_usfm, read_usfm_text
 from .version import BRIDGE_VERSION
+
+
+class ImportCancelled(ProjectError):
+    """The caller's ``cancel`` said stop before the import was committed.
+
+    Nothing has reached the destination root when this is raised: every book
+    is written under a staging directory and the whole set is moved into
+    place only after the last one is complete (#231).
+    """
+
+
+# A progress sink and a cancel test, both optional. The sink receives one dict
+# per checkpoint (``phase`` plus whatever that phase knows: ``bookId``,
+# ``bookIndex``, ``bookCount``, ``chapter``, ``chapterCount``); the test is
+# asked at every checkpoint and ``True`` ends the import with ImportCancelled.
+ImportProgress = Callable[[dict[str, Any]], None]
+ImportCancel = Callable[[], bool]
+
+
+def import_checkpoint(progress: ImportProgress | None, cancel: ImportCancel | None, **event: Any) -> None:
+    """Ask ``cancel`` and then tell ``progress``, in that order, so a cancelled
+    import never reports a phase it did not run."""
+    if cancel is not None and cancel():
+        raise ImportCancelled("The import was cancelled before anything was written.")
+    if progress is not None:
+        progress(event)
 
 
 SCRIPTURE_EXTENSIONS = {".usfm", ".sfm", ".txt"}
@@ -575,7 +601,9 @@ def _available_destination(root: Path, name: str) -> Path:
     return candidate
 
 
-def _write_imported_book(project_root: Path, book: ParsedBook, metadata: dict[str, str]) -> None:
+def _write_imported_book(project_root: Path, book: ParsedBook, metadata: dict[str, str], *,
+                         progress: ImportProgress | None = None,
+                         cancel: ImportCancel | None = None) -> None:
     language_id = metadata["languageId"]
     language_name = metadata["languageName"]
     language_direction = metadata.get("languageDirection") or "ltr"
@@ -625,7 +653,12 @@ def _write_imported_book(project_root: Path, book: ParsedBook, metadata: dict[st
     unreliable = 0
     generated_source_tokens = 0
     missing_source_verses: list[str] = []
-    for chapter, verses in book.chapters.items():
+    chapter_count = len(book.chapters)
+    for chapter_index, (chapter, verses) in enumerate(book.chapters.items()):
+        import_checkpoint(
+            progress, cancel, phase="normalize", bookId=book.book_id,
+            chapter=chapter_index + 1, chapterCount=chapter_count,
+        )
         target_chapter: dict[str, str] = {}
         alignment_chapter: dict[str, dict[str, Any]] = {}
         for verse, raw_text in verses.items():
@@ -955,12 +988,37 @@ def collection_qa_runs(project_root: str | Path) -> dict[str, dict[str, Any]]:
     return {str(r.get("bookId")): r for r in runs if isinstance(r, dict) and r.get("bookId")}
 
 
+def collection_final_stage(project_root: str | Path) -> dict[str, Any] | None:
+    """The last whole-collection stage recorded in this project's
+    `.bridge/collection.json` (`qaFinalStage`), or None. A stage recorded
+    before #274 holds only its summary: no proposals, no cross-book rows."""
+    data = _read_json(Path(project_root).resolve() / _COLLECTION_PATH)
+    stage = data.get("qaFinalStage") if isinstance(data, dict) else None
+    return stage if isinstance(stage, dict) else None
+
+
 def record_collection_qa_run(project_root: str | Path, entry: dict[str, Any],
                              final_stage: dict[str, Any] | None = None) -> None:
     """Upsert one book's run into `qaRuns[]` (one entry per book, the latest),
-    and optionally the whole-collection stage's summary under `qaFinalStage`.
-    Every other key of the file is kept as it was; the write is atomic."""
-    path = Path(project_root).resolve() / _COLLECTION_PATH
+    and optionally the whole-collection stage under `qaFinalStage`, in this
+    book's `.bridge/collection.json` and then in every sibling's (#274): a run
+    is the collection's, so whichever book is opened next sees it. This book's
+    copy must be written; a sibling whose copy cannot be is skipped (it falls
+    back to running its books again). Every other key of each file is kept as
+    it was; each write is atomic."""
+    root = Path(project_root).resolve()
+    _upsert_collection_qa(root / _COLLECTION_PATH, entry, final_stage)
+    for sibling in _collection_projects(root):
+        folder = Path(str(sibling.get("path") or ""))
+        if folder == root or not (folder / _COLLECTION_PATH).is_file():
+            continue
+        try:
+            _upsert_collection_qa(folder / _COLLECTION_PATH, entry, final_stage)
+        except (OSError, ValueError):
+            continue
+
+
+def _upsert_collection_qa(path: Path, entry: dict[str, Any], final_stage: dict[str, Any] | None) -> None:
     data = _read_json(path) if path.is_file() else {}
     if not isinstance(data, dict):
         data = {}
@@ -974,7 +1032,16 @@ def record_collection_qa_run(project_root: str | Path, entry: dict[str, Any],
     _write_json_atomic(path, data)
 
 
-def materialize_lazy_project(project_root: str | Path) -> bool:
+def lazy_import_pending(project_root: str | Path) -> bool:
+    """True while the book is still the lightweight placeholder a collection
+    import leaves (#210: project.open decides from this whether to prepare the
+    book on a worker before loading it)."""
+    return (Path(project_root).resolve() / _LAZY_IMPORT_PATH).is_file()
+
+
+def materialize_lazy_project(project_root: str | Path, *,
+                             progress: ImportProgress | None = None,
+                             cancel: ImportCancel | None = None) -> bool:
     """Normalize a lightweight imported book the first time it is opened.
 
     Collection import copies every source file into application storage up
@@ -1000,18 +1067,33 @@ def materialize_lazy_project(project_root: str | Path) -> bool:
     metadata = descriptor.get("metadata")
     if not isinstance(metadata, dict):
         raise ProjectError(f"Deferred import metadata is invalid: {descriptor_path}")
-    book = parse_scripture_file(source)
     expected = str(descriptor.get("bookId") or "").lower()
+    import_checkpoint(progress, cancel, phase="normalize", bookId=expected, bookIndex=0, bookCount=1)
+    book = parse_scripture_file(source)
     if expected and book.book_id != expected:
         raise ProjectError(
             f"Deferred Scripture source identifies {book.book_id.upper()}, expected {expected.upper()}."
         )
-    _write_imported_book(root, book, {str(key): str(value) for key, value in metadata.items()})
+    # Written in place (there is no second copy to stage into); a cancel at a
+    # chapter checkpoint leaves the descriptor, so the next open starts over.
+    _write_imported_book(
+        root, book, {str(key): str(value) for key, value in metadata.items()}, progress=progress, cancel=cancel,
+    )
     descriptor_path.unlink()
     return True
 
 
-def import_source(source_path: str | Path, destination_root: str | Path, metadata: dict[str, Any]) -> dict[str, Any]:
+def import_source(source_path: str | Path, destination_root: str | Path, metadata: dict[str, Any], *,
+                  progress: ImportProgress | None = None,
+                  cancel: ImportCancel | None = None) -> dict[str, Any]:
+    """Write the imported project(s) under ``destination_root``.
+
+    Everything is built under one staging directory and moved into place only
+    at the end, so a failure or a cancel (``cancel`` returning True at any
+    checkpoint, raising ImportCancelled) leaves the destination exactly as it
+    was. Before #231 each book of a collection was moved as soon as it was
+    written, so a crash on book 40 left 39 books behind.
+    """
     source = Path(source_path).resolve()
     destination = Path(destination_root).resolve()
     destination.mkdir(parents=True, exist_ok=True)
@@ -1035,6 +1117,7 @@ def import_source(source_path: str | Path, destination_root: str | Path, metadat
                 project_source = _find_extracted_project(extracted)
             else:
                 project_source = source
+            import_checkpoint(progress, cancel, phase="copy", bookIndex=0, bookCount=1)
             manifest = _read_json(project_source / "manifest.json")
             language = manifest.setdefault("target_language", {})
             resource = manifest.setdefault("resource", {})
@@ -1046,6 +1129,7 @@ def import_source(source_path: str | Path, destination_root: str | Path, metadat
             _ensure_tc_project_compatible(work, combined)
             name = _slug(f"{combined['languageId']}_{resource['id']}_{manifest.get('project', {}).get('id', 'project')}", "project")
             final = _available_destination(destination, name)
+            import_checkpoint(progress, cancel, phase="commit", bookCount=1)
             os.replace(work, final)
             project = TranslationCoreProject(final)
             imported.append({"path": str(final), "bookId": project.book_id, "bookName": project.summary.book_name})
@@ -1082,7 +1166,13 @@ def import_source(source_path: str | Path, destination_root: str | Path, metadat
                 "bibleName": combined["bibleName"],
                 "projects": [{key: value for key, value in entry.items() if key != "path"} for entry in planned],
             }
+            staged: list[tuple[Path, Path]] = []
+            book_count = len(planned)
             for index, (book_info, entry) in enumerate(zip(preview_books, planned)):
+                import_checkpoint(
+                    progress, cancel, phase="normalize" if index == 0 else "stage",
+                    bookId=entry["bookId"], bookIndex=index, bookCount=book_count,
+                )
                 work = staging / f"book-{index:03d}-{entry['bookId']}"
                 work.mkdir(parents=True)
                 book_metadata = dict(combined)
@@ -1090,7 +1180,7 @@ def import_source(source_path: str | Path, destination_root: str | Path, metadat
                 source_file = Path(str(book_info["sourceFile"]))
                 if index == 0:
                     book = parse_scripture_file(source_file)
-                    _write_imported_book(work, book, book_metadata)
+                    _write_imported_book(work, book, book_metadata, progress=progress, cancel=cancel)
                     entry["chapters"] = list(book.chapters)
                 else:
                     suffix = source_file.suffix.lower() or ".usfm"
@@ -1106,9 +1196,21 @@ def import_source(source_path: str | Path, destination_root: str | Path, metadat
                         "metadata": book_metadata,
                     })
                 _write_json_atomic(work / _COLLECTION_PATH, collection)
-                final = Path(entry["path"])
-                os.replace(work, final)
-                imported.append(entry)
+                staged.append((work, Path(entry["path"])))
+            # The last cancel point. From here the whole set lands or none of
+            # it does: a rename that fails part-way takes the moved books back
+            # out, so the destination never holds a partial collection.
+            import_checkpoint(progress, cancel, phase="commit", bookCount=book_count)
+            moved: list[Path] = []
+            try:
+                for work, final in staged:
+                    os.replace(work, final)
+                    moved.append(final)
+            except BaseException:
+                for final in moved:
+                    shutil.rmtree(final, ignore_errors=True)
+                raise
+            imported.extend(planned)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
 

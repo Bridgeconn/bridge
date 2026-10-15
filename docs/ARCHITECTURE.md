@@ -74,8 +74,9 @@ stages. See `SIMPLIFICATION_AUDIT_2026-09.md`.
 **Per-method timeouts** live in `sidecar.rs` (`request_timeout_seconds`): 30 s default;
 `project.import` 300; `project.open`, `project.inspectImport`, `project.list`, `report.get`,
 `report.export`, `triage.results`, `correction.applyProposal` 180; `verse.runChecks` 150;
-model calls 260 to 300. `project.open` joined the 180 class in #112 (step one); step two,
-building `PassageSemanticRuntime` lazily, is still open.
+model calls 260 to 300. `project.open` joined the 180 class in #112 (step one); since step
+two (2026-10-14) the call returns before `PassageSemanticRuntime` is built, so the 180 s now
+covers the translationCore load, registration and recovery alone.
 
 ### 2.1 Why these choices
 
@@ -139,13 +140,20 @@ a project carrying any of them refuses to open and is re-imported (no migration,
 **What opens a project** (`BridgeEngine.open_project`, phase-timed as `[trace] project.open`
 on stderr): materialize a lazy import, ensure the original-language packs, construct
 `TranslationCoreProject` (which opens and migrates the workbench DB), register the project,
-recover incomplete journal transactions, sync the dashboard progress cache, construct
+recover incomplete journal transactions, sync the dashboard progress cache, and return
+with `passageSemantic.state == "BUILDING"`. A worker thread then constructs
 `PassageSemanticRuntime` (opens and migrates the semantic DB, replays pending invalidations,
-establishes current text revisions, syncs the source lock and alignment state), then build
-the correction services. After #99 (2026-09-16) a first open of Genesis from source measures
-about 1 s and a lazy sibling's first open about 4 s; before it, per-verse fsyncs made the
-same step take minutes. Any runtime failure degrades the open to `RECOVERY_REQUIRED` rather
-than failing it.
+establishes current text revisions, syncs the source lock and alignment state) and the
+correction services (#112 step two, 2026-10-14). `passage_semantic_runtime` is a property on
+both `BridgeEngine` and `TranslationCoreProject` that waits for that build, so a Scripture
+edit, an alignment write or a semantic RPC issued meanwhile waits for the runtime rather
+than racing it or going without its semantic intent; a read that never touches the runtime
+never waits, and `passageSemantic.status` reports `BUILDING` without waiting. A caller that
+needs the old all-done-on-return behaviour (scripts, tests, the sync `project.import`)
+passes `awaitSemantic: true`. After #99 (2026-09-16) a first open of Genesis from source
+measures about 1 s and a lazy sibling's first open about 4 s, of which the runtime was
+0.3 to 1 s; before #99, per-verse fsyncs made the same step take minutes. Any runtime
+failure degrades the status to `RECOVERY_REQUIRED` rather than failing the open.
 
 ### 3.1 Vendored source and bundled data
 
@@ -197,7 +205,7 @@ documented alongside the resources and reproducible via
 
 ```mermaid
 flowchart LR
-  subgraph GRq["Greek Room and local checks (per verse, offline, auto-started on first chapter entry)"]
+  subgraph GRq["Greek Room and local checks (per verse, offline; the selected checks on chapter entry, Greek Room on demand: #251, #252)"]
     W["Wildebeest"] --> F
     U["USFM structural checker"] --> F
     N["Names (Uroman, smart edit distance)"] --> F
@@ -344,9 +352,10 @@ This is the repository's one doc map; `CLAUDE.md`, `DEVELOPER_GUIDE.md` and
 | `IMPORTS.md` | Import pipeline: supported inputs, normalized project schema, duplicate safety, provenance, and the tN/tW materialization boundary. |
 | `ALIGNMENT.md` | Manual word alignment and the Bridge-private cross-verse link store: protocol, persistence, completion states. |
 | `Greek_Room_Findings.md` | Upstream Greek Room module map: what the `greekroom` PyPI package ships as of 0.1.5, what must still be vendored, the Windows and import bugs reproduced in each module, and drift from Bridge's pinned vendor trees. Point-in-time (verified 2026-09-15). |
-| `TEAM_ARCHITECTURE.md` | Direction for #44 to #47. Its §3 and §4 describe shipped code; §5 to §8 are still design. |
+| `TEAM_ARCHITECTURE.md` | Direction for #44 to #47. Its §3 to §5 describe shipped code (the workbench and workspace databases, identity and roles); §6 to §8 are the hub design, reviewed in the note below. |
+| `HUB_ARCHITECTURE_REVIEW_2026-10-15.md` | The architecture review SRS §14 requires before `FUTURE-002`/`FUTURE-003` (#227): which tables sync and which never do, how a project is linked across devices, conflict semantics for links and batches, where `authorize()` runs on the hub, packaging and the hub machine, the acceptance restated as tests, and the order #79 → #80 → #81. |
 | `QA_TEST_MATRIX.md` | The release gate: what is tested, how, and the current pass state per row. |
-| `LANGUAGE_QA_PLAN.md` | Offline Language QA (#169): scope, coverage, the layered-rules phase table. `LANGUAGE_QA_BENCHMARK.md` holds the per-rule precision and recall against the IRV review reports and how to run them; `LANGUAGE_QA_HOUSESTYLE.md` is house style as project data (entries, scopes, the learner's thresholds, export ledger); `LANGUAGE_QA_PACKS.md` is the three tiers (core, `indic` rule kinds, data-only packs), the `index.json` registry, where packs live at runtime, and how to add a language with no code; `LANGUAGE_QA_RULE_PACK.md` is the rule-pack schema (the bundled `ta-irv` pack, examples-as-tests, narrowing-only project overrides, inline sign-off); `LANGUAGE_QA_TAMIL_SPECIFICATION.md` maps the 56-item Tamil proofreading framework to pack ids, status and owner; `LANGUAGE_QA_REVIEW_FIXES_ACCEPTANCE.md` holds the desktop cases for A52–A55. |
+| `LANGUAGE_QA_PLAN.md` | Offline Language QA (#169): scope, coverage, the layered-rules phase table. `LANGUAGE_QA_BENCHMARK.md` holds the per-rule precision and recall against the IRV review reports and how to run them; `LANGUAGE_QA_HOUSESTYLE.md` is house style as project data (entries, scopes, the learner's thresholds, export ledger); `LANGUAGE_QA_PACKS.md` is the three tiers (core, `indic` rule kinds, data-only packs), the `index.json` registry, where packs live at runtime, and how to add a language with no code; `LANGUAGE_QA_RULE_PACK.md` is the rule-pack schema (the bundled `ta-irv` pack, examples-as-tests, narrowing-only project overrides, inline sign-off); `LANGUAGE_QA_TAMIL_SPECIFICATION.md` maps the 56-item Tamil proofreading framework to pack ids, status and owner; `LANGUAGE_QA_REVIEW_FIXES_ACCEPTANCE.md` holds the desktop cases for A52–A55; `TAMIL_UI_STRINGS.md` is every Tamil string on screen with its English, screen and source, for native review, generated by `scripts/export_tamil_ui_strings.py` and kept current by a test (#235). |
 | `SIMPLIFICATION_AUDIT_2026-09.md` | What is slowing the codebase down, ranked, with the decisions taken. Point-in-time (2026-09-16). |
 | `USER_MANUAL.md` | What the app does, screen by screen, for translators and checkers. |
 | `RELEASE_*.md` | Release notes, one per version. |

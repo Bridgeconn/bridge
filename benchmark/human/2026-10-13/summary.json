@@ -1,0 +1,374 @@
+{
+ "rules": {
+  "common/punctuation.repeated": {
+   "labelled": 1,
+   "tp": 1,
+   "fp": 0,
+   "house": 0,
+   "unsure": 0,
+   "precision": 1.0,
+   "verdicts": {
+    "TP": 1
+   }
+  },
+  "common/spacing.extra": {
+   "labelled": 15,
+   "tp": 8,
+   "fp": 7,
+   "house": 0,
+   "unsure": 0,
+   "precision": 0.5333333333333333,
+   "verdicts": {
+    "TP": 8,
+    "FP": 7
+   }
+  },
+  "common/unicode.invisible": {
+   "labelled": 1,
+   "tp": 1,
+   "fp": 0,
+   "house": 0,
+   "unsure": 0,
+   "precision": 1.0,
+   "verdicts": {
+    "TP": 1
+   }
+  },
+  "heading.marker-inconsistent": {
+   "labelled": 4,
+   "tp": 4,
+   "fp": 0,
+   "house": 0,
+   "unsure": 0,
+   "precision": 1.0,
+   "verdicts": {
+    "TP": 4
+   }
+  },
+  "heading.trailing-punctuation": {
+   "labelled": 25,
+   "tp": 25,
+   "fp": 0,
+   "house": 0,
+   "unsure": 0,
+   "precision": 1.0,
+   "verdicts": {
+    "TP": 25
+   }
+  },
+  "ta-irv/indicqa.lex.compound": {
+   "labelled": 25,
+   "tp": 12,
+   "fp": 13,
+   "house": 0,
+   "unsure": 0,
+   "precision": 0.48,
+   "verdicts": {
+    "TP_OTHER_FIX": 2,
+    "FP": 13,
+    "TP1": 10
+   }
+  },
+  "ta-irv/indicqa.lex.near-miss": {
+   "labelled": 40,
+   "tp": 10,
+   "fp": 30,
+   "house": 0,
+   "unsure": 0,
+   "precision": 0.25,
+   "verdicts": {
+    "FP": 25,
+    "TP1": 9,
+    "FP_NAME": 5,
+    "TP_OTHER_FIX": 1
+   }
+  },
+  "ta-irv/indicqa.lex.unknown": {
+   "labelled": 25,
+   "tp": 3,
+   "fp": 22,
+   "house": 0,
+   "unsure": 0,
+   "precision": 0.12,
+   "verdicts": {
+    "FP_NAME": 3,
+    "FP": 19,
+    "TP_OTHER_FIX": 3
+   }
+  },
+  "ta-irv/indicqa.punct.no-space-after": {
+   "labelled": 1,
+   "tp": 1,
+   "fp": 0,
+   "house": 0,
+   "unsure": 0,
+   "precision": 1.0,
+   "verdicts": {
+    "TP": 1
+   }
+  },
+  "ta-irv/indicqa.punct.repeated": {
+   "labelled": 2,
+   "tp": 1,
+   "fp": 1,
+   "house": 0,
+   "unsure": 0,
+   "precision": 0.5,
+   "verdicts": {
+    "TP": 1,
+    "FP": 1
+   }
+  },
+  "ta-irv/indicqa.sandhi.conflict": {
+   "labelled": 20,
+   "tp": 16,
+   "fp": 4,
+   "house": 0,
+   "unsure": 0,
+   "precision": 0.8,
+   "verdicts": {
+    "TP": 16,
+    "FP_DOUBLING_RIGHT": 4
+   }
+  },
+  "ta-irv/indicqa.sandhi.dangling": {
+   "labelled": 7,
+   "tp": 6,
+   "fp": 1,
+   "house": 0,
+   "unsure": 0,
+   "precision": 0.8571428571428571,
+   "verdicts": {
+    "TP": 5,
+    "TP_OTHER_FIX": 1,
+    "FP_DOUBLING_RIGHT": 1
+   }
+  },
+  "ta-irv/indicqa.sandhi.extra": {
+   "labelled": 50,
+   "tp": 10,
+   "fp": 33,
+   "house": 7,
+   "unsure": 0,
+   "precision": 0.23255813953488372,
+   "verdicts": {
+    "FP_DOUBLING_RIGHT": 33,
+    "HOUSE": 7,
+    "TP": 7,
+    "TP_OTHER_FIX": 3
+   }
+  },
+  "ta-irv/indicqa.sandhi.missing": {
+   "labelled": 30,
+   "tp": 25,
+   "fp": 1,
+   "house": 4,
+   "unsure": 0,
+   "precision": 0.9615384615384616,
+   "verdicts": {
+    "TP": 23,
+    "HOUSE": 4,
+    "FP_ROOT": 1,
+    "TP_OTHER_FIX": 2
+   }
+  },
+  "ta-irv/indicqa.sandhi.wrong-class": {
+   "labelled": 1,
+   "tp": 0,
+   "fp": 1,
+   "house": 0,
+   "unsure": 0,
+   "precision": 0.0,
+   "verdicts": {
+    "FP_ROOT": 1
+   }
+  },
+  "ta-irv/indicqa.shape.initial-pulli": {
+   "labelled": 4,
+   "tp": 3,
+   "fp": 1,
+   "house": 0,
+   "unsure": 0,
+   "precision": 0.75,
+   "verdicts": {
+    "TP": 3,
+    "FP": 1
+   }
+  },
+  "ta-irv/indicqa.shape.malformed": {
+   "labelled": 9,
+   "tp": 9,
+   "fp": 0,
+   "house": 0,
+   "unsure": 0,
+   "precision": 1.0,
+   "verdicts": {
+    "TP": 9
+   }
+  },
+  "ta-irv/indicqa.shape.unusual-initial": {
+   "labelled": 8,
+   "tp": 0,
+   "fp": 8,
+   "house": 0,
+   "unsure": 0,
+   "precision": 0.0,
+   "verdicts": {
+    "FP": 7,
+    "FP_NAME": 1
+   }
+  },
+  "ta-irv/lexicon.known-misspelling": {
+   "labelled": 30,
+   "tp": 23,
+   "fp": 7,
+   "house": 0,
+   "unsure": 0,
+   "precision": 0.7666666666666667,
+   "verdicts": {
+    "TP1": 22,
+    "FP": 7,
+    "TP_OTHER_FIX": 1
+   }
+  },
+  "ta-irv/sandhi.compound.direction": {
+   "labelled": 15,
+   "tp": 15,
+   "fp": 0,
+   "house": 0,
+   "unsure": 0,
+   "precision": 1.0,
+   "verdicts": {
+    "TP": 15
+   }
+  },
+  "ta-irv/sandhi.vallinam.demonstrative": {
+   "labelled": 20,
+   "tp": 20,
+   "fp": 0,
+   "house": 0,
+   "unsure": 0,
+   "precision": 1.0,
+   "verdicts": {
+    "TP": 20
+   }
+  },
+  "ta-irv/sandhi.vallinam.manner-adverb": {
+   "labelled": 1,
+   "tp": 1,
+   "fp": 0,
+   "house": 0,
+   "unsure": 0,
+   "precision": 1.0,
+   "verdicts": {
+    "TP": 1
+   }
+  },
+  "ta-irv/typo.divine-name.dative-stem": {
+   "labelled": 9,
+   "tp": 9,
+   "fp": 0,
+   "house": 0,
+   "unsure": 0,
+   "precision": 1.0,
+   "verdicts": {
+    "TP1": 9
+   }
+  },
+  "ta-irv/typo.divine-name.vowel-drop": {
+   "labelled": 6,
+   "tp": 6,
+   "fp": 0,
+   "house": 0,
+   "unsure": 0,
+   "precision": 1.0,
+   "verdicts": {
+    "TP1": 6
+   }
+  },
+  "ta-irv/typo.participle.sentence-final": {
+   "labelled": 1,
+   "tp": 1,
+   "fp": 0,
+   "house": 0,
+   "unsure": 0,
+   "precision": 1.0,
+   "verdicts": {
+    "TP_OTHER_FIX": 1
+   }
+  },
+  "usfm.footnote-no-text": {
+   "labelled": 3,
+   "tp": 3,
+   "fp": 0,
+   "house": 0,
+   "unsure": 0,
+   "precision": 1.0,
+   "verdicts": {
+    "TP": 3
+   }
+  },
+  "usfm.ior-trailing-space": {
+   "labelled": 3,
+   "tp": 3,
+   "fp": 0,
+   "house": 0,
+   "unsure": 0,
+   "precision": 1.0,
+   "verdicts": {
+    "TP": 3
+   }
+  },
+  "usfm.note-caller": {
+   "labelled": 2,
+   "tp": 2,
+   "fp": 0,
+   "house": 0,
+   "unsure": 0,
+   "precision": 1.0,
+   "verdicts": {
+    "TP": 2
+   }
+  },
+  "usfm.wj-boundary": {
+   "labelled": 2,
+   "tp": 2,
+   "fp": 0,
+   "house": 0,
+   "unsure": 0,
+   "precision": 1.0,
+   "verdicts": {
+    "TP": 2
+   }
+  },
+  "usfm.wj-outside-gospels": {
+   "labelled": 1,
+   "tp": 1,
+   "fp": 0,
+   "house": 0,
+   "unsure": 0,
+   "precision": 1.0,
+   "verdicts": {
+    "TP": 1
+   }
+  }
+ },
+ "wordList": {
+  "rows": 15,
+  "curatedPairs": 39,
+  "notes": [
+   "தண்ணீனால் → தண்ணீரினால்: already in the shipped map (→ தண்ணீரினால்); dropped",
+   "உடன்பட்டிக்கை → உடன்படிக்கை: already in the shipped map (→ உடன்படிக்கை); dropped",
+   "எல்லாக்கூட்டத்தாரும் → எல்லாக் கூட்டத்தாரும்: joined words, a known-join candidate (item 4)",
+   "போர்செய்யப்புறப்பட்டு → போர்செய்யப் புறப்பட்டு: joined words, a known-join candidate (item 4)",
+   "நகரத்தைப்பிடிக்கும்படி → நகரத்தைப் பிடிக்கும்படி: joined words, a known-join candidate (item 4)",
+   "சொல்லுகிறேன்என்றார் → சொல்லுகிறேன் என்றார்: joined words, a known-join candidate (item 4)",
+   "இல்லையா?என்றார் → இல்லையா? என்றார்: joined words, a known-join candidate (item 4)",
+   "அடைந்தனஎன்றார் → அடைந்தன என்றார்: joined words, a known-join candidate (item 4)",
+   "வைத்தீர்கள்?என்றார் → வைத்தீர்கள்? என்றார்: joined words, a known-join candidate (item 4)",
+   "இருதயத்தார்கள் → இருதயத்தார்: already shipped as a human pair (ta-irv/indicqa.lex.near-miss); dropped",
+   "எவ்விடத்திற்குப்போக → எவ்விடத்திற்குப் போக: not one word for one word (ta-irv/indicqa.lex.unknown); the lexicon builder drops it",
+   "தெற்குதிசைக்கு → தெற்குத் திசைக்கு: not one word for one word (ta-irv/lexicon.known-misspelling); the lexicon builder drops it"
+  ]
+ }
+}

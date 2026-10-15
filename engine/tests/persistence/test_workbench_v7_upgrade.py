@@ -39,7 +39,7 @@ def test_a_database_at_indic_qa_v6_gains_the_alignment_tables(tmp_path, monkeypa
     assert "alignment_null_decisions" not in before
 
     repo = wr.WorkbenchRepository(path)
-    assert repo.schema_version() == 7
+    assert repo.schema_version() == 10  # #240, #80 and #279 added v8 to v10 above v7
     after = _tables(path)
     assert {"alignment_null_decisions", "alignment_verdicts"} <= after
     # The other branch's tables are untouched.
@@ -50,7 +50,7 @@ def test_a_v5_database_climbs_both_rungs(tmp_path, monkeypatch):
     path = tmp_path / "bridge-workbench.sqlite3"
     _build_at(path, 5, monkeypatch)
     repo = wr.WorkbenchRepository(path)
-    assert repo.schema_version() == 7
+    assert repo.schema_version() == 10  # #240, #80 and #279 added v8 to v10 above v7
     assert {"language_qa_batches", "alignment_null_decisions", "alignment_verdicts"} <= _tables(path)
 
 

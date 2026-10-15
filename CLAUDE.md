@@ -252,7 +252,7 @@ A raw Scripture import becomes a translationCore-compatible book project:
                                                 dialog (2026-10-08). An indic-qa rule may be switched back
                                                 on there; inline never.
 <project>/.apps/translationCoreAI/bridge-workbench.sqlite3
-                                                schema v7. Every Bridge-private store lives here:
+                                                schema v10. Every Bridge-private store lives here:
                                                 the human-owned ones (#76), the derived ones
                                                 (#77) -- progress rollup, check-finding snapshots,
                                                 check cache, triage verdicts, metrics, backups index --
@@ -265,10 +265,14 @@ A raw Scripture import becomes a translationCore-compatible book project:
                                                 journalled verse edits, it never writes Scripture),
                                                 null alignment decisions (`alignment_null_decisions`: a word with
                                                 no counterpart for a named reason, #216 -- no row
-                                                means unaligned) and the per-verse automatic
-                                                alignment verdicts (`alignment_verdicts`, #216).
+                                                means unaligned), the per-verse automatic
+                                                alignment verdicts (`alignment_verdicts`, #216),
+                                                and each user's role on this project
+                                                (`team_members`, #279; no row means the
+                                                installation or hub-token role applies).
 <project>/.apps/translationCoreAI/backups/      the backup files themselves, indexed by the DB
-%LOCALAPPDATA%\Bridge\data\workspace.sqlite3    app-level, schema v2 (#77): users, devices, the
+%LOCALAPPDATA%\Bridge\data\workspace.sqlite3    app-level, schema v5 (#77, #236, #238, #240): users
+                                                with their role and the chosen one, devices, the
                                                 project registry, non-secret settings (bookmarks and
                                                 recent chapters among them), and one cached
                                                 progress rollup per project for the dashboard
@@ -405,17 +409,22 @@ translation team that database *is* months of work, and no reset is available.
 
 This same discipline now has two more, independent ladders. `bridge-workbench.sqlite3`
 (`WorkbenchRepository`, `engine/tc_ai_bridge/workbench_repository.py`,
-`WORKBENCH_SCHEMA_VERSION`, currently v7 — v2 added `change_log.columns_json` for
+`WORKBENCH_SCHEMA_VERSION`, currently v10 — v2 added `change_log.columns_json` for
 sync and rebuilt the immutability trigger; v3 added `alignment_cross_verse_links`,
 #117; v4 added `language_qa_cache`, #169; v5 rebuilt `human_decisions` to admit the `housestyle` kind, #169;
 v6 added `language_qa_batches`, `language_qa_learned_fixes` and `language_qa_flags`, indic-qa editor
 features;
-v7 added `alignment_null_decisions` and `alignment_verdicts`, #216) and `workspace.sqlite3`
+v7 added `alignment_null_decisions` and `alignment_verdicts`, #216; v8 lifted
+`team_assignments` into real columns, #240; v9 added the hub's device-local
+`sync_state` and `sync_conflicts`, #80; v10 lifted `team_members.user_id` and `role` for
+per-project roles, #279) and `workspace.sqlite3`
 (`WorkspaceRepository`, `engine/tc_ai_bridge/workspace_repository.py`,
-`WORKSPACE_SCHEMA_VERSION`, currently v2 — v1 is exactly the unversioned
+`WORKSPACE_SCHEMA_VERSION`, currently v5 — v1 is exactly the unversioned
 devices/users the first cut created, kept as `IF NOT EXISTS` so an existing
 database is adopted with its ids intact; v2 added `projects`, `settings_kv`,
-`project_progress_cache`). Three databases, three version numbers; a bump in one
+`project_progress_cache`; v3 added `projects.archived_at` and `last_opened_by`, #238;
+v4 added `users.role`, #236; v5 added `project_assignments_cache`, #240). Three
+databases, three version numbers; a bump in one
 is never a bump in another, and each gets its own forward block. The pre-release
 amendment above applies to all three.
 
@@ -425,6 +434,8 @@ a translator hits during normal work. The one bundled network-shaped thing —
 `ai_client.py` — is explicitly optional, human-invoked, and never on the path that
 imports, checks, or opens a project. If a feature seems to need a network call, say
 so and stop; that is an architecture decision, not an implementation detail.
+The team hub (#46, decided 2026-10-12) is the one agreed exception, and it is a
+sync peer the desktop never waits on, not a dependency on any path above.
 
 ## The analysis pipeline, and why stage numbers matter
 
@@ -678,7 +689,11 @@ These are cheap to start and expensive to undo. If a task appears to require one
 raise it as a question in the issue rather than deciding it in a commit:
 
 - Anything that adds a server, an account, a login, or a network round-trip on a
-  runtime path a translator hits
+  runtime path a translator hits. Decided 2026-10-12 for the hub only
+  (`docs/DECISIONS.md`; #46, architecture review in #227 before #79): the team
+  hub is an optional sync peer the desktop never waits on. Any other network
+  dependency — an account, a login, a hosted service, a call on the import,
+  check or open path — is still a question
 - Re-baselining either golden
 - Changing the confidence thresholds or the auto-apply behaviour. Still on this
   list after #146 and #219: those decisions were taken for cross-verse links

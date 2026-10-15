@@ -10,6 +10,7 @@
     meaningStatusLabel,
     propertyLabel,
     realizationLabel,
+    actorDisplayId,
   } from "../utils/reviewLabels";
 
   /**
@@ -314,7 +315,7 @@
       <ol class="history">
         {#each detail.history as record}
           <li>
-            <span class="actor">{record.actorType === "HUMAN" ? record.actorId : record.actorType}</span>
+            <span class="actor">{record.actorType === "HUMAN" ? actorDisplayId(record.actorId) : record.actorType}</span>
             <span class="transition">
               {text(record.previousQaDisposition, "—")} → {text(record.newQaDisposition, "—")}
             </span>

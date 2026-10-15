@@ -451,18 +451,17 @@ def test_protocol_create_edit_reject_and_history_round_trip(tmp_path: Path) -> N
 
     created = call("correction.createProposal", {
         "findingId": "qa-1", "intent": to_wire(_intent(runtime)),
-        "humanProposedText": "offline wording", "actorId": "Reviewer",
+        "humanProposedText": "offline wording",
     })
     assert created["success"] is True, created
     proposal_id = created["result"]["id"]
     edited = call("correction.editProposal", {
         "proposalId": proposal_id, "proposedText": "edited wording",
-        "expectedProposalRevision": 1, "actorId": "Reviewer",
+        "expectedProposalRevision": 1,
     })
     assert edited["success"] is True, edited
     rejected = call("correction.rejectProposal", {
-        "proposalId": proposal_id, "expectedProposalRevision": 2,
-        "actorId": "Reviewer", "note": "reject",
+        "proposalId": proposal_id, "expectedProposalRevision": 2, "note": "reject",
     })
     assert rejected["success"] is True, rejected
     history = call("correction.getProposalHistory", {"proposalId": proposal_id})

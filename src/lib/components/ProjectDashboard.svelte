@@ -23,11 +23,38 @@
   export let openBookName = "";
   export let onLoadReport: () => void = () => {};
   export let onNavigateToFinding: (chapter: string, verse: string) => void = () => {};
+  /** #240: the signed-in user, to filter to "My work"; whether they may
+   *  assign (a project_admin); and the row's Assign… action. */
+  export let myUserId = "";
+  export let canAssign = false;
+  export let onAssign: (path: string) => void = () => {};
 
   let bookSearch = "";
+  let myWorkOnly = false;
+
+  function isMine(book: BookProgressEntry): boolean {
+    return Boolean(myUserId) && (book.assignments ?? []).some((a) => a.assigneeId === myUserId);
+  }
+
+  /** "Genesis: Revant · ch 3: Rina" -- the book's assignee first, then chapters. */
+  function assigneeLine(book: BookProgressEntry): string {
+    const items = book.assignments ?? [];
+    if (items.length === 0) return "";
+    const whole = items.find((a) => a.chapter === "");
+    const chapters = items.filter((a) => a.chapter !== "");
+    const parts = [];
+    if (whole) parts.push(`book: ${whole.assigneeName || whole.assigneeId}`);
+    if (chapters.length > 0) {
+      const shown = chapters.slice(0, 3).map((a) => `ch ${a.chapter}: ${a.assigneeName || a.assigneeId}`);
+      parts.push(shown.join(", ") + (chapters.length > 3 ? ` +${chapters.length - 3}` : ""));
+    }
+    return parts.join(" · ");
+  }
 
   $: normalizedBookSearch = bookSearch.trim().toLocaleLowerCase();
+  $: myWorkCount = books.filter(isMine).length;
   $: filteredBooks = books.filter((book) => {
+    if (myWorkOnly && !isMine(book)) return false;
     if (!normalizedBookSearch) return true;
     return `${book.bookId ?? ""} ${book.bookName ?? ""}`
       .toLocaleLowerCase()
@@ -116,6 +143,12 @@
             <label for="book-search">Find a book</label>
             <input id="book-search" type="search" bind:value={bookSearch} placeholder="Book name or code, for example Luke or LUK" />
             <span>{filteredBooks.length} of {books.length}</span>
+            {#if myUserId}
+              <label class="my-work">
+                <input type="checkbox" bind:checked={myWorkOnly} />
+                My work ({myWorkCount})
+              </label>
+            {/if}
           </div>
           <section class="books">
             {#each filteredBooks as book (book.path)}
@@ -149,12 +182,33 @@
                         <span class="bar-label">Checked {book.progress.checkedChapterCount}/{book.progress.chapterCount} chapters</span>
                         <div class="track"><div class="fill checked" style="width:{percent(book.progress.checkedChapterCount, book.progress.chapterCount)}%" /></div>
                       </div>
+                      <!-- #239: the two further stages of requirement 5. Each is
+                           shown over what has been counted, never over the whole
+                           book, so an unvisited chapter is not read as unaligned. -->
+                      {#if (book.progress.alignedKnownVerseCount ?? 0) > 0}
+                        <div class="bar-row">
+                          <span class="bar-label">Aligned {book.progress.alignedVerseCount ?? 0}/{book.progress.alignedKnownVerseCount}</span>
+                          <div class="track"><div class="fill aligned" style="width:{percent(book.progress.alignedVerseCount ?? 0, book.progress.alignedKnownVerseCount ?? 0)}%" /></div>
+                        </div>
+                      {/if}
+                      {#if (book.progress.languageQaCheckedVerseCount ?? 0) > 0}
+                        <div class="bar-row">
+                          <span class="bar-label">Language QA clean {book.progress.languageQaCleanVerseCount ?? 0}/{book.progress.languageQaCheckedVerseCount}</span>
+                          <div class="track"><div class="fill language-qa" style="width:{percent(book.progress.languageQaCleanVerseCount ?? 0, book.progress.languageQaCheckedVerseCount ?? 0)}%" /></div>
+                        </div>
+                      {/if}
                     </div>
                     {#if book.progress.updatedAt}
                       <small>Updated {new Date(book.progress.updatedAt).toLocaleString()}</small>
                     {/if}
                   {/if}
+                  {#if assigneeLine(book)}
+                    <small class="assignees" class:mine={isMine(book)}>{assigneeLine(book)}</small>
+                  {/if}
                 </div>
+                {#if canAssign && !book.missing}
+                  <button class="small-button" on:click|stopPropagation={() => onAssign(book.path)}>Assign…</button>
+                {/if}
                 <button
                   class="small-button primary"
                   on:click|stopPropagation={() => onSelectBook(book.path)}
@@ -385,12 +439,17 @@
   .book-copy strong { font-size: var(--fs-sm); color: var(--text); }
   .book-copy .note { color: var(--text-2); font-size: var(--fs-2xs); }
   .book-copy small { color: var(--text-2); font-size: var(--fs-3xs); }
+  .my-work { display: inline-flex; align-items: center; gap: 6px; margin-left: 12px; font-size: var(--fs-2xs); color: var(--text-2); }
+  .assignees { color: var(--text-2); font-size: var(--fs-2xs); }
+  .assignees.mine { color: var(--accent); font-weight: 650; }
   .bars { display: flex; flex-direction: column; gap: 4px; margin: 2px 0; }
   .bar-row { display: flex; align-items: center; gap: 8px; }
   .bar-label { color: var(--text-2); font-size: var(--fs-3xs); width: 175px; flex-shrink: 0; }
   .track { width: 100%; height: 6px; background: #EEF0F3; border-radius: 4px; overflow: hidden; }
   .fill { height: 100%; background: var(--accent); }
   .fill.checked { background: var(--pass); }
+  .fill.aligned { background: var(--accent-2, #6b5bd2); }
+  .fill.language-qa { background: var(--warning); }
   .small-button { border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); color: var(--text); padding: 6px 10px; cursor: pointer; font-size: var(--fs-2xs); flex-shrink: 0; }
   .small-button.primary { border-color: var(--accent); color: var(--accent); }
   .small-button:disabled { opacity: .55; cursor: not-allowed; }

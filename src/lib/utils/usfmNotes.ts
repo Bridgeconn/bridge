@@ -47,7 +47,11 @@ export function withNoteMarkers(segments: TextSegment[], notes: VerseNote[], fla
     while (noteIndex < ordered.length && ordered[noteIndex].position <= segEnd) {
       const at = Math.max(ordered[noteIndex].position, segStart);
       if (at > cursor) {
-        pieces.push({ kind: "text", seg: { ...seg, text: seg.text.slice(cursor - segStart, at - segStart) } });
+        // A finding's reference number follows the last piece of its segment
+        // only, so a note marker inside the segment does not repeat it (#172).
+        pieces.push({ kind: "text", seg: {
+          ...seg, text: seg.text.slice(cursor - segStart, at - segStart), numbers: at === segEnd ? seg.numbers : [],
+        } });
         cursor = at;
       }
       pieces.push(ordered[noteIndex].piece);

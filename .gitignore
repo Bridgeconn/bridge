@@ -91,3 +91,8 @@ test-temp-*/
 # They quote Scripture and review text; only benchmark/baseline.json and the
 # table in docs/LANGUAGE_QA_BENCHMARK.md are committed.
 benchmark/results/
+# The hub's dashboard bundle (#81), built by `npm run build:dashboard`
+dist-dashboard/
+
+# Per-user Claude Code instructions (not shared)
+CLAUDE.local.md

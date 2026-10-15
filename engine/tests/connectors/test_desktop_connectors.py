@@ -14,7 +14,9 @@ import pytest
 import bridge_service
 from bridge_service import BridgeEngine
 from greek_room_engine.protocol import EngineRequest
+from tc_ai_bridge.logos_connector import LogosConnectorClient
 from tc_ai_bridge.paratext_connector import ParatextConnectorClient
+from tests.support.waits import job_timeout
 
 
 def call(engine, method, params=None):
@@ -54,6 +56,12 @@ def test_paratext_set_reference_fails_cleanly_with_no_companion_plugin_running(m
 )
 def test_logos_get_state_spawns_the_real_helper_and_returns_environment_safe_result():
     engine = BridgeEngine()
+    # The helper's startup budget scales like a background-job wait (#247).
+    # PowerShell -STA with Add-Type takes ~0.7 s idle but 11-17 s with every
+    # core busy, past the client's 10 s default: the client then stops the
+    # helper (correct), getState reports logos_connector_error, and `running`
+    # below was False. A bigger budget is only spent on a run that was slow.
+    engine._logos_client = LogosConnectorClient(startup_timeout=job_timeout(10.0))
     try:
         result = call(engine, "logos.getState")
         if result["success"]:
@@ -64,6 +72,9 @@ def test_logos_get_state_spawns_the_real_helper_and_returns_environment_safe_res
         # spawning a fresh one for every call — the real point of caching it.
         assert engine._logos_client is not None
         assert engine._logos_client.running is True
+        helper = engine._logos_client._process
+        call(engine, "logos.getState")
+        assert engine._logos_client._process is helper and engine._logos_client.running is True
     finally:
         if engine._logos_client is not None:
             engine._logos_client.close()

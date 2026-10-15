@@ -20,6 +20,26 @@ class _Dispatcher(Protocol):
     def handle_request(self, request: EngineRequest) -> EngineResponse: ...
 
 
+def send_stage(stage: str, label: str, stream: Any | None = None) -> None:
+    """One startup stage line on the protocol stream, before the ready line
+    (#233). Same envelope as a response, under the reserved id ``__stage__``,
+    so every reader keyed on ``id`` -- sidecar.rs, the e2e test, the frozen
+    smoke -- can skip it or use it. Written to the interpreter's own stdout,
+    like the responses, and flushed at once: the point is that the shell sees
+    it *while* the slow thing it names is still running. `stream` is for
+    tests."""
+    out = stream if stream is not None else sys.__stdout__
+    if stream is None:
+        # Same Windows codepage hazard run_stdio_loop guards against; this
+        # runs before it does. Idempotent, so the loop's own call is harmless.
+        try:
+            out.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
+    out.write(EngineResponse.ok("__stage__", result={"stage": stage, "label": label}).to_json() + "\n")
+    out.flush()
+
+
 def run_stdio_loop(engine: Any | None = None, on_ready: Any | None = None) -> None:
     """`on_ready` runs once, right after the ready line, for warmup work that
     must not delay it (main.py preloads uroman, #242). A failure there is

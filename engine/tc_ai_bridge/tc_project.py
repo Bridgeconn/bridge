@@ -123,6 +123,9 @@ class ProjectSummary:
 
 
 _PARATEXT_SYNC_STATE_KEY = 'paratext_live_sync_state'
+# #277: a Language QA pack's overrides file, mirrored as a project_state row
+# per pack so it travels through the hub like any other review state.
+_LANGUAGE_QA_OVERRIDES_KEY = 'languageQaOverrides:'
 
 # Directories that held human-owned records before #76 moved those stores into
 # `bridge-workbench.sqlite3`. A project containing any of them was written by a
@@ -212,7 +215,12 @@ class TranslationCoreProject:
         self._workspace: WorkspaceRepository | None = workspace
         # Stage 4 attaches an advisory companion runtime after project identity
         # is resolved. Direct TranslationCoreProject users remain unchanged.
-        self.passage_semantic_runtime: Any | None = None
+        # #112 step two: the runtime is built on a worker after project.open
+        # returns, so until it is attached every reader of the attribute waits
+        # through `_passage_semantic_waiter` (a write must not race the build
+        # and must not slip past it without its semantic intent).
+        self._passage_semantic_runtime_value: Any | None = None
+        self._passage_semantic_waiter: Any | None = None
 
     def _refuse_pre_cutover_project(self) -> None:
         """Refuse to open a project whose records predate the #76 cutover.
@@ -245,8 +253,29 @@ class TranslationCoreProject:
             + str(self.path) + '.'
         )
 
+    @property
+    def passage_semantic_runtime(self) -> Any | None:
+        waiter = self._passage_semantic_waiter
+        if waiter is not None:
+            waiter()
+        return self._passage_semantic_runtime_value
+
+    @passage_semantic_runtime.setter
+    def passage_semantic_runtime(self, runtime: Any | None) -> None:
+        self.attach_passage_semantic_runtime(runtime)
+
     def attach_passage_semantic_runtime(self, runtime: Any | None) -> None:
-        self.passage_semantic_runtime = runtime
+        """The build is over (it produced `runtime`, or None when it failed):
+        readers stop waiting."""
+        self._passage_semantic_runtime_value = runtime
+        self._passage_semantic_waiter = None
+
+    def expect_passage_semantic_runtime(self, waiter: Any) -> None:
+        """A build is in flight (#112): `waiter()` blocks until it has ended,
+        and is called by every reader of `passage_semantic_runtime` until
+        `attach_passage_semantic_runtime` clears it."""
+        self._passage_semantic_runtime_value = None
+        self._passage_semantic_waiter = waiter
 
     @property
     def workspace(self) -> WorkspaceRepository:
@@ -667,6 +696,16 @@ class TranslationCoreProject:
             return 'partial'
         return 'complete'
 
+    def close(self) -> None:
+        """Let go of this project's database handles (#113): called when the
+        engine replaces or deletes the project. Reads and writes after it
+        simply reopen; nothing else is torn down."""
+        self.workbench.release_connections()
+
+    def release_thread_db_handles(self) -> None:
+        """The dispatcher's per-request release (#113)."""
+        self.workbench.release_thread_connections()
+
     def alignment_work_state(self, chapter: str | int, verse: str | int) -> str:
         return self._alignment_work_state(self.load_verse_alignment(chapter, verse))
 
@@ -1014,6 +1053,42 @@ class TranslationCoreProject:
             extra_columns={'key': _PARATEXT_SYNC_STATE_KEY},
         )
         return row_id
+
+    def language_qa_overrides_states(self) -> dict[str, dict[str, Any] | None]:
+        """#277: each pack's overrides document as last written on any device,
+        {pack: document}; None is a pack whose overrides were cleared."""
+        states: dict[str, dict[str, Any] | None] = {}
+        for row in self.workbench.rows(
+            'project_state', project_id=self.workbench_identity.project_id, book_id=self.book_id,
+        ):
+            key = str(row.get('key') or '')
+            if not key.startswith(_LANGUAGE_QA_OVERRIDES_KEY):
+                continue
+            try:
+                document = json.loads(row['payload_json']).get('document')
+            except (TypeError, ValueError, AttributeError):
+                continue
+            states[key[len(_LANGUAGE_QA_OVERRIDES_KEY):]] = document if isinstance(document, dict) else None
+        return states
+
+    def save_language_qa_overrides_state(self, pack: str, document: dict[str, Any] | None) -> bool:
+        """#277: mirror one pack's overrides file into its project_state row.
+        Written only when it differs, so an unchanged file never travels; a
+        pack with no file and no row says nothing. Returns whether it wrote."""
+        document = document or None
+        current = self.language_qa_overrides_states()
+        if (pack in current and current[pack] == document) or (pack not in current and document is None):
+            return False
+        identity = self.workbench_identity
+        key = f'{_LANGUAGE_QA_OVERRIDES_KEY}{pack}'
+        self.workbench._write(
+            'project_state', natural_row_id(identity.project_id, self.book_id, key),
+            project_id=identity.project_id, book_id=self.book_id,
+            payload={'version': 1, 'pack': pack, 'document': document},
+            actor_id=identity.actor_id, device_id=identity.device_id,
+            expected_revision=None, extra_columns={'key': key},
+        )
+        return True
 
     @staticmethod
     def _validate_issue_resolution_id(resolution_id: str) -> str:
@@ -3297,11 +3372,16 @@ class TranslationCoreProject:
         return natural_row_id(self.workbench_identity.project_id, self.book_id, 'check_findings', chapter)
 
     def save_check_findings_snapshot(self, chapter: str | int, verses: dict[str, list[dict[str, Any]]],
-                                     language_qa: dict[str, list[dict[str, Any]]] | None = None) -> str:
+                                     language_qa: dict[str, list[dict[str, Any]]] | None = None, *,
+                                     check_groups: list[str] | None = None,
+                                     inputs_fingerprint: str | None = None) -> str:
         """`language_qa` is the Language QA stage's findings per verse, open
         and decided (each decided one carries `decision`). Kept apart from
         `verses`, which every reader takes as QaFinding dicts. None (a job
-        without the stage) keeps the chapter's previous Language QA share."""
+        without the stage) keeps the chapter's previous Language QA share.
+        `check_groups` and `inputs_fingerprint` (#272): which checks the
+        findings cover, and a fingerprint of what they were computed from, so
+        chapter entry can show them instead of re-running the job."""
         identity = self.workbench_identity
         chapter_key = str(chapter)
         row_id = self._check_findings_row_id(chapter_key)
@@ -3318,6 +3398,10 @@ class TranslationCoreProject:
         }
         if isinstance(language_qa, dict):
             payload['languageQa'] = {str(v): list(f) for v, f in language_qa.items()}
+        if check_groups is not None:
+            payload['checkGroups'] = sorted(str(g) for g in check_groups)
+        if inputs_fingerprint is not None:
+            payload['inputsFingerprint'] = str(inputs_fingerprint)
         self.workbench._write(
             'check_findings', row_id,
             project_id=identity.project_id, book_id=self.book_id,
@@ -3345,6 +3429,14 @@ class TranslationCoreProject:
                 if isinstance(findings, list):
                     out[(chapter, str(verse))] = [f for f in findings if isinstance(f, dict)]
         return out
+
+    def load_check_findings_payload(self, chapter: str | int) -> dict[str, Any]:
+        """The chapter's whole stored snapshot (#272), {} when there is none."""
+        found = self.workbench.payloads(
+            'check_findings', project_id=self.workbench_identity.project_id,
+            book_id=self.book_id, equals={'chapter': str(chapter)},
+        )
+        return dict(found[0]) if found and isinstance(found[0], dict) else {}
 
     def load_check_findings_snapshot(self, chapter: str | int) -> dict[str, list[dict[str, Any]]]:
         found = self.workbench.payloads(
@@ -3445,16 +3537,30 @@ class TranslationCoreProject:
             if not chapter:
                 continue
             listed = payload.get('checkedVerses')
+            # #239: the Language QA finding ids each verse had at its last
+            # pass (open or decided), so the totals can tell a Language QA
+            # finding from any other in the status map; and the chapter's
+            # aligned-verse count, refreshed by every alignment writer. Both
+            # absent on a row written before #239.
+            lqa_ids = payload.get('languageQaFindingIds')
+            lqa_ids = lqa_ids if isinstance(lqa_ids, dict) else {}
+            aligned = payload.get('alignedVerseCount')
             chapters[chapter] = {
                 'verseCount': int(payload.get('verseCount') or 0),
                 'aiChecked': bool(payload.get('aiChecked')),
                 'aiCheckedAt': payload.get('aiCheckedAt'),
+                'alignedVerseCount': int(aligned) if isinstance(aligned, (int, float)) else None,
                 # A verse the job checked and found nothing in has no finding
                 # row, but it was checked: the file kept an empty entry for it
                 # and the QA report's coverage counts it as PASS, so the
                 # chapter row lists it.
                 'verses': {
-                    str(v): {'findings': {}} for v in (listed if isinstance(listed, list) else [])
+                    str(v): {
+                        'findings': {},
+                        **({'languageQaFindingIds': [str(i) for i in lqa_ids[str(v)]]}
+                           if isinstance(lqa_ids.get(str(v)), list) else {}),
+                    }
+                    for v in (listed if isinstance(listed, list) else [])
                 },
             }
         for payload in self.workbench.payloads(
@@ -3466,7 +3572,7 @@ class TranslationCoreProject:
             if not (chapter and verse and finding_id):
                 continue
             entry = chapters.setdefault(chapter, {
-                'verseCount': 0, 'aiChecked': False, 'aiCheckedAt': None, 'verses': {},
+                'verseCount': 0, 'aiChecked': False, 'aiCheckedAt': None, 'alignedVerseCount': None, 'verses': {},
             })
             entry['verses'].setdefault(verse, {'findings': {}})['findings'][finding_id] = str(
                 payload.get('status') or ''
@@ -3499,6 +3605,7 @@ class TranslationCoreProject:
                     payload={
                         'chapter': chapter_key, 'verseCount': int(verse_count),
                         'aiChecked': False, 'aiCheckedAt': None, 'checkedVerses': [],
+                        'alignedVerseCount': None, 'languageQaFindingIds': {},
                     },
                     actor_id=identity.actor_id, device_id=identity.device_id,
                     extra_columns={'chapter': chapter_key},
@@ -3545,6 +3652,8 @@ class TranslationCoreProject:
             plan.append((chapter_key, entry, wanted, stale))
         with self.workbench.batch() as batch:
             for chapter_key, entry, wanted, stale in plan:
+                verses_entry = entry.get('verses') if isinstance(entry.get('verses'), dict) else {}
+                aligned = entry.get('alignedVerseCount')
                 batch.write(
                     'progress_chapters', self._progress_chapter_row_id(chapter_key),
                     project_id=identity.project_id, book_id=self.book_id,
@@ -3553,9 +3662,13 @@ class TranslationCoreProject:
                         'verseCount': int(entry.get('verseCount') or 0),
                         'aiChecked': bool(entry.get('aiChecked')),
                         'aiCheckedAt': entry.get('aiCheckedAt'),
-                        'checkedVerses': [str(v) for v in (
-                            entry.get('verses') if isinstance(entry.get('verses'), dict) else {}
-                        )],
+                        'checkedVerses': [str(v) for v in verses_entry],
+                        'alignedVerseCount': int(aligned) if isinstance(aligned, (int, float)) else None,
+                        'languageQaFindingIds': {
+                            str(v): [str(i) for i in verse_entry['languageQaFindingIds']]
+                            for v, verse_entry in verses_entry.items()
+                            if isinstance(verse_entry, dict) and isinstance(verse_entry.get('languageQaFindingIds'), list)
+                        },
                     },
                     actor_id=identity.actor_id, device_id=identity.device_id,
                     extra_columns={'chapter': chapter_key},
@@ -3577,6 +3690,233 @@ class TranslationCoreProject:
                         actor_id=identity.actor_id, device_id=identity.device_id,
                         extra_columns={'chapter': chapter_key},
                     )
+
+    # -- assignments (#240) ------------------------------------------------
+    #
+    # One `team_assignments` row per scope of this book: chapter '' is the
+    # whole book. The payload is what the dashboard shows; the lifted columns
+    # are what the hub will query. Every write refreshes the workspace cache
+    # from the write's own change_log seq, as the progress totals do.
+
+    def _assignment_row_id(self, chapter: str) -> str:
+        return natural_row_id(self.workbench_identity.project_id, self.book_id, 'assignment', chapter or 'book')
+
+    def list_assignments(self) -> list[dict[str, Any]]:
+        identity = self.workbench_identity
+        rows = self.workbench.payloads(
+            'team_assignments', project_id=identity.project_id, book_id=self.book_id,
+        )
+        out = []
+        for payload in rows:
+            if not isinstance(payload, dict) or 'assigneeId' not in payload:
+                continue  # a row from before v8 carried no assignment shape
+            out.append({
+                'chapter': str(payload.get('chapter') or ''),
+                'assigneeId': str(payload.get('assigneeId') or ''),
+                'assignedBy': str(payload.get('assignedBy') or ''),
+                'assignedAt': str(payload.get('assignedAt') or ''),
+                # #81: an assignment made on the hub dashboard names someone
+                # this device may never have met; the name travels with it.
+                'assigneeName': str(payload.get('assigneeName') or ''),
+            })
+        out.sort(key=lambda a: (a['chapter'] != '', _chapter_sort_key(a['chapter'])))
+        return out
+
+    # -- per-project roles (#279) -------------------------------------------
+    #
+    # One `team_members` row per user who has a role on this book that differs
+    # from, or pins, their installation (or hub token) role. No row: the
+    # installation role applies. authorization.authorize reads it.
+
+    def _team_member_row_id(self, user_id: str) -> str:
+        return natural_row_id(self.workbench_identity.project_id, self.book_id, 'team_member', str(user_id))
+
+    def team_roles(self) -> dict[str, str]:
+        """{user id: role} for every user with a role on this book."""
+        roles: dict[str, str] = {}
+        for row in self.workbench.rows(
+            'team_members', project_id=self.workbench_identity.project_id, book_id=self.book_id,
+        ):
+            if row.get('user_id') and row.get('role'):
+                roles[str(row['user_id'])] = str(row['role'])
+        return roles
+
+    def team_role(self, user_id: str) -> str | None:
+        """The user's role on this book, or None when the installation role applies."""
+        row = self.workbench.get('team_members', self._team_member_row_id(user_id))
+        return str(row['role']) if row and row.get('role') else None
+
+    def set_team_role(self, user_id: str, role: str | None, *, set_by: str) -> bool:
+        """Give `user_id` `role` on this book, or remove their row (None).
+        Returns whether anything changed."""
+        identity = self.workbench_identity
+        row_id = self._team_member_row_id(user_id)
+        current = self.workbench.get('team_members', row_id)
+        if role is None:
+            if current is None:
+                return False
+            with self.workbench.batch() as batch:
+                batch.delete('team_members', row_id, project_id=identity.project_id, book_id=self.book_id,
+                             actor_id=identity.actor_id, device_id=identity.device_id)
+            return True
+        if current is not None and current.get('role') == role:
+            return False
+        self.workbench._write(
+            'team_members', row_id, project_id=identity.project_id, book_id=self.book_id,
+            payload={'userId': str(user_id), 'role': str(role), 'setBy': str(set_by),
+                     'setAt': self._timestamp()[0]},
+            actor_id=identity.actor_id, device_id=identity.device_id, expected_revision=None,
+            extra_columns={'user_id': str(user_id), 'role': str(role)},
+        )
+        return True
+
+    def set_assignment(self, chapter: str | int, assignee_id: str, *, assigned_by: str,
+                       assignee_name: str = '') -> dict[str, Any]:
+        identity = self.workbench_identity
+        chapter_key = str(chapter or '')
+        if chapter_key and chapter_key not in self.chapters():
+            raise ProjectError(f'Chapter {chapter_key} does not exist in this book.')
+        iso = self._timestamp()[0]
+        payload = {
+            'chapter': chapter_key, 'assigneeId': str(assignee_id),
+            'assignedBy': str(assigned_by), 'assignedAt': iso, 'assigneeName': str(assignee_name or ''),
+        }
+        receipt = self.workbench._write(
+            'team_assignments', self._assignment_row_id(chapter_key),
+            project_id=identity.project_id, book_id=self.book_id, payload=payload,
+            actor_id=identity.actor_id, device_id=identity.device_id, expected_revision=None,
+            extra_columns={
+                'chapter': chapter_key, 'assignee_id': str(assignee_id),
+                'assigned_by': str(assigned_by), 'assigned_at': iso,
+            },
+        )
+        self._refresh_assignments_cache(int(receipt['seq']))
+        return payload
+
+    def clear_assignment(self, chapter: str | int) -> bool:
+        identity = self.workbench_identity
+        chapter_key = str(chapter or '')
+        row_id = self._assignment_row_id(chapter_key)
+        if self.workbench.get('team_assignments', row_id) is None:
+            return False
+        with self.workbench.batch() as batch:
+            batch.delete(
+                'team_assignments', row_id,
+                project_id=identity.project_id, book_id=self.book_id,
+                actor_id=identity.actor_id, device_id=identity.device_id,
+            )
+        self._refresh_assignments_cache(
+            self.workbench.max_seq(project_id=identity.project_id, table='team_assignments'),
+        )
+        return True
+
+    def _refresh_assignments_cache(self, source_seq: int) -> None:
+        identity = self.workbench_identity
+        self.workspace.upsert_assignments_cache(
+            self.path, project_id=identity.project_id, book_id=self.book_id,
+            assignments=self.list_assignments(), source_seq=int(source_seq),
+        )
+
+    def sync_assignments_cache(self) -> str:
+        """Repair this book's assignments cache on open, as the progress cache
+        is repaired: trusted only at the change_log seq of the latest
+        team_assignments write and for this project id and book."""
+        identity = self.workbench_identity
+        current_seq = self.workbench.max_seq(project_id=identity.project_id, table='team_assignments')
+        cached = self.workspace.assignments_cache_entry(self.path)
+        if (
+            cached is not None and cached['sourceSeq'] == current_seq
+            and cached['projectId'] == identity.project_id and cached['bookId'] == self.book_id
+        ):
+            return 'fresh'
+        if current_seq == 0 and cached is None:
+            return 'fresh'
+        self._refresh_assignments_cache(current_seq)
+        return 'repaired'
+
+    def update_progress_chapter_alignment(self, chapter: str | int, aligned_verse_count: int, *,
+                                          verse_count: int) -> None:
+        """#239: one alignment writer refreshed its chapter's aligned-verse
+        count. The chapter row keeps everything else it had; a chapter no
+        check job has written yet gets a row that says so (`aiChecked`
+        False) so the count is not lost."""
+        identity = self.workbench_identity
+        chapter_key = str(chapter)
+        row_id = self._progress_chapter_row_id(chapter_key)
+        existing = self.workbench.get('progress_chapters', row_id)
+        payload: dict[str, Any] | None = None
+        if existing is not None:
+            try:
+                loaded = json.loads(str(existing.get('payload_json') or ''))
+                payload = dict(loaded) if isinstance(loaded, dict) else None
+            except ValueError:
+                payload = None
+        if payload is None:
+            payload = {
+                'chapter': chapter_key, 'verseCount': int(verse_count),
+                'aiChecked': False, 'aiCheckedAt': None, 'checkedVerses': [], 'languageQaFindingIds': {},
+            }
+        payload['alignedVerseCount'] = int(aligned_verse_count)
+        self.workbench._write(
+            'progress_chapters', row_id,
+            project_id=identity.project_id, book_id=self.book_id, payload=payload,
+            actor_id=identity.actor_id, device_id=identity.device_id,
+            expected_revision=None, extra_columns={'chapter': chapter_key},
+        )
+
+    def update_progress_language_qa(self, chapter: str | int,
+                                    verses: dict[str, tuple[list[str], dict[str, str]]]) -> None:
+        """#280: a live Language QA pass (the background pass after an edit,
+        a decision, a scoped Use or an undo -- not a check job) changed some
+        verses of `chapter`. `verses` maps verse -> (its Language QA finding
+        ids, open or decided; those findings' statuses). For each, the chapter
+        row's id list and those findings' rows are replaced. Every other field
+        of the row and every other finding row is left as it was. One
+        transaction. A chapter with no row is left alone: the stage has not
+        run there, so nothing is claimed."""
+        identity = self.workbench_identity
+        chapter_key = str(chapter)
+        row_id = self._progress_chapter_row_id(chapter_key)
+        existing = self.workbench.get('progress_chapters', row_id)
+        if existing is None:
+            return
+        try:
+            loaded = json.loads(str(existing.get('payload_json') or ''))
+        except ValueError:
+            return
+        if not isinstance(loaded, dict):
+            return
+        payload = dict(loaded)
+        lqa_ids = dict(payload.get('languageQaFindingIds') or {})
+        with self.workbench.batch() as batch:
+            for verse, (ids, statuses) in verses.items():
+                verse_key = str(verse)
+                old = [str(i) for i in lqa_ids.get(verse_key) or []]
+                new = [str(i) for i in ids]
+                for finding_id in old:
+                    if finding_id not in new or finding_id not in statuses:
+                        batch.delete(
+                            'progress_findings', self._progress_finding_row_id(chapter_key, verse_key, finding_id),
+                            project_id=identity.project_id, book_id=self.book_id,
+                            actor_id=identity.actor_id, device_id=identity.device_id,
+                        )
+                for finding_id, status in statuses.items():
+                    batch.write(
+                        'progress_findings', self._progress_finding_row_id(chapter_key, verse_key, str(finding_id)),
+                        project_id=identity.project_id, book_id=self.book_id,
+                        payload={'chapter': chapter_key, 'verse': verse_key,
+                                 'findingId': str(finding_id), 'status': str(status)},
+                        actor_id=identity.actor_id, device_id=identity.device_id,
+                        extra_columns={'chapter': chapter_key},
+                    )
+                lqa_ids[verse_key] = new
+            payload['languageQaFindingIds'] = lqa_ids
+            batch.write(
+                'progress_chapters', row_id,
+                project_id=identity.project_id, book_id=self.book_id, payload=payload,
+                actor_id=identity.actor_id, device_id=identity.device_id,
+                extra_columns={'chapter': chapter_key},
+            )
 
     def save_progress_totals(self, totals: dict[str, Any]) -> dict[str, Any]:
         """Write the book's totals row and refresh the workspace cache from it.
@@ -3636,6 +3976,11 @@ class TranslationCoreProject:
             totals=totals, updated_at=updated_at, source_seq=current_seq,
         )
         return 'repaired'
+
+
+def _chapter_sort_key(chapter: str) -> tuple[int, str]:
+    digits = ''.join(ch for ch in str(chapter) if ch.isdigit())
+    return (int(digits) if digits else 0, str(chapter))
 
 
 def _workbench_db_path(project_root: str | Path) -> Path:

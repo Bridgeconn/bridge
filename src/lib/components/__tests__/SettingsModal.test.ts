@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 
-const { getSettings, getNavigationStatus, setSettings, engineInfo, terminologyList, terminologyRecord, housestyleList, housestyleRecord, housestyleSetState, housestyleNameSuggestions, languageQaStatus, languageQaSetPack, pickFolder, checkerGet, checkerSet, wordsList } = vi.hoisted(() => ({
+const { getSettings, getNavigationStatus, setSettings, engineInfo, terminologyList, terminologyRecord, housestyleList, housestyleRecord, housestyleSetState, housestyleNameSuggestions, languageQaStatus, languageQaSetPack, pickFolder, checkerGet, checkerSet, wordsList, usersList, connectorStatus, installConnector } = vi.hoisted(() => ({
+  connectorStatus: vi.fn(),
+  installConnector: vi.fn(),
+  usersList: vi.fn(),
   checkerGet: vi.fn(),
   checkerSet: vi.fn(),
   wordsList: vi.fn(),
@@ -38,6 +41,9 @@ vi.mock("../../api/bridgeClient", () => ({
     languageQaCheckerSettingsSet: checkerSet,
     languageQaWordsList: wordsList,
     pickFolder,
+    usersList,
+    paratextConnectorStatus: connectorStatus,
+    paratextInstallConnector: installConnector,
   },
 }));
 
@@ -99,6 +105,59 @@ describe("SettingsModal connections", () => {
     await waitFor(() => {
       expect(container.querySelector(".connection-detail")).toHaveTextContent(/Connected.*IRVTam.*PHP 1:5/);
     });
+  });
+
+  function connector(overrides: Record<string, unknown> = {}) {
+    return {
+      paratextFound: true, paratextDir: "C:\Program Files\Paratext 9", paratextVersion: "9.5.110.1",
+      running: false, installed: false, installedVersion: "", bundledVersion: "0.7.4", compilerFound: true,
+      action: "install", message: "Paratext 9 is installed, but Bridge's connector is not.",
+      install: { state: "idle", message: "" }, ...overrides,
+    };
+  }
+
+  it("offers to install the Paratext connector and reports how the install went (#282)", async () => {
+    getNavigationStatus.mockResolvedValue(navigationState());
+    connectorStatus
+      .mockResolvedValueOnce(connector())
+      .mockResolvedValueOnce(connector({ install: { state: "running", message: "" } }))
+      .mockResolvedValue(connector({
+        installed: true, installedVersion: "0.7.4", action: "none",
+        message: "The Paratext connector 0.7.4 is installed.",
+        install: { state: "succeeded", message: "The Paratext connector 0.7.4 is installed. Start Paratext, then turn on Paratext navigation in Settings › Connections." },
+      }));
+    installConnector.mockResolvedValue({ install: { state: "running", message: "" } });
+    render(SettingsModal, { props: { initialPane: "connections", onClose: vi.fn() } });
+
+    const button = await screen.findByRole("button", { name: "Install Paratext connector" });
+    expect(screen.getByText(/Bridge's connector is not/)).toBeInTheDocument();
+    await fireEvent.click(button);
+    expect(installConnector).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole("button", { name: "Installing…" })).toBeDisabled();
+    expect(await screen.findByText(/connector 0.7.4 is installed. Start Paratext/, {}, { timeout: 4000 }))
+      .toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Install Paratext connector|Installing/ })).toBeNull();
+  });
+
+  it("will not install while Paratext is open, and offers an update over an older connector", async () => {
+    getNavigationStatus.mockResolvedValue(navigationState());
+    connectorStatus.mockResolvedValue(connector({ running: true, installed: true, installedVersion: "0.6.0", action: "update",
+      message: "An older Paratext connector is installed (0.6.0); this Bridge carries 0.7.4." }));
+    render(SettingsModal, { props: { initialPane: "connections", onClose: vi.fn() } });
+
+    const button = await screen.findByRole("button", { name: "Update Paratext connector to 0.7.4" });
+    expect(button).toBeDisabled();
+    expect(screen.getByText(/Close Paratext first, then install/)).toBeInTheDocument();
+  });
+
+  it("offers nothing when the connector is current", async () => {
+    getNavigationStatus.mockResolvedValue(navigationState());
+    connectorStatus.mockResolvedValue(connector({ installed: true, installedVersion: "0.7.4", action: "none",
+      message: "The Paratext connector 0.7.4 is installed." }));
+    render(SettingsModal, { props: { initialPane: "connections", onClose: vi.fn() } });
+
+    await waitFor(() => expect(connectorStatus).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: /Paratext connector/ })).toBeNull();
   });
 
   it("keeps an actionable connector error visible during a background refresh", async () => {
@@ -577,7 +636,7 @@ describe("SettingsModal terminology (#171)", () => {
   it("offers the threshold with no project open, and asks for one before the pack and house style", async () => {
     render(SettingsModal, { props: { initialPane: "languageQa", onClose: vi.fn() } });
     expect(await screen.findByLabelText(/Minimum measured precision: 0%/)).toBeInTheDocument();
-    expect(screen.getByText("Every indic-qa finding is drawn.")).toBeInTheDocument();
+    expect(screen.getByText("Every finding is drawn.")).toBeInTheDocument();
     expect(screen.getByText(/Open a project to choose its Language QA rules/)).toBeInTheDocument();
     expect(languageQaStatus).not.toHaveBeenCalled();
     expect(housestyleList).not.toHaveBeenCalled();
@@ -596,5 +655,29 @@ describe("SettingsModal terminology (#171)", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     await waitFor(() => expect(setSettings).toHaveBeenCalledWith(expect.objectContaining({
       languageQaReferenceDirs: { "hi-irv": "D:/OV Hindi" }, languageQaRelatedWords: true })));
+  });
+});
+
+describe("Users pane (#237)", () => {
+  it("opens the Users pane from the nav and lists the users with the signed-in one marked", async () => {
+    getSettings.mockResolvedValue({
+      provider: "openai", apiBaseUrl: "", model: "gpt-test", hasApiKey: false, reviewerMode: "basic",
+      paratextNavigation: false, logosNavigation: false, reviewerName: "Revant", reviewerNameUpdatedAt: "",
+      localUserId: "u-1", localUserRole: "project_admin", languageQaReferenceDirs: {}, bookmarks: [], recentChapters: [],
+    });
+    getNavigationStatus.mockResolvedValue(navigationState());
+    engineInfo.mockResolvedValue({ bridgeVersion: "0.16.0", companionSchemaVersion: 16 });
+    usersList.mockResolvedValue({
+      users: [
+        { userId: "u-1", displayName: "Revant", role: "project_admin", active: true, createdAt: "", updatedAt: "", current: true },
+        { userId: "u-2", displayName: "Rina", role: "reporter", active: true, createdAt: "", updatedAt: "", current: false },
+      ],
+      currentUserId: "u-1",
+    });
+    render(SettingsModal, { props: { onClose: vi.fn(), initialPane: "ai" } });
+    await fireEvent.click(await screen.findByRole("button", { name: "Users" }));
+    await screen.findByText("Rina");
+    expect(screen.getByText("(you)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add" })).toBeInTheDocument();
   });
 });

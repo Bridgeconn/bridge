@@ -136,9 +136,10 @@ def test_a_verse_whose_only_gaps_are_linked_is_fully_accounted_but_never_complet
     assert v3["gaps"] == {"sourceUnmatched": 0, "targetUnmatched": 0}
     assert v3["crossVerseAccounted"] == 2 and v3["crossVerseRealized"] == 1
     assert v3["fullyAccounted"] is True
-    # tC truth is unchanged: nothing is grouped, so the verse is still untouched
-    # and can never be marked complete through this route.
-    assert v3["status"] == "untouched"
+    # Since #228 the status says the verse has nothing left to do -- every gap
+    # is closed by a link -- while the tC truth beside it is unchanged: nothing
+    # is grouped, so it can never be marked complete through this route.
+    assert v3["status"] == "complete_cross_verse"
     assert v3["completionState"] == "pending"
     assert v3["canComplete"] is False
     assert v3["alignment"]["wordBank"] and all(not g["bottomWords"] for g in v3["alignment"]["alignments"])

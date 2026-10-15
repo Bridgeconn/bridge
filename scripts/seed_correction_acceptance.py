@@ -142,7 +142,7 @@ def seed_case_c(root: Path) -> dict[str, object]:
     """Run the real Stage 5-8 pipeline and stop, leaving the finding UNRESOLVED."""
     build_production_project(root)
     project_id = _register(root)
-    runtime = PassageSemanticRuntime(TranslationCoreProject(root), project_id)
+    runtime = PassageSemanticRuntime(TranslationCoreProject(root), project_id, actor_id="seed")
     # One shared axis for the Greek quantifier and both the broken and the
     # corrected target word, so retrieval can reach whichever is on disk.
     vectors = {"πᾶς": [1.0], BROKEN_WORD: [1.0], CORRECTED_WORD: [1.0]}
@@ -242,7 +242,7 @@ def seed_case_a_negation(root: Path) -> dict[str, object]:
     """Restage the ef49e9e Tamil-negation regression through the real pipeline."""
     build_negation_project(root)
     project_id = _register(root)
-    runtime = PassageSemanticRuntime(TranslationCoreProject(root), project_id)
+    runtime = PassageSemanticRuntime(TranslationCoreProject(root), project_id, actor_id="seed")
     vectors = {NEGATION_SOURCE_TEXT: [1.0], NEGATION_TARGET_TEXT: [1.0]}
     runtime.semantic_location = SemanticLocationEngine(
         runtime, FixtureEmbeddingProvider(vectors))

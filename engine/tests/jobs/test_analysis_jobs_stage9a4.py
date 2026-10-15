@@ -275,7 +275,7 @@ def test_affected_rerun_currentizes_a_larger_scope_without_recomputing_it(tmp_pa
         "\\id PHP\n\\c 1\n\\p\n\\v 3 OLD THREE\n\\p\n\\v 4 OLD FOUR\n",
         encoding="utf-8",
     )
-    runtime = PassageSemanticRuntime(TranslationCoreProject(root), initial.project_id)
+    runtime = PassageSemanticRuntime(TranslationCoreProject(root), initial.project_id, actor_id="Reviewer")
     manager = AnalysisJobManager(); manager.bind_runtime(runtime)
     scope = {
         "kind": "SELECTED_RANGE", "startChapter": "1", "startVerse": "3",

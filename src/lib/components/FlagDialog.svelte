@@ -93,7 +93,7 @@
 </div>
 
 <style>
-  .overlay { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: rgba(15, 20, 26, 0.45); }
+  .overlay { position: fixed; inset: 0; z-index: var(--z-dialog-over-dialog); display: grid; place-items: center; background: rgba(15, 20, 26, 0.45); }
   .dialog { width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; box-sizing: border-box;
     background: var(--surface); color: var(--text); border-radius: 14px; padding: 20px 24px; }
   h2 { font-size: var(--fs-lg); margin: 0 0 4px; }

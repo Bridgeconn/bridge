@@ -237,9 +237,9 @@ def test_full_bible_import_only_normalizes_primary_book_eagerly(tmp_path, monkey
     real_write = project_import._write_imported_book
     normalized: list[str] = []
 
-    def record_write(project_root, book, metadata):
+    def record_write(project_root, book, metadata, **checkpoints):
         normalized.append(book.book_id)
-        return real_write(project_root, book, metadata)
+        return real_write(project_root, book, metadata, **checkpoints)
 
     monkeypatch.setattr(project_import, "_write_imported_book", record_write)
     result = project_import.import_source(source, tmp_path / "projects", _metadata(projectName="Bible"))

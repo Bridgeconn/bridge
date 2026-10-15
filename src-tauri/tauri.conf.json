@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Bridge",
-  "version": "0.14.0",
+  "version": "0.18.0",
   "identifier": "org.translationcore.aibridge",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -17,6 +17,7 @@
         "height": 860,
         "minWidth": 960,
         "minHeight": 640,
+        "backgroundColor": "#F3F4F6",
         "dragDropEnabled": true
       }
     ],
@@ -37,6 +38,11 @@
       "binaries/bridge-engine",
       "binaries/bridge-usfm-checker"
     ],
-    "resources": ["resources/", "language_packs/"]
+    "resources": ["resources/", "language_packs/"],
+    "windows": {
+      "nsis": {
+        "installerHooks": "./windows/hooks.nsh"
+      }
+    }
   }
 }

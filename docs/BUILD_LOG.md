@@ -18004,3 +18004,3005 @@ draft pre-release `v0.14.0-mac-linux.1` on selvabenz/Bridge carries
 `Bridge_0.14.0_amd64.AppImage` (193 MB) and `Bridge_0.14.0_amd64.deb`
 (125 MB). Publishing it is Benz's click. `fork/main` was fast-forwarded to
 the same commit; nothing was pushed to RevantCI.
+
+## 2026-10-12 — Benz's decisions of 2026-10-12 recorded (#226)
+
+Benz answered the 2026-10-09 requirements list by email. Four DECISIONS.md
+entries, all dated 2026-10-12:
+
+- **Users and hub are v1 scope; dashboard is Option A.** Supersedes 2026-09-16.
+  Requirement 4 is #45 as #236 (roles, `authorize()`), #237 (Users screen,
+  picker, `legacy:human`), #240 (assignments, My work). Requirement 6 is #46 as
+  #227 (architecture review, the SRS §14 step for `FUTURE-002`/`003`), then
+  #79, #80, #81. This is the maintainer's decision to add a server: CLAUDE.md's
+  first stop-and-ask bullet now says "decided 2026-10-12 for the hub only; any
+  other network dependency is still a question", and the offline-invariant
+  paragraph names the hub as the one exception, a sync peer the desktop never
+  waits on. Option B (a web workbench) is off the table.
+- **Language QA accuracy.** The 70% target is dropped; the 2026-09-28 0.90 gate
+  is the standard. Recall is the abstain-class still-missed rate of
+  LANGUAGE_QA_BENCHMARK.md; the proposed target is at most 10% per class on at
+  least 20 reviewed abstains, awaiting Benz. Labels come as JSONL in the
+  existing verdict format, 50+ per rule; the word list as a CSV shaped like
+  `lexicon_curated.csv`. First batch 2026-10-13.
+- **Requirement 8 scaling** means `editorPrefs.textScale`, RTL correct at each
+  step; Windows 125%/150% must only not break layout.
+- **Requirement 9** covers the automatic alignment path too; the verse ✓ dead
+  end for cross-verse-linked verses is fixed by #228, not blocking the interim
+  release.
+
+Also from the email, not a DECISIONS entry: requirement 2 (loading screen,
+#233) goes before requirement 1 (speed, #229); the field-spec machine is
+available from 2026-10-15; #183 (actor id) is left to us and is the next
+commit.
+
+**Files.** `docs/DECISIONS.md` (four entries appended), `CLAUDE.md` (the
+stop-and-ask bullet and the offline paragraph), `docs/TEAM_ARCHITECTURE.md`
+(a scope note under the header; §10's order of work carries the issue numbers
+and the review step), `docs/SOFTWARE_REQUIREMENTS_SPECIFICATION.md` (§14: the
+three FUTURE items moved into v1 scope, pointing at the decision and #227).
+
+**Verified.** Docs only; no code changed, no gates run. Claims checked against
+the tree before writing: the still-missed-rate table exists in
+LANGUAGE_QA_BENCHMARK.md; `lexicon_curated.csv` is under
+`benchmark/human/<date>/`; `textScale` is in `src/lib/editorPrefs.ts`;
+`legacy:human` is not yet in code (it is #237's); the wire `actorId` fallback
+is at `bridge_service.py:7049`.
+
+## 2026-10-12 — Actor id: the engine stamps its own; the wire fields go (#183)
+
+Benz left the question to us. Decided: every write is attributed to the
+identity the engine holds for the caller, and a request that names its own
+actor is refused. DECISIONS.md 2026-10-12 has the entry; the #183 comment has
+the reasoning in full. The code change — dropping `actorId`, `actor` and
+`requestedBy` from the correction methods in `bridge_service.py:7049-7111`,
+the matching optional fields in `bridgeClient.ts:1156-1232`, the six
+`reviewerActorId()` sends in `CorrectionReviewPanel.svelte`, the `"human"`
+fallback in `correctionApplication.ts:70`, and the seven wire usages in the
+correction tests — lands with #236, where `authorize()` first depends on it.
+
+**What the survey found, against the issue's premise.** The issue counted 26
+test usages of the wire field. Seven calls actually go through the
+dispatcher with an asserted actor (`test_correction_stage9b1.py` three,
+`test_correction_stage9b3b.py` one, `test_correction_stage9b4.py` two,
+`test_correction_stage9b3c.py` one); the other occurrences assert on
+`actorId` in returned proposal history or pass `actor=` straight to a
+service method, which the decision does not touch. The desktop sends
+`settings.localUserId` on every one of these calls, so the engine's own id
+and the asserted one are already the same and no row changes when the field
+goes. The service layer already refuses a non-HUMAN wire actor on apply and
+acknowledge, so the `actor` object could only ever carry what the engine
+would build itself.
+
+**Verified.** Docs only; no code changed, no gates run. The file:line
+references above were read in the tree today.
+
+## 2026-10-12 — Startup loading screen: real stages, a 30 s failure view, Copy diagnostics (#233)
+
+Requirement 2 (P0). Before this the window was blank until the engine
+answered a ping: the Python ready handshake was dropped in `sidecar.rs`, a
+spawn failure went to `eprintln!` only, the version was shown nowhere at
+startup, and Diagnostics had no copy button.
+
+**Engine.** `stdio_transport.send_stage(stage, label)` writes one line in
+the response envelope under the reserved id `__stage__`, flushed, to the
+interpreter's own stdout, *before* the work it names. `main.py` now boots in
+`_start()`: `_apply_cli_overrides()`, `send_stage("modules", …)`, then
+`from bridge_service import BridgeEngine` (moved out of the module top so
+the stage precedes the import and `import main` from a test pays nothing),
+`send_stage("engine", …)`, `BridgeEngine()`, `run_stdio_loop`. The e2e
+`Sidecar` reader skips stage lines up to `__ready__` and asserts the order
+`["modules", "engine"]`; the frozen smoke already looped to ready.
+
+**Shell.** `sidecar.rs` classifies every stdout line (`classify_protocol_line`:
+Stage / Ready / Response / Noise) and keeps a `StartupStatus` (stages with a
+running `seq`, `ready`, `failed`). Stages: `spawning` and `spawned` from
+`start()`, the engine's `modules` and `engine`, `ready` on the handshake
+(also logged "Engine ready" and emitted as `engine-ready`), `failed` when the
+sidecar cannot be resolved or spawned (also an error in the log), `exited`
+when the process terminates before ready. Each is emitted as `engine-stage`.
+`engine_startup_state` returns the catch-up: stages so far, ready/failed,
+the version from `package_info()`, and the paths "Copy diagnostics" prints
+(engine-events.log, `%LOCALAPPDATA%\Bridge\data`, resource dir, exe).
+`main.rs` still echoes a start failure to the dev terminal.
+
+**Frontend.** `StartupScreen.svelte` is an overlay inside `.frame` while
+`startupDone` is false: an inline SVG wordmark (the bundled icon is a plain
+gradient tile, no logo exists), the version, a spinner with the latest
+stage's own label and an elapsed counter, and the stage list. On failure:
+"Bridge could not start its engine.", the stage's text, Retry (pings again,
+which respawns a dead sidecar), Show details (the engine log, newest first)
+and Copy diagnostics (`startup.ts` `buildDiagnosticsText`: version,
+platform, problem, paths, stages with times, the log tail; async clipboard
+with a selection-copy fallback, no plugin). `App.svelte` listens for
+`engine-stage` first, then fetches `engineStartupState()` and merges by
+`seq`; `connectEngine()` arms the 30 s timer, pings, and on success does
+what the old mount block did (navigation, settings, file drop). A `failed`
+or `exited` stage shows the failure at once. `startupDone` is set on the
+first successful ping only, so a mid-session respawn keeps its own notice.
+
+**Measured, dev build on this machine** (`target/debug`, frozen sidecar
+beside it, Vite dev server; not the installer): screenshot burst at 250 ms
+after launching the exe — 1.0 s blank webview (first paint pending), 1.3 s
+the card with "Engine process started, loading Python" and the stage list,
+1.6 s "Loading engine modules", 1.9 s "Engine ready", 2.2 s the Home screen
+with the projects list. `engine-events.log`: "Sidecar started" to "Engine
+ready" 1.65 s on the first launch of the day and 0.77 s on the second;
+`project.list` 618 ms / 445 ms. Failure path: the dev exe copied to a
+folder with no sidecar beside it showed the failure view 0.8 s after
+launch with "The engine process could not be started: The system cannot
+find the file specified. (os error 2)", Retry, Show details and Copy
+diagnostics; the log holds the same text as an error. The window closed
+cleanly in both runs (no orphaned bridge-engine.exe). The requirement's
+cold-start-under-5 s row needs the installed build on the reference
+machine (QA_TEST_MATRIX M48, not run).
+
+**Verified.** Engine `pytest -n auto`: 5189 passed, 3 xfailed, 1 failed —
+`test_logos_get_state_spawns_the_real_helper…` in
+`tests/connectors/test_desktop_connectors.py`, which passed when rerun
+alone (it spawns a PowerShell helper and ran while this session's own
+PowerShell screenshot loops were competing for the machine; unrelated to
+these files). New: `tests/service/test_startup_stages.py` (2) and the e2e
+stage-order test. Frontend: `npm run check` 0/0; `npm run test` 54 files,
+676 passed (new `startup.test.ts` 5, `StartupScreen.test.ts` 4); `npm run
+build` ok. Shell: `cargo check` clean, `cargo test` 13 passed (11 + the
+protocol-line and StartupStatus tests). Frozen: `build-sidecars.ps1`, then
+`smoke_sidecars.py` passed, "Frozen engine ready in 3.31s" with the stage
+lines on the wire. `src-tauri/language_packs/` had to be staged by hand
+(`build-sidecars.ps1` does it; `cargo check` fails without it — a fresh
+checkout gotcha to add to the memory note, not the repo).
+
+**Not done / noticed.** The blank-white second before the webview's first
+paint is WebView2 initialisation, before any HTML; a window
+`backgroundColor` matching `--bg` would soften it and is a one-line config
+change for a follow-up, not this issue. Every request sent while the
+sidecar is down calls `start()` again (pre-existing), so a spawn failure
+logs once per queued request (four at Home); harmless, the loading screen
+shows one failure.
+
+## 2026-10-12 — Cross-verse verification, part 1: the gap list on the frozen 0.14.0 engine (#241)
+
+Requirement 9 asks for an end-to-end confirmation on the installed 0.14.0
+build, UI pointers, and the known gaps. Two things outside the repo block the
+installed-build half: there is **no v0.14.0 release** (the release workflow
+runs on a `v*` tag push; the last tag is v0.13.0, 2026-10-01, and the
+machine's installed Bridge is 0.13.0), and every AI-backed call answers
+**HTTP 429, "your organization has reached its configured enforced spend
+limit"**. What could be run was run on today's frozen `bridge-engine.exe`
+(built from `main` at d82597b; `engine.info` reports 0.14.0, schema 16), over
+the stdio protocol, with LOCALAPPDATA redirected to a scratch folder holding
+a copy of the real settings (the DPAPI key is bound to the account, not the
+path), on two throwaway projects: the #219 test fixture (Greek PHP 1:3–4,
+"I thank" rendered in v4) and a copy of the IRV Tamil Genesis project with
+its backups and transactions left out. The script and its full output are
+in the session scratchpad (`walk_241.py`, `walk_241.jsonl`).
+
+**Manual flow, observed.** `alignment.getRange` 1:3–4 gaps 3/1 and 1/3;
+`alignment.crossVerse.link` εὐχαριστῶ (1:3) → ஸ்தோத்திரிக்கிறேன் (1:4)
+annotated both verses (realized 1 / accounted 1, gaps net of the link), the
+tC file untouched, `canComplete` false on both; the duplicate was refused
+with "is already linked to"; `unlink` returned both to zero, a second unlink
+→ `alignment_error`; re-link; `verse.edit` on 1:4 reported
+`crossVerseLinksInvalidated`, after which both verses list the link as
+`invalid` and 1:4 reads `status: invalid`. `gapScan` listed every source and
+target gap with signatures. `verse.runChecks` local on the window gave
+`ALIGN_UNALIGNED_TOP/BOTTOM` only (no automatic pass had run). On the GEN
+copy: `project.open` 2.7 s, 50 chapters; `alignment.status` ch 1 complete 1
+/ untouched 30; `Suggest links` (offline corpus) 1 proposal in 2.5 s; the
+same call on the fresh fixture: 0 with `unavailable` (#208 explained: the
+corpus is the project's own completed verses).
+
+**Automatic flow, observed.** `alignment.autoAlign.estimate` GEN 1: 15
+windows, 30 calls, ~126k input tokens, USD 1.98 estimated, no provider
+call. `window.autoAlign`, `crossVerse.aiPropose` and the chapter job each
+reached the provider and came back `ai_error` with the 429 text after 5–8 s;
+nothing was written (`alignment.get` unchanged, verdict null), the job ended
+`failed` with "1 window(s) failed", `revert` on an untouched verse was
+refused with "No automatic alignment has run". The fail-closed path is
+verified; the agreement-gate hit rate, token spend and reasons wait for the
+spend limit.
+
+**Gap list, each checked in code today.**
+1. Export: `canComplete` (`bridge_service.py:1820`) needs an empty word bank
+   and every group two-sided; a linked word stays in its verse's bank, so a
+   linked verse never completes and the chapter stays `partial`
+   (`alignment_gaps.py` docstring, `cross_verse_links.py` docstring).
+2. Reports: no cross-verse reference in `qa_report.py`, `reporting.py`,
+   `report_jobs.py`, `collection_jobs.py`.
+3. Undo and history: a link change writes an `alignment_history` row
+   without `backupPath` on purpose, and `_alignment_history_entries`
+   (`tc_project.py:1557`) keeps only rows with one — so link events are
+   absent from the verse history list (`alignment.get` → `history: []`
+   after link, unlink and invalidation) and `alignment.restore` cannot
+   restore them. Undo is unlink; an invalidated link is kept as `invalid`.
+4. Cross-chapter: every range method takes one chapter and a verse list.
+5. #208 (offline suggestions need completed alignments), #188 (status
+   reflects tC groups only, so a linked verse still reads `untouched`).
+6. The 1366×768 visual check of the page is still owed.
+7. The verse ✓ dead end: #228.
+
+**Docs.** QA matrix: D14's status now records the 429 run; M49–M58 added
+for #134's list (protocol PASS where the run covered it, desktop NOT RUN).
+**Not done.** The on-screen walk of the installed app: no 0.14.0 installer
+exists, and the maintainer was using the desktop while this session ran,
+so no synthetic clicks were sent. The verse-list, modal and finding entry
+points are named from the code in the #241 comment for Benz.
+
+## 2026-10-12 — `complete_cross_verse`: the verse ✓ on a verse aligned through a link (#228)
+
+Since 2026-10-09 the verse ✓ needs word alignment `complete`, and a verse
+whose words are aligned through a cross-verse link can never reach it:
+translationCore's rule wants every word in a two-sided group, aligned USFM
+cannot express the link, so the verse read "Not clear: alignment partial"
+for ever. Benz (2026-10-12): not acceptable. Option 1 of the issue is what
+landed: a fifth status value, not a change to export.
+
+**Engine.** `alignment_gaps.STATUS_COMPLETE_CROSS_VERSE` and
+`complete_via_cross_verse()`: source tokens present, `gap_ids`' remaining
+sources and targets both empty (so net of active links and null decisions,
+the one gap definition), and at least one id closed by a link or a null —
+without that last clause the verse would be tC-complete already.
+`BridgeEngine._alignment_verse_status` (now an instance method) returns it
+when the tC work state is `partial` or `untouched` and the rule holds;
+`invalid` and `complete` are untouched. It reaches every reader of that
+method: `alignment.status` (whose `counts` gain the key), `alignment.get`
+and `getRange` (`status`, so the modals' badges and the stores update on a
+link), and the chapter load that seeds the verse list. `canComplete`,
+`completionState`, `fullyAccounted` and `accounted` are unchanged.
+
+**Cost.** A verse no link or null touches pays nothing new. The engine keeps
+`_cross_verse_touch_index`: the active links and null decisions of the book
+as stored signatures, keyed by (chapter, verse), from two queries, cached on
+(project id, book, `workbench.write_generation` — the #241 counter) so a
+chapter load or scan reads them once, not three connections per verse; a
+touched verse then loads its alignment once more and runs `gap_ids`.
+
+**Frontend.** `alignmentStatus.ts` (`isAlignmentComplete`,
+`alignmentStatusLabel` → "complete (cross-verse)"). `VerseList`: the ✓ rule
+and the title ("Checked: no open findings, alignment complete
+(cross-verse)"), the ⇄ title and class (success tint with an inset ring).
+`App` status bar and both modals' chapter tallies show "N via cross-verse"
+when non-zero; the badges use the label. `AlignmentCounts` gains the key.
+
+**Tests.** `tests/service/test_alignment_status_cross_verse.py` (4): the
+link alone leaves τῷ a gap (`partial`); link + null → `complete_cross_verse`
+in `alignment.get`, `getRange`, `alignment.status` counts and the chapter
+load, with `canComplete` false and `completionState` pending; unlink or
+clearing the null reopens it; a verse edit that invalidates the link drops
+it on the source verse and marks the edited verse `invalid`; the touch index
+follows writes and is reused within a generation. The #117 test that pinned
+`untouched` for a fully-linked verse now expects the new value, with its tC
+assertions unchanged; the get-range counts literal and three TypeScript
+fixtures gain the key. Vitest: the ✓ test for the new state (title, class,
+glyph title) and `alignmentStatus.test.ts`.
+
+**Verified.** Engine `pytest -n auto`: 5193 passed, 3 xfailed, 1 failed (`test_logos_get_state_spawns_the_real_helper…`, which passes alone both times it was rerun today; it spawns a real PowerShell helper and fails only in the parallel run while a sidecar build competes for the machine). Frontend: `npm run check` 0/0, `npm run test` 55 files / 679 passed, `npm run build` ok. Shell: no Rust change. Frozen: `build-sidecars.ps1` then `smoke_sidecars.py` passed (engine ready in 2.25 s).
+
+**Not done.** Progress totals do not yet count it as aligned: the aligned
+dimension is #239's (next in the order), where this value joins `complete`.
+The desktop check of the tick on a real linked verse is M53 in the QA
+matrix, NOT RUN.
+
+## 2026-10-12 — One SQLite connection per thread, released per request (#113)
+
+**Measured first.** `tests/semantic/test_qa_target_hash_contract_stage8_9b.py`,
+9 tests, serial, the file the issue's profile came from, run under four
+settings by a pytest plugin that swapped `_connect` (conftest's own
+opt-out disabled with `BRIDGE_TEST_DURABLE_SQLITE=1`):
+
+| setting | wall |
+|---|---|
+| FULL, a connection per call (product) | 95.6 s, 95.3 s |
+| NORMAL, a connection per call | 121 s, 90 s |
+| NORMAL plus an idle anchor connection per file | 155 s |
+| OFF + memory journal (the old test patch) | 33 s, 29 s |
+| NORMAL, one connection per thread reused | 11.7 s, 10.9 s |
+
+So the fsync the issue blamed was not the cost; the open/close was (every
+close of the last connection checkpoints the WAL), and the anchor that
+stops the checkpoint did not help either. An in-engine run on a copy of IRV
+Tamil Genesis (open, gap scan, ten verse checks, ten link/unlink pairs) showed
+FULL, NORMAL and anchor within noise of each other for the same reason: those
+paths open few connections per call.
+
+**Change.** `tc_ai_bridge/sqlite_pool.py` `ConnectionPool`: one connection
+per (thread, read-only) per file, opened on first use with the product
+pragmas and `synchronous NORMAL`; `acquire()` yields it and rolls back on
+exit if the block left a transaction open (a per-call connection was closed
+there, which did the same); `release_thread()` closes the caller's and every
+dead thread's; `release()` is the same (a live thread's connection is never
+closed from outside). Both repositories' `_connect` delegate to it and gain
+`release_connections` / `release_thread_connections`; `TranslationCoreProject`
+and `PassageSemanticRuntime` gain `close()` and `release_thread_db_handles()`.
+`BridgeEngine.handle_request` releases the dispatcher thread's handles after
+every request, so between requests nothing holds the files, as before;
+`open_project` closes the outgoing project's handles before replacing it;
+`delete_project` closes them before `rmtree`; `FoundationRepository.restore`
+releases before it unlinks the live WAL (the two foundation tests that
+failed until it did were exactly that: `PermissionError` on
+`semantic.sqlite3-wal`). Backups were already WAL-safe (SQLite's backup API).
+The conftest opt-out (OFF + memory journal) is gone; tests run the product
+pragmas and the profiled file now takes 10 s, under the old patched 29 s.
+`workbench.connect` in check timing now counts real opens.
+
+**Audit before the change.** An AST walk of both repositories found no
+method that opens a connection inside another's connection block, and the
+only write paths without an explicit `commit()` are the migrations, which
+commit inside their own `executescript`.
+
+**Not changed.** `WorkspaceRepository` (per-call FULL, a handful of calls).
+Job threads keep their connection until the job's thread ends; a restore
+while a job holds the file now fails cleanly instead of racing it.
+
+**Verified.** Engine `pytest -n auto` with the product pragmas: 5200 passed, 3 xfailed, 1 failed in 7:20 (the suite took 11:00 under the old test patch); the failure was `test_save_semantic_location_run_is_atomic_if_the_alignment_edge_write_fails`, which swaps `sqlite3.connect` for a failing wrapper that a pooled connection never calls -- the test now releases the pool before and after the patch and its file passes (8); the suite was not rerun for that test-only edit. The Logos connector test passed in this run. `build-sidecars.ps1` then `smoke_sidecars.py` passed, with the frozen indic-qa stages faster (Hindi pack 4.6 s, was 7.3 s; ta-irv layer 6.7 s, was 12.5 s). Frontend and shell untouched.
+
+## 2026-10-12 — Tamil UI strings exported for native review, part 1 of 2 (#235)
+
+Requirement 3 asks a native speaker (Benz supplies the reviewer) to review
+the Tamil on screen. There is no i18n file, so nothing could be handed over.
+This commit adds the table; the corrections land in a second commit when the
+review comes back, and #235 stays open until then.
+
+**What is on screen, checked against the code.** The coverage statement
+(`language_qa.coverage()`: in-scope labels, out-of-scope labels and reasons,
+behind the panel's (i) since DECISIONS 2026-10-09), the two (i) headings in
+`LanguageQaPanel.svelte`, Settings placeholders and help text with Tamil
+examples, the ta-irv pack's finding messages, the தான் context message and
+the fix rationales (tooltips in the Review panel and the verse right-click
+menu), the indic-qa Tamil layer's rule labels (finding message and Checker
+settings switch) and detail phrases, and the sandhi grammar's 71 rule names
+(quoted as "rule <id>: <en> (<ta>)" in a sandhi finding's detail). The pack
+rules' `title.ta` (13) is loaded but no screen shows it; it is listed last
+so the reviewer can do it in the same pass. `plugins.py`'s Tamil is an AI
+prompt, not UI, and is left out.
+
+**What landed.** `scripts/export_tamil_ui_strings.py` writes
+`docs/TAMIL_UI_STRINGS.md` (138 rows: 22 coverage, 2 headings, 30 Tamil
+terms inside English text, 71 grammar names, 13 unshown titles) and, with
+`--csv`, a UTF-8-BOM sheet with two empty reviewer columns. Each row names
+its source. Kind *Tamil* is a rendering of the English beside it; kind
+*Term* is Tamil words inside an English sentence, review those words only.
+Messages shared by several rules appear once with every rule listed.
+`tests/language_packs/test_export_tamil_ui_strings.py` (`external`) fails
+when the committed table is stale, so a changed Tamil string cannot skip the
+next review round, and checks every coverage string is in it.
+
+**Open question for the review.** The grammar names are pack dictionary data
+(`ta-irv/dictionary/sandhi_rules.tsv`), which Bridge never writes; a
+correction there is an upstream indic-qa change re-synced with
+`scripts/sync_indic_qa.py`, not an edit here.
+
+**Verified.** `python scripts/export_tamil_ui_strings.py --check` exits 0;
+the three new tests pass. The full engine suite runs with the batch (#235,
+#234, #191).
+
+## 2026-10-12 — ta-irv 1.2.0 and its changelog (#234)
+
+ta-irv had been 1.1.0 since 2026-09-28 while the inline promotions, rule
+revision 3 (the தான் contexts), seven rules moved out of code, the indic-qa
+layer, `typo.participle.sentence-final` and the general corpus all shipped
+under it. The 2026-10-07 layer decision kept 1.1.0 on purpose so no ignore
+would expire, and `test_indic_qa_tamil_layer.py` pinned it. Benz confirmed the
+bump on 2026-10-12 knowing that; DECISIONS.md records the reversal ("Every
+ta-irv change ships as a new pack version with a changelog") and marks the old
+line superseded.
+
+**What changed.** `pack.json` and `build_ta_irv_pack.py` `PACK_VERSION` are
+1.2.0. No rule changed. `engine/language_packs/ta-irv/CHANGELOG.md` records
+1.0.0, 1.1.0 and 1.2.0, rebuilt from the pack's commit history (per-commit rule
+version, inline and enabled state, read from git rather than the docs).
+`LANGUAGE_QA_RULE_PACK.md`'s version section is now `ta-irv@1.2.0`: all 13
+native rules at their current revisions, inline flags and combined human
+numbers, the seven code-origin rules, and the layer. The layer test's version
+pin is now a check that the changelog has an entry for the pack's version, so
+a bump without one fails; the two stamp tests expect `ta-irv@1.2.0`.
+
+**Existing ignores come back as `previouslyIgnored`.** Measured on the loaded
+pack: 31 rules stamp `ta-irv@1.2.0` (13 native, 18 `indicqa.*`), so every
+ignore or rejection of their findings recorded under 1.1.0 is shown again once
+for re-check. The 7 rules with `legacyVersion` stamp `language-qa-7` and keep
+their ignores. The fingerprint includes the pack version, so the Language QA
+chapter cache rescans once.
+
+**Verified.** Human gate (`scripts/language_qa_benchmark.py --human-labels
+benchmark/human --gate`): pass, pack version `language-qa-7+ta-irv@1.2.0`, 818
+label rows, the same per-rule numbers as at 1.1.0, nothing lost. The pack,
+layer, stamp and report tests: 117 passed. The changelog check fails when the
+version is set to 1.3.0 with no entry (tried, then reverted).
+`benchmark/human/baseline.json` and `population.json` still carry the 1.1.0
+label in `packVersion`; neither the gate nor population staleness reads it
+(population is per-rule definition hashes), so they are not regenerated here.
+
+## 2026-10-12 — TA_DOUBLE_SPACE (#191): already resolved on 2026-10-08
+
+#191 (2026-09-30) asked to delete the dead `TA_DOUBLE_SPACE` check or run it on
+raw text. Option (a) landed on 2026-10-08 as `b919731` ("One owner for
+zero-width and double spaces", the fork's #234, entry above): `local_checks`
+no longer emits `{TA|LANG}_DOUBLE_SPACE` or `{TA|LANG}_HIDDEN_CHAR`, Language QA
+owns them as `spacing.extra` and `unicode.invisible` for every pack, and
+`tests/jobs/test_local_checks_ownership.py` asserts a real double space and a
+zero-width space give the Language QA findings and no local one. That commit
+never referenced #191, so the issue stayed open. Nothing to change; verified
+`b919731` is an ancestor of `origin/main` and the test passes on today's main.
+
+## 2026-10-12 — Language QA panel: #177 verified done; #178's list switch pinned
+
+**#177 (coverage behind an ⓘ).** Already delivered on 2026-10-09 by `107f9f3`
+and `8945ef1` (DECISIONS 2026-10-09). Checked against the issue's acceptance
+in the current code: the statement is hidden until the (i) in the sticky
+header is clicked (`aboutOpen`, `aria-expanded`, `aria-controls`, accessible
+name "About these checks"); it closes on the (i), Escape (focus returns to the
+(i)) or a click elsewhere; it is a real button, so keyboard-reachable; the
+Tamil keeps its `lang="ta"` spans; the box is capped at min(320px, 45vh).
+`LanguageQaPanel.test.ts` "states what it checks … behind the (i)" asserts
+all of that. No code change.
+
+**#178 (controls in reach, less prose).** The 2026-10-09 work pinned the title,
+(i), Pause/Resume and Close in a sticky header with one status line under it,
+and the Issues / Book words / Flags / Edits / Dictionary tab bar under that;
+"No candidates found … This is not publication approval." is kept. The one
+gap: the Findings / Re-check / False positives switch lived in the Issues
+filter box inside the scrolling body, so it scrolled away. Benz chose
+(2026-10-12) to pin only that row. It is now a third sticky row under the tab
+bar (`.list-row`, `top: head-h + tabs-h`, the tab bar's height bound like the
+header's), shown on the Issues tab only; Show and Kinds still scroll with the
+list. Roles unchanged (`tablist` "Language QA lists", `tab`, `aria-selected`).
+
+**Tests.** New Vitest: the switch is the tab bar's next sibling, outside
+`.panel-body`, switches the list, and is absent on Book words. The filter-rows
+test now expects Show and Kinds in the box.
+
+**Verified.** `npm run check` 0/0, `npm run test` 55 files / 680 passed,
+`npm run build` ok. Not run: the desktop visual check at 1366×768 for both
+issues (jsdom does not lay out, so sticky behaviour is unproven by the tests).
+
+## 2026-10-12 — Cross-verse re-tests: #208 closed; #188 blocked by the provider's spend limit
+
+Both issues waited on #214's window alignment (#216–#222, now on `main`).
+Driven against the real stdio sidecar, isolated data folder, IRV 1 Corinthians.
+
+**#208 (offline, closed).** `alignment.crossVerse.propose` on 7:1-3 of a book
+with no completed alignments returns 0 proposals with `unavailable.reason:
+"no-completed-alignments"` and its explanation; the corpus pass makes no
+network call. The page's rendering of that message is pinned by
+`CrossVerseAlignmentModal.test.ts`. Desktop not run.
+
+**#188 (one paid window, Benz's go-ahead).** The offline estimator put
+1 Co 7:1-3 at ~6,800 input tokens over 2 requests, $0.12–0.51 on gpt-5.6.
+`alignment.window.autoAlign` (what "▶ Align automatically" calls; the old
+"Suggest with AI" is gone since #222) was refused by OpenAI with HTTP 429,
+"organization has reached its configured enforced spend limit", after 10.8 s.
+Nothing was written; the error reached the caller as `ai_error`. No retry was
+made. #188 stays open until the limit is raised and the window is run again.
+
+## 2026-10-12 — #188 re-tested with a real provider: the cold-start window aligns
+
+After the OpenAI spend limit was raised, the same single window ran (Benz's
+go-ahead): IRV 1 Co 7:1-3 on a fresh import, no completed alignments,
+`alignment.window.autoAlign` with `apply: true`, gpt-5.6. Two calls, 16,230
+tokens, $0.298 (estimate before: $0.12–0.51), 136.6 s, no failures. Agreed
+and written: v1 7 groups + 5 nulls, v2 10 groups + 4 nulls, v3 7 groups + 9
+nulls; verdicts NEEDS_REVIEW / ALIGNED_CLEAN / NEEDS_REVIEW; status
+`untouched` → `partial` / `complete_cross_verse` / `partial`. The two
+disagreements (v1 என்னவென்றால் grammatical vs explicitation; v3 δὲ link vs
+implicit) became suggestions, unwritten. First successful real-provider run
+of the #219 path. Desktop app not run. Observation for Benz: v2's
+`complete_cross_verse` came from null decisions alone, no link (#228's rule).
+
+## 2026-10-12 — #210, the frontend part: a busy sidecar no longer fails the check notice
+
+Root cause (measured, on #210): a request ahead of a `checks.status` poll —
+opening a never-opened sibling, `materialize_lazy` 60 s while a check runs —
+holds the single dispatcher past Rust's 30 s limit, and the monitor turned
+that one timeout into "Checking failed: Sidecar request 'checks.status' timed
+out". The root fix (materialize off the dispatcher, #112's area) is Revant's;
+Benz chose (2026-10-12) to land only this part.
+
+**What changed.** `src/lib/checkMonitor.ts`: a timed-out poll is a busy
+sidecar, not a failed check. `App.svelte` `monitorJob` (not the startup path)
+keeps polling after one, with the progress label "Waiting for Bridge to finish
+another task"; ten timeouts in a row (about five minutes) still end it. The
+failure notice now reads "Bridge stopped answering while checking." or
+"Checking stopped because of an error.", then "Your text is not affected;
+press Retry to check again.", with the sidecar's text kept as "(Details: …)".
+
+**Verified.** `checkMonitor.test.ts` (3): both Rust timeout wordings are read
+as busy, the give-up bound, the wording. `npm run check` 0/0, `npm run test`
+56 files / 683 passed, `npm run build` ok. Engine suite not run (no engine
+change). Not run: the desktop repro (open an unopened book during a check and
+watch the label); the protocol repro on #210 is what showed the 63 s wait.
+
+## 2026-10-12 — Tamil UI strings, part 2: the native review applied (#235)
+
+The reviewer filled 36 of the 138 rows of `D:\Bridge_Tamil_UI_strings_review.csv`
+(the `--csv` sheet). Every correction was applied by row id from the sheet, each
+replacement asserting its old text, so no Tamil was retyped.
+
+- **Coverage statement** (`language_qa.py`, the panel's (i)), 6 strings: "or"
+  rather than "both" for joined/split words (சேர்ந்தோ பிரிந்தோ); proper names as
+  ஆள், இடப் பெயர்கள், not பெயர்ச்சொல் (any noun); பிரதிப்பெயர் for pronoun; a
+  noun phrase for missed/added source words; and the two reasons gain the
+  "(Stage 7/8 shows candidates)" the English had and the Tamil dropped.
+- **Pack rule titles**, 6 (builder and rule files; no screen shows them yet).
+- **The தான் context message** of the five வல்லினம் rules: இடைச்சொல் for the
+  clitic, the term every other string uses (was ஒட்டுச்சொல்).
+- **indic-qa sandhi grammar names**, 18: committed upstream as indic-qa
+  `282d033` (branch `tamil-review-235`, from the vendored `ab53636`; the main
+  clone's uncommitted work was left alone by using a separate worktree), then
+  synced with `scripts/sync_indic_qa.py`. Names only, so no rule `revision` was
+  bumped, as the sync's prompt allows when matching is unchanged.
+- Notes with no correction were left: `in.sandhi` ("also acceptable"), the
+  சரிபார்ப்பர் register, and `dem` / `dem_padi` (எந்த, எப்படி are interrogative;
+  acceptable since the rows cover all three).
+
+**No version bump.** Benz decided (DECISIONS 2026-10-12, the later entry) that a
+wording-only change gets a CHANGELOG line and keeps the version, so no ignore
+expires. ta-irv stays 1.2.0.
+
+**The IRV snapshot.** The changed `sandhi_rules.tsv` hash makes
+`test_the_snapshot_is_for_the_vendored_tamil_dictionary` require a rebuild of
+`irv_state.json.gz`. The rebuild also took in `44JHNIRVTam.SFM`, edited in
+`D:\Claude Lab\IRV Tamil` on 2026-10-10 18:10 after the 2026-10-07 snapshot (the
+other 65 books are byte-identical); Benz confirmed the edit is deliberate. Only
+`--irv-state ta` was run, not `--ta-layer`, which would regenerate the
+hand-reviewed `indic_qa_rules.json`.
+
+**The reviewer's "contradiction".** `no_clitic` and `particle_dbl` were read as
+contradicting on கூட / போல. They do not: `no_clitic` (`next:=கூட|=போல`) is about
+the word before them, `particle_dbl` about the word after. The follow-up rule
+change on கூட is its own commit.
+
+**Verified.** Language QA, pack, layer, report and export tests: 556 passed.
+Human gate pass, unchanged (`language-qa-7+ta-irv@1.2.0`, 818 rows).
+`sync_indic_qa.py --check` ok. indic-qa's Tamil tests on the branch: 21 passed,
+3 skipped. The full suite and the frozen smoke run with the next commit.
+
+## 2026-10-12 — ta-irv 1.3.0: no ஒற்று verdict after கூட, சொந்த, கள்ள (from the #235 review)
+
+The #235 reviewer flagged `no_clitic` and `particle_dbl` as contradicting on கூட /
+போல. Read against indic-qa's rule format they do not: `no_clitic`
+(`next:=கூட|=போல`) is about the word before them, `particle_dbl` about the word
+after. Benz first decided to take கூட and போல out of `particle_dbl` on the
+premise that the OV leaves the following word bare, with his own test: count the
+IRV; if more than a fifth is doubled, use an `amb_` row instead.
+
+**Measured** (IRV, 66 books; OV for comparison), the word after:
+- கூட: doubled 50 + fused 2 vs bare 31 (62%); OV 45/1.
+- போல: doubled 27 + fused 1 vs bare 1 (97%); OV 7/0.
+- Before கூட (no_clitic's boundary): mostly bare (9 doubled).
+Benz then chose: கூட → `amb_kooda`, போல stays.
+
+**The guard.** Without கூட, `particle_dbl` agreed with the OV 119/14 (89.5%) and
+failed indic-qa's `test_rules_agree_with_the_ov` (0.9). Per word: போல 7/0, மற்ற
+84/9, கிட்ட 8/1, சொந்த 15/3, கள்ள 5/1. Benz chose to move சொந்த and கள்ள to
+`amb_sontha_kalla` and keep the 0.9 floor (an earlier local attempt that lowered
+the floor to 0.8 was undone before anything was pushed). `particle_dbl` is now
+போல, மற்ற, கிட்ட (99/10, 90.8%); `test_order_pins` follows.
+
+**indic-qa.** Branch `tamil-review-235`: 282d033 (names, part 2 of #235) and
+2a36f19 (this rule). Its suite: 342 passed; two `BuildIsolationTest::
+test_tamil_input_writes_nothing` tests (ml, pa) fail, and fail identically on the
+untouched `ab53636`, so they were deselected, not fixed. `test_webapp`'s
+`test_csrf_header_required` failed once in a full run and passed 3 of 3 alone.
+
+**Effect, measured with the real layer** over every IRV chapter with these words
+before a க/ச/த/ப word: "missing ஒற்று" after கூட 32 → 7, after சொந்த 20 → 0,
+after கள்ள 0 → 0; no new finding. The 7 are before a ப-word: an `amb_` row only
+removes the grammar's vote, and the OV, which writes கூடப் nearly always, still
+leads there.
+
+**Versions.** Findings change, so ta-irv 1.3.0 (CHANGELOG, builder, two stamp
+tests) and `indicqa.sandhi.missing` / `.extra` / `.conflict` revision 2 (the
+sync's prompt). Every ignore of the 31 pack-stamped rules returns once as
+`previouslyIgnored`. `irv_state.json.gz` rebuilt for the new dictionary hash.
+The two new grammar names (amb_kooda, amb_sontha_kalla) are unreviewed Tamil;
+they are in `docs/TAMIL_UI_STRINGS.md` for the next round.
+
+**Verified.** Language QA, pack, layer, report and export tests: 556 passed.
+Human gate pass at `language-qa-7+ta-irv@1.3.0`, same 818 rows.
+`sync_indic_qa.py --check` ok.
+Full engine suite (`-n auto`): 5200 passed, 3 xfailed, 4 failed, and the 4
+passed when rerun alone (4 passed, 10.8 s): three Logos helper-process tests
+(the known parallel-load flake) and
+`test_passage_semantic_runtime.py::test_moved_project_retains_identity_but_live_copy_is_rejected`,
+new to this flake list. Frozen sidecars rebuilt; `smoke_sidecars.py` passed,
+including the ta-irv indic-qa layer.
+
+## 2026-10-13 — Cross-verse verification, part 2: the installed builds (#241)
+
+0.14.0 exists after all: Benz's selvabenz/Bridge release was built from this
+repo's `c76bc91`, the 0.14.0 bump, so its installer is the real one; it was
+installed here. 0.15.0 was cut from `main` (8e56a71, `chore(release):
+0.15.0`), published by the maintainer from a drafted release with
+hand-written notes, built by the workflow in 14 minutes and installed over
+0.14.0 at the end of the walk. Benz also raised the OpenAI spend limit.
+
+**Driving the installed app.** Screen coordinates are physical (the desktop
+is at 125 %, the Bridge window renders at 100 %, and a DPI-unaware helper
+process sees a virtualised screen), so the helper calls
+`SetProcessDPIAware` first; the window is pinned topmost so clicks are not
+stolen by the editor; the app runs with `LOCALAPPDATA` pointed at a scratch
+folder holding a copy of the real settings and the throwaway projects, so
+the maintainer's registry and projects were never touched. A copied
+collection book must keep its `directoryName` (`collection.json` resolves
+siblings by name under the parent folder), or the dashboard says the folder
+is missing and Open does nothing.
+
+**0.14.0, Cross-Verse Alignment on GEN 1:1–3.** The page opened on the
+selected verse ±1 with the copied workbench's real links drawn under their
+source words. **Suggest links** ran. **Align automatically** ran 275.6 s and
+ended with "The read operation timed out", the AI client's socket timeout,
+writing nothing. For the whole call the dispatcher was held: `languageQa
+.status` timed out seven times (30 s each), the status bar read "Language
+QA: unavailable", and the page's "Aligning… pass 2 of 2" is a 20 s timer in
+`CrossVerseAlignmentModal.svelte:217`, not a stage the engine reported.
+Over the protocol the provider answered: `aiPropose` on the PHP fixture in
+4.5 s, `window.autoAlign` on PHP 1:3–4 in 26.7 s with 2 calls, 3,447 tokens,
+USD 0.047, both passes agreeing on every pair and both verses ending
+`complete_cross_verse`. A synthetic drag, and pick-then-click, did not
+register in WebView2; the on-screen manual link stays NOT RUN.
+
+**0.15.0.** Loading screen on first launch after install: card at 2.7 s
+("Engine process started, loading Python"), "Loading engine modules · 2 s"
+at 4.7 s, Home by 6.6 s; spawn to ready 2.4 s. On the auto-aligned fixture
+the status bar reads "0 complete · 2 via cross-verse · 0 partial" and the ⇄
+tooltip "Alignment: complete (cross-verse)" (#228 on the installed build).
+
+**Proposed, not filed.** (1) `alignment.window.autoAlign` runs its two
+provider calls on the dispatcher thread; make it a job like the chapter
+path, so status polls keep answering. (2) The modal's pass label should come
+from the engine, and the failure text should be plain ("The AI provider did
+not answer within 4 minutes") rather than the socket's. QA matrix: M48, D14,
+M49, M50, M53, M56, M58 updated.
+
+
+## 2026-10-13 — Language QA human review, round 3: the indic-qa layer's first labels; spacing.extra offers its fix (#230)
+
+**The data.** Yesu Selva Benz labelled 361 items on 2026-10-13, all answered, none
+"unsure", with a note on 232; plus a word list of 15. Committed as data in
+`benchmark/human/2026-10-13/` (`human_labels.jsonl` 376 rows, `verses.jsonl` 313 verses
+from `D:\Claude Lab\IRV Tamil`, `lexicon_curated.csv`, `summary.json`, `pack_changes.md`,
+and the converter). The workbook (`ta-irv_reviewer_workbook_round3.xlsx`, its sampler and
+builder) is in `D:\Claude Lab\Claude outputs\ta-irv\round3\`.
+
+**Sample.** A full scan of the 66 books on main (ta-irv 1.3.0), verses of rounds 1-2
+excluded, at most three rows per first word:
+- the indic-qa layer, never labelled before: `sandhi.extra` 50 (the மிகா இடம் half of
+  framework item 3, on its own sheet), `.missing` 30, `.conflict` 20, `.dangling` and
+  `.wrong-class` (whole populations), `lex.near-miss` 40, `lex.unknown` 25,
+  `lex.compound` 25, the `shape.*` and `punct.*` populations;
+- round 2's next sample: the rest of both divine-name populations (6 + 9), 30 of the 107
+  AI-review misspelling pairs;
+- top-ups for inline rules under 50 labels (demonstrative 20, direction 15, spacing 15);
+- 40 structure candidates for items with no rule yet (`kind: "candidate"`, not scored):
+  heading trailing punctuation 25, `\s`/`\s1` 4, footnote with no `\ft` 3, `\ior` space 3,
+  `\x -` caller 2, `\wj` 3. All 40 confirmed.
+
+Six indic-qa rules fire nowhere in the IRV (`lex.near-miss` was thought to, it does: 94);
+the IRV has no quotation marks at all and balanced parentheses (587/587); all 5,879
+parseable cross-reference targets exist. Those structure items can be built without labels.
+
+**Headline (benchmark, combined).**
+
+| Rule | Labelled | Precision | |
+|---|---|---|---|
+| `indicqa.sandhi.missing` | 27 | 100% (23/23, 4 house) | inline candidate at 20+ |
+| `indicqa.sandhi.extra` | 40 | **27.3%** (9/33, 7 house) | the மிகா half of item 3 is not usable as it stands |
+| `indicqa.sandhi.conflict` | 19 | 79% | |
+| `indicqa.lex.near-miss` | 38 | **21.1%** | names and real words |
+| `indicqa.lex.unknown` | 42 | 21.4% | |
+| `indicqa.lex.compound` | 26 | 46.2% | |
+| `indicqa.shape.unusual-initial` | 7 | 0% | every one a loanword (டன், டிசம்பர்) |
+| `indicqa.shape.malformed` | 9 | 100% | whole population |
+| `typo.divine-name.vowel-drop` / `.dative-stem` | 11 / 13 | 100% | whole populations now labelled: rule (b) holds |
+| `lexicon.known-misspelling` | 79 | 91.1% | the AI-review pairs 25/32 |
+| `sandhi.vallinam.demonstrative`, `compound.direction` | 44, 40 | 100% | |
+
+**The conflict, and the decision.** `common/spacing.extra` (inline) came back 8/15: all
+seven "wrong" were a single verse-final space. Rounds 1-2 had confirmed 18 of 18 of the
+same shape. Benz ruled (DECISIONS 2026-10-13): keep flagging, and offer the fix. Rule
+revision 2: repeated spaces become one, an edge space is removed (a line break after it
+stays); before, the rule offered no fix at all. The seven round-3 labels are listed in
+`benchmark/human/superseded.json`, which `load_human_rounds` reads: the label stays in its
+round unedited, the benchmark lists it under "Labels superseded" and does not score it.
+spacing.extra is 31/31.
+
+A first attempt skipped verse-final spaces instead; it lost 18 confirmed round-1/2
+findings (hidden at first by a visible text that ends in `\n` after `\qs*`), which is how
+the 18-to-7 conflict surfaced.
+
+**Also changed.** `human_label_verses` skips `candidate` and `wordlist` rows (a candidate
+may sit on a heading). Baseline rewritten with round 3; rounds 1-2 unchanged.
+
+**Word list.** 15 rows: 2 already shipped (தண்ணீனால், உடன்பட்டிக்கை), 6 new misspellings,
+7 joined words (`சொல்லுகிறேன்என்றார்` …) that the curated-pair builder cannot take (it
+needs one word for one word): known-join candidates for item 4. `lexicon_curated.csv`
+carries 39 new pairs (the 6, plus 33 confirmed on sheet 2); not yet built into the lexicon.
+
+**Observed, not fixed.** The scorer credits a label to whichever finding sits first at its
+exact span, so where two rules flag the same word (`lexicon.known-misspelling` and
+`indicqa.lex.unknown` on பதிணெட்டாயிரம்) the counts move between rules (`lex.unknown`
+shows 42 labelled from 25 sampled). The per-rule table for those rules is approximate.
+Root-noun abstain class: "correct skip, now flagged" is 3 (was 1), new false alarms no gate
+reads.
+
+**Gates.**
+- Human gate pass, 1,194 rows over three rounds; `--update-doc`, `--write-baseline`.
+- Engine suite (`pytest -n auto`): 5,210 passed, 3 xfailed, 2 failed. Both failures were tests that used
+  spacing.extra as "a rule with no fix"; fixed in the rule commit, and the four affected files re-run: 36 passed.
+- `scripts/build-sidecars.ps1`, then `scripts/smoke_sidecars.py engine/dist/bridge-engine.exe`: passed
+  (the ta-irv indic-qa layer included).
+- Frontend untouched, so `npm run check/test/build` were not run; src-tauri untouched.
+
+## 2026-10-14 — #231 import as a cancellable job, #242 the window auto-align as a job
+
+**#231.** `project.import` was one blocking RPC (300 s, no progress, no
+cancel). It is now also a job: `project.import.start` returns a snapshot at
+once, `.status` is polled, `.cancel` ends it. Engine: `engine/import_jobs.py`,
+the report-job shape with its own lock domain; the worker runs the new
+`BridgeEngine._import_and_register` (inspect, classify, write, register) and
+never touches `self.project`, so the import screen opens the primary book
+afterwards with the ordinary `project.open`. The sync RPC stays for scripts,
+tests and the smoke, and shares `_import_lock` with the job (taken on the
+dispatcher in `start_import`, released by the worker), so a second start or a
+sync call during a job is refused at once.
+
+Two things found on the way, both fixed in the same commit because the cancel
+contract needed them:
+
+- **`import_source` moved each book into the destination as soon as it was
+  written.** A crash on book 40 of 66 left 39 books behind, and a cancel could
+  not have been clean. Every book is now staged and the whole set is moved at
+  the end; a rename that fails part-way takes the moved books back out
+  (`test_project_import_staging.py`, three tests). `import_checkpoint`
+  (progress + cancel) runs before every book, before every chapter of the
+  eagerly normalised first book, and before the commit, which is the last
+  cancel point; `ImportCancelled` is a `ProjectError`.
+- **`ProjectRegistry` had no lock.** The dispatcher reads its in-memory entry
+  list (`project.list`, `project.open`) while the worker registers new books;
+  the public methods now take one RLock (`_locked`), re-entrant because
+  `classify` calls `list_projects` and `list_projects` calls `register`.
+
+Snapshot: `phase` / `phaseLabel` (engine wording), `totalBooks`,
+`completedBooks`, `currentBook`, `chapter` / `chapterCount` for the first book,
+`percent` (inspect 0-8, classify 8-10, books 10-90 split per book and, for the
+first, per chapter, commit 90-95, register 95-100), `result` once succeeded.
+Frontend: `bridge.importStart/importStatus/importCancel`,
+`ImportJobSnapshot`; `ImportScreen.svelte` polls every 250 ms and draws a
+banner with the label, the bar and Cancel above both views, so Project Home
+stays usable; "Import cancelled. Nothing was written." on cancel. Timeout
+table: the three job methods stay at the default 30 s (`sidecar::tests`,
+now 14). Tests: `tests/service/test_import_job.py` (progress and registration
+through the dispatcher; cancel mid-write with status answering meanwhile and
+nothing on disk afterwards; a failed job frees the lock; status/cancel with no
+job) and `ImportScreen.test.ts` (bar and Cancel from the start snapshot before
+any poll; cancel opens nothing; a failed job is an error with the form usable).
+Not measured: the 66-book time on the field machine (NFR-PERF-004) and the
+installed-build walk; both are the field-machine day.
+
+**#242.** `alignment.window.autoAlign` ran its two provider calls on the
+dispatcher; on the installed 0.14.0 that was 275 s with seven
+`languageQa.status` timeouts (#241). The page's window is now scope
+`"window"` of the chapter job (`alignment.autoAlign.start` with `chapters:
+[chapter]` and `verses`), one window, on the worker. `auto_align_window` takes
+`report` and `cancelled` checkpoints: before pass 1, before pass 2, at
+reconcile and at apply; the snapshot carries `currentPass` (`number` 1 or 2,
+`of`, `direction`, `stage`) and `stage` text ("Asking about 1:1-3 (pass 2 of
+2)"), and, for a window job only, `windowResult`, the full result the page
+draws from. A cancel is honoured at the next checkpoint before the write and
+raises `AutoAlignCancelled`, so a cancelled job has written nothing; this also
+changes the chapter job, which used to keep an in-flight window's writes (its
+retry re-runs that window, so nothing is lost). The sync method stays for
+tests and scripts, at 540 s. Frontend: `bridge.autoAlignWindow` keeps its
+signature and now starts and polls the job (500 ms), with an optional
+`onProgress(snapshot)` for the modal; `CrossVerseAlignmentModal.svelte` is
+untouched (its pass text from engine state is #243, Benz) and already gets the
+non-blocking behaviour. Tests: `tests/service/test_auto_align_window_job.py`
+(a gated fake provider: `ping` and `verse.get` answer while pass 1 is held,
+pass 1 then 2 reported, the full window result on success; cancel during pass
+1 leaves the alignment file byte-identical and no verdicts; window validation)
+and `autoAlignWindowJob.test.ts` (what the client sends, passes to
+`onProgress`, unavailable without polling, cancelled and failed reject). Not
+done: the installed-build walk of QA matrix D14 without a "Language QA:
+unavailable" moment, which needs a provider key and the desktop.
+
+
+## 2026-10-13 — Section-heading rules; framework item 31 is Checked (#244, #230)
+
+**What.** Three common Language QA rules over the section headings
+(`<chapter>.headings.json`), in `engine/tc_ai_bridge/language_qa_headings.py`, run in
+the pass's book step for every pack:
+- `common/heading.trailing-punctuation`: an `\s*`/`\ms*` title ending in `.` `,` `;` `:`
+  (`?` and `!` are fine; `\r`, `\sp`, `\mr` are not titles);
+- `common/heading.marker-mixed`: in a book whose headings use both `\s` and `\s1`
+  (the same level), the minority;
+- `common/heading.missing`: a chapter with no section heading, in a book of five or
+  more chapters where at least four in five have one.
+
+All panel only, `context: "heading"` (start/end index `contextText`, no fix offered,
+as for the layer's heading findings). Headings used to be read only when the indic-qa
+layer ran; every pack reads them now. Row 31 of LANGUAGE_QA_TAMIL_SPECIFICATION.md
+moves to Checked: wording was already the layer's, and these add consistency and presence.
+
+**Why.** Requirement 3 (#230); the 2026-10-13 review confirmed the candidates 25/25
+(trailing full stop) and 4/4 (mixed markers).
+
+**Measured on the IRV** (`D:\Claude Lab\IRV Tamil`, parsed as an import parses it):
+25 trailing-punctuation, 4 mixed-marker (JOL 2:28, OBA 1:15, 1TI 3:8, 2PE 3:14),
+0 missing-heading findings. The 7 headings ending in `?` are not flagged.
+
+**Not scored by the benchmark.** `language_qa_benchmark.scan_book` writes no headings,
+and the round-3 labels for these are `candidate` rows without offsets, so the human gate
+does not read them. The confirmation is the review count above.
+
+**Gates.**
+- `tests/jobs/test_language_qa_headings.py`: 7 passed (each rule, a non-title tag, a
+  rarely-headed book, and one pass through LanguageQaManager reading a headings.json).
+- Language QA test files: 3,476 passed.
+- Full engine suite: 5,218 passed, 3 xfailed, 1 failed:
+  `test_passage_semantic_runtime.py::test_moved_project_retains_identity_but_live_copy_is_rejected`,
+  a WinError 32 on renaming a folder whose `bridge-workbench.sqlite3` was still open,
+  under `-n auto`. It passes alone and touches no Language QA code; reported, not fixed.
+- Human gate: pass.
+- `build-sidecars.ps1`, then `scripts/smoke_sidecars.py engine/dist/bridge-engine.exe`: passed.
+- Frontend and src-tauri untouched; their gates were not run.
+
+
+## 2026-10-13 — Footnote text without \ft; framework item 27 is Checked (#245, #230)
+
+**What.** `common/footnote.missing-ft`, in `scan_text` beside the other integrity rules:
+a `\f … \f*` note with text but no paragraph marker (`\ft`, `\fq`, `\fqa`, `\fk`, `\fl`,
+`\fw`, `\fp`, `\fdc`). The finding spans the note (raw offsets) and offers the reviewer's
+fix: the same note with `\ft ` inserted after the `\fr` reference (after the caller when
+there is no `\fr`). A note holding only a reference is not flagged. Panel only, `usfm`
+category, `context: "footnote"`: Use applies it in its verse; a scoped (book-wide) apply
+leaves footnotes alone, as for the layer's footnote findings.
+
+Row 27 of LANGUAGE_QA_TAMIL_SPECIFICATION.md moves to Checked. Its "note content is not
+checked" was out of date: the indic-qa layer reads footnote text (round 3 had layer
+findings inside footnotes).
+
+**Why.** Requirement 3 (#230); the 2026-10-13 review confirmed 3 of 3 (EZR 4:7, MAT 22:44,
+LUK 11:50: text after `\xt …\xt*` with no `\ft`; "add `\ft` after `\fr`").
+
+**Measured on the IRV.** `scan_text` over every verse of the reviewer's copy: 3 findings,
+exactly those three, each fix the reviewer's (1,419 `\fr` against 1,416 `\ft`).
+
+**Gates.**
+- `tests/jobs/test_language_qa_footnotes.py`: 5 passed (the shape, applying the fix
+  re-scans clean, `\ft`/`\fq` notes fine, a bare reference, no `\fr`).
+- Full engine suite (`pytest -n auto`): 5,235 passed, 3 xfailed, none failed.
+- Human gate: pass.
+- `build-sidecars.ps1`, then `smoke_sidecars.py`: passed.
+- Frontend and src-tauri untouched; their gates were not run.
+
+## 2026-10-14 — #112 step two: project.open returns before the semantic runtime is built
+
+`project.open` now returns once the translationCore project is loaded,
+registered and recovered, with `passageSemantic.state == "BUILDING"`; a
+daemon thread (`BridgeEngine._build_semantic_runtime`) then constructs
+`PassageSemanticRuntime` and the three correction services exactly as the
+inline code did, ending in `READY` or `RECOVERY_REQUIRED`. Measured in the
+issue: the runtime was 0.31 s of a 0.65 s cold open on the test fixture and
+1.04 s of 2.7 s on IRV Tamil Genesis, so the editor's first paint moves
+earlier by that much; `original_language` (1.48 s on Genesis) stays on the
+open path, it is a Scripture-adjacent backfill and out of this issue's scope.
+
+**The gate is the attribute itself.** `passage_semantic_runtime` is a
+property on both `BridgeEngine` and `TranslationCoreProject`
+(`expect_passage_semantic_runtime(waiter)` while a build is in flight,
+`attach_passage_semantic_runtime(runtime)` when it ends). Every reader waits
+for the build: `apply_scripture_edit` (which reads the runtime before its
+journal transaction, for the semantic intent), the alignment writers' `
+synchronize_alignment_state`, `_require_passage_semantic_runtime` for the
+semantic and correction RPCs, `_close_project_db_handles`. No call site
+changed. The build thread itself never waits (the runtime's constructor reads
+the project, whose property calls back into the waiter). Two readers were
+made deliberately non-blocking: `passageSemantic.status`, which reports
+`BUILDING`, and the dispatcher's per-request `_release_thread_db_handles`,
+which would otherwise have made every `verse.get` wait for the build -- the
+first run of the new test found exactly that.
+
+Opening another project while a build is in flight waits for it first, so a
+build never attaches to the wrong project. The build thread releases its
+pooled SQLite connections when it ends (#113's pool closes a dead thread's
+connection only when it next looks), because on Windows an open handle blocks
+a move or delete of the folder right after the open. `awaitSemantic: true`
+on `project.open` restores the old all-done-on-return behaviour; the sync
+`project.import` passes it, and the twenty-one test opens that assert on the
+runtime right after opening now pass it (`test_passage_semantic_runtime.py`,
+`test_correction_stage9b3a.py`'s journal-before-runtime order test, and
+`test_dispatcher_releases_db_handles.py`, which counts the dispatcher's pooled
+connections right after an open and saw the worker's as well under load).
+
+Tests: `tests/service/test_project_open_semantic_lazy.py` (4): the open
+returns `BUILDING` while the constructor is held open, `verse.get` and the
+status poll answer meanwhile, a `verse.edit` from another thread blocks until
+the build is released and then lands with the runtime attached; `awaitSemantic`
+returns `READY`; a constructor that raises degrades to `RECOVERY_REQUIRED`
+with `verse.edit` still working and the semantic RPC refusing cleanly; a
+second open waits for the first build and each project keeps its own runtime.
+Frontend: nothing reads `passageSemantic` today; the type gains `BUILDING`.
+
+**Pre-existing flakes seen while gating, not caused by this change** (both
+reproduced on main without it, same parallel run): `test_moved_project_retains_
+identity_but_live_copy_is_rejected` moves the project folder right after an
+open while the Language QA worker still holds `bridge-workbench.sqlite3`
+(`WinError 32`), and `test_continuous_foreground_polling_does_not_starve_worker`
+in `test_language_qa.py` under `-n auto` load. Proposed as issues, not filed.
+
+
+## 2026-10-13 — Note callers; framework item 44 is Checked (#246, #230)
+
+**What.** Two common Language QA rules, panel only, each with its fix:
+- `common/note.caller-mixed` (`language_qa_notes.py`, the pass's book step): a `\f`,
+  `\fe` or `\x` whose caller differs from the book's usual caller for that kind. The
+  finding spans the opener and caller (`\x -`) and offers `\x +`. Because the span and the
+  fix are the same text everywhere, a book-wide apply is safe.
+- `common/note.space-before-caller` (`scan_text`): a space between a word and a mid-verse
+  note, so the caller prints apart from its word. The fix removes the space. A marker's
+  own syntax space (`\q1 \x`, `\wj \x`) is skipped, and so is the verse end, which
+  `spacing.extra` already flags (ACT 12:25).
+
+Row 44 (Gate 5) moves to Checked, with a note under the table: these checks run on the
+USFM, before typesetting; where the note text falls on the page is still proofed on the PDF.
+
+**Why.** Requirement 3 (#230). The 2026-10-13 review confirmed both `\x -` callers ("every
+other note is +; make them consistent"). Benz decided on 2026-10-13 that a space before a
+caller is flagged with a fix that removes it; those 53 rows are not labelled.
+
+**Measured on the IRV** (the reviewer's copy, as an import stores it): callers are
+1,419 `\f +`, 3,412 `\x +` and 2 `\x -`. The rules produce 2 caller findings (JOL 2:28,
+RUT 2:1) and 53 space-before-caller findings, all footnotes. `spacing.extra` stays at 86,
+so nothing is flagged twice. Footnotes sit directly after a word 1,108 times and after
+punctuation 249 times; cross-references stand at the start of the verse (1,821). That is
+house style, not flagged.
+
+**Gates.**
+- `tests/jobs/test_language_qa_note_callers.py`: 5 passed.
+- Full engine suite: 5,239 passed, 3 xfailed, 1 failed. The failure is the same
+  `test_moved_project_retains_identity_but_live_copy_is_rejected` file-lock race as under #244
+  (WinError 32/5, `-n auto`); it passes alone. It has now failed in 2 of 3 full runs today, so it is
+  flaky under load, not occasional. Proposed for Revant, not fixed here.
+- Human gate: pass. `build-sidecars.ps1`, then `smoke_sidecars.py`: passed.
+- Frontend and src-tauri untouched; their gates were not run.
+
+## 2026-10-14 — #232 click-timing instrumentation, the p95 table and NFR-PERF-001 in tiers
+
+**What is measured.** `src/lib/perf.ts` brackets each Tier A and B action
+of requirement 1: `perfBegin(action)` at the click, `perfResponded(action)`
+when the first visible change was pushed, `perfEnd(action)` after the last
+store update. Both "responded" and "complete" are taken at the paint after
+that point (two animation frames), which is what "visible response within
+100 ms / complete within 300 ms (A) or 2 s (B)" means. A finished sample goes
+to the bounded `perfSamples` store and, through the sink App.svelte installs,
+to the diagnostics log as one line:
+
+    1760400000000 [info] perf action=chapter.open tier=B responded=12.4 complete=180.2 detail=12
+
+The shell got one command for it, `frontend_log` (`EngineSidecar::
+log_from_frontend`), which records a frontend line exactly like a sidecar
+event: the in-memory buffer, the `engine-log` event and `engine-events.log`.
+`performance.mark`/`measure` are written as well for a DevTools timeline.
+
+**Where the marks live**, by the rule for this week (App.svelte and the
+stores, not VerseList):
+
+| action | tier | begin | responded | end |
+|---|---|---|---|---|
+| `verse.navigate` | A | `selectedVerse.set` in `stores.ts`, whoever called it (list, keyboard, finding, bookmark); skipped while a chapter, book or project open owns the span | = end | the paint after the set |
+| `menu.open` | A | `FindingContextMenu.svelte` creation (inside the click), and `openPlacesMenu` in App | = end | the paint after mount |
+| `panel.toggle` | A | the `sidePanels` store notifying App (rail and toolbar both go through `toggleSidePanel`) | = end | the paint after the update |
+| `decision.record` | A | `findingActions.decideLocalFinding` / `decideLanguageQaFinding` / the optimistic variant (the mark leaving the store is the response) and `reviewStores.decideReviewFinding` | the store update | the engine's reply and the store update |
+| `project.open` | B | `ImportScreen.openPath` at the click | the disabled buttons | App's `handleOpened` after the dashboard has loaded |
+| `chapter.open` | B | `activateChapter` | `currentChapter.set` | verses in the stores and one selected; aborted when superseded |
+| `book.report` | B | `loadReport` | `reportLoading` | the report in hand |
+| `book.switch` | B | `switchBook` | "Opening X…" | the first chapter entered; aborted on error |
+
+`word.select` is in the table with no mark: the selection lives in
+`VerseList.svelte` (and the alignment modal), which is Benz's this week. Two
+lines there (`perfBegin("word.select")` on mousedown, `perfEnd` after the
+selection state is set) complete the set.
+
+**The runner.** Engine diagnostics (the panel behind the engine status)
+gained a "Responsiveness" section: the p95 table of this session's samples
+with the tier budget and a pass/FAIL per row, "Copy table" for the
+release-notes markdown, and "Measure 20× each", which repeats the actions
+App can drive without a mouse (next verse, next chapter, the reference
+panel, the next book of a collection, the book report) twenty times each
+while a book is open in the editor. The actions whose click lives in a
+component (a menu, a decision, a word) are measured when the reviewer does
+them; on the measurement day that is twenty right-clicks and twenty
+decisions by hand.
+
+**The script.** `scripts/perf_table.py` reads `engine-events.log` (the
+installed app's by default, `--log` otherwise, `--since` an ISO time or epoch
+ms), and prints the table with `--hardware` named above it, `--json` for
+the evidence file and `--gate` to fail on a budget miss. Its action and budget
+tables are pinned to `perf.ts` by a test, and its percentile is the same
+nearest-rank one as `benchmark_language_qa.py` and `perf.ts` (half to even,
+as Python rounds), so the in-app table and the script agree to the sample.
+
+**NFR-PERF-001** in the SRS is rewritten from "five seconds" to the three
+tiers, naming the instrumentation and the script; the hardware line is left
+for the first measurement.
+
+Tests: `src/lib/__tests__/perf.test.ts` (sample recording at the paint,
+responded before end, unknown and aborted actions, a throwing sink, the log
+line, the percentile against Python's rounding, the summary's pass/FAIL and
+unmeasured rows, the table, the runner and its refusal without a project)
+and `engine/tests/service/test_perf_table_script.py` (parsing, `--since`,
+the summary, the markdown, `--gate`/`--json`/a missing log, the pin against
+`perf.ts`). Not done: any measurement. The 30-minute long-task recording
+and the 4-hour memory sample are the field-machine day's; the recording is a
+DevTools Performance capture on a dev build or Windows Performance Recorder
+on the installed one, and the memory sample is Task Manager's private bytes
+of `Bridge.exe`, `msedgewebview2.exe` and `bridge-engine.exe` every 15 min.
+
+## 2026-10-14 — #210 engine half: a lazy sibling is prepared on a worker, not on the dispatcher
+
+Benz's measurement (#210, 2026-10-12): on the 66-book IRV Tamil import,
+opening Psalms for the first time while the Genesis check ran held the
+single request thread for 63 s (`materialize_lazy=60.08s`, 16.6 s without the
+check's threads competing for the GIL), and the `checks.status` poll queued
+behind it timed out at the desktop's 30 s, which the check notice reported as
+a failure. His frontend half (dd8c4f8) made the monitor treat that timeout as
+a busy sidecar. This is the cause.
+
+`project.open` takes `prepareInBackground` (the desktop client always sends
+it). When the book is still the collection import's placeholder
+(`lazy_import_pending`), the open does not materialise inline: it starts the
+normalisation on the import job manager (#231's `ImportJobManager`, sharing
+the import lock, so an import and a prepare refuse each other instead of
+queueing) and answers `{"state": "preparing", "path", "jobId", "job"}` at
+once. `materialize_lazy_project` gained the same `progress`/`cancel`
+checkpoints as `import_source`, so the job's snapshot carries phase
+`normalize`, the book and `chapter x of y`, and a cancel at a chapter
+checkpoint leaves the descriptor in place for the next open to start over
+(the book is written in place; there is nothing to stage). `bridge.openProject`
+polls `project.import.status` every 250 ms, hands each snapshot to an
+optional `onProgress`, and opens again once the job has succeeded, which is
+then the ordinary fast path; App's "Opening Psalms…" row says "preparing
+chapter 12 of 150". Without the flag (scripts, the older tests) the open
+materialises inline as it always did; the collection QA runner, which
+materialises on its own thread, is untouched.
+
+What this does to Benz's table: `project.open` on the never-opened Psalms
+still takes its 16 to 60 s, on the worker; `checks.status`, `report.generate`
+and `triage.results` no longer queue behind it. The one request that waits is
+the second `project.open`, issued by the client after the job, and that is
+the fast path.
+
+Tests: `tests/service/test_project_open_prepare_job.py` (3): the open answers
+`preparing` while the write is held open and `ping` and `verse.get` answer
+meanwhile, a second open of the same book is refused rather than queued, the
+descriptor is gone and the open returns the book after the job; a cancel
+leaves the descriptor and the next open starts over; without the flag the
+open materialises inline and a prepared book never goes through the job.
+`openProjectPrepare.test.ts` (4): the polling and the second open, an
+already-prepared book without polling, cancelled and failed in plain words.
+The client seam test now pins `prepareInBackground: true` on `project.open`.
+Not run: the desktop repro Benz described (open a never-opened book during a
+check and watch the label switch and recover); it needs the 66-book project
+on a built app.
+
+## 2026-10-14 — #239 progress totals: the aligned and Language QA dimensions
+
+Requirement 5 wants progress per stage. The totals row held checked and
+reviewed; it now also holds **aligned** and **Language QA clean**, each over
+the verses that were actually counted, so an unvisited chapter is never read
+as unaligned or unclean:
+
+- `alignedVerseCount` / `alignedKnownVerseCount`: a verse counts when
+  `_alignment_verse_status` would show its ✓ (`complete`, or
+  `complete_cross_verse` through links and null decisions, #228). The count
+  lives on the chapter's `progress_chapters` row (`alignedVerseCount`) and is
+  written by two kinds of writer: a succeeded check job, for every chapter it
+  covered, and every alignment writer for its own chapter through
+  `_refresh_progress_alignment`: `_finish_alignment_mutation` (manual save,
+  auto-align, undo), `_cross_verse_result` (link and unlink, both chapters of
+  the link), `_null_result` (set and clear) and `edit_verse` (an edit can
+  invalidate the verse's alignment). `known` is the verse count of the
+  chapters that carry a count. A recount is one chapter's verses, and the
+  cross-verse touch index is cached per write generation, so a decision's
+  totals recompute stays a dict walk over the rollup.
+- `languageQaCleanVerseCount` / `languageQaCheckedVerseCount`: the check job's
+  completion hook records, per verse, the ids of the Language QA findings the
+  stage left (open or decided) as `languageQaFindingIds` on the chapter row,
+  and only when that stage ran. A verse with the key and no finding still
+  OPEN in the status map is clean. Decisions on those findings go through
+  `record_progress_decision` as any decision does, so ignoring one moves the
+  clean count up and reopening it moves it down. A live Language QA pass
+  outside a check job (after an edit) does not update the count until the next
+  check job or decision; that pass is Benz's manager and is not hooked here.
+
+`load_progress_rollup` reads both fields (absent on rows written before
+this, which total as unknown), `replace_progress_chapters` writes them, and
+`update_progress_chapter_alignment` rewrites just the aligned count on an
+existing row, creating an unchecked row when a writer touches a chapter no
+job has seen. Every write goes through `save_progress_totals`, so the
+workspace `project_progress_cache` entry is refreshed from the totals write's
+own `change_log.seq` and `sync_progress_cache` reports `fresh` afterwards.
+No schema change: the fields are payload JSON.
+
+Dashboard: two more bars per book, "Aligned x/known" and "Language QA clean
+x/checked", shown only once something has been counted. The projects list
+columns are #238. `BookProgressSummary` gains the four optional fields.
+
+Tests: `tests/service/test_progress_dimensions.py` (3): a chapter check job
+counts the aligned verses of its chapters only, an `alignment.save` in another
+chapter recounts it with the cache at the write's seq and `sync_progress_cache`
+fresh, an edit that invalidates takes the verse out again; the Language QA
+count from the hook's row shape, through an ignore and a reopen, and an
+old-shape rollup totalling as unknown; a job with the Language QA stage
+records ids for every verse and one without records none. The dashboard
+test's book carries the new fields.
+
+
+## 2026-10-13 — The footnote and caller rules read lift_verse's notes, not a pattern (#245, #246; gotcha 14)
+
+**What was wrong.** `footnote.missing-ft` (#245, 6dad936), `note.space-before-caller` and
+`note.caller-mixed` (#246, 774ef6f) found notes and their callers with their own regular
+expressions over the raw verse. CLAUDE.md gotcha 14: USFM is read by `usfm_parser.py` and
+`usfm_verse.py` only, and nothing else may regex-parse it. `lift_verse` already returns
+every note (kind, caller, reference, parts, raw range) and every character-style span.
+I noticed it while starting item 28, which also needs the notes.
+
+**What changed.** Language QA's `LiftedVerse` now carries the parser's `notes` and
+`styles` (passed through by `lift_inline_usfm`, no second lift). The rules read them:
+- the note's own span comes from its raw range (`note_extent`), minus the one space the
+  parser may swallow;
+- `note.space-before-caller` asks whether the space before a note is visible text, so a
+  marker's syntax space (`\q1 \x`) is not one, and whether any text follows the note;
+- `footnote.missing-ft` reads the parts. The parser keeps only markers that have text, so
+  an empty `\ft` straight before `\xt` (the reviewer's own fix) is also looked for among
+  the note's tokens. With tokens alone, `\fr 28:22\ft …` (no space, 5 notes in the IRV)
+  read as missing `\ft`; with parts and tokens, neither form is missed. The rule is
+  limited to the reviewed shape, a `\fr` reference followed by text;
+- `note.caller-mixed` uses the first token of the parser's caller.
+
+**Found, not fixed.** For a footnote with no marker at all (`\f + text\f*`), `lift_verse`
+reads `+ text` as the caller. Gotcha 14 says such an edge case is fixed in the parser, with
+a parity test, not worked around in a rule. There are none in the IRV. Proposed, not filed.
+
+**Measured on the IRV:** the same findings as the pattern versions: 3 missing-ft, 53
+space-before-caller, 2 caller-mixed, `spacing.extra` 86. `scan_text` over every verse of
+the Bible takes 8.3 s in one process.
+
+
+## 2026-10-13 — Words of Jesus: \wj boundaries and placement; framework item 29 is Partial (#248, #230)
+
+**What.** Three common Language QA rules in `scan_text`, on the parser's `\wj` style spans
+(`lift_verse` styles), panel only, each with its fix:
+- `common/wj.glued`: `\wj*` directly between two words, so the words run together on
+  screen (MRK 2:14 `வா\wj*என்றார்`, which reads "வாஎன்றார்"). Fix: `\wj* `.
+- `common/wj.space-inside`: a space inside the close and a word right after it (LUK 24:26
+  `இல்லையா? \wj*என்று`). It reads correctly, so this is tidiness only (low). Fix: move the
+  space outside.
+- `common/wj.outside-speech`: `\wj` in a book or chapter where Jesus does not speak. The
+  reviewer's rule allows the Gospels, Acts, Revelation, 1 Corinthians 11 and
+  2 Corinthians 12 (1TI 5:18, Paul quoting Scripture). Fix: remove the markers; a note
+  inside the run stays.
+
+Row 29 moves to Partial: the boundaries are checked; whether every word of Jesus is marked
+needs the source and is not. An unbalanced `\wj` already stops the verse from being
+scanned and is reported as a limitation.
+
+**Why.** Requirement 3 (#230); the 2026-10-13 review confirmed 3 of 3.
+
+**Measured on the IRV:** exactly MRK 2:14, LUK 24:26 and 1TI 5:18, each with the
+reviewer's fix. `\wj` verses: MAT 645, MRK 289, LUK 588, JHN 431, ACT 31, REV 65, 1CO 2
+(chapter 11), 2CO 1 (chapter 12), 1TI 1.
+
+**Gates** (with the gotcha-14 correction above, run together).
+- `test_language_qa_words_of_jesus.py` 5, and the footnote, caller, spacing and heading
+  rule tests: 27 passed.
+- Full engine suite: 5,257 passed, 3 xfailed, none failed.
+- Human gate: pass. `build-sidecars.ps1`, then `smoke_sidecars.py`: passed.
+- Frontend and src-tauri untouched; their gates were not run.
+
+## 2026-10-14 — #238 projects list: progress columns, last opened by, rename, archive
+
+**Workspace schema v3.** `projects.archived_at` and `projects.last_opened_by`,
+lifted from `entry_json` (`archivedAt`, `lastOpenedBy`) the way
+`last_opened_at` is, so the list can filter and sort without parsing JSON;
+the entry stays the record. Additive (`ALTER TABLE ... ADD COLUMN`), no
+rebuild, no data-preservation test beyond the ladder test now asserting
+`[1, 2, 3]` (the pre-release amendment in CLAUDE.md). `WORKSPACE_SCHEMA_VERSION`
+is 3; the workbench (v7) and semantic (v16) ladders are untouched.
+
+**Registry.** `register(touch=True, opened_by=user_id)` stamps who opened;
+`project.open` passes `current_actor_id()`, the stable user id from #183,
+never the display name. `rename(project_id, name)` sets `displayName` on
+every book of the collection (an empty name clears it); `set_archived`
+sets or clears `archivedAt` on the same set. Both are registry fields only:
+the folder, the manifest and `.bridge/collection.json` are byte-identical
+afterwards, and a re-register on open keeps them (the metadata refresh
+writes `projectName`, not `displayName`).
+
+**project.list** now sums the cached totals over a collection's books from
+`project_progress_cache` in one query (`progress`, with `booksWithProgress`;
+null until any book has a rollup), reports the collection's latest open
+across its books with `lastOpenedBy` and the display name the workspace
+knows for it (`lastOpenedByName`), and carries `displayName` and
+`archivedAt`. No project database is opened for the list; the "66 books
+under 1 s" rule holds. New RPCs `project.rename`, `project.archive`,
+`project.unarchive`, interactive (default 30 s). `project.forget` and
+`project.delete` are unchanged, and Delete keeps its on-screen confirmation.
+
+**Project Home.** Each row shows the display name (or the import's name),
+language, book count, the four stages in one line ("checked 3/50 ch ·
+reviewed 40/1533 · aligned 20/90 · LQA clean 70/90", the last two only once
+counted), when and by whom it was last opened, and Rename / Archive (or
+Unarchive) beside Open and Delete. Rename is an inline field (Enter commits,
+Escape cancels, blur commits). Archived rows are hidden behind "Show
+archived (n)" and marked "(archived)" when shown. "Create" from the
+requirement is the existing Import; nothing new was added for it.
+
+Tests: `tests/service/test_projects_list_management.py` (3): the summed
+progress and the latest open with its user, across a check job and a sibling
+open; rename on every book with the folder, manifest and collection file
+byte-identical, surviving a reopen, cleared by an empty name, refused for an
+unknown id; archive and unarchive on the whole collection, lifted into the
+columns and seen by a fresh engine on the same workspace. `ImportScreenList
+.test.ts` (5): the columns, the empty states, rename through the engine,
+archive behind the filter and unarchive from it, Delete still behind its
+confirmation. The workspace ladder test moves to v3.
+
+
+## 2026-10-13 — Cross-reference targets and origins; framework item 28 is Checked (#249, #230)
+
+**What.** `engine/tc_ai_bridge/language_qa_xrefs.py`, two common rules in the pass's
+book step, panel only:
+- `common/xref.target-missing`: a reference in a cross-reference's `\xt` whose chapter or
+  verse exists in none of the six standard versifications (the vendored `versification`
+  data, merged maximum per chapter, loaded once, 0.44 s), so a different numbering is never
+  an error (PSA 151 exists in the LXX, MAL 4 in the English). Book names resolve against
+  every book of the collection: `\toc3`, `\toc2` and `\h`, read with
+  `usfm_parser.identify_usfm` from each book's preserved source (`<book>.usfm`, or the copy
+  in `.bridge/lazy-import.json` while the book is lazy), cached until a source changes;
+  0.40 s for 66 books, 126 names. An unknown name is flagged only when the collection
+  holds all 66 books. Text that does not read as a reference is skipped, never flagged.
+  No fix is offered.
+- `common/xref.origin-mismatch`: an `\xo` whose chapter:verse is not the verse the note
+  sits in (a range or a verse bridge that covers it is fine). The fix is the verse's own
+  reference.
+
+Notes come from `lift_verse` (gotcha 14); only the reference text inside `\xt` is read here,
+as plain text. Reading a sibling's files can never fail the pass: an error becomes a
+limitation. Row 28 moves to Checked.
+
+**Why.** Requirement 3 (#230): the specification listed target validity as not checked.
+
+**Measured on the IRV** (66 books, the reviewer's copy): 5,973 references checked, 0
+findings, 1 skipped (HEB 11:32 `1சாமு 16:1-2சாமு 2:11`, a range across books, which is
+valid). Every `\xo` matches its verse. Cross-chapter ranges (`யாத் 7:8-12:13`), whole
+chapters (`சங் 59`) and a bare chapter after the previous book (`142`) are all read. The
+rule is a safeguard here: the IRV's cross-references are clean.
+
+**Seen, not changed.** Footnotes that embed `\xt` (MAT 22:44 …) are not checked for
+targets; this rule reads cross-reference notes only.
+
+**Gates.**
+- `tests/jobs/test_language_qa_xrefs.py`: 7 passed (existing and missing targets, LXX and
+  English numbering, an unknown name in a partial versus a whole Bible, a cross-book range
+  skipped, origin mismatch, range and bridge origins, a two-book collection with one lazy
+  book, and one pass through LanguageQaManager).
+- Full engine suite: 5,267 passed, 3 xfailed, none failed.
+- Human gate: pass.
+- Latency gate (`benchmark_language_qa.py --gate --cores 2`, the 50 ms default): pass. p95 during a scan:
+  Language QA verse.decide 34.7 ms, verse.get 23.4, languageQa.inline 24.0, languageQa.status 7.3,
+  ping 8.0. The ungated write paths (verse.edit 1,175 ms, project.open 830) are not a Language QA cost.
+- `build-sidecars.ps1`, then `smoke_sidecars.py`: passed.
+- Frontend and src-tauri untouched; their gates were not run.
+
+## 2026-10-14 — #236 roles and authorize(); #183's wire fields removed; #111 decided; #182 deferred
+
+**Roles.** `engine/tc_ai_bridge/authorization.py` holds the three roles of
+requirement 4 (`project_admin`, `editor`, `reporter`), five actions (`read`,
+`run_checks`, `write`, `manage_projects`, `manage_users`), the role table
+(reporter: read; editor: read, run checks, write; project_admin: all) and
+`authorize(user, project, action)`, which raises `AuthorizationError` with a
+sentence for the screen ("Rina is a reporter and cannot change the text,
+alignments or decisions."). `project` is accepted for the hub's per-project
+roles and ignored today. Workspace schema v4 adds `users.role`, default
+`project_admin`, because a single-user installation always was one;
+`get_or_create_local_user` returns it, `set_user_role` sets it (#237's
+Users screen), `settings.get` reports it as `localUserRole`.
+
+**Every method is classified.** `METHOD_ACTIONS` names all 193 protocol
+methods and the dispatcher asks `authorize()` before the `if m ==` chain; an
+unclassified method is refused, and
+`test_every_engine_method_is_classified_and_nothing_else_is` pins the table
+against `Methods` both ways, so a new method cannot arrive without a line
+there. The choices worth knowing: `report.*`, `project.report` and
+`triage.results` are reads (a reporter's job is reports); `report.cancel`,
+`languageQa.pause` and `navigation.*` are reads (session toggles, nothing
+recorded); `export.*` and `settings.set` are writes; `project.import*`,
+`forget`, `delete`, `rename`, `archive`, `unarchive` are `manage_projects`.
+The refusal is the protocol error code `forbidden`.
+
+**#183 landed.** The eight dispatcher reads of `actorId`, `actor` and
+`requestedBy` are gone; every correction write is stamped with
+`current_actor_id()`. A request carrying any of the three keys is refused
+(`refuse_named_actor`, before the method runs) and writes nothing. The client
+wrappers, `CorrectionReviewPanel`'s eight sends and `reviewerActorId()`,
+`correctionApplication.ts`'s `"human"` fallback and `AlignmentQaMode`'s pass
+are removed; the four engine tests that sent the field no longer do.
+
+**#111 decided:** `team.py` and `session.py` are deleted (nothing imported
+`session.py`; `team.py` only fed a constant `team` section of the project
+report, which is dropped from the report payload; the frontend never read
+it). `security.py` stays: `ai_payload_manifest` is used by `ai_client.py` and
+`correction_wording.py`. The workbench `team_members` and `team_assignments`
+tables stay: #45/#46 are v1 scope (DECISIONS 2026-10-12) and #240's
+assignments are their first writer. Recorded in DECISIONS.md.
+
+**#182 deferred, decided.** The seven `actor_id="human"` defaults become
+required parameters in their own commit after #237, when the only callers
+left are the dispatcher and tests; 51 call sites counted, all
+mechanical. The decision is yes; the timing is to keep this commit
+reviewable.
+
+Tests: `tests/service/test_authorize_roles.py` (table pin; the role table;
+a reporter refused on `verse.decide`, `verse.edit`, `checks.start` and
+`project.rename` with the workbench seq unchanged and reads still answered;
+an editor refused on `project.rename`, `archive` and `import.start` and
+allowed to edit and run checks; the admin default; a request naming its actor
+refused for each of the three keys with nothing written).
+
+## 2026-10-15 — #237 Users screen, the startup display-name picker, legacy:human
+
+**Engine.** Six RPCs on the workspace users table: `users.list` and
+`users.setCurrent` are anyone's (the picker must let a reporter sign in),
+`users.create`, `users.rename`, `users.deactivate` and `users.setRole` are a
+project_admin's (`authorization.METHOD_ACTIONS`, `manage_users`). The chosen
+user is `settings_kv["workspace.currentUserId"]`; `get_or_create_local_user`
+prefers it when it is still active and falls back to the oldest active row,
+which is what every installation did before. `settings.get` reports
+`needsUserChoice`: true when more than one active user exists and none has
+been chosen, which is when the picker comes before Home; a first install has
+one admin and never sees it. Choosing a user sets the Settings "Reviewer name"
+to that user's name, and renaming the current user through either path keeps
+the other in step. A rename never changes the id: `test_rename_keeps_the_id
+_so_history_does_not_split` writes an edit, renames, and reads the change_log
+rows back under the same actor id. Deactivation keeps the row and every
+record under its name; you cannot deactivate yourself, and the last active
+project_admin can be neither deactivated nor demoted.
+
+**Frontend.** `UserPicker.svelte` (list of active users with their role,
+"New name" with a role, shown over Home while `needsUserChoice`; a lone user
+is chosen silently), `UsersPane.svelte` in Settings > Users (add, rename
+inline, role select, deactivate; read-only with the reason for anyone who is
+not a project_admin; deactivated users behind "Show deactivated (n)").
+Client wrappers `usersList/Create/Rename/Deactivate/SetRole/SetCurrent`.
+
+**legacy:human.** A row written before identity existed carries the actor id
+`"human"`. `actorDisplayId` (`reviewLabels.ts`) and `display_actor_id`
+(`authorization.py`) show it as `legacy:human`; `actorLabel` and the
+evidence inspector's history use it. Nothing rewrites the row (#78: no
+backfill, the author is genuinely unknown).
+
+Tests: `tests/service/test_users_rpcs.py` (the first install; an admin adds
+a reporter, the picker is needed until a choice is made, the choice survives
+a restart, a reporter is refused on create but may switch; rename keeps the
+id and the change_log rows; deactivation keeps the rows, protects yourself
+and the last admin, refuses a deactivated choice, an unknown user and a bad
+role; legacy rendering). `UserPicker.test.ts` (4), `UsersPane.test.ts` (4),
+`reviewLabels.test.ts` (2), and the Settings modal test gains the Users pane.
+Not run on the desktop: the picker on a real second launch after a user has
+been added.
+
+## 2026-10-15 — #182 actor_id is required; the review service gets the signed-in user
+
+The seven `actor_id="human"` defaults are gone: `create_proposal`,
+`edit_proposal`, `reject_proposal`, `regenerate_proposal`
+(`correction_wording.py`), `record_human_review`,
+`record_correction_application_metadata`, `record_correction_applied`
+(`passage_semantic_repository.py`) and `QaReviewService.__init__`
+(`qa_review.py`) now require it, so a new caller cannot write an
+unattributed row by forgetting the argument.
+
+**One behaviour change found by doing it.** `QaReviewService` is built by
+`PassageSemanticRuntime` with no actor, and the dispatcher's
+`qaReview.decideFinding` / `addNote` never passed one, so every Stage 9A
+review decision and note was recorded with the literal `"human"` even after
+#78 gave every other write the stable user id. `PassageSemanticRuntime`
+now takes `actor_id` (required) and hands it to the review service; the
+engine passes `current_actor_id()` when it builds the runtime (#112's
+worker). From this commit a review decision is attributed like a verse
+decision. Rows already written as `"human"` stay as they are and show as
+`legacy:human` (#237); #78's no-backfill rule holds.
+
+Call sites: 29 in tests and test support, found by a balanced-paren scan
+and given `actor_id="Reviewer"`; two in the engine. No row changes for the
+desktop: the dispatcher already passed `current_actor_id()` on every
+correction path, and #183 removed the last way a request could name one.
+
+Tests: `tests/service/test_users_rpcs.py::test_review_decisions_carry_the_
+signed_in_user` (a qaReview decision through the dispatcher records the
+engine's user id, not "human"); the existing correction and review suites
+pass with the required argument.
+
+## 2026-10-15 — #240 assignments and "My work"
+
+**Record.** Workbench schema v8 lifts `team_assignments` into real columns
+(`chapter`, `''` for the whole book so the scope's unique index works;
+`assignee_id`, `assigned_by`, `assigned_at`), additive, no rebuild. One row
+per scope of a book, written through `_write` with the lifted columns and
+deleted through a batch, so both ride the change_log for the hub's first
+sync slice (#80). `TranslationCoreProject.list_assignments / set_assignment
+/ clear_assignment`; a chapter must exist in the book, an assignee must be
+an active user.
+
+**Copy.** Workspace schema v5 adds `project_assignments_cache`, one JSON
+list per book keyed like the progress cache and refreshed from each write's
+own `change_log.seq`; `sync_assignments_cache` repairs it on open the way
+`sync_progress_cache` does, and `project.forget` drops it with the progress
+entries. `project.listBookProgress` carries `assignments` per book from
+that cache in one query, so "My work" on a 66-book Bible never opens a
+sibling's database.
+
+**RPCs.** `assignments.list` (anyone), `assignments.set` and
+`assignments.clear` (`manage_projects`: a project_admin's, refused as
+`forbidden` otherwise), for the open book; the dashboard's Assign… on a
+sibling previews that book first (the existing `switchBook(path, false)`
+seam) and then opens the dialog.
+
+**UI.** `AssignmentsDialog.svelte`: the whole book and each chapter with a
+select of active users, "— nobody —" clears. The dashboard shows an
+assignee line per book ("book: Rina · ch 3: Revant", highlighted when it
+includes me), a "My work (n)" filter beside the search, and Assign… for a
+project_admin. The chapter list in the top bar marks my chapters with ●: a
+chapter assignment wins over a whole-book one (`assignedToMe` in
+`stores.ts`), from `bookAssignments`, loaded with the book and reset with it.
+
+Tests: `tests/service/test_assignments.py` (3): book and chapter
+assignment with the lifted columns and the change_log seq, the dashboard
+seeing both from the cache, refusals for a missing chapter and an inactive
+or unknown user, clear and its no-op; the cache repaired on open and
+forgotten with the project; a reporter/editor refused on set and clear but
+able to read. `AssignmentsDialog.test.ts` (3), `ProjectDashboardAssignments
+.test.ts` (2), `assignedToMe` through the top bar's mark is covered by the
+store function's rule. The ladders' tests move to workbench v8 and
+workspace v5. Not run on the desktop: assigning from the dashboard and
+seeing ● in the chapter list.
+
+## 2026-10-15 — #227 hub and dashboard architecture review
+
+The review SRS §14 requires before `FUTURE-002`/`FUTURE-003` are built, done
+as a dated note, `docs/HUB_ARCHITECTURE_REVIEW_2026-10-15.md`, against the
+code on `main` today (workbench v8, workspace v5, `authorize()` in place)
+rather than the v2 workbench `TEAM_ARCHITECTURE.md` §6 to §8 were written
+against. What the review settled, each also a DECISIONS entry of this date:
+
+- **Twelve tables sync, fourteen never do.** Every one of the 26
+  `MUTABLE_TABLES` is classified: the human-owned rows (decisions, issue
+  resolutions, cross-verse links, null decisions, alignment history,
+  assignments and members, Language QA batches, flags and learned fixes,
+  project state, AI review results) travel; progress, check snapshots and
+  cache, triage, metrics, the backups index, semantic mappings and runs,
+  alignment diagnostics and verdicts and the Language QA scan cache are
+  derived or device-local and are rebuilt by each device. The hub keeps its
+  own progress rollup from the events it receives. A learned fix carries a
+  token's wording, not verse text, so "Scripture never travels" holds.
+  `overrides.json` and the reference cache stay on disk; mirroring
+  `overrides.json` into `project_state` is the second slice. #80 adds a
+  frozen `SYNCED_TABLES` tuple pinned against `MUTABLE_TABLES` by a test,
+  the way `METHOD_ACTIONS` is pinned against `Methods`.
+- **Linking is by a hub project id per book, matched on natural keys.** Two
+  devices importing the same folder mint different ids, and the same source
+  imported twice must stay two projects, so neither the id nor the sha256
+  links alone. Rows keep each device's local `projectId`; the hub maps per
+  device at push time and matches rows by the lifted columns v3 to v8 gave
+  every table. `natural_row_id` takes the hub id once set (#80).
+- **Conflicts.** tC alignment groups do not sync (tC-owned, Scripture-
+  adjacent); links and null decisions are one row per token signature, so
+  two users linking the same token to different targets make two rows and a
+  verse that shows as needing review, not a merge problem. A batch row
+  travels as a record; its verse edits do not, and a receiving device never
+  replays them (no second Scripture writer). Decisions conflict on revision
+  exactly as `import_events` already reports.
+- **`authorize()`** runs on the hub where it runs on the desktop: the HTTP
+  transport binds the device token's user to the session and hands the
+  request to `handle_request`. Roles stay per installation until
+  `team_members.role` arrives after #81.
+- **Packaging:** a pip `[server]` extra behind Task Scheduler with a nightly
+  `sqlite3 .backup`, not a second PyInstaller exe and not NSSM; the hub
+  machine is the requirement's 2-core, 4 GB, fixed-hostname LAN host with no
+  internet.
+- **Acceptance restated as #80's tests:** 500 events under 30 s over
+  loopback and a 100 Mbit link; the existing divergent-row test lifted to
+  the protocol; the offline smoke as the never-blocks gate.
+- **Order confirmed:** #79 → #80 → #81, Option A only. Nothing widens the
+  stop-and-ask list.
+
+`ARCHITECTURE.md` §9 lists the note; `TEAM_ARCHITECTURE.md` §6 points to it
+as the current word where the two differ. Three follow-ups proposed, not
+filed: `overrides.json` as a `project_state` row; `natural_row_id` taking
+the hub project id; `team_members.role`. Ran: nothing (docs only); the
+table count and the sync code (`unsynced`, `mark_synced`, `import_events`,
+`record_domain_event`) were read from today's tree, not from the design.
+
+## 2026-10-16 — #79 engine sessions, the HTTP transport, `--serve`
+
+**Sessions.** A request carries an optional envelope-level `session`
+(`EngineRequest.session`, not a param: `project.open` already uses
+`projectId` for the registry id of a book being located). `""` is the
+desktop's session and the stdio loop never sends anything else, so the
+frontend is unchanged. `BridgeEngine._activate_session` swaps the
+per-project fields (`project`, the semantic runtime and its build event
+and thread, the semantic status, the three correction services, the
+cross-verse touch index) in and out of a per-session dict before the
+request runs, after waiting for an in-flight semantic build (the build
+thread writes into the active session's fields, #112). The workspace
+(settings, registry, users, job managers, the whole-book caches, already
+keyed by project path) is shared. This is the narrow form of the
+`Workspace`/`ProjectSession` split TEAM_ARCHITECTURE §6 designed: the same
+isolation without moving 280 `self.project` reads into a new class; the
+class split can follow if a second consumer needs it.
+
+**Language QA stays with the desktop.** Its scan is one background worker
+bound to one book; a non-default session gets `session_unsupported` for
+`languageQa.*`, and opening a project in a hub session does not rebind the
+scan.
+
+**Transport.** `engine/bridge_server.py`: FastAPI `POST /rpc` with the stdio
+envelope and `GET /health`; one lock serialises requests (the dispatcher
+assumes one at a time, as stdio does; job threads still run in parallel).
+`main.py` routes `--serve [--data-dir] [--host] [--port]` there and imports
+the module only then; `--host` defaults to 127.0.0.1, so listening on the
+LAN is the administrator's explicit choice until #80 adds join codes and
+device tokens. `[server]` extra (fastapi, uvicorn) in `pyproject.toml`, the
+same plus httpx in `dev` for the test client; `bridge-engine.spec` excludes
+`bridge_server`, fastapi, starlette and uvicorn. The snake_case Tauri
+command table the issue mentions is already gone (#115's `engine_call`), so
+the client's method names are the shared definition.
+
+Tests: `tests/service/test_bridge_server.py` (5): two sessions on two
+projects read and write their own project in any order and a fresh session
+has none; Language QA refused outside the desktop session; `--serve`
+parsing with the stdio default; an AST check that `bridge_service` and the
+stdio transport import nothing of the server, and the spec excludes it;
+`POST /rpc` through FastAPI's test client answers `ping` and `project.open`
+with the stdio envelope and a bad body with `bad_request`.
+`test_stdio_e2e.py` unchanged and green.
+
+Gates: pytest -n auto 5298 passed (the two known timing/flake tests only); frozen pair rebuilt without the server and `smoke_sidecars.py` passed. No frontend or Rust change.
+
+
+## 2026-10-13 — Book header and introduction: items 47 (Partial) and 43 (Checked) (#253, #254, #230)
+
+**What.** `engine/tc_ai_bridge/language_qa_header.py`: Language QA reads a book's header and
+introduction for the first time. They come from the preserved source (`<book>.usfm`, or the
+lazy copy), read with `usfm_parser.identify_usfm` (the preamble) and `usfm_verse.lift_verse`
+(the `\ior` spans), cached until the source changes. Rules, all panel only:
+- item 47 (#253): `common/header.missing` (no or empty `\toc1`, `\toc2`, `\toc3`, `\mt`);
+  `common/intro.ior-space` (a space inside `\ior … \ior*`); `common/intro.ior-target` (an
+  outline reference to a chapter or verse that does not exist, read as
+  `xref.target-missing` reads `\xt`).
+- item 43 (#254): `common/header.running-head` (`\h` differs from `\mt`); `header.missing`
+  also covers `\h`.
+
+A new finding context, `"introduction"`: anchored at the book's first verse; start/end index
+`contextText` (the header line as shown); no fix applied, because Bridge does not edit the
+header (a suggested form is in the message). Frontend: the type, "Book introduction: …" in
+LanguageQaPanel and the badge title in ReviewPanel, with a Vitest case. A failure reading the
+source becomes a limitation, never a failed pass.
+
+**Why.** Requirement 3 (#230). The 2026-10-13 review confirmed 3 of 3 `\ior` spaces. Benz
+decided on 2026-10-13 that the running head must equal the title `\mt` (of the three options:
+`\mt`, `\toc2`, or only a missing `\h`).
+
+**Measured on the IRV** (66 books): `\ior` spaces at MAT 8, 21 and 28 (the 3 confirmed);
+running head LAM (`புலம்பல்கள்` / `புலம்பல்`) and ACT (`அப்போஸ்தலருடைய` /
+`அப்போஸ்தலர்களுடைய நடபடிகள்`); PSA's `\h` equals its `\mt`, so it is not flagged. No missing
+marker; no bad outline target in 291 `\io1` lines.
+
+Rows: 47 Partial (the glossary and maps index are separate books the IRV does not have),
+43 Checked (page numbers are proofed on the PDF). Coverage: 12 Checked, 28 Not checked.
+
+**Gates.**
+- `header.missing` is one finding per book naming every absent marker: the test fixtures' bare `\id` source listed
+  five. Four pass-level tests over that fixture (persisted results, the real dispatcher, the indic-qa drawn flags,
+  the QA report's exception row) assert other rules' exact findings and now set the introduction finding aside;
+  the fixtures are unchanged. A header finding also counts in verse 1:1's exception-queue row, where it is anchored.
+- `tests/jobs/test_language_qa_header.py`: 9 passed. LanguageQaPanel Vitest: 30 passed.
+- Frontend: `npm run check` 0 errors, `npm run test` 726 passed, `npm run build` ok.
+- Full engine suite (rebased on #79): 5,307 passed, 1 skipped, 3 xfailed, 1 failed, the flaky
+  `test_moved_project_retains_identity_but_live_copy_is_rejected` (WinError 32/5 under `-n auto`; its third failure
+  today, it passes alone; Revant's area, proposed not fixed).
+- Human gate: pass. Latency gate (50 ms default): pass; ping max 96 ms. One earlier run in the same batch hit a single
+  404 ms ping (max must stay under 250) while the machine was loaded; two reruns gave 162 and 102 ms, and this one 96.
+- `build-sidecars.ps1`, then `smoke_sidecars.py`: passed. src-tauri untouched.
+
+
+## 2026-10-13 — Requirement 3 coverage target met: 20 Checked, 20 Not checked (#230)
+
+**What.** The framework table in LANGUAGE_QA_TAMIL_SPECIFICATION.md went from 7 Checked / 33 Not
+checked (the morning) to 20 / 20, one sub-issue per item. The earlier entries today cover items 31,
+27, 44, 29, 28, 47 and 43. This entry covers the rest.
+
+| Item | Status | Sub-issue | How |
+|---|---|---|---|
+| 49 wordlist audit | Assisted | #255 | the panel's Book words tab (`languageQa.bookWords`); run on IRV Ruth: 167 words |
+| 40 line breaking | Partial | #256 | `tamil.dependent-sign` already reports a break or space inside a cluster; test added |
+| 41 hyphenation | Partial | #257 | `unicode.invisible` already reports a soft hyphen; test added |
+| 1, 4, 20, 50, 51, 55 | Checked | #258–#263 | Benz's decision on the existing rules, gaps named in each row |
+| 9 punctuation | Checked | #264 | new `punctuation.unbalanced-pair` (brackets, per verse) and `.unbalanced-quote` (per chapter) |
+| 33 poetry | Checked | #265 | new `poetry.q2-without-q1`; IRV: exactly MAT 4:6 |
+| 13, 14, 15, 16 | Assisted | #266–#269 | Benz's decision: the tN check presents 4,741 / 4,590 / 23,477 / 12,822 notes on these topics (56 books; NUM, 1CH, 2CH, ECC, ISA, JER, EZK, DAN, AMO, ZEC have none) |
+| 34 special structures | Partial | #270 | new `acrostic.stanzas`: Psalm 119's `\qa` letters; IRV: flagged once |
+| 21 proper names | stays Partial | – | names with suffixes are compared as whole words; Benz kept it Partial after I corrected my claim |
+
+Also #134 closed: M49–M58 covered six of its eight asks; M59 (same-verse drag) and M60 (a
+workbench newer than the build is refused) added, both NOT RUN.
+
+**How the new rules read the text.** `language_qa_structure.py` reads each verse's stored string
+through `usfm_verse` only (`lift_inline_usfm`, `marker_names`) and never parses the book: parsing
+Psalms takes 3.1 s of pure Python, which would hold the GIL inside a pass. The whole-Bible
+structure step takes 4.0 s, spread over each book's pass.
+
+**Two things learned on the IRV.**
+- A paragraph marker between `\c` or a heading and the next verse (`\s …`, `\q1`, `\v 2` at JOL
+  1:2) is in no stored verse string. The poetry rule's first version reset the stanza at a heading
+  and flagged 11 false alarms in Joel and Obadiah. It now treats the level there as unknown and
+  gives it the benefit of the doubt.
+- Not every row claim held up. Item 21's "names with suffixes" is not handled (both name checks
+  compare whole words), and I said so before Benz decided. The consultant items were moved on tN
+  evidence, not on Stage 7: its participant list is six words.
+
+**Unlabelled findings for the next review round:** MAT 4:6 (poetry), PSA 119 (acrostic letters),
+and the 53 space-before-caller findings (#246).
+
+**Gates** (items 9, 33): full engine suite 5,323 passed, none failed; human gate pass; latency
+gate pass (ping max 122 ms); sidecar build and smoke passed. Item 34: full engine suite 5,327 passed, none failed; human gate pass; latency gate pass (ping max 102 ms); sidecar build and smoke passed. Docs-only moves
+(49, 1, 4, 20, 50, 51, 55, 13–16) were verified against the rule files, the code and the bundled
+tN, not by a gate run. 40 and 41 added tests only: 5 passed.
+
+
+## 2026-10-13 — The source text beside the translation, a side panel (#67, requirement 8 Option A)
+
+**What.** A fourth editor side panel, **Source**, on the rail (the SidePanel/SideRail pattern of
+2026-10-09), placed next to the verse text. It shows the chapter's Hebrew, Aramaic or Greek verse by
+verse; the selected verse is highlighted and followed, as in the Reference panel.
+- Data: `alignment.getRange`'s `topTokens`, `sourceDirection` and `groups`; no new endpoint. Each
+  source word shows the target words it is aligned to (`topIds` → `bottomIds`); a word with none yet
+  is dotted; the selected verse says "n of m source words aligned".
+- Type: Ezra SIL (`--font-hebrew`) right to left, Gentium Plus (`--font-greek`) left to right; the
+  size follows the in-app A−/A+ (`--verse-scale`, set on `.work-col`).
+- Speed: `src/lib/sourceText.ts` keeps each chapter once read: a few KB of the contexts, which run to
+  about 1 MB for PSA 119. Opening the column or moving verse draws from it at once. A verse whose
+  alignment status changes (an alignment save or a text edit) is read again on its own with
+  `alignment.get`. Measured on IRV Psalms in the engine: `alignment.getRange` PSA 23 (6 verses)
+  12 ms; PSA 119 (176 verses) 220 ms, once per chapter.
+- Preference: open/closed and width persist with the editorPrefs `persisted` helper (localStorage),
+  as the prompt asked, not through settings. The saved layout is validated all-or-nothing, and
+  adding `source` to the required panels would have thrown away every reviewer's saved widths. So a
+  layout saved before the column existed keeps them and gains the column, closed.
+- `src/App.svelte` (Revant's file) has a 4-line mount, approved by Benz and noted on #67. The old
+  `showSource` stub the issue mentions was already gone.
+
+**Visual acceptance, measured.** jsdom does not lay out text, so the real `SourceTextPanel`, with the
+app's `index.css` and bundled fonts, was built into a throwaway Vite harness. It was fed real
+`alignment.getRange` output for IRV PSA 23 (UHB) and JHN 1:1–8 (UGNT), and captured with headless
+Chrome at every text-size step (0.85–1.7) and at device scale factors 1, 1.25 and 1.5, in a 320 px
+column. At every combination the Hebrew runs right to left, right-aligned, with vowel points intact;
+the Greek runs left to right with polytonic accents; text wraps with no clipping or overlap at 1.7 ×
+150%. The harness is not committed: it lives in the session scratchpad, and its fake bridge pairs
+words in order to show aligned and unaligned words together.
+
+**Gates.** `npm run check` 0 errors, 0 warnings; `npm run test` 735 passed (new:
+`SourceTextPanel.test.ts` 6, `sourcePanelPrefs.test.ts` 3); `npm run build` ok. The engine is
+untouched, so the engine suite was not run. Not yet seen in the installed desktop app (WebView2);
+the harness used Chrome, the same engine family.
+
+## 2026-10-13 — Large-book first open, verified on the installed v0.15.0 (#181)
+
+**What.** The two checks #99 left for an installed build. Both pass.
+
+**How.** The installed `%LOCALAPPDATA%\Bridge\bridge-engine.exe` (v0.15.0, `engine.info`
+`bridgeVersion` 0.15.0), launched with the `--resources-dir` / `--language-packs-dir` arguments
+`sidecar.rs` passes, driven over stdio with v0.15.0's own client calls (`project.import`
+synchronous, then `project.open {path}`), `LOCALAPPDATA` pointed at a scratch folder so no real
+data was read or written by the engine. Not through the app window: the Rust relay and WebView are
+not in these numbers.
+
+| Open | `project.open` | of which `materialize_lazy` | `semantic_runtime` (`current_text`) |
+|---|---|---|---|
+| hin-irv import, 66 books, Genesis opened inside it | import 14.95 s; GEN 1.29 s | 0 | 0.63 s (0.03 s) |
+| EXO, first open, lazy | **4.81 s** | 3.70 s | 0.59 s (0.02 s) |
+| PSA, first open, lazy | **12.65 s** | 11.23 s | 0.68 s (0.06 s) |
+| ta-irv JER, first editor open (already normalized by a Collection QA run, no semantic store) | **3.15 s** | 0 | 1.83 s (0.29 s) |
+
+The runtime was READY when `project.open` returned in every case. The Language QA pass runs after
+the reply, in the background (JER 12.3 s).
+
+**The 43 s.** It sat between the registry touch and the scan, i.e. in `semantic_runtime`'s
+`current_text` phase: one commit per verse in `synchronize_current_text`, found and batched on
+2026-09-29 (20.8 s for Genesis from source then). In the release it is 0.02–0.29 s. Nothing else
+in the trace is above 1.1 s except the lazy normalization itself.
+
+**Headroom.** Psalms is the worst case at 12.7 s, almost all of it normalizing 150 chapters; a
+machine 2.4× slower than this laptop would cross 30 s. Worth one re-run on the field-spec machine
+(available 15 October). v0.15.0's own `project.open` timeout is 180 s, so that would be slow, not
+a failure.
+
+**Found on the way, not part of #181.** This machine's real `workspace.sqlite3` is already at
+workspace schema v5 (#238/#236/#240, after v0.16.0), from a source build. The installed v0.15.0
+engine, and v0.16.0, are v2 and refuse it at startup: `Workspace schema 5 is newer than supported
+v2`. Raised with Benz, not changed.
+
+## 2026-10-14 — Every Language QA finding drawn behind the Settings slider, with "Why" in the menu (#250)
+
+**What.** Benz's decision of 2026-10-13 (DECISIONS.md, same date): every Language QA finding is
+underlined in the verse text unless the reviewer's Settings > Language QA threshold hides it, not
+only reviewed-inline rules and indic-qa findings. The reviewed-inline tier (≥ 0.90 human precision
+on ≥ 20 labels) is still always drawn, and the slider cannot hide it. A book-header finding
+(`context: "introduction"`, #253) is never drawn.
+
+**How.**
+- `language_qa_drawn.gated_rules` now lists every enabled rule a pass can report. That means the
+  non-pack `language_qa.RULES` (common checks and project house style) and every enabled pack
+  rule, not only `match_type == "indic-qa"`. A rule the table does not know (another pack, or a
+  cache read before the first pass) is treated as unmeasured, at the finding's own confidence.
+- `served()` adds `rulePrecision` and `ruleLabelled` beside `drawn` on every served finding
+  (`inline`, `status`, `verse`). `languageQa.inline` serves through it instead of stamping
+  `drawn: True`.
+- The pass is untouched. The threshold is still applied per request, so there is no rescan, no
+  cache key change and no finding-id change. The indic-qa layer's de-duplication still defers
+  only to reviewed-inline findings.
+- Editor menu: a new "Why is this flagged?" item opens a text flyout (`FindingContextMenu` renders
+  a submenu of header lines as `role="note"`, which takes focus so Left/Escape close it). It shows
+  what was found, the rule's measured precision and label count (or "no reviewer has labelled"),
+  why it is underlined (reviewed inline, or the threshold and the rule's confidence), the first
+  fix's rationale, and the rule id. Use (Here/Chapter/Book), Ignore, Ignore this rule and False
+  positive were already on every Language QA mark and are unchanged.
+- Settings > Language QA wording, the `grammar` coverage label ("drawn behind the Settings
+  threshold", which was already untrue since 2026-10-07) and comments are updated.
+
+**Measured.**
+- Latency gate, local, 50 ms default: pass. `languageQa.inline` p95 6.4 ms during a scan (it now
+  returns every finding of the chapter), `languageQa.status` 10.1 ms, Language QA `verse.decide`
+  37.6 ms, `verse.get` 21.3 ms.
+- Human gates: ta-irv (1,194 label rows over three rounds), hi and ml all pass. `inline` and the
+  gate are untouched.
+
+**Gates.** Engine `pytest -n auto`: 5,330 passed, 1 skipped, 3 xfailed. `npm run check` 0 errors,
+0 warnings. `npm run test` 745 passed (new: the Why flyout in `FindingContextMenu.test.ts`; Why
+lines, the full menu on five kinds and an undrawn finding in `VerseList.test.ts`). `npm run build`
+ok. Frozen pair rebuilt and `scripts/smoke_sidecars.py` passed, including the indic-qa Hindi pack and the ta-irv layer.
+
+**Not done.** Not looked at in the desktop app at 1366x768. With the default threshold, a Tamil
+book now shows many more marks, and more verse rows lose their ✓ (a drawn mark is open,
+layered-rules 4.3). The common checks have no shipped precision (`rule_precision.json` lists pack
+rules only), so only the confidence floor can hide them. ta-irv's `rule_precision.json` was
+generated on 2026-10-07, before round 3; the slider reads that table.
+
+## 2026-10-14 — The Logos helper test's startup budget scales with load (#247)
+
+**What.** `test_logos_get_state_spawns_the_real_helper_and_returns_environment_safe_result` failed
+now and then under `pytest -n auto` on a loaded machine. The cause is the client's 10 s startup
+default, not the helper or its reuse.
+
+**Measured.** The real `logos_bridge.ps1` helper answers its first `state` request in 0.7 s on an
+idle machine. With 16 CPU-burning processes on 8 cores and 12 helpers starting at once:
+- with the 10 s default, all 12 timed out ("did not respond within the connector timeout (10.0s;
+  helper generation 1)"). The client then stopped each helper (correct), so `running` was False,
+  which is exactly Revant's failure on 2026-10-13;
+- with a 60 s budget, all 12 answered, in 10.9 to 17.3 s.
+
+**Change.** The test gives its engine a client with `startup_timeout=job_timeout(10.0)`
+(`tests/support/waits.py`: 10 s × workers, never below 60 s). Every assertion stays, and one is
+added: a second `logos.getState` reuses the same helper process. The client's own 10 s default is
+unchanged.
+
+**Acceptance run.** Ten consecutive `pytest -n auto tests/connectors` runs alongside a
+`scripts/build-sidecars.ps1` build plus eight CPU burners: 10 of 10 passed, 19 tests each. The full
+engine suite was not re-run for this one-file test change. It last ran at b136bb8: 5,330 passed.
+
+**Not changed, worth knowing.** A translator's machine as loaded as this one would also see the
+first Logos request time out at 10 s. It is retried on the next call, and nothing is lost.
+
+## 2026-10-14 — Cross-Verse "Align automatically": the pass from the job, a plain timeout message (#243)
+
+**What.** The button's "Aligning… pass 1 of 2 / pass 2 of 2" was a 20 s `setTimeout`. A provider
+timeout showed the socket's "The read operation timed out" (#241 on the installed 0.14.0). Since
+#242 the window is a job whose status carries `currentPass`.
+
+**How.**
+- `CrossVerseAlignmentModal` passes `onProgress` to `bridge.autoAlignWindow` (#242's hook, so
+  `bridgeClient.ts` is untouched) and labels each status with `autoAlign.passLabel`: "Starting…",
+  "Aligning… pass N of 2", "Comparing the two passes…", "Writing what both passes agree on…". The
+  timer is gone.
+- On failure the raw text is the failed window's own `results[...].error` from the last status.
+  The job's `error` there is only "1 window(s) failed.", and that is what the client throws.
+  `autoAlign.providerProblem` maps three cases to a plain sentence that says nothing was changed:
+  - a timeout: "The AI provider did not answer within 4 minutes; nothing was changed.";
+  - HTTP 429;
+  - an unreachable provider (URLError, refused, getaddrinfo).
+
+  The raw text is under a native `<details>` "Show details". Any other error is shown as it is.
+- The window job writes only after both passes and reconcile, so "nothing was changed" holds for
+  every provider failure.
+
+**The 240 s ceiling: kept.** It is `ai_client.OpenAIResponsesClient`'s one timeout for every AI
+call, not only this window. A normal window measured 26.7 s for both calls (#241, PHP 1:3–4), so
+240 s is about 18 times one call. With the dispatcher no longer held (#242), a slow call costs only
+the reviewer's wait, and Cancel is honoured before any write. Lowering it would risk cutting off
+the longer review calls that share it. Scaling it by window size buys nothing at ≤ 5 verses.
+
+**Gates.** `npm run check` 0 errors, 0 warnings; `npm run test` 751 passed (new: `passLabel`,
+`windowJobError` and `providerProblem` in `autoAlign.test.ts`; pass text following the status, the
+timeout message with its details and a usable page, and a raw error with no details, in
+`CrossVerseAlignmentModal.test.ts`); `npm run build` ok. Frontend-only, so the engine suite was not
+run. Not yet seen on the installed app against a real provider.
+## 2026-10-14 — #80 the team hub's first slice
+
+Built to the #227 review (DECISIONS 2026-10-15), which supersedes the issue
+text in one place: progress and check findings do **not** sync (each device
+rebuilds them); the twelve human-owned tables do.
+
+**Hub** (`bridge_server.py`, the `[server]` extra). Its own `hub.sqlite3`:
+join codes (stored as sha256), devices (token sha256, user id, display name,
+role, last seen), projects (hub project id, book, source sha256) and an
+append-only `events` table with a `hub_seq` cursor. A first start writes one
+project_admin join code to `admin-join-code.txt`. Endpoints: `POST
+/hub/join` (code + name → device token, no password), `POST /hub/join-codes`
+(admins invite with a role), `GET /hub/presence` (last seen per device),
+`POST /hub/projects/link`, `POST /sync/push` (idempotent on `event_id`,
+refuses tables outside `SYNCED_TABLES` and events for another project,
+reporters refused) and `GET /sync/pull?hubProjectId&after` (pages of 1000).
+`/rpc` now needs a device token and runs the request as that user
+(`BridgeEngine.handle_request_as`), so `authorize()` refuses a reporter's
+`qaReview.decideFinding` exactly as on the desktop. The hub never applies or
+merges events.
+
+**Linking** (the #227 rule). The first device to link a book registers it
+under its own project id. A later device with the same book and source
+sha256 adopts that id (`ProjectRegistry.adopt_project_id` rewrites
+`.bridge/project.json` and the registry entry, then the book is reopened),
+so every `natural_row_id` matches across devices with no row rewritten. It
+is refused while the book holds rows in a synced table under its old id:
+"link a fresh import". This is narrower than natural-key matching after the
+fact, which stays a later slice.
+
+**Device** (`tc_ai_bridge/hub_sync.py`). `SYNCED_TABLES` (12) and
+`NOT_SYNCED_TABLES` (14) pinned against `MUTABLE_TABLES`. One pass pushes
+unsynced events of the synced tables in batches of 500 and acknowledges the
+rest locally (they never travel, and the unsynced cursor must not grow),
+then pulls after its cursor and applies through
+`WorkbenchRepository.import_event_lines` (split out of `import_events`), the
+same revision check every local write uses. An event whose base is not the
+local row lands in workbench v9 `sync_conflicts` with the incoming event
+verbatim; the local row is left alone. Settling one (`hub.resolveConflict`,
+"kept-mine" or "redecided") marks it and never applies it. v9 also adds
+`sync_state` (pull cursor, last push/pull, last error); neither table is in
+`MUTABLE_TABLES` or the change log.
+
+**Desktop.** The hub address, identity and links are settings; the device
+token is DPAPI-wrapped like the API key. A daemon thread syncs the open book
+every 60 s while a hub is configured, resumed at startup; `hub.syncNow` only
+wakes it. `hub.join` and `hub.link` are explicit setup clicks with a 10 s
+HTTP timeout. An unreachable hub records `lastError` and changes nothing
+else. Settings › Team (`TeamPane.svelte`): join with address, code and name;
+link this book; last synced and the last error; Sync now; the open conflicts
+with who changed what and Keep mine; Leave the hub (removes nothing).
+Methods classified in `authorization.py` (status and conflicts read;
+syncNow and resolveConflict write; join, leave, link manage_projects);
+`hub.link` has the 180 s open class in `sidecar.rs`.
+
+Tests: `tests/service/test_hub_sync.py` (5): the table classification; two
+devices with the same imported book join an in-process hub (FastAPI test
+client as the transport), B adopts A's id, a decision crosses in one pass
+each, a concurrent change to the same decision leaves each side with its own
+row and one conflict naming the other's decision, settling marks it, a
+second pull is idempotent; a reporter token refused on
+`qaReview.decideFinding` over `/rpc` and on push, a made-up code and a
+missing token refused; the hub refusing a non-travelling table; an
+unreachable hub recording its error while `verse.edit` and the rest work;
+500 decisions pushed and pulled in 1.15 s in-process (marked `slow`; the
+requirement's budget is 30 s on a LAN).
+`TeamPane.test.ts` (3), `sidecar::tests` (15). Not run: two physical
+machines on a LAN; the 500-event figure over a real 100 Mbit link.
+
+Gates: pytest -n auto 5335 passed (the moved-project flake only); npm check 0/0, test 748, build; cargo test 15; frozen pair rebuilt and smoked.
+
+## 2026-10-14 — #81 the hub-served team dashboard
+
+Option A of 2026-10-12: a browser surface over the hub's own data, not a
+web workbench. The hub serves it at `/`.
+
+**Where the data comes from.** The hub holds no projects and no Scripture,
+so the dashboard reads the hub's endpoints rather than the engine protocol
+through an `httpTransport` swap of `bridgeClient.ts` (the issue's plan):
+engine methods such as `project.listBookProgress` have nothing to answer
+with on a hub. The five `bridgeClient` members the issue wanted hidden are
+therefore simply not in the web build. One correction to the #227 review:
+it said the hub would keep its own progress rollup "from the events it
+receives", but progress events never travel, so that could not work.
+Instead each device posts a small **progress snapshot** (book, project
+name, chapters, the #239 totals) to `POST /hub/progress` after every sync.
+It is derived and display-only, last writer wins, and never travels back
+to a device.
+
+**Hub endpoints added.** `GET /hub/me`; `GET /hub/projects` (each linked
+book with its snapshot, last activity, and assignments folded from the
+`team_assignments` events in order); `GET /hub/users` (admins; one row per
+person, device count, last seen); `POST /hub/assignments` (admins). A
+dashboard assignment is an ordinary `team_assignments` event the hub
+**authors** on the admin's behalf, with the device's natural row id, the
+current revision as base and the next as new, so devices apply it through
+their own revision check exactly like an event pushed by another device;
+clearing is a delete event. `POST /hub/join-codes` and the role checks
+are shared with #80.
+
+**Identity across hub and desktop.** A desktop now joins under its own
+stable user id (`hub.join` sends `local_user().userId`), so the person an
+admin assigns on the dashboard is the same id as that person's "My work"
+on their desktop. A browser has no local id and gets a fresh one. The join
+code remains the trust: it grants the role, whatever id the holder brings.
+An assignment carries the assignee's name, so a device that has never met
+that person still shows a name; a device that knows them shows its own.
+After every pull the device refreshes its assignments cache (#240), so
+"My work" follows without a reopen.
+
+**Dashboard** (`dashboard/index.html`, `src/dashboard/`, built by `npm run
+build` as a second Vite entry into `dist-dashboard/`, gitignored): sign in
+with a join code and a name (the token is kept in that browser for that
+hub); Projects with checked, reviewed and aligned progress, assignees and
+last activity; Export CSV for everyone signed in (reporters and up); for
+project admins, Assign… per book and chapter, and Users with role, devices
+and last seen, and Create join code. `bridge_server.default_dashboard_dir`
+finds the bundle beside the engine in a source checkout.
+
+Tests: `tests/service/test_hub_dashboard.py` (2): the issue's manual check
+in-process (a 3-book collection linked and synced from one desktop, every
+book on the dashboard with its chapters and totals, an assignment made on
+the dashboard reaching the desktop's `assignments.list` and the book list
+after one sync, clearing it there too, a chapter that does not exist
+refused, the bundle served at `/`); a reporter reading projects but refused
+users, assignments and invitations. `src/dashboard/__tests__/
+DashboardApp.test.ts` (4): sign-in and the projects table for a reporter
+(no Users, no Assign, Export present); assigning a chapter and creating a
+join code as an admin; the empty hub; the CSV. Not run: a real browser on a
+second machine against a hub on the LAN.
+
+Gates: pytest -n auto 5337 passed (the two known flakes only); npm check 0/0, test 758, build (both entries); frozen pair rebuilt and smoked. No Rust change.
+
+## 2026-10-14 — Elective checks (#251) and Greek Room on demand (#252), e4c5e9e
+
+**What changed.** A run now names its checks and runs only those. The editor has a **Checks ▾**
+menu beside **Run whole book**: six boxes (Translation Notes, Translation Words, Alignment, USFM
+and text, Language QA, Greek Room), saved per installation in `editorPrefs`
+(`bridge.editor.checks.v1`), default all but Greek Room. Chapter entry, the post-edit re-check,
+**Run chapter** and **Run whole book** all use it. The same menu has **Greek Room, on demand**:
+the verse, the chapter or the whole book. The Review panel's Greek Room tab has **Run Greek Room
+on this verse** and no longer runs anything on verse selection. Collection QA keeps its own
+selection (`bridge.dashboard.collectionChecks.v1`), Greek Room included by default. DECISIONS
+2026-10-13 records the reversal of "live on focus".
+
+**Engine.** `check_jobs.py` holds the vocabulary: groups `tN tW alignment text` (Bridge-side) and
+`wildebeest usfm names` (Greek Room); `"local"` keeps its old meaning (every Bridge-side group
+plus the book USFM and names scans) for older callers, `"greekroom"` is the three Greek Room
+tools. `run_local_qa(..., groups)` runs only the groups asked for; it was one unfiltered bundle,
+so `["tN"]` used to run alignment integrity, tC state, editorial and verse-USFM too. tN and tW
+split on the index entry's tool; comments, edit history and other tools' items come with either
+(group `tc`); Word Alignment's invalid state is alignment's. Every QaFinding now carries
+`check` (a new dataclass field, empty default, so stored findings still load through
+`from_dict`). Stage labels name the checks ("tN · tW · Alignment · Text", "Greek Room",
+"Language QA"); "QA" is gone.
+
+**A subset run merges, it does not replace.** Found while wiring it: `_on_check_job_complete`
+replaced each covered chapter's rollup rows and findings snapshot with what the job found, and
+`applyJobSnapshot` did the same to the editor's findings. With elective runs, a Greek-Room-only
+chapter run would have wiped the stored tN/tW findings, and the default chapter job would wipe
+stored Greek Room ones. Now each verse keeps its stored findings of the groups that did not run
+(with their current status from the rollup), and the Language QA ids and statuses when that
+stage did not run. The snapshot reports `checkGroups`; the frontend merges with the same rule
+(`checkSelection.mergeFindings`). After an edit the verse's findings are replaced outright: they
+described the old text.
+
+**The ✓.** A verse ticks when every check in the reviewer's selection has run on it with nothing
+open (and alignment complete, as before). `checkGroupsByVerse` records what has run since the
+verse was opened or edited; the verse-number title adds "Ran: …" and "Greek Room not run".
+A re-check of some checks (an alignment save) keeps a fully checked verse ticked and does not
+tick one whose other checks never ran.
+
+**Book caches.** A chapter or book Greek Room job clears the book's in-memory USFM and names
+results first (`_forget_greek_room_book_caches`), so findings an edit made stale come back fresh;
+the scan then runs in the job's preflight. A verse's Greek Room run reads those results from
+memory only and never scans: it runs on the dispatcher, and clearing the caches inside
+`verse.runChecks` is what `edit_verse`'s docstring records as tried and reverted (#24's failure
+mode). The first cut did take `_checker_lock` for a verse Greek Room run;
+`test_live_greek_room_and_status_stay_responsive_during_check_preparation` caught it at 2.2 s.
+`checks.start` was already refused during Collection QA; `verse.runChecks` with Greek Room now is
+too, and the frontend holds every run while Collection QA runs.
+
+**Measured** (Tamil IRV Luke fixture imported fresh, this dev machine, not the field laptop; a
+one-off script through the protocol): old default chapter list `["local","greekroom","languageQa"]` against
+the new default `["tN","tW","alignment","text","languageQa"]`.
+
+| Run | Old | New |
+|---|---|---|
+| First chapter of the session (book preflight) | 16.09 s, of which names 13.09 s, USFM checker 2.06 s, Greek Room stage 0.78 s | 11.74 s, of which resource indexes 7.79 s, first Language QA pass 3.62 s (paid by either) |
+| A later chapter, cold Wildebeest cache | 1.19 s (Greek Room stage 0.98 s) | 0.10 s |
+| Same chapter again, warm | 0.20 s | 0.15 s |
+| Post-edit verse re-check, median of 10 | 24 ms | 2 ms |
+
+**Not done here.** #275 (the Wildebeest section triage and analytics read) is decided separately.
+#272 will read the stored snapshot back on chapter entry; the merge above is what keeps that
+snapshot whole across elective runs. Not seen on the desktop: QA matrix M61, M62.
+
+## 2026-10-14 — A live Language QA pass updates the dashboard's clean count (#280)
+
+**What.** #239's "Language QA clean" count moved when a check job completed and, through #239's
+decision recompute, on a Language QA decision. It did not move when a background pass after an
+edit, a scoped Use or an undo made a finding appear or disappear. The issue named decisions as the
+gap. With the new hook unwired, the test's "ignore" step still passed and its "edit" step failed,
+so edits, Use and undo were the real gap.
+
+**How.**
+- `LanguageQaManager.on_published(project_path, by_verse)` is called by the background worker
+  after it publishes a completed pass, outside its lock, so there is no extra pass. A check job's
+  `run_pass` writes the rollup itself and does not call it.
+- `BridgeEngine._refresh_progress_language_qa` builds each verse's Language QA ids (open and
+  hidden) and statuses (open, or the decision) from the pass, as the check job builds them. It
+  compares them with the rollup and writes only the verses that changed. It then recomputes the
+  totals and saves them, which refreshes the workspace cache (#239's path).
+- Only verses that already hold Language QA ids are touched (a check job ran the stage there). A
+  book never checked still reads "not checked", not "clean".
+- `TranslationCoreProject.update_progress_language_qa(chapter, verses)` replaces those verses' id
+  lists and finding rows in one transaction. The chapter row's other fields (`aiChecked`,
+  `checkedVerses`, `alignedVerseCount`) and other checks' rows are left as they were.
+
+**Measured.**
+- `tests/service/test_progress_dimensions.py`: 5 passed (new: the clean count follows an ignore
+  and an edit with no check job, and a live pass claims nothing where the stage never ran). With
+  the hook unwired, the new test fails at the edit step.
+- Latency gate, local, 50 ms default: passed twice. Gated p95 ≤ 40 ms (`languageQa.inline` 15–33 ms),
+  ping max 100–102 ms. With the hook unwired, the same run measured ping max 114 ms. One earlier run
+  straight after the full suite tripped the script's sanity assertion on ping (828 ms). Ungated
+  `verse.edit` (1.4–2.0 s) and `project.open` (0.6–1.2 s) are higher than on 2026-10-13, with or
+  without the hook.
+- Frozen pair rebuilt; `scripts/smoke_sidecars.py` passed.
+- Engine `pytest -n auto`: 5,344 passed, 3 failed, none from this change.
+  `tests/service/test_bridge_service.py::test_check_job_can_cancel_and_retry` and
+  `::test_check_job_rejects_a_second_active_job` fail on a clean checkout of c8d8c49 and pass on
+  75dd038, the commit before e4c5e9e (#251/#252), so that commit broke them. Reported to Revant on
+  #251. `tests/project_io/test_project_import.py::test_locate_rejects_a_different_book_for_missing_project`
+  passed alone.
+
+**Found, not fixed.** `common/header.missing` (#253) is anchored at the book's first verse, so in
+any book without `\h`, verse 1:1 can never count as Language QA clean.
+
+## 2026-10-14 — QA 08 cross-verse sign-off on the installed 0.16.0; coverage rules on real chapters (#159, #230)
+
+**#159, the cross-verse sign-off.** The installed 0.16.0 was used (`Bridge_0.16.0_x64-setup.exe` from the release,
+installed over 0.15.0; `engine.info` 0.16.0). It ran on a scratch `LOCALAPPDATA` with a fresh import of IRV Tamil
+Genesis, window 1366x768 (viewport 1350x729). It was driven through WebView2's remote-debugging port with Playwright's
+mouse, i.e. CDP `Input.dispatchMouseEvent`, the method the #117 dev walk used. The 2026-10-13 "synthetic input did
+not register" attempt did not use it.
+- XVA-001: the toolbar opened the page on 1:1–3 from 1:2.
+- XVA-002: To = 5 widened to 1:1–5 (51/47 unmatched); chip 2 off dropped v.2 (37/34). The page has no free-text
+  search and is scoped to one chapter.
+- XVA-003 / M50: a real drag (1:2 பூமியானது → 1:1 הָאָרֶץ) and pick-then-click (1:2 ஒழுங்கற்றதாகவும் → 1:1 בָּרָא)
+  each saved a link. On disk: 2 link rows, 2 `crossVerseLink` events, 2 history rows without `backupPath`, and
+  `alignmentData/gen/1.json` byte-identical to an untouched import.
+- XVA-004 / M51: × removed one link only (`crossVerseUnlink`).
+- XVA-005: Suggest links ran offline and explained it learns from completed verses, of which there are none.
+- XVA-006: with no key, Align automatically was disabled with its reason.
+- XVA-010: after a full restart, the remaining link showed on both verses with the same tally. The change log was
+  2 links and 1 unlink, with 1 active row.
+- M59: a same-verse drag saved an ordinary tC group.
+- XVA-007/008/009 (a real provider) were not run on the desktop: the scratch data has no key. They are covered over
+  the protocol by M58, A40 and A41, and on 0.14.0 by D14.
+
+**#230, the coverage rules on real chapters.** Over stdio, the installed 0.16.0 found heading trailing punctuation
+(GEN 4:25, 36:1), mixed heading markers (JOL 2:28) and a footnote with no `\ft` (MAT 22:44). These are listed, not
+drawn: drawing them is #250, after the tag. The cross-reference rules (#249) are not in 0.16.0. On a frozen build
+of main, a scratch copy of Ruth with two references broken showed `xref.origin-mismatch` (2:1) and
+`xref.target-missing` (3:12). The real IRV has none (#249).
+
+## 2026-10-14 — Bridge → Paratext navigation fixed; #110's hand check done (#110)
+
+**What was wrong.** With Paratext 9.5 (plugin 0.7.4) running, the installed 0.16.0 connected and
+followed Paratext (Paratext → Bridge), but never moved Paratext. Selecting a verse in Bridge made no
+`navigation.bridgeChanged` call; the IPC was watched over WebView2's debug port. The cause:
+`App.svelte`'s `$: navigationReference = currentBridgeReference();` names no store, and Svelte 4
+re-runs a reactive statement only for the names written in it, so it ran once at mount. It dates from
+Stage 9A.4 (bcb9a7e). The engine's `currentReference` moved only when Bridge rejected a Paratext
+candidate (`navigation.resolve` carries Bridge's reference).
+
+**Fix (a732e53).** The statement now passes `$project`, `$currentChapter` and `$selectedVerse` to a pure
+`bridgeReference()` (`src/lib/navigationReference.ts`). `src/__tests__/appNavigationReference.test.ts`
+pins the statement, because jsdom cannot mount `App.svelte`.
+
+**Verified** in a dev build (`npm run tauri dev`, scratch data, IRV Tamil GEN) against the running
+Paratext. Selecting GEN 1:3 and then 1:6 in Bridge sent `navigation.bridgeChanged`, and Paratext
+reported GEN 1:3 and GEN 1:6. Moving Paratext to GEN 1:8 through the connector moved Bridge's selection
+to 1:8. Earlier on the installed 0.16.0: sync off, 0 `navigation.poll` in 10 s; on, 13; off again, 0.
+Paratext was left where it was found (MAT 1:0). Nothing was typed into Paratext.
+
+**Gates.** `npm run check` 0/0; `npm run test` 768 passed; `npm run build` ok. Frontend-only, so the
+engine suite and cargo were not run. It reaches the installed app with the next release.
+
+## 2026-10-14 — Bridge installs its own Paratext connector (#282)
+
+**What.** A translator no longer installs the Paratext connector by hand
+(`paratext_plugin/build.ps1 -Deploy` from an Administrator shell). Benz chose all three:
+both places (the installer and Settings › Connections), compiling on the user's PC, and an issue.
+
+**How.**
+- `engine/tc_ai_bridge/paratext_install.py`:
+  - finds Paratext 9 through `HKLM\SOFTWARE\WOW6432Node\Paratext\8` › `Paratext9_Full_Release_AppPath`;
+  - reads the installed version, from `connector-version.txt` or, for a hand-deployed connector, from the
+    UTF-16 `PluginVersion` string in the `.ptxplg`;
+  - compiles the three `.cs` files with `%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe` against
+    that PC's `PluginInterfaces.dll` / `CorePluginInterfaces.dll`, as `build.ps1` does;
+  - writes a PowerShell copy script and runs it through `ShellExecuteExW` "runas", which is one UAC
+    prompt; a declined prompt is reported, and nothing is installed;
+  - refuses while Paratext runs.
+- RPCs `paratext.connectorStatus` (read) and `paratext.installConnector` (write). The install runs on
+  its own thread, so the dispatcher never waits on the admin prompt (#241's lesson) and no
+  `sidecar.rs` timeout changed.
+- `bridge-engine --install-paratext-connector` for the installer, with exit codes 0 installed,
+  1 failed, 2 Paratext running, 3 declined, 4 already current and 5 no Paratext 9.
+- `bridge-engine.spec` ships the three `.cs` files.
+- Settings › Connections shows **Install Paratext connector**, or **Update … to <version>**, and polls
+  the result.
+- `src-tauri/windows/hooks.nsh` (`bundle.windows.nsis.installerHooks`): after install, if Paratext 9
+  is registered and the install is not silent, it asks the user and runs the engine flag. If Paratext
+  is open it offers Retry.
+
+**Measured on this PC (Paratext 9.5.110.1, connector 0.7.4 deployed by hand on 2026-08-17).**
+- Status found Paratext and read the hand-deployed connector as 0.7.4, so it offers no needless update.
+- The real compile produced a 24 KB assembly carrying "0.7.4".
+- The frozen engine reports `bundledVersion` 0.7.4, and `--install-paratext-connector` printed "The
+  Paratext connector 0.7.4 is installed." and exited 4.
+- `npx tauri build --bundles nsis` built `Bridge_0.16.0_x64-setup.exe` with the hook included and
+  inserted at post-install.
+
+**Gates.**
+- Engine `pytest -n auto`: 5,358 passed, 3 failed:
+  - `test_check_job_rejects_a_second_active_job` is the e4c5e9e break reported on #251;
+  - the two file-lock tests passed alone.
+- New: 12 tests in `tests/connectors/test_paratext_install.py`, including the real compile (skipped
+  without Paratext) and the generated copy script run for real against a temp folder whose path has a
+  quote; 2 in `tests/service/test_paratext_connector_install_protocol.py`.
+- `npm run check` 0/0; `npm run test` 771 passed (3 new Settings cases); `cargo test` 15 passed;
+  frozen smoke passed.
+
+**Not yet watched.** The elevated copy itself, i.e. a real UAC prompt answered and Paratext loading the
+installed connector. It needs Paratext closed and a person at the prompt.
+
+**#282, the elevated install, watched (2026-10-14, 10:36).** With Paratext closed, `paratext.installConnector` through
+the frozen engine compiled the connector, raised one Windows administrator prompt (Benz clicked Yes), and replaced
+the hand-deployed August `.ptxplg` (22,528 bytes) with the freshly built one (24,064 bytes), writing
+`connector-version.txt` (0.7.4) beside it. Status then read installed 0.7.4, action "none". Paratext 9.5 was started
+again, loaded it, and the connector answered `connected: true` (HEB/GRK, MAT 1:0).
+
+## 2026-10-14 — Finding-id audit: stable, non-colliding ids, and old decisions moved only when unambiguous (#273), 74c0b01
+
+**The audit** is on #273 as a table (engine, check type, disambiguator, verdict). Benz's four claims
+held: tC PENDING, INVALIDATED and STALE_AFTER_EDIT for one check shared an id, so an Ignore on a
+pending item also hid its later stale or invalidated warning; ALIGN_DUP findings with the same count
+shared an id; local ids built from a detail with a count changed when the count did; Wildebeest ids
+used offsets, so an edit earlier in the verse orphaned the decision. Three more were found:
+USFM_BALANCE (counts in the message), TC_COMMENTS and TC_VERSE_EDITS (counts), and the USFM
+structural checker, whose explanation ends with an excerpt of the verse, so any edit to the verse
+changed the id.
+
+**The fix.** `_issue_disambiguators` in `bridge_service.py`: the tC states get `groupId|code`, and
+TC_PENDING keeps its id, so most existing decisions need nothing. Count-bearing codes use their
+group_id: the token signature for ALIGN_DUP (set in `local_checks`) and the marker for USFM_BALANCE
+(`usfm_verse.unbalanced_markers`, the message built from it by `balance_message`). The rest are one
+per verse and use nothing. Wildebeest uses `original_text#k`, k counting same-type findings by
+offset. The USFM checker uses `#k` in report order, and its persisted cache section is rebuilt once
+(content hash suffix `|ids-273`). `qa_report` derives the per-state tC id the same way.
+
+**Decisions under an old id.** Each changed finding knows its pre-#273 id (`_legacy_finding_id`:
+set when built, or derived from a cached USFM finding's explanation). At reapply, a decision found
+only under the old id is copied to the new id when exactly one finding of the verse had that old id.
+The copy is an ordinary `record_qa_decision` with `rekeyedFrom` in the payload; the old row stays.
+Otherwise the decision is not applied, and the finding carries `unmatched_decision`. This covers an
+old id shared by two current findings, and a tC INVALIDATED or STALE finding whose pending id holds
+a decision, which says nothing about the state it was made on. The Review panel shows it: "An
+earlier decision on this item (…) was recorded under another finding id and is not applied here."
+The wording is neutral on purpose: after #273 a pending-item decision is legitimately not applied
+to the same check's stale warning either.
+
+**Tests.** `tests/service/test_finding_ids.py`, 15: a Wildebeest decision survives an edit earlier
+in the verse; two occurrences get two ids; a local alignment decision survives a change of count;
+three tC states carry three ids, and PENDING's id is unchanged; two ALIGN_DUP tokens with the same
+count differ; six one-per-verse codes are count-free; USFM_BALANCE is keyed on the marker; an old
+Wildebeest id is re-keyed once with `rekeyedFrom`, the old row kept; a colliding old ALIGN_DUP id
+is shown on both findings and applied to neither. Vitest: the panel line.
+
+**Not done.** Two USFM-checker check types are built from verse text by the adapter's report parse
+(`usfm.luk_18_14_wj_f_…` on Luke) and stay unstable; an issue is proposed, not filed.
+
+## 2026-10-14 — The Language QA book stages are reused while their inputs are unchanged (#271)
+
+**What.** A warm Language QA pass no longer re-runs every book stage. Each stage's last result is kept in
+memory (per bind) under a digest of what it reads, and a decision, an idle refresh or an unrelated change
+re-runs none of them. Code: 72cfce0.
+
+**Why the pass was slow (measured first, on main at 4ef4c83).** On a scratch import of the reviewer's IRV
+Genesis (1,533 verses, ta-irv 1.3.0), a warm pass took 15.0–16.0 s after one verse edit, and 15.3 s after a
+decision or an idle invalidate. Two-thirds of it was sleep. The book stages added on 13 October (#244–#249)
+call the background worker's `proceed()` once per note or per chapter, and each call yields 20 ms:
+`note_callers` 6.0 s, `headings`, `structure` and `xrefs` 1.55 s each, plus 1 s each for the sample loop,
+the chapter loop and the indic-qa layer. With yields off, the same pass was 1.3–2.4 s. The real work was
+the indic-qa layer (`build_book` 0.3–0.8 s, `check_chapter` 0.3–0.75 s, `build_index` 0.37 s after a word
+edit, `map_findings` 0.15 s), then structure 0.2 s and names 0.1 s. A cProfile showed `lift_verse`
+called 5,344 times per pass, about 35% of it.
+
+**How.**
+- `YIELD_SLICE` (0.25 s): the chapter loops and the book stages yield once per slice of work, not once per
+  item. The per-verse scan still yields per verse, as the latency gate measured it.
+- `book_stage()` in `_scan_locked`: digest = the chapter key (rule version, pack with overrides, termbase,
+  house-style lists, lexicon) + every chapter file's sha256 + the stage's own inputs (headings, checker
+  settings via `indic_qa_adapter.checker_key`, collection names, the source file, learned fixes). Headings
+  and the header read verse keys, not text, so an edit keeps them. Structure is cached per chapter. The
+  layer is reused only while `indic_qa_adapter.is_resident` (Book words reads that checker). A stage a
+  cancellation cut short is never kept.
+- Exact savings inside the stages:
+  - `_same_index`: no `build_index` when no changed word crosses `irv_min` and the lexicon and settings
+    generations are those of the last build. Same sources, same index; classify()'s caches are still
+    cleared. hi and ml (an `on_build_index` hook) always rebuild.
+  - `lift_inline_usfm` is an `lru_cache` (4,096; the result is frozen).
+  - `build_book` reuses the lifted notes and memoizes line runs; the OV table is resolved once per pass.
+  - An unchanged chapter file is not parsed again; the language sample's detection is reused.
+  - `name_findings` memoizes each word's candidate names. Only their order depends on the counts.
+- `check_timing.Timings.cached()`: a step reused shows `{"ms": 0, "calls": 0, "cached": n}`.
+
+**Measured after** (Genesis, warm, background worker with its yields, one word-changing edit, 8 edits per
+run, findings and false positives identical to a cold pass every time):
+
+| | before | after |
+|---|---|---|
+| after one verse edit | 15.0–16.0 s | median 0.80 s on a quiet machine; 1.18–1.43 s under normal desktop load |
+| after a decision | 15.3 s | 0.13–0.31 s |
+| idle invalidate | 15.1–15.5 s | 0.09–0.44 s |
+| Philippians, after an edit | 1.6 s (2026-10-08) | 0.19 s |
+
+The spread comes from this laptop (Balanced plan, 8 logical cores, Teams/VS Code/Edge running). The pass's
+own thread CPU time for identical work ranged from 0.70 to 1.25 s between runs, and with the machine at 91%
+load an edit pass reached about 2 s. Benz asked for at least 1.2 s; it is met on a quiet machine and is at
+the line under load. What remains is the indic-qa layer re-checking the whole book after any text change:
+a line's result depends on book-wide counts, IRV sandhi habits and form use. Going lower exactly would
+need a per-line memo inside the vendored checker, which was not done.
+
+**Considered and dropped.** `gc.freeze()` after the checker loads: full collections walk its ~300,000
+objects, 85–120 ms each and about once per pass, blocking every thread. A same-process A/B (alternate
+edits frozen and thawed) gave only ~5% on the pass (median 1.34 against 1.41 s), and it is a
+process-wide change, so it is not in this commit. Proposed separately, because those pauses also stall
+foreground requests.
+
+**Not as the issue proposed.** The cache is in memory, not a `language_qa_cache` row or a workbench
+migration. On reopen the checker loads anyway (about 2 s), so a persisted copy saves little. The tests
+are in `tests/jobs/` (manager-driven, no RPC, CLAUDE.md rule 1), not `tests/service/`.
+
+**Gates.**
+- Engine `pytest -n auto`: 5,367 passed. The only failure was `test_check_job_rejects_a_second_active_job`,
+  the e4c5e9e break reported on #251. After rebasing onto 0.17.0/#273: 3,649 Language QA, jobs, pack and
+  finding-id tests passed.
+- New tests:
+  - `tests/jobs/test_language_qa_book_stages.py` (5): nothing changed re-runs no stage; an edit re-runs
+    structure for its chapter only and matches a cold pass; a heading edit leaves the text-only stages
+    alone; a rebind starts empty; the layer re-runs when its checker is no longer resident.
+  - The index skip equals a fresh `build_index()` and a from-scratch checker's findings.
+  - `cached` in `Timings`.
+- Human-benchmark gate (`--gate`): pass. Latency gate (`benchmark_language_qa.py --gate`): pass, p95
+  ping 8 ms, `verse.get` 21 ms, `verse.decide` 33 ms, `languageQa.status` 9 ms, `languageQa.inline` 25 ms.
+- `build-sidecars.ps1` + `smoke_sidecars.py`: passed, including the ta-irv indic-qa layer.
+- `npm run check` 0/0, `npm run test` 771 passed, `npm run build` ok (the `cached?` field on the timings
+  type).
+
+**Not watched.** The installed app. These numbers come from the engine in-process, with the worker's real
+pacing and a 0 s debounce. The app adds its 0.75 s debounce before the pass starts.
+
+## 2026-10-14 — Chapter entry reads the stored findings back; the job runs only when they are stale (#272, closes #114), 49b559d
+
+**What changed.** Entering a chapter used to start a chapter job whenever the frontend's
+`loadedChapters` did not list it, and that set is cleared on every book switch, so going A → B → A
+re-ran A's job for results already on disk. Now `activateChapter` asks `check.loadChapterFindings`
+first (`chapterEntry.ts` decides). If the stored snapshot still describes the chapter, its findings
+are shown with today's decisions applied, and a job runs only for the selected checks it does not
+cover (#251). Otherwise the chapter job runs as before. Nothing new is persisted in the frontend.
+
+**What "still describes the chapter" means.** The snapshot payload (`check_findings`, no schema
+change) now carries `checkGroups` and an `inputsFingerprint` (`_chapter_inputs_fingerprint`). The
+fingerprint hashes the file signatures (file id, mtime, size) of everything the findings were
+computed from:
+- the chapter's text and alignment files;
+- its tC `checkData` (selections, invalidated, comments, verseEdits) and Word Alignment marks;
+- the book's tN/tW index;
+- the change-log positions of the three workbench tables the alignment gap check reads (links,
+  null decisions, verdicts);
+- for a Greek Room snapshot only, the book's `.usfm` and every chapter's text, because the
+  USFM and names scans are whole-book.
+
+This is wider than the text hash the issue asked for, deliberately: an alignment save or a tC
+selection changes findings without changing text, and a text-only hash would have shown stale
+alignment findings. Decisions are not an input; they are applied on read. A snapshot written
+before #272 has no fingerprint and so counts as stale once.
+
+**The merge from #251 now respects staleness.** A run of some checks carries the other checks'
+stored findings only from a snapshot that is still current. Before, a Greek Room run after an edit
+would have carried tN findings computed from the old text. The snapshot's `checkGroups` is the
+job's groups, plus those of a current prior snapshot.
+
+**Measured** (Tamil IRV Luke, dev machine, through the protocol, new default checks): the chapter
+job is 194–267 ms on chapters 2, 6 and 22 (49–71 verses); reading back is a median of 33–38 ms,
+max 92 ms. #272's own figures for the old default were 1.9–3.3 s per chapter job.
+
+**Tests.** `tests/service/test_chapter_findings_readback.py`, 9: nothing stored is not current;
+after a job the stored ids equal the job's; a later decision shows on read; an edit, an alignment
+change or a tC selection makes the chapter stale; a pre-#272 snapshot is stale; a stale snapshot's
+findings are not carried into a partial run; a current snapshot covers the union of its runs.
+Vitest `chapterEntry.test.ts`: hit, partial hit, miss or failed read, and nothing while a job or
+Collection QA runs or the chapter is loaded.
+
+**Not seen on the desktop:** QA matrix M63.
+
+## 2026-10-14 — Wildebeest results: the chapter snapshot is the store, the dead section reads go (#275), 128735f
+
+**Decision (with #252).** No `wildebeest` check-cache section. Since #251/#252 a Greek Room chapter,
+book or Collection QA run saves its Wildebeest findings in the chapter's `check_findings` snapshot.
+#251's merge keeps them through runs of other checks, and #272 drops them when the chapter's inputs
+change. That snapshot is the persisted store. Triage already read it first, so its `wildebeest`
+section read was dead and is removed. Analytics (`_local_findings_by_verse`, the report's exception
+queue) read only the section, which nothing in production ever wrote. It now takes Wildebeest
+findings from the snapshots. A verse-level Run Greek Room is interactive and not persisted, as
+before.
+
+**Bug found by the writer-and-reader test.** The Wildebeest adapter never set `chapter` or `verse`
+on its findings, so every stored Wildebeest finding said 0:0. The editor never noticed, because it
+keys findings by the verse the job ran. A report keying by the finding's own fields could never
+have matched one. `_run_verse_checks_for_project` now anchors them as `_qaissue_to_finding` does
+(the first numeric component). Analytics keys snapshot findings by the snapshot's verse key, which
+also keeps a bridged verse like `3-4` intact, and old 0:0 findings still land on their verse.
+
+**Tests.** `test_project_report_local_findings.py` seeds the snapshot instead of the dead section,
+and adds the writer-and-reader test: a Greek Room chapter job's Wildebeest finding reaches the
+report's exception queue and `triage.persisted_findings` at 1:1, and no `wildebeest` section exists.
+
+## 2026-10-14 — Collection QA: the skip hash covers every check input; the final stage survives a restart (#274)
+
+**What.** Code: ea944d2.
+- A Collection QA run no longer skips a book whose chapter text is unchanged when something else its checks
+  read has changed.
+- The whole-collection stage is kept and shown again after a restart.
+- `qaRuns[]` is written to every sibling's `collection.json`.
+
+**Why.** Benz's check inventory (2026-10-13). The skip rule hashed only `<book>/<N>.json`. So a book was
+skipped after any of these changed: a pack version, overrides, checker settings, the termbase, house
+style, a headings file or alignment. `qaFinalStage` held only a summary (completedAt, termbase coverage,
+the names count). `collection.qaStatus` after a restart reported no final stage at all. And `qaRuns[]`
+lived only in the copy of the book that was open when the run started, so opening another book re-ran
+everything.
+
+**How.**
+- `collection_jobs.book_content_hash` also hashes:
+  - `<book>/<N>.headings.json`;
+  - `.apps/translationCore/alignmentData/<book>/<N>.json`;
+  - every file under `.apps/translationCoreAI/language-packs/` (overrides and checker settings);
+  - the manifest's `target_language` and `language_qa`;
+  - each bundled pack's `pack.json` version, with the common rules' `RULE_VERSION`;
+  - the book's `human_decisions` rows of kind terminology and housestyle, read through
+    `tc_project._peek_workbench` (read only, nothing created).
+
+  Every pack's version is included because a pack can also be chosen by script evidence.
+- Each recorded run carries `hashCovers` (2). An entry without it covered the chapter files only, so it is
+  stale and runs again: the first run after this build re-checks every book once.
+- `record_collection_qa_run` writes the open book's copy first, which must succeed, then every sibling's.
+  A sibling copy that cannot be written is skipped, and that sibling's next run re-checks its books.
+  `collection_final_stage()` reads `qaFinalStage`.
+- `_collection_final_stage` records the whole stage, in the shape the panel reads. Cross-book names and
+  house-style proposals are capped at `FINAL_STAGE_ROWS` (500, the cap the names rows already had).
+  `collection_check_status`'s idle snapshot returns it. These two handlers are in `bridge_service.py`,
+  which is Revant's this week; Benz decided to edit them, and they were pulled, edited and pushed at once.
+- **Measured:** `book_content_hash` on the IRV Genesis import (641 KB of chapters, 9.5 MB of alignment)
+  takes 57–62 ms. That is a few seconds over a 66-book run, and 2–3 s for a run that skips every book.
+
+**Not done here.** Reloading the dashboard's book progress when a run ends needs `CollectionQaPanel.svelte`
+and `App.svelte`, which are Revant's this week. The exact change is on #274. Two more inputs of a book's
+Language QA are still not in the hash, the same class of gap:
+- learned fixes, which are shared across the collection;
+- decisions recorded since the run, which only change the stored counts.
+
+They are reported on #274, not added.
+
+**Gates.**
+- Engine `pytest -n auto`: 5,393 passed, 4 failed. The 4 passed when re-run alone and none touches a
+  collection run or the hash: `test_progress_dimensions` clean count, `test_projects_list_management`
+  summed progress, `test_stdio_e2e` uroman-after-ready, `test_dispatcher_releases_db_handles`.
+- New tests:
+  - the hash moves with each input (pack version, overrides, headings, alignment, the Language QA setting,
+    a termbase rule) and returns when the change is undone;
+  - an entry without `hashCovers` is re-run;
+  - a recorded run reaches every sibling's file;
+  - `tests/service/test_collection_qa_restart.py`: a new engine shows the final stage from either book, and
+    a termbase rule re-runs only its book.
+- `build-sidecars.ps1` + `smoke_sidecars.py`: passed. Frontend untouched; its gates were not run.
+
+## 2026-10-14 — The window is the loading screen's colour before it paints (#276), a6787e2
+
+`tauri.conf.json` sets the window `backgroundColor` to the loading screen's `--bg` (#F3F4F6; Tauri
+2.11 takes a hex string), and `index.html` paints `html, body` the same in an inline style. That
+covers the gap between WebView2's first paint and the CSS loading. There is no dark theme, so one
+light value is right.
+
+**Seen, not assumed.** Two release builds of this tree (`tauri build --no-bundle`), one without
+the change and one with it, were each launched with `LOCALAPPDATA` redirected to scratch. A
+PowerShell helper sampled the window about every 40 ms and logged the colour at a background point
+clear of the card. Before: plain white from the first visible frame (1.33 s) to 2.75 s, so 1.4 s of
+white, then the grey loading screen, then Home (white surface) at 4.8 s. After: #F3F4F6 from the
+first visible frame (0.32 s) until Home at 3.6 s, with no white frame. Frames were checked by eye
+as well. Not yet run: the installed build at 1366x768 (QA matrix M87, beside M48), which belongs
+to the field-laptop day with the next release.
+
+## 2026-10-14 — A book's Language QA overrides travel through the hub as a project_state row (#277), 805c679
+
+**What.** The Checker settings dialog writes each pack's `overrides.json` (narrowed rules, inline off,
+abstains, the indic-qa checker settings). That file is a reviewer's decision on disk, outside the
+change log, so the hub never carried it; the #227 review deferred it to this slice. Now:
+- **On save:** `languageQa.checkerSettings.set` also writes a `project_state` row per pack (key
+  `languageQaOverrides:<pack>`, payload `{version, pack, document}`) for every materialized book it
+  wrote. The row is written only when it differs from the file, so an unchanged file never travels.
+- **Before each sync:** `hub_sync_once` mirrors the open book's files first. A file written before
+  this change, or by hand, travels too.
+- **After each pull:** any pack whose row now differs from its file has the file rewritten (atomic
+  replace, the dialog's JSON format) or removed (back to the defaults). The book is then marked for
+  a Language QA rebind. The pull runs on the hub thread, so the dispatcher does the rebind at the
+  start of its next request, the same `bind` the dialog's save does. No Language QA module was
+  touched.
+
+**Conflicts** need nothing new: two devices that both changed the overrides each keep their own
+row and file, and the other's lands in `sync_conflicts` like any row. Settings › Team names it,
+for example "Language QA checker settings (hi-irv): switched off hi.lex.unknown", and the reviewer's
+own settings are the dialog.
+
+**Tests** (`tests/service/test_hub_sync.py`, two devices through the in-process hub, a Hindi book):
+- A switches `hi.lex.unknown` off. After one sync each, B's file equals A's, and B's next Language
+  QA pass reports no `hi.lex.unknown`. The next sync moves nothing.
+- A switches it off while B switches `hi.lex.archaic-form` on. Each keeps its own file, and B's
+  conflict carries A's document.
+
+The first draft of the conflict test "switched off" a rule that is off by default. B then had no
+override at all, and A's legitimately applied: the test was wrong, not the sync. Vitest: the Team
+pane's label.
+
+**Not run:** two real laptops on a LAN; that is #281.
+
+## 2026-10-14 — Hub row ids: already the hub's by adoption; link-after-use stays refused (#278), ad00702
+
+#278 asked for `natural_row_id` to take the hub project id once a book is linked, with a natural-key
+fallback for books linked after use. Checked against the code before starting: #80 already makes
+a linking device adopt the hub's project id (`project_registry.adopt_project_id` rewrites
+`.bridge/project.json`), so every row is built from the hub id and the first half holds. A book
+with rows under its own id is refused at link time. The hub folds rows by `row_key` only; no
+natural-key path exists anywhere. The fallback would need each row's natural key stored (row ids
+are one-way hashes), which is a workbench v10 column and a translation step on push and pull.
+Revant chose to close #278 as delivered (DECISIONS 2026-10-14). Two tests pin it: one finding
+decided first on two linked devices is one `row_key` in the hub's event log plus one conflict, and
+a book with a decision made before linking is refused with its id and rows unchanged and nothing
+on the hub. No code change and no migration.
+
+## 2026-10-14 — Greek Room: a lone symbol and a whole word in another script are findings; NFD on the mock too (#204, #205)
+
+**What the reports said.** QA (JesniJ, 2026-10-01) imported `café` with the `é` in NFD and saw no
+Greek Room finding (#205); and saw `@`, `#` and a standalone `ദൈവം` in an English verse pass while
+`ദൈവംcalled` was flagged (#204).
+
+**What reproduced, and what did not.** Against wildebeest-nlp 0.9.2 in the 3.12 venv, and against
+the frozen engine inside the installed 0.17.0 (`engine.info`: real engine, 0.9.2), the reporter's own
+USFM imported and checked through the protocol gives the NFD finding on both check paths: the live
+`verse.runChecks` and the chapter job, with raw-string offsets 21–23 and the NFC `é` as the
+suggestion. The adapter has read Wildebeest's `non-canonical` since 20 August, before the report. So
+#205 is not reproducible on main or on 0.17.0 at the engine; what the reporter looked at on 1 October
+cannot be recovered from the issue, and the one candidate is the Wildebeest anchoring that #275 fixed
+today (every stored Wildebeest finding said chapter 0, verse 0, so the report and triage readers
+never showed one). The installed-app walk of the same steps stays with #156: Benz's own Bridge
+instance was open on this machine, and a second instance launched on a scratch `LOCALAPPDATA` opened
+its window but never started a WebView2 (no `EBWebView` folder, no debugging port), twice.
+
+#204 reproduced exactly. Wildebeest's report holds the raw material and nothing in it was a finding:
+a lone `@` is filed under `pattern` as "TOKENS WITH @ (U+0040 COMMERCIAL AT)" — beside "TOKENS WITH .
+(U+002E FULL STOP)" listing `dark.`, because its "characters of interest" include `.`, `,`, `-`, `'`
+and `?` — and a standalone Malayalam word in an English verse is a count under `letter-script`,
+with no per-token entry. The mock, for its part, flagged the first Latin letter anywhere in a verse
+that also had Tamil or Devanagari (so a whole English word in a Tamil verse was "mixed script") and
+knew no other script at all.
+
+**What changed** (`wildebeest_adapter.py`, `engine.py`; the vendored tree untouched):
+- `wildebeest.special_character`: a whitespace token holding a symbol from `_SUSPICIOUS_SYMBOLS`
+  (`@ # $ % & * + ~ _ | ¦ § € £ ¥ ₪ ¢ ¤ ₨ ₹ µ`), a subset of Wildebeest's characters of interest
+  chosen so ordinary sentence punctuation, dashes, quotes, `3:16`, `1/2` and ellipses never fire.
+  Once per token, flagged text the token, offsets into the raw string.
+- `wildebeest.foreign_script`: a whole word whose letters are all in one script that is not the
+  verse's expected script — the language id's usual script (the same table as
+  `language_qa.LANGUAGE_SCRIPTS`, copied because the adapter package stays free of `tc_ai_bridge`
+  imports), or for an unknown id the script of a strict majority of the verse's letters, or nothing.
+  A token mixing scripts is left to Wildebeest's `notable-token`. Evidence names the basis.
+- Both run on the real path and the mock; the mock also gets NFD detection (`_non_canonical_runs`,
+  one finding per distinct form with the NFC suggestion, as the real report is) and its mixed-script
+  check is per token across every script the helper knows.
+- **Markup.** A finding's offsets are into the raw stored verse, and an aligned or styled import keeps
+  `\wj ...\wj*`, `\f ...\f*`, `\zaln-s |x-strong=...` verbatim there — Luke IRV has markup in 720 of
+  1,140 verses. Wildebeest's own checks tokenise at punctuation and are not misled; a token scan
+  would flag `\zaln-s` as a Latin word and `\wj*` as an asterisk. So the scan runs on the lifted
+  plain text when the caller passes `params={"lifted": lift_verse(text)}` (`GreekRoomEngine.check_verse`
+  now forwards `params`; the adapter duck-types `plain` and `raw_span`, no new import), mapping each
+  span back to raw offsets; a `@` inside a footnote is not verse text and is not flagged. Without it,
+  a verse carrying any marker is left alone by these two checks rather than mis-scanned. **The
+  dispatcher does not pass it yet** — `bridge_service.py` is Revant's this week; the one-line change
+  at the Greek Room call site is written on #204.
+
+**Measured.** Both Tamil IRV books (1,244 verses, language `ta`, lifted): no finding of any kind,
+before and after. The reporter's cases, controls and markup cases: `greek_room_engine/tests/
+test_wildebeest_real.py` (real, 14), `test_wildebeest_mock.py` (mock, 9),
+`tests/service/test_greek_room_unicode_protocol.py` (import → live check and job, 4, runs on either
+engine). `pattern` and `char-conflict` stay unwired as categories (#125): `pattern`'s shape is now
+verified, `char-conflict`'s is not.
+
+## 2026-10-14 — A user's role on a project, enforced in authorize() only (#279), c25b419
+
+**What.** One person can now hold two roles on two projects, for example an editor on Ruth and a
+reporter on Jonah:
+- **Storage.** Workbench **v10** lifts `team_members.user_id` and `role`. The table already
+  existed, was in `SYNCED_TABLES` and was unused. The change is additive, with no rebuild and no
+  data-preservation test, under the pre-release amendment. `tc_project.team_role/set_team_role`
+  keep one row per user per book; no row means the installation role (or, on the hub, the token
+  role) applies.
+- **Rule.** `authorization.authorize(user, project, action)` now uses the project's role for
+  every action except `manage_users`, which stays installation- or token-wide, because the user
+  list is not a project's. `effective_role` is the same rule exposed for display.
+- **Desktop.** `team.roles` (read) and `team.setRole` (manage_users); the latter writes every
+  book of the collection.
+- **Hub.**
+  - `/hub/team-roles` writes a `team_members` event on the admin's behalf, as assignments do.
+  - `/hub/projects` carries `myRole` and `roles`.
+  - `/hub/assignments`, `/hub/users` and `/sync/push` decide through `authorize()`, via a
+    `_HubProject` adapter whose `team_role` folds the hub's event log. So one rule decides on
+    the desktop, through `/rpc` and on the dashboard. `/sync/push` used to check the token role
+    only, so a per-project reporter could have pushed.
+- **UI.**
+  - **Top bar:** shows "Reporter on this project" (or the other roles).
+  - **Reporter banner:** a reporter sees a banner over the editor.
+  - **Settings › Users:** gains an "On this project" column.
+  - **Dashboard:** shows Assign… by the role on each book, and a token admin gets a per-book role
+    picker.
+  - **No controls are hidden.** A refused action still says why (DECISIONS 2026-10-14, Revant's
+    choice).
+
+**Tests.** `tests/service/test_project_roles.py`, 6:
+- `authorize` with a per-project reporter, admin, or no row.
+- **Desktop:** editor on A decides, reporter on B is refused "on this project", and
+  `effectiveRole` follows.
+- **Per-project admin:** may assign but not set roles.
+- **Clearing:** a cleared role returns the installation role.
+- **`/rpc`:** the same editor-and-reporter pair, as a token user.
+- **Dashboard:** a role set by a token admin, assigning by a per-project admin, setting roles refused
+  to them, and push refused to a per-project reporter.
+
+Version pins moved to 10 in four persistence tests. Vitest: the dashboard (two new) and Users
+(one new). The role-change notice in Users read "is now a editor"; it now picks the article.
+
+**Gates.** Full `pytest -n auto`: 5415 passed. One names-preload timing flake passed alone. After
+rebasing on Benz's #204/#205 Wildebeest change, the 124 overlapping tests passed. Vitest 780,
+`npm run check` 0/0, build OK, frozen `smoke_sidecars.py` passed.
+
+**Not seen on the desktop:** QA matrix M88. Two laptops on a LAN: #281.
+
+## 2026-10-14 — A finding's number follows the whole word; a mark edge sits on a grapheme boundary (#172)
+
+**What was seen.** `அப்ப¹,²டி திரும்பினாள்`: two finding numbers wedged into the middle of அப்படி.
+The mechanism was in the code, not the data: `buildSegments` cuts the verse at every span edge
+and VerseList renders a segment's numbers right after it, so a tN/tW selection that matched the
+first four letters of a word (`exactTextRanges` is a substring match, by design: tC occurrences
+are substrings) ended a segment mid-word and the numbers landed there. That split is at a
+grapheme boundary (between ப and டி), so a grapheme rule alone would not have moved it.
+
+**What changed** (`highlight.ts`, `unicodeDiff.ts`, `usfmNotes.ts`, `VerseList.svelte`; display
+only, no offset or finding changes):
+- A finding's number is shown once, after the whitespace-delimited word its span ends in. The
+  word's end becomes a segment boundary so the number has a segment to follow, and VerseList
+  renders a number after an unmarked segment too (it used to render them only after a `<mark>`).
+  A number used to repeat on every segment its span covered, and on both halves of a segment a
+  footnote marker split; it now appears exactly once.
+- Every span edge is snapped to a grapheme boundary (start down, end up) with
+  `graphemeBoundariesInUtf16`, a UTF-16 sibling of the existing `graphemeBoundariesInCodePoints`
+  over the same `Intl.Segmenter` clusters, so a mark never isolates a vowel sign or virama. The
+  underline still follows the span otherwise.
+
+**Tests.** `highlight.test.ts`: the reporter's word (mark on அப்ப, numbers after டி), a span that
+already ends at a word end, a span ending between ட and ி widened to the cluster, one number per
+finding across overlapping spans. `VerseList.test.ts`: the DOM order `அப்படி¹ `, one `<sup>`.
+
+**Gates.** `npm run check` 0/0; `npm run test` and `npm run build` as recorded on the issue. Engine
+suite skipped: frontend only. **Not run:** the desktop app at 1366x768; the verse-editor row of
+QA 05B/#156 on the next build covers it.
+
+## 2026-10-14 — The verse list does not scroll on a click: already true since #236, now pinned (#179)
+
+**Checked against the code before starting.** The issue (filed 2026-09-29) listed the routes that called
+`onSelect` directly and bypassed `selectFromList`'s `lastScrolledKey` guard: the finding and Language
+QA mark menus, the mixed-source menu, Enter/Space and Shift+F10 on a row, Shift- and Ctrl-click.
+Every one of them was routed through `selectFromList` on 2026-10-09 (fe65e58, "right-click scroll
+and focus", #236), so on main none of them scrolls. The "plain left click on a mark" case the issue
+left open bubbles to the row's own click handler, which has always gone through `selectFromList`.
+
+**What this adds.** `VerseListScroll.test.ts`, the regression the issue asked for: three verses, a
+Greek Room mark in each, a Language QA mark in one, `onSelect` wired to the store as App does, and
+`Element.prototype.scrollTo` observed. Right-click on a mark of another verse (menu opens, no
+scroll), right-click on a Language QA mark, left-click on a mark, Shift-click and Ctrl-click on a
+row, Shift+F10 and Enter on a focused row: `scrollTo` is never called. A selection that does not come
+from the list (`selectedVerse.set`, as Go to, desktop sync and a report row do) still scrolls once.
+No component change.
+
+**Not run:** the desktop app; the "text moves out from under the cursor" symptom is a layout one, and
+jsdom does not lay out. The #156 walk on the next build covers it (M-row to add then).
+
+## 2026-10-14 — The chapter dropdown shows the whole chapter number (#209)
+
+The top bar's chapter `<select>` had an inline `width:72px`, so "Ch 119" (and "Ch 119 ●" for an
+assigned chapter) was cut to "Ch 11" in Psalms, and the in-app text size made it worse. The select
+now sizes to its widest option with `min-width: 72px`, so one- and two-digit books keep the old
+width. One style change in `TopBar.svelte`; no logic. `npm run check` 0/0, `npm run test`, `npm run
+build` as recorded on the issue. **Not run:** the desktop app at 1366x768 with Psalms open and the
+largest text size; the #156 walk covers it, and a Psalms fixture is listed there.
+
+## 2026-10-14 — Align Words: joined columns for a split source word; Undo walks back; the invalid flag (#207, #122, #149)
+
+**#207, split source, joined target.** The engine's `realign` has always accepted several source
+words in one group (`realign_words(top_ids=[...])`, `alignment_engine.realign`), which is how tC
+holds `word1 word2` → `joinedword`. The surface could not ask for it: the interlinear drew one
+column per source word and every drop realigned `[that one source id]`, so a group with two source
+words showed the same targets under both columns and a drop on either broke the group into one
+word's. Now `sourceColumns` (alignmentGroups.ts) draws a group with several source words as one
+column at the place of its first word, a drop on a column realigns the whole column's ids
+(`topIdsFor`), and each column after the first has a ⟵ Join button folding it into the previous
+column with the targets of both; a joined column has a ⟶ Split button taking its last source word
+out, which the engine keeps as its own empty group. `realign` needs at least one target word, so
+Join is disabled while neither column has one (the title says to drop a target first) and Split
+while the joined column has none, rather than refused after the click.
+
+**#122, Undo.** Each undo is a `restore` history row whose backup is the pre-undo state, and
+`alignment.undo` restores the newest backup, so a second press re-applied the first's change.
+Undo now names the backup it wants through `alignment.restore`: `undoTargetId` skips the leading
+`restore` rows and takes the n-th newest edit for the n-th press in a row, and the button is
+disabled once every edit is undone. No engine change (`tc_project.py` and `bridge_service.py` are
+Revant's this week; the engine's undo keeps its old meaning for any other caller).
+
+**#149, the invalid flag.** Nothing to change on the surface: #148 already reworded the flag to
+"Marked invalid in translationCore" and put the structural issues behind their own ⚠ button, which
+shows for a verse with issues whatever its tC status. What remains is engine-side and Revant's: the
+same duplicate target token is reported twice in `_alignment_context` (per group by
+`alignment_reliability` and as a count by `bridge_service.py`), written on the issue.
+
+**Tests** (`AlignmentModal.test.ts`, 7 new): one column for a two-word group with one aligned card;
+a drop on it realigns both ids; Join sends both ids with the previous column's targets; Join
+disabled with no target on either side; Split sends the first id only; Undo after one restore
+targets the older edit, Undo on a fresh history targets the newest edit, and is disabled once all
+are undone. **Gates** as recorded on the issues. **Not run:** the desktop app; the drag path is
+real pointer events (alignmentDrag.ts, covered by its own tests) and the join buttons are plain
+clicks, but the layout of a joined column at 1366x768 belongs to the #156 walk.
+
+## 2026-10-14 — A Greek Room result lands where the reader is looking (#202)
+
+**Re-read against the manual Greek Room (#252).** The report (a U+200B finding visible only after a
+click on the verse's small red mark) predates #252; now that Greek Room runs from a button or the
+Checks menu, the result of that click needs a landing. Two pieces, both in Benz's files:
+- **The panel switches to the Greek Room tab when a run lands for the selected verse**
+  (`ReviewPanel.svelte`): the verse's own run finishing (even if the reader moved to another tab
+  while it ran), or a chapter or book job writing this verse's result. Only on that transition:
+  selecting a verse that ran earlier leaves the reader on whatever tab they had, and the marks
+  in the verse list were already drawn as each result landed.
+- **The chapter's result is stated under the run button**: "Greek Room: N open in this chapter ·
+  M of K verses checked", or "not run in this chapter". It reads `greekRoomChapterSummary`
+  (`verseChecks.ts`, a derived store over the chapter's findings and run records), which is
+  also what the status bar line beside Language QA should read.
+
+**Not done here, asked of Revant on the issue:** the status bar entry itself is in `App.svelte`
+(#272 is in that file this week); one line reading the store is written on #202.
+
+**Tests.** `ReviewPanelGreekRoom.test.ts` (3 new): a run finishing while Language QA is up brings
+the Greek Room tab back with the U+200B finding; a chapter job landing the selected verse's result
+switches, selecting an already-run verse does not; the summary line counts. `verseChecks.test.ts`
+(2): the summary counts open Greek Room findings only, across the chapter's verses, and checked
+verses by their run record. Gates as recorded on the issue. **Not run:** the desktop app; the
+reporter's sample book with U+200B is on the #156 walk.
+
+## 2026-10-15 — The Source text panel re-reads a verse on every alignment write, not on a status move (#291)
+
+**Cause, confirmed by a test.** `SourceTextPanel.svelte` refreshed a verse only when its entry in
+`alignmentStatusByVerse` changed, and skipped a key seen for the first time. Aligning one more word
+in a partly aligned verse leaves it `partial`, moving a word between columns of a complete verse
+leaves it `complete`, so the kept chapter (`sourceText.ts`, a module-level cache a restart clears)
+showed the old alignment until the app was reopened. The same gap covered the cross-verse page,
+automatic alignment, undo and restore, and a write made while the column was closed: reopening it
+drew the kept chapter as it was.
+
+**Change.** A per-verse alignment revision, `alignmentRevisionByVerse` in `stores.ts`, bumped by
+`noteAlignmentChanged(verseKey)` from every frontend alignment writer: `AlignmentModal`'s
+`refreshChecks` (save, unalign, Join, Split, Undo, restore), `CrossVerseAlignmentModal`'s
+`refreshChecks` (same-verse saves, null decisions, both ends of a link or unlink, each verse of an
+automatic window, a revert — plus the other verses of the reverted pass's window, which the revert
+result does not name), `AutoAlignChapterButton` when the job ends in any state (every key of its
+`verdicts` is already a verseKey), and `verseEditor.saveVerseEdit` once the engine has accepted the
+text — not on the optimistic show, which precedes the engine's write, and not on a refused save,
+which leaves the engine's groups as they were. `sourceText.ts` stamps each kept verse with the
+revision it was read at (taken before the read, so a write landing during a chapter load leaves its
+verse stale) and `staleSourceVerses` names the verses whose revision moved; the panel re-reads only
+those and keeps the rest of the chapter, whether the write happened while it was open or closed.
+One in-flight read per verse and revision, so a second write during a read asks once more, not a
+third time. `resetBookState` clears the revision map like the other verse-keyed stores (gotcha 7).
+The status store is no longer a refresh trigger anywhere.
+
+**Tests.** `SourceTextPanel.test.ts` (4 new, 1 replaced): a write that keeps the status re-reads the
+verse once and the chapter not at all; a status arriving or moving on its own reads nothing; a write
+while the column is closed is re-read on reopen with the chapter kept; two writes during one read
+cost two reads, not three. All four fail against the pre-fix panel (run and watched).
+`AlignmentModal.test.ts`, `CrossVerseAlignmentModal.test.ts`, `AutoAlignChapterButton.test.ts`,
+`verseEditor.test.ts`: each writer's bump asserted, the refused save's absence too. `npm run check`
+0/0 and the five touched Vitest files green at commit; `npm run test` and `npm run build` run once
+for the batch with #285. **Not run:** the engine suite (frontend only) and the desktop app; the
+#291 steps on 0.18.0 belong to the #156 walk.
+
+## 2026-10-15 — Align Words: several target words picked together, placed in one save (#285)
+
+**Reproduced from the code.** `AlignmentModal.svelte` kept one `pickedUpId`; a click on a second word
+replaced the first, a drag carried one word, and an aligned card could not be picked up at all (only
+its × returned it). A meaning-based rendering often uses two or three target words for one source
+word, so Amos (Punjabi QA, 2026-10-14) placed them one by one: one save, one history row and one
+re-check each.
+
+**Change, frontend only.** The engine's `realign` already takes a list of target words and detaches
+each from whatever group it was in (`alignment_engine.realign`), so several words — bank words and
+aligned cards alike — go to a column in one call: one history row, one undo step, one re-check.
+- `picked: string[]` replaces `pickedUpId`. A plain click picks one word up or puts the only picked
+  word down, as before. Ctrl-click (⌘ on a Mac) adds or removes a word; Shift-click takes the run
+  from the last word picked on its own to this one, in verse order over the pickable words (every
+  target word except one a cross-verse link accounts for). The picked words show the same outline a
+  picked word always had, each is `aria-pressed`, and the Target words heading carries a chip
+  ("N picked · click a column to place them, Esc to put them down").
+- A click on a column places every picked word; a click on the word bank returns the aligned ones
+  among them in one `unalign` call and leaves the bank words where they are.
+- A drag that starts on a picked word carries the whole selection, with every word in the ghost; a
+  drag that starts elsewhere supersedes the selection and carries that word alone, as a real drag
+  always superseded pick-up. The drag helper is unchanged.
+- Escape puts the picked words down before it closes the popup (after a pinned issues popover, as
+  before).
+- An aligned card's word is now a pick-up button ("Pick up X from Y"), so a word can be moved to
+  another column without first returning it; × still returns it.
+- `bottomIdsAfterDrop` (alignmentGroups.ts) takes one id or several: the column's own words first,
+  then the dropped ones in verse order, skipping any already there; null when none would move. The
+  cross-verse page calls it with one id and is unchanged.
+
+**Tests.** `AlignmentModal.test.ts` (8 new): Ctrl-click picks two bank words and one click on a
+column sends one `realign` with both in verse order, one re-check, one notice; Shift-click takes the
+run of three; Ctrl-click on a picked word puts that one down and a plain click keeps the one-word
+path; Escape clears the selection and the next Escape closes; an aligned word picked with a bank
+word moves in one call; picked words dropped on the bank are unaligned in one call with bank words
+left alone; a drag from a picked word carries the selection (jsdom has no PointerEvent, so the test
+dispatches MouseEvents under the pointer names and stubs `elementFromPoint`); a drag from an
+unpicked word supersedes it. `alignmentDrag.test.ts` (1 new): the helper's multi-id ordering and
+no-op cases. Gates as recorded on the issue.
+
+## 2026-10-15 — Punjabi "full stops in italics": Vijaya's oblique Latin, now the script face first (#286)
+
+**Cause, confirmed on screen before any change.** Revant's reading (2026-10-15 comment) held: no
+italic rule touches verse text; the slant is font fallback. `--font-target` begins with Vijaya, a
+Tamil face whose Latin glyphs are oblique and which also carries U+0964. Chromium falls back per
+glyph, so in a Gurmukhi line the letters came from Nirmala UI (second in the list) while every
+ASCII character — digits, hyphen, full stop — *and the danda* came from Vijaya. Measured with
+Playwright on Edge 155.0.4283.45, the same Chromium build as the installed WebView2 runtime
+(155.0.4283.45), serving the built `dist/` so the app's own index.css, @font-face rules and bundled
+Noto fonts loaded exactly as in the app, with `CSS.getPlatformFontsForNode`: the Genesis
+introduction line "ਇਹ ਪੁਸਤਕ ਲਗਭਗ 1446 - 1405 ਈ. ਪੂ. ਦੇ ਵਿਚਕਾਰ ਲਿਖੀ ਗਈ।" under `var(--font-target)`
+split 27 glyphs Vijaya / 28 Nirmala UI, and a lone "." came from Vijaya. The screenshot shows the
+digits in Vijaya's italic and the closing danda as a slanted stroke. Benz's instance of the
+installed app (0.17.0) was running all morning and a second instance does not get a WebView2
+beside it (BUILD_LOG 2026-10-14), so the check was not made inside 0.18.0 itself; the engine
+build and the font set are the same, and the issue says what remains to be watched there.
+
+**Where the ASCII stops are.** The Punjabi IRV's 479 ASCII full stops are 368 after a digit in
+`\io1` outline lines and 111 after a Gurmukhi letter in `\ip` introduction paragraphs (the
+abbreviation "ਈ. ਪੂ.", B.C.); only 4 `\v` lines carry one, all in footnote references. So Amos saw
+them in a book introduction — in the verse list under `--font-target` — and the danda, the
+Punjabi full stop proper, has had the same slant in every verse since the stack was written.
+
+**Change, frontend only.** `index.css` gets per-language orders for `--font-target` under
+`:lang()`: for pa/pan, "Nirmala UI", "Noto Serif Gurmukhi", then the old chain; likewise hi (and
+mr, ne, sa), ml, or (ori, ory, od), bn/as, te, kn, gu with their Noto face, and ur with Noto
+Nastaliq Urdu first. Nirmala UI first keeps today's letterforms on Windows and supplies upright
+Latin and the danda from the same font; the Noto face is the floor where Windows' font is absent.
+Tamil has no rule: Vijaya is its face and its text is uniform today. `--font-ui` is untouched.
+`stores.ts` gets `targetLang`, the project's `targetLanguageId` lower-cased (the import's ISO 639
+code, "pan" from the language picker or a two-letter code from a tC `\id` line), and every
+container of mine that shows target text carries `lang={$targetLang}`: VerseList's
+`.editor-scroll` (the verse container), the Language QA panel's evidence paragraphs and word
+cells (the evidence also moves from the inherited UI stack to `--font-target`, since under
+`--font-ui` its danda came from Vijaya too), the Reference panel's text, and both alignment
+pages' target cells, word banks and drag ghosts. Source words carry no `lang`.
+
+**Watched after the change** with the same probe on the rebuilt `dist/`: under a `lang="pa"`
+container every one of the 55 glyphs, letters, digits, both full stops and the danda, came from
+Nirmala UI, upright; the letters are pixel-for-pixel the Nirmala UI of before.
+
+**Asked of Revant on the issue:** one `lang={$targetLang}` on the workbench container in
+`App.svelte` would cover the surfaces not in Benz's files (ReviewPanel evidence, popovers,
+FindingContextMenu, VerseHistoryPopover) in one line. **Open question for the Punjabi team,
+reported not decided:** whether the 111 "ਈ. ਪੂ." stops and the 368 outline numbers should be
+dandas or stay as they are; `pa.punct.ascii-fullstop` already reports the former.
+
+**Tests.** `targetFont.test.ts` (5): the store; the default stack still Vijaya-first with no Tamil
+rule; the pa/pan rule's order; the hi/ml/or rules and aliases; `--font-ui` unchanged.
+`VerseList.test.ts` (2): the container's `lang` from the project, none without a code.
+`AlignmentModal.test.ts` (1): target cells and bank carry it, source words do not. jsdom picks no
+platform font, so the rendered-font fact stays with the Edge probe above. Gates as recorded on
+the issue.
+
+## 2026-10-15 — Named stacking layers; Settings at 1.5x, capped at 80% of the window (#288)
+
+**Reproduced from the code.** `SettingsModal`'s overlay was `z-index: 30` and the floating Language
+QA panel `45`, so Settings opened under the panel and could not be used until the panel was closed;
+Export, Diagnostics and Assignments shared the 30. Every z-index in `src/` was a hand-picked
+literal (5, 20, 25, 30, 40, 45, 50, 60, 100, 200, 999, 9000, 10000) with nothing saying which kind
+of surface goes above which.
+
+**Change, frontend only.** `index.css` defines seven layers as custom properties, lowest to
+highest: `--z-dropdown` 40 (a menu anchored to a control), `--z-panel` 45 (the floating Language QA
+panel), `--z-dialog` 50 (Settings, Export, Diagnostics, Align Words, Cross-verse alignment, a
+correction's confirm backdrop), `--z-dialog-over-dialog` 60 (Checker settings, Language QA
+History, Lexicon, Flag, Scope confirm, Occurrences, Verse notes, the cross-verse issue menu),
+`--z-popover` 70 (finding context menu, flag and verse-history popovers, the two drag ghosts),
+`--z-toast` 80 (ScopeNotice, the verse list's context notice), `--z-startup` 200. Twenty-six
+rules in twenty-two components now name their layer; a literal survives only where it orders
+things inside one component (sticky headers 1–3, close buttons 2, the side panel's handle 5/6).
+The three files on Revant's side keep their numbers and are listed for him on the issue:
+`AssignmentsDialog` (30, the one dialog still under the panel), `StartupScreen` (200) and
+`UserPicker` (25), whose one-line moves are `--z-dialog` and `--z-startup`; `App.svelte`'s file-drop
+overlay (100) and error (101) sit between `--z-toast` and `--z-startup` on purpose and the
+index.css comment says so. The docked Language QA panel is in flow with no z-index, so any dialog
+is above it already.
+
+**Settings.** `.settings-modal` is `min(960px, 80vw)` by `min(720px, 80vh)`: 1.5x the old 640x480,
+960x614 at 1366x768. The nav keeps its 170px (`flex-shrink: 0`) and the pane scrolls
+(`overflow-y: auto`), both as before. Nothing else in `SettingsModal.svelte` changed.
+
+**Tests.** `stackingLayers.test.ts` (6): the layer order; every dialog on `--z-dialog` and the panel
+on `--z-panel`; the over-dialog set; popovers, toasts and dropdowns; no literal of 10 or more left
+in the converted components; the Settings size and its scrolling pane. The test reads the files
+from disk because vitest serves a CSS import as an empty module (the same reason
+`targetFont.test.ts` does; both carry `@ts-expect-error` on the node imports, since the app tsconfig
+has no node types — svelte-check flagged the first commit's `node:fs` import, fixed here). Gates
+as recorded on the issue. **Not run:** the desktop app; the issue's verification list (floating
+and docked panel against Settings, Export and Diagnostics; Checker settings and History above
+Settings; context menus and toasts; the 80% cap on the field laptop) is a walk on the next
+installed build, and jsdom does not paint.
+
+## 2026-10-15 — Greek Room noise, measured: one check type is the list (#290, Part A)
+
+**How.** Mark in the Tamil IRV (`42MRKIRVTam.SFM`) and the Punjabi IRV (`42MRKIRVPun.SFM`),
+imported into throwaway projects under a scratch `LOCALAPPDATA` (so the real workspace registry
+was never touched) and checked through the dispatcher exactly as the app does it: `checks.start`
+with `scope: book, checks: ["greekroom"]`, then `check.loadChapterFindings` per chapter. Source
+checkout at aef32bc, real Wildebeest 0.9.2, Python 3.12. Script, per-finding lists, samples and
+labels are in the dated folder `D:\Claude Lab\Claude outputs\greek-room-noise\2026-10-15\` on
+Benz's machine (`greek_room_noise.py`, `findings_{ta,pa}.jsonl`, `sample_*.json`, `labels_*.json`,
+`report.json`); the labels are Claude's reader-level judgement for Benz, one reason per item, to be
+confirmed by a Tamil and a Punjabi reviewer before any rule changes.
+
+**Counts.** Tamil Mark: 404 Greek Room findings in 71.7 s (import + job): `names.spelling_similarity`
+368, USFM structural 36 (`nested_tags_wj_f_f_wj…` 18, `nested_tags_wj_x_x_wj…` 9, `nested_tags_ft_xt…`
+7, `missing_closing_tag_xt` 1, one slug carrying a verse reference 1), Wildebeest 0. Punjabi Mark:
+1,207 in 89.1 s: `names.spelling_similarity` 1,206, `wildebeest.foreign_script` 1, USFM 0.
+
+**Labels (20 per type, or all when fewer).** `names.spelling_similarity`: Tamil 0 real, 1 maybe
+(பிலிப்பு Philip vs பிலிப்பி Philippi, distinct in Greek, but a names check should look there), 19
+not; Punjabi 0 real, 20 not — every pair is an inflection of one word or two distinct words a
+letter apart. USFM nesting family: 34 of 34 the IRV's own convention (a footnote or cross-reference
+inside `\wj`, `\xt` inside `\ft` without `\+`), formatting rather than translation;
+`missing_closing_tag_xt` at 10:51: real; the reference-slugged one: unclear. Wildebeest Punjabi
+12:18: real, a Latin "l" typed for the danda ("…ਨਹੀਂ ਹੈ l ਉਸ…").
+
+**Why.** `names_adapter.py` takes every token of three or more letters as a candidate
+(`_MIN_TOKEN_LENGTH`), romanises with uroman and pairs under cost 0.4; its design note expects
+inflectional false positives and leaves the reviewer as the filter. On an inflecting language that
+is the entire list: 2.2 findings per verse in Punjabi Mark.
+
+**Proposed on the issue, not built.** (1) Restrict `names.spelling_similarity` candidates to proper
+names: tokens aligned to a source token whose UHB/UGNT morphology marks a proper noun, or listed in
+the book's translationWords names index; an unaligned book then reports a status, not inflections.
+A rule fix in Bridge's adapter; ids keep their formula. (2) Until then, the type off by default with
+a visible count in the Checks menu, if Revant wants the interim step. (3) The USFM nesting family
+grouped per pattern per book with locations, the real structural ones kept per verse; slug the
+category, not the message, so a type is stable. (4) Wildebeest: nothing to cut on these books;
+measure a second book each since #204/#205 changed it on 2026-10-14.
+
+**Part B stopped for sign-off.** The display-only likelihood filter hides findings on a score (the
+stop-and-ask item); the DECISIONS.md entry is drafted on the issue and not committed. With remedy
+(1) or (2) in place Greek Room on these two books is 36 and 1 findings, which bears on how much the
+filter would have to hide.
+
+## 2026-10-15 — The target face is Latin-first by default; Tamil keeps Vijaya through its own rule (#286, follow-up)
+
+**Found on the 0.18.0 walk.** Every verse of an English project rendered in italics: the whole
+line, not only its full stops. The cause is the one bfec7e1 fixed for Indic languages: the default
+`--font-target` began with Vijaya, whose Latin glyphs are oblique, and bfec7e1 added `:lang()`
+rules only for Indic codes, so a Latin-script project (and any surface without `lang`) still drew
+every Latin letter from Vijaya. bfec7e1 alone would not have fixed English on the next build.
+
+**Change.** The default `--font-target` is `var(--font-ui)` (Latin faces, then the Indic chain, so
+a script the Latin faces lack still falls through per glyph), and `:lang(ta), :lang(tam)` keeps the
+old order with Vijaya first, so Tamil is drawn as it was. The Indic rules from bfec7e1 are
+unchanged.
+
+**Watched,** with the probe of bfec7e1 (Playwright on Edge 155.0.4283.45, the WebView2 runtime's
+build, serving the rebuilt `dist/`, `CSS.getPlatformFontsForNode`): an English line under the
+default stack, 70 of 70 glyphs from Segoe UI (before: Vijaya); a Tamil line under `lang="ta"`, 50 of
+50 from Vijaya, as before; the same Tamil line with no `lang` (surfaces outside Benz's files), Tamil
+letters from Vijaya and the 10 ASCII glyphs from Segoe UI. `targetFont.test.ts` now pins the
+Latin-first default and the Tamil rule (6 tests). `npm run check` 0/0, `npm run test` 829 passed,
+`npm run build` ok. **Not watched:** the installed app with this commit.
+
+## 2026-10-15 — The 0.18.0 installed-app walk: QA 01, QA 05 and QA 05A (#152, #156, #175)
+
+**How.** The installed 0.18.0 (575235b) on Benz's machine, launched on a scratch `LOCALAPPDATA`
+(imports land under the settings folder, so no real project was touched) with WebView2's debug
+port, sized to 1366x768, driven by real mouse and keyboard events over CDP. A file drop is the
+`tauri://drag-drop` webview event the OS sends; everything after it went through the import screen.
+The report's Save As dialog was filled with UI Automation. Fixtures were generated for the GR cases
+(Titus, 3 John, two broken Philemons, 2 John with `3-4`/`5a`/`5b`), plus Tamil IRV Mark for job
+timing and a copy of a real IRV Tamil Philippians project at workbench v7 for the migration case.
+The shell writes `engine-events.log` to the real profile's `org.translationcore.aibridge\logs`
+whatever `LOCALAPPDATA` says, so the walk appended lines there; nothing else of Benz's was written.
+The installed `bridge-usfm-checker.exe` was renamed for one run (CHK-015) and restored, same size.
+
+**Results** are in QA_TEST_MATRIX's new section "0.18.0 installed-app regression walk" and on the
+three cards. Passed: real engines, the Unicode and names cases, structural defects, cancel/retry,
+kill mid-job, normal shutdown with the stdin-close exit, decisions and stable ids across a relaunch
+(including `3-4` and `5a`), the report filter and CSV, the checker-missing state, and a v7 → v10
+workbench migration that kept every row and left Scripture byte-identical.
+
+**Failed, filed:** #301 (a return to Projects reopens the last dropped file's import review; a
+second drop shows the first file — `App.svelte`/`ImportScreen.svelte`), #302 (bridges and segments
+drawn after the last verse — `Object.keys` order at `App.svelte:937`), #303 (the USFM checker calls
+`5a`/`5b` a duplicate verse; a question for the maintainer), #304 (Tab in the finding menu leaves
+focus on the resize handle). **Failed, fixed on main:** every English verse in italics (#286,
+f9adccb). **Observed, not filed:** the USFM structural check reads the imported source, which verse
+edits never change, so a defect typed in through the editor is not checked until re-import; the
+alignment-gap message names the script of the verse's first foreign word ("Unaligned Malayalam
+target tokens" in an English project); typing "Tamil" in the import language search lists Old Tamil
+first; English projects are offered "Show IRV/OV occurrences"; a names finding's CSV row puts the
+explanation in the Issue column; 50 `_MEI*` folders from earlier sessions sit in TEMP.
+
+**Not run:** INS-001 (Benz's install), INS-002 (Start entry), INS-004 (offline), INS-006 (Benz's
+upgrade), INS-010 (uninstall), GR-11 (source/frozen only), the GR-13 collection run, PDF export.
+
+## 2026-10-15 — Greek Room count in the status bar; one wording per duplicated target token (#202, #149)
+
+**#202, the status-bar half (e1c6b46).** Benz built the Review panel's landing in 8fafd81 and asked
+for one span in `App.svelte`. It sits after "chapters approved" and reads `greekRoomChapterSummary`
+from `verseChecks.ts`: "Greek Room: not run" until a verse of the chapter has a run record, then
+"Greek Room: N open · M/K verses". It is a plain span, not a button: the Review panel's tab is local
+state, and the panel already switches to Greek Room when a run lands. Not in 0.18.0.
+
+**#149, the engine half (d1dd2ef).** `_alignment_context` appended "N target token(s) occur more than
+once in alignment data." after `structural_issues` had already listed each duplicate with its
+groups or wordBank ("target token 'x' occurs more than once (group 1 and group 2)"). `all_bottom()`
+is groups plus wordBank, which is exactly what `structural_issues` walks, so the count was always a
+second wording. It is now appended only when no per-token "target token " line exists. The
+source-side pair ("source token 'x' occurs in groups 1 and 2" and "N source token(s) occur in more
+than one alignment group") has the same shape and was left as it is: not asked for on #149.
+
+**Ran.** `tests/service/test_alignment_duplicate_issue_wording.py` failed before the fix with both
+lines and passes after. `npm run check` 0/0, `npm run test` 829 passed (79 files), `npm run build`
+ok. Engine `pytest -n auto`: 5437 passed, 3 xfailed, 1 failed:
+`test_passage_semantic_runtime.py::test_moved_project_retains_identity_but_live_copy_is_rejected`,
+which passed alone and in three runs of its whole file (37/37); it touches neither change. Smoke
+of the frozen sidecars not run: no build was made. **Not watched:** both changes in the desktop app.

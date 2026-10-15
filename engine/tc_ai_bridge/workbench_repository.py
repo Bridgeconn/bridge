@@ -30,6 +30,7 @@ import threading
 import uuid
 
 from . import check_timing
+from .sqlite_pool import ConnectionPool
 
 # Committed row writes per database file, in this process. A reader that keeps
 # rows across calls (a check job's gap prefetch, #241) compares it to know its
@@ -40,7 +41,7 @@ _GENERATIONS: dict[str, int] = {}
 _GENERATION_LOCK = threading.Lock()
 
 
-WORKBENCH_SCHEMA_VERSION = 7
+WORKBENCH_SCHEMA_VERSION = 10
 WORKBENCH_SCHEMA_ID = "bridge-workbench-v1"
 
 _IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -94,6 +95,14 @@ class WorkbenchIdentity:
     book_id: str | None
     actor_id: str
     device_id: str
+
+
+def _safe_json(value: Any) -> Any:
+    try:
+        loaded = json.loads(str(value)) if value else {}
+    except ValueError:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
 
 
 def natural_row_id(*parts: Any) -> str:
@@ -686,6 +695,59 @@ CREATE UNIQUE INDEX ux_alignment_verdicts_verse
     ON alignment_verdicts(project_id, book_id, chapter, verse);
 """
 
+# v8 (#240): `team_assignments` gets its lifted columns. One row per scope,
+# `chapter` '' for the whole book; the row id is the natural key, so the index
+# is for lookup only. The table was already in MUTABLE_TABLES
+# and rides the change_log, which is what the hub's first sync slice reads.
+# Additive: nothing is rebuilt.
+_MIGRATION_V8 = r"""
+ALTER TABLE team_assignments ADD COLUMN chapter TEXT NOT NULL DEFAULT '';
+ALTER TABLE team_assignments ADD COLUMN assignee_id TEXT;
+ALTER TABLE team_assignments ADD COLUMN assigned_by TEXT;
+ALTER TABLE team_assignments ADD COLUMN assigned_at TEXT;
+CREATE INDEX ix_team_assignments_scope ON team_assignments(project_id, book_id, chapter);
+CREATE INDEX ix_team_assignments_assignee ON team_assignments(project_id, assignee_id);
+"""
+
+# v9 (#80): the hub slice's device-local tables. Neither is in
+# MUTABLE_TABLES and neither rides the change_log: a pull cursor and a
+# conflict another device's event raised here are this device's business.
+# `sync_conflicts` keeps the incoming event verbatim; resolving marks it,
+# never deletes it, and never applies it (a human re-decides).
+_MIGRATION_V9 = r"""
+CREATE TABLE sync_state (
+    hub_project_id TEXT PRIMARY KEY,
+    pull_cursor INTEGER NOT NULL DEFAULT 0,
+    last_push_at TEXT,
+    last_pull_at TEXT,
+    last_error TEXT
+);
+CREATE TABLE sync_conflicts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    hub_project_id TEXT NOT NULL,
+    event_id TEXT NOT NULL UNIQUE,
+    table_name TEXT NOT NULL,
+    row_key TEXT NOT NULL,
+    base_revision INTEGER,
+    local_revision INTEGER,
+    reason TEXT NOT NULL,
+    event_json TEXT NOT NULL,
+    received_at TEXT NOT NULL,
+    resolved_at TEXT,
+    resolution TEXT
+);
+"""
+
+# v10 (#279): `team_members` gets its lifted columns, one row per user of the
+# book with that user's role on it. The table was already in MUTABLE_TABLES
+# and SYNCED_TABLES, unused; the columns ride change_log.columns_json like
+# v8's. Additive: nothing is rebuilt.
+_MIGRATION_V10 = r"""
+ALTER TABLE team_members ADD COLUMN user_id TEXT;
+ALTER TABLE team_members ADD COLUMN role TEXT;
+CREATE INDEX ix_team_members_user ON team_members(project_id, user_id);
+"""
+
 _MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, _MIGRATION_V1),
     (2, _MIGRATION_V2),
@@ -694,6 +756,9 @@ _MIGRATIONS: tuple[tuple[int, str], ...] = (
     (5, _MIGRATION_V5),
     (6, _MIGRATION_V6),
     (7, _MIGRATION_V7),
+    (8, _MIGRATION_V8),
+    (9, _MIGRATION_V9),
+    (10, _MIGRATION_V10),
 )
 
 
@@ -703,6 +768,9 @@ class WorkbenchRepository:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.read_only = False
         self._generation_key = str(self.path.resolve())
+        # #113: one connection per thread, reused; `workbench.connect` now
+        # times real opens only, so a check job's `calls` is how many it made.
+        self._pool = ConnectionPool(self.path, error=WorkbenchError, timing_step="workbench.connect")
         self._migrate()
 
     @property
@@ -716,28 +784,22 @@ class WorkbenchRepository:
         with _GENERATION_LOCK:
             _GENERATIONS[self._generation_key] = _GENERATIONS.get(self._generation_key, 0) + 1
 
-    # -- connection discipline, copied from FoundationRepository
-    # (passage_semantic_repository.py:1070-1086) --------------------------
+    # -- connection discipline, shared with FoundationRepository (#113:
+    # sqlite_pool.ConnectionPool) ------------------------------------------
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        # Timed (check_timing): `calls` on a check job is how many connections
-        # its verses opened, the cost a reused connection would remove.
-        with check_timing.current().step("workbench.connect"):
-            conn = sqlite3.connect(str(self.path), timeout=5.0)
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA foreign_keys = ON")
-            conn.execute("PRAGMA busy_timeout = 5000")
-            conn.execute("PRAGMA synchronous = FULL")
-            conn.execute("PRAGMA journal_mode = WAL")
-            if self.read_only:
-                conn.execute("PRAGMA query_only = ON")
-            if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
-                conn.close()
-                raise WorkbenchError("SQLite foreign-key enforcement could not be enabled")
-        try:
+        with self._pool.acquire(self.read_only) as conn:
             yield conn
-        finally:
-            conn.close()
+
+    def release_connections(self) -> None:
+        """Let go of the database file: the caller's connections and every
+        finished thread's. Called when a project is replaced or deleted."""
+        self._pool.release()
+
+    def release_thread_connections(self) -> None:
+        """The dispatcher's per-request release (#113): nothing is held open
+        between requests, so a restore or a delete can replace the file."""
+        self._pool.release_thread()
 
     def _migrate(self) -> None:
         with self._connect() as conn:
@@ -1146,6 +1208,80 @@ class WorkbenchRepository:
                 event_ids.append(str(event["event_id"]))
         return {"path": str(destination), "count": count, "lastSeq": last_seq, "eventIds": event_ids}
 
+    # -- hub sync, device side (#80) ---------------------------------------
+
+    def sync_state(self, hub_project_id: str) -> dict[str, Any]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM sync_state WHERE hub_project_id=?", (hub_project_id,)).fetchone()
+        if row is None:
+            return {"hubProjectId": hub_project_id, "pullCursor": 0, "lastPushAt": None,
+                    "lastPullAt": None, "lastError": None}
+        return {"hubProjectId": row["hub_project_id"], "pullCursor": int(row["pull_cursor"]),
+                "lastPushAt": row["last_push_at"], "lastPullAt": row["last_pull_at"],
+                "lastError": row["last_error"]}
+
+    def update_sync_state(self, hub_project_id: str, *, pull_cursor: int | None = None,
+                          last_push_at: str | None = None, last_pull_at: str | None = None,
+                          last_error: str | None = None, clear_error: bool = False) -> None:
+        with self._connect() as conn:
+            conn.execute("INSERT OR IGNORE INTO sync_state(hub_project_id) VALUES(?)", (hub_project_id,))
+            for column, value in (("pull_cursor", pull_cursor), ("last_push_at", last_push_at),
+                                  ("last_pull_at", last_pull_at), ("last_error", last_error)):
+                if value is not None:
+                    conn.execute(f"UPDATE sync_state SET {column}=? WHERE hub_project_id=?", (value, hub_project_id))
+            if clear_error:
+                conn.execute("UPDATE sync_state SET last_error=NULL WHERE hub_project_id=?", (hub_project_id,))
+            conn.commit()
+
+    def record_sync_conflicts(self, hub_project_id: str, conflicts: list[dict[str, Any]],
+                              events_by_id: dict[str, str]) -> int:
+        """Keep each conflict with the incoming event verbatim. Idempotent on
+        the event id: a conflict pulled twice is one row."""
+        added = 0
+        arrived = self._now()
+        with self._connect() as conn:
+            for item in conflicts:
+                event_id = str(item.get("eventId") or "")
+                if not event_id:
+                    continue
+                added += conn.execute(
+                    "INSERT OR IGNORE INTO sync_conflicts(hub_project_id,event_id,table_name,row_key,"
+                    "base_revision,local_revision,reason,event_json,received_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (hub_project_id, event_id, str(item.get("table") or ""), str(item.get("rowKey") or ""),
+                     item.get("baseRevision"), item.get("localRevision"), str(item.get("reason") or ""),
+                     events_by_id.get(event_id, "{}"), arrived),
+                ).rowcount
+            conn.commit()
+        return added
+
+    def sync_conflicts(self, hub_project_id: str, *, include_resolved: bool = False) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM sync_conflicts WHERE hub_project_id=?"
+        if not include_resolved:
+            sql += " AND resolved_at IS NULL"
+        with self._connect() as conn:
+            rows = conn.execute(sql + " ORDER BY id", (hub_project_id,)).fetchall()
+        out = []
+        for row in rows:
+            event = _safe_json(row["event_json"])
+            out.append({
+                "id": int(row["id"]), "eventId": row["event_id"], "table": row["table_name"],
+                "rowKey": row["row_key"], "baseRevision": row["base_revision"],
+                "localRevision": row["local_revision"], "reason": row["reason"],
+                "theirActorId": str(event.get("actor_id") or ""), "theirCreatedAt": str(event.get("created_at") or ""),
+                "theirPayload": _safe_json(event.get("payload_json")),
+                "receivedAt": row["received_at"], "resolvedAt": row["resolved_at"], "resolution": row["resolution"],
+            })
+        return out
+
+    def resolve_sync_conflict(self, conflict_id: int, resolution: str) -> bool:
+        with self._connect() as conn:
+            changed = conn.execute(
+                "UPDATE sync_conflicts SET resolved_at=?, resolution=? WHERE id=? AND resolved_at IS NULL",
+                (self._now(), str(resolution), int(conflict_id)),
+            ).rowcount
+            conn.commit()
+        return bool(changed)
+
     def import_events(self, path: str | Path) -> dict[str, Any]:
         """Apply a JSON-lines event batch to this database.
 
@@ -1159,13 +1295,18 @@ class WorkbenchRepository:
         to travel back to.
         """
         source = Path(path)
+        with source.open("r", encoding="utf-8-sig") as handle:
+            lines = [line for line in handle if line.strip()]
+        return {"path": str(source), **self.import_event_lines(lines)}
+
+    def import_event_lines(self, lines: list[str]) -> dict[str, Any]:
+        """`import_events` without the file: one JSON event per string. The
+        hub client (#80) hands pulled events here directly."""
         applied = 0
         duplicates = 0
         conflicts: list[dict[str, Any]] = []
         malformed = 0
         arrived = self._now()
-        with source.open("r", encoding="utf-8-sig") as handle:
-            lines = [line for line in handle if line.strip()]
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             for line in lines:
@@ -1240,7 +1381,7 @@ class WorkbenchRepository:
             conn.commit()
         self._bump_generation()
         return {
-            "path": str(source), "applied": applied, "duplicates": duplicates,
+            "applied": applied, "duplicates": duplicates,
             "conflicts": conflicts, "malformed": malformed,
         }
 

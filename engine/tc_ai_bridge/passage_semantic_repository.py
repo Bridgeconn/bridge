@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import base64
 from contextlib import contextmanager
+
+from .sqlite_pool import ConnectionPool
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -1142,26 +1144,26 @@ class FoundationRepository:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.read_only = False
+        # #113: one connection per thread, reused; see sqlite_pool.py for the
+        # contract this keeps and the one thing it changes (synchronous NORMAL).
+        self._pool = ConnectionPool(self.path, error=FoundationError)
         self._migrate()
         self.recovery_check()
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(str(self.path), timeout=5.0)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA busy_timeout = 5000")
-        conn.execute("PRAGMA synchronous = FULL")
-        conn.execute("PRAGMA journal_mode = WAL")
-        if self.read_only:
-            conn.execute("PRAGMA query_only = ON")
-        if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
-            conn.close()
-            raise FoundationError("SQLite foreign-key enforcement could not be enabled")
-        try:
+        with self._pool.acquire(self.read_only) as conn:
             yield conn
-        finally:
-            conn.close()
+
+    def release_connections(self) -> None:
+        """Let go of the database file: the caller's connections and every
+        finished thread's. Called when a project is replaced or deleted."""
+        self._pool.release()
+
+    def release_thread_connections(self) -> None:
+        """The dispatcher's per-request release (#113): nothing is held open
+        between requests, so a restore or a delete can replace the file."""
+        self._pool.release_thread()
 
     def _migrate(self) -> None:
         with self._connect() as conn:
@@ -3840,7 +3842,7 @@ class FoundationRepository:
 
     def record_human_review(
         self, entity_type: str, entity_id: str, *, review_status: ReviewStatus,
-        expected_revision: int, actor_id: str = "human", note: str = "",
+        expected_revision: int, actor_id: str, note: str = "",
         lifecycle_status: LifecycleStatus | None = None,
         payload_updates: dict[str, Any] | None = None,
         invalidate_dependents: bool = False,
@@ -4481,7 +4483,7 @@ class FoundationRepository:
 
     def record_correction_application_metadata(
         self, proposal_id: str, *, actor_type: str | ActorType, applied_target_revision: str,
-        expected_revision: int, actor_id: str = "human",
+        expected_revision: int, actor_id: str,
     ) -> None:
         """Record that a proposal's text was written. Bookkeeping only.
 
@@ -4544,7 +4546,7 @@ class FoundationRepository:
             )
             conn.commit()
 
-    def record_correction_applied(self, proposal_id: str, *, actor_type: str | ActorType, applied_target_revision: str, expected_revision: int, actor_id: str = "human") -> None:
+    def record_correction_applied(self, proposal_id: str, *, actor_type: str | ActorType, applied_target_revision: str, expected_revision: int, actor_id: str) -> None:
         """Deprecated Stage 9A name. Retained so existing callers keep working.
 
         Kept as a thin alias rather than deleted: the old name reads like the
@@ -5040,6 +5042,11 @@ class FoundationRepository:
         safety_root = self.path.parent / "restore-safety"
         self.backup(safety_root, reason="pre-restore safety backup")
         self.read_only = False
+        # #113: this thread's pooled connection would keep the live file and
+        # its WAL open through the unlink and replace below. A connection a
+        # running job holds on another thread is left alone, and the replace
+        # then fails cleanly rather than under that job.
+        self._pool.release()
         temp = self.path.with_suffix(self.path.suffix + ".restore")
         if temp.exists():
             temp.unlink()

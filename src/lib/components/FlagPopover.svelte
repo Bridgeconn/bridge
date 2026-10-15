@@ -67,7 +67,7 @@
 </div>
 
 <style>
-  .popover { position: fixed; z-index: 10000; width: 320px; max-width: calc(100vw - 16px); box-sizing: border-box;
+  .popover { position: fixed; z-index: var(--z-popover); width: 320px; max-width: calc(100vw - 16px); box-sizing: border-box;
     padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface);
     color: var(--text); box-shadow: 0 10px 28px rgba(15, 23, 42, .22); font-size: var(--fs-xs); outline: none; }
   .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; color: var(--flag); }

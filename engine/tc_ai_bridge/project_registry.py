@@ -14,9 +14,11 @@ is not consulted. There is no other migration (TEAM_ARCHITECTURE.md ss3.5).
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import os
+import threading
 import tempfile
 import uuid
 from datetime import datetime, timezone
@@ -140,6 +142,18 @@ def collection_fingerprint(fingerprints: dict[str, str]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _locked(method):
+    """Serialise the registry's public surface. The in-memory entry list is
+    read by the dispatcher (project.list, project.open) while an import job
+    registers new books from its worker thread (#231); the RLock lets
+    classify() call list_projects() and list_projects() call register()."""
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapper
+
+
 class ProjectRegistry:
     def __init__(
         self, path: Path, managed_root: Path, *, workspace: WorkspaceRepository | None = None,
@@ -148,6 +162,7 @@ class ProjectRegistry:
         # an empty table and otherwise unused. The workspace database defaults
         # to the one beside it, which is where BridgeEngine keeps its own.
         self.path = Path(path)
+        self._lock = threading.RLock()
         self.workspace = workspace or WorkspaceRepository(self.path.parent / "workspace.sqlite3")
         self.managed_root = Path(managed_root).resolve(strict=False)
         self._data = self._load()
@@ -280,6 +295,7 @@ class ProjectRegistry:
         except OSError:
             return ""
 
+    @_locked
     def register(
         self,
         path: str | Path,
@@ -289,6 +305,7 @@ class ProjectRegistry:
         project_id: str = "",
         collection_id: str = "",
         save: bool = True,
+        opened_by: str = "",
     ) -> dict[str, Any]:
         project_path = Path(path).resolve(strict=False)
         managed = self._is_managed(project_path)
@@ -357,12 +374,15 @@ class ProjectRegistry:
         })
         if touch:
             entry["lastOpenedAt"] = _utc_now()
+            if opened_by:
+                entry["lastOpenedBy"] = str(opened_by)
         if is_new or entry != snapshot:
             self._dirty = True
         if save:
             self._save()
         return dict(entry)
 
+    @_locked
     def list_projects(self, *, refresh_managed: bool = True, collapse_collections: bool = False) -> list[dict[str, Any]]:
         self.managed_root.mkdir(parents=True, exist_ok=True)
         if refresh_managed or not self._managed_discovered:
@@ -432,6 +452,76 @@ class ProjectRegistry:
             result[index]["bookCount"] = counts[collection_id]
         return result
 
+    @_locked
+    def adopt_project_id(self, path: str | Path, new_project_id: str) -> dict[str, Any]:
+        """#80: a second device links its own import of a book to the hub's
+        project by taking the hub's id, so row ids (built from the project id)
+        match on every device. Rewrites `.bridge/project.json` and the
+        registry entry; the caller has checked the book has nothing synced
+        under its old id."""
+        project_path = Path(path).resolve(strict=False)
+        entry = self._find(path=project_path)
+        if entry is None:
+            raise ProjectIdentityError("The project is not registered on this device.")
+        identity_path = project_path / _IDENTITY_PATH
+        identity = _read_json(identity_path)
+        identity["projectId"] = str(new_project_id)
+        _write_json_atomic(identity_path, identity)
+        entry["projectId"] = str(new_project_id)
+        self._dirty = True
+        self._save()
+        return dict(entry)
+
+    @_locked
+    def rename(self, project_id: str, display_name: str) -> list[dict[str, Any]]:
+        """#238: the name the list shows, on every book of the project's
+        collection. A display name only: the folder, the manifest and the
+        collection file are untouched, and `projectName` (what the import
+        said) is kept beside it so the rename can be undone by clearing it."""
+        name = str(display_name or "").strip()
+        changed = []
+        for entry in self._group(project_id):
+            if name:
+                entry["displayName"] = name
+            else:
+                entry.pop("displayName", None)
+            changed.append(dict(entry))
+        if changed:
+            self._dirty = True
+            self._save()
+        return changed
+
+    @_locked
+    def set_archived(self, project_id: str, archived: bool) -> list[dict[str, Any]]:
+        """#238: archive or unarchive the project's whole collection. Nothing
+        on disk changes; the list hides archived rows behind a filter."""
+        changed = []
+        stamp = _utc_now()
+        for entry in self._group(project_id):
+            if archived:
+                entry["archivedAt"] = stamp
+            else:
+                entry.pop("archivedAt", None)
+            changed.append(dict(entry))
+        if changed:
+            self._dirty = True
+            self._save()
+        return changed
+
+    def _group(self, project_id: str) -> list[dict[str, Any]]:
+        """The live entries (not copies) of the project and its collection siblings."""
+        target = self._find(project_id=project_id)
+        if target is None:
+            return []
+        collection_id = str(target.get("collectionId") or "")
+        if not collection_id:
+            return [target]
+        return [
+            entry for entry in self._data["projects"]
+            if isinstance(entry, dict) and entry.get("collectionId") == collection_id
+        ]
+
+    @_locked
     def group_entries(self, project_id: str) -> list[dict[str, Any]]:
         """Return the entry for ``project_id`` plus any siblings sharing its collectionId."""
         target = self._find(project_id=project_id)
@@ -445,6 +535,7 @@ class ProjectRegistry:
             if isinstance(entry, dict) and entry.get("collectionId") == collection_id
         ]
 
+    @_locked
     def forget(self, project_id: str) -> bool:
         before = len(self._data["projects"])
         target = self._find(project_id=project_id)
@@ -461,10 +552,12 @@ class ProjectRegistry:
             self._save()
         return changed
 
+    @_locked
     def get(self, project_id: str) -> dict[str, Any] | None:
         entry = self._find(project_id=project_id)
         return dict(entry) if entry is not None else None
 
+    @_locked
     def classify(self, preview: dict[str, Any], metadata: dict[str, Any] | None = None) -> dict[str, Any]:
         projects = self.list_projects(refresh_managed=False)
         source_by_book = source_fingerprints(preview)

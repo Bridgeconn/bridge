@@ -137,4 +137,13 @@ describe("alignmentGroups", () => {
     expect(bottomIdsAfterDrop(context, "H003", "T003")).toEqual(["T003"]);
     expect(bottomIdsAfterDrop(context, "H001", "T002")).toBeNull();
   });
+
+  it("places several picked words after the column's own, in verse order, skipping those already there (#285)", () => {
+    expect(bottomIdsAfterDrop(context, "H003", ["T004", "T003"])).toEqual(["T003", "T004"]);
+    expect(bottomIdsAfterDrop(context, "H001", ["T004", "T002", "T003"])).toEqual(["T001", "T002", "T003", "T004"]);
+    // An aligned word moved to another column is sent like any other; the engine detaches it.
+    expect(bottomIdsAfterDrop(context, "H002", ["T001", "T003"])).toEqual(["T001", "T003"]);
+    expect(bottomIdsAfterDrop(context, "H001", ["T001", "T002"])).toBeNull();
+    expect(bottomIdsAfterDrop(context, "H001", [])).toBeNull();
+  });
 });

@@ -9,7 +9,8 @@
     cancelCollectionQa, collectionQa, pauseCollectionQa, refreshCollectionQa, startCollectionQa,
   } from "../collectionQa";
   import type { CollectionQaBook } from "../types/collectionQa";
-  import { collectionQaCollapsed } from "../editorPrefs";
+  import { collectionChecks, collectionQaCollapsed } from "../editorPrefs";
+  import { CHECK_BOXES, checkListLabel, selectedCollectionChecks, toggleCheck } from "../checkSelection";
 
   export let bookCount = 0;
   export let onOpenBook: (path: string) => void = () => {};
@@ -92,7 +93,7 @@
         <button class="danger" on:click={() => act(cancelCollectionQa)} disabled={busy || snapshot?.state === "cancelling"}>Cancel</button>
       {:else}
         <button class="primary" on:click={() => act(() => startCollectionQa(false))} disabled={busy}
-          title="Checks every book in turn; books unchanged since their last run are skipped">
+          title={`Checks every book in turn (${checkListLabel($selectedCollectionChecks)}); books unchanged since their last run are skipped`}>
           Run QA on all {bookCount} {bookCount === 1 ? "book" : "books"}</button>
         {#if lastRun}
           <button on:click={() => act(() => startCollectionQa(true))} disabled={busy}
@@ -106,9 +107,21 @@
   {#if open}
   <div id="collection-qa-body">
   <p class="note">
-    Runs tN/tW/alignment, Greek Room and Language QA over each book, one at a time. It is meant to run
-    unattended: while it runs, editing and switching books are paused. It is never started automatically.
+    Runs the ticked checks over each book, one at a time. It is meant to run unattended: while it runs,
+    editing, switching books and Greek Room are paused. It is never started automatically. A book whose
+    last run covered these checks and has not changed since is skipped.
   </p>
+  <fieldset class="checks" disabled={active}>
+    <legend>Checks</legend>
+    {#each CHECK_BOXES as box}
+      <label title={box.title}>
+        <input type="checkbox" checked={$selectedCollectionChecks.includes(box.id)}
+          disabled={$selectedCollectionChecks.length === 1 && $selectedCollectionChecks.includes(box.id)}
+          on:change={(event) => toggleCheck(collectionChecks, box.id, event.currentTarget.checked)} />
+        {box.label}
+      </label>
+    {/each}
+  </fieldset>
   {#if snapshot && snapshot.books.length}
     <table>
       <thead><tr><th>Book</th><th>State</th><th>Verses checked</th><th>Open findings</th><th>Last run</th><th>Time</th><th /></tr></thead>
@@ -154,6 +167,9 @@
   button.danger { color: var(--danger, #b91c1c); }
   button.link { border: none; text-decoration: underline; padding: 0; }
   button:disabled { opacity: .55; cursor: not-allowed; }
+  .checks { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0 0 8px; padding: 6px 10px; border: 1px solid var(--border, #e5e7eb); border-radius: 6px; font-size: var(--fs-xs, 12px); }
+  .checks legend { padding: 0 4px; color: var(--text-2, #4b5563); font-weight: 600; }
+  .checks label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
   .note { margin: 6px 0 8px; color: var(--text-3, #6b7280); font-size: var(--fs-xs, 12px); }
   .error { color: var(--danger, #b91c1c); font-size: var(--fs-xs, 12px); }
   table { width: 100%; border-collapse: collapse; font-size: var(--fs-xs, 12px); }

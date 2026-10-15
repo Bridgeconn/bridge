@@ -46,8 +46,15 @@ def verses(dictionary: Path) -> dict[tuple[str, str, str], str]:
 def reference(dictionary: Path, book: str, chapter: str, verse: str) -> dict[str, str] | None:
     """{label, ref, text} for one verse, or None. A bridge ("3-4") or a
     lettered segment ("3a") looks up its first number."""
+    return lookup(verses(dictionary), book, chapter, verse)
+
+
+def lookup(table: dict[tuple[str, str, str], str], book: str, chapter: str, verse: str) -> dict[str, str] | None:
+    """reference() on a table verses() already returned: a book pass looks up
+    every finding's verse, and resolving the table once saves a path per
+    finding (#271)."""
     first = "".join(ch for ch in verse.split("-", 1)[0] if ch.isdigit())
-    text = verses(dictionary).get((book.upper(), str(chapter), first))
+    text = table.get((book.upper(), str(chapter), first))
     if text is None:
         return None
     return {"label": LABEL, "ref": f"{book.upper()} {chapter}:{first}", "text": text}

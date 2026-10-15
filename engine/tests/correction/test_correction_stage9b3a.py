@@ -407,7 +407,7 @@ def _guarded_digests(root: Path) -> dict[str, str]:
 def test_all_stage9b3a_operations_leave_scripture_and_tc_files_byte_identical(tmp_path: Path) -> None:
     root = _write_project(tmp_path / "project")
     project = TranslationCoreProject(root)
-    runtime = PassageSemanticRuntime(project, "project-1")
+    runtime = PassageSemanticRuntime(project, "project-1", actor_id="Reviewer")
     project.attach_passage_semantic_runtime(runtime)
     runtime.repository.create_qa_finding("finding-1", "project-1")
     runtime.repository.save_correction_proposal_v2(_proposal())
@@ -431,7 +431,7 @@ def test_all_stage9b3a_operations_leave_scripture_and_tc_files_byte_identical(tm
 def _runtime_with_application(tmp_path: Path) -> tuple[Path, PassageSemanticRuntime]:
     root = _write_project(tmp_path / "project")
     project = TranslationCoreProject(root)
-    runtime = PassageSemanticRuntime(project, "project-1")
+    runtime = PassageSemanticRuntime(project, "project-1", actor_id="Reviewer")
     project.attach_passage_semantic_runtime(runtime)
     runtime.repository.create_qa_finding("finding-1", "project-1")
     runtime.repository.save_correction_proposal_v2(_proposal())
@@ -460,7 +460,7 @@ def test_recovery_with_intended_after_hash_never_reapplies_and_completes_metadat
     span = _proposal().intent.affected_target_span
     intended = BEFORE[:span.start_code_point] + REPLACEMENT + BEFORE[span.end_code_point:]
     _simulate_target_text(root, intended)
-    restarted = PassageSemanticRuntime(TranslationCoreProject(root), "project-1")
+    restarted = PassageSemanticRuntime(TranslationCoreProject(root), "project-1", actor_id="Reviewer")
     recovered = restarted.repository.application_intent("application-1")
     assert recovered["applicationState"] == "COMPLETED"
     assert recovered["resultMetadata"]["scriptureAlreadyMatchedIntendedFinalHash"] is True
@@ -477,7 +477,7 @@ def test_recovery_with_intended_after_hash_never_reapplies_and_completes_metadat
 def test_recovery_with_neither_hash_enters_recovery_required_read_mode(tmp_path: Path) -> None:
     root, _runtime = _runtime_with_application(tmp_path)
     _simulate_target_text(root, "a different editor's text")
-    restarted = PassageSemanticRuntime(TranslationCoreProject(root), "project-1")
+    restarted = PassageSemanticRuntime(TranslationCoreProject(root), "project-1", actor_id="Reviewer")
     application = restarted.repository.application_intent("application-1")
     assert application["applicationState"] == "RECOVERY_REQUIRED"
     assert application["failureCode"] == "TARGET_HASH_AMBIGUOUS"
@@ -502,7 +502,7 @@ def test_recovery_after_invalidation_before_finalization_completes_without_write
         app = runtime.repository.transition_application_state(
             app["applicationId"], expected_state=app["applicationState"],
             expected_state_revision=app["stateRevision"], new_state=next_state)
-    restarted = PassageSemanticRuntime(TranslationCoreProject(root), "project-1")
+    restarted = PassageSemanticRuntime(TranslationCoreProject(root), "project-1", actor_id="Reviewer")
     assert restarted.repository.application_intent("application-1")["applicationState"] == "COMPLETED"
 
 
@@ -533,7 +533,7 @@ def test_recovery_after_proposal_metadata_before_ledger_finalization_is_idempote
         expected_revision=stale_proposal["revision"],
     )
 
-    restarted = PassageSemanticRuntime(TranslationCoreProject(root), "project-1")
+    restarted = PassageSemanticRuntime(TranslationCoreProject(root), "project-1", actor_id="Reviewer")
     recovered = restarted.repository.application_intent("application-1")
     assert recovered["applicationState"] == "COMPLETED"
     assert restarted.repository.correction_proposal("proposal-1")["revision"] == (
@@ -547,7 +547,7 @@ def test_unrecoverable_semantic_invalidation_blocks_correction_writes(tmp_path: 
     span = _proposal().intent.affected_target_span
     intended = BEFORE[:span.start_code_point] + REPLACEMENT + BEFORE[span.end_code_point:]
     _simulate_target_text(root, intended)
-    restarted = PassageSemanticRuntime(TranslationCoreProject(root), "project-1")
+    restarted = PassageSemanticRuntime(TranslationCoreProject(root), "project-1", actor_id="Reviewer")
     application = restarted.repository.application_intent("application-1")
     assert application["applicationState"] == "RECOVERY_REQUIRED"
     assert application["failureCode"] == "SEMANTIC_INVALIDATION_NOT_RECOVERABLE"
@@ -602,10 +602,12 @@ def test_startup_recovers_tc_journal_before_semantic_runtime(tmp_path: Path, mon
     chapter.write_text(json.dumps({"6": "PARTIAL WRITE"}), encoding="utf-8")
     observed: list[str] = []; real_runtime = bridge_service.PassageSemanticRuntime
     class ObservingRuntime(real_runtime):
-        def __init__(self, candidate, project_id):
-            observed.append(candidate.target_verse_text("1", "6")); super().__init__(candidate, project_id)
+        def __init__(self, candidate, project_id, **kwargs):
+            observed.append(candidate.target_verse_text("1", "6")); super().__init__(candidate, project_id, **kwargs)
     monkeypatch.setattr(bridge_service, "PassageSemanticRuntime", ObservingRuntime)
-    opened = _call(BridgeEngine(settings=AppSettings(path=tmp_path / "settings.json")), "project.open", {"path": str(root)})
+    # awaitSemantic: the runtime is built on a worker (#112 step two); the
+    # order this test pins -- journal recovery, then the runtime -- is unchanged.
+    opened = _call(BridgeEngine(settings=AppSettings(path=tmp_path / "settings.json")), "project.open", {"path": str(root), "awaitSemantic": True})
     assert opened["success"] is True
     assert observed == [BEFORE]
 
@@ -627,7 +629,7 @@ def test_failed_tc_rollback_blocks_semantic_runtime_and_correction_writes(tmp_pa
 
 def test_target_tokens_and_units_stale_while_source_token_history_survives(tmp_path: Path) -> None:
     root = _write_project(tmp_path / "project")
-    runtime = PassageSemanticRuntime(TranslationCoreProject(root), "project-1")
+    runtime = PassageSemanticRuntime(TranslationCoreProject(root), "project-1", actor_id="Reviewer")
     target = runtime.target_semantic.build_range("1", "6", "1", "6")
     target_token = target["tokens"][0]["id"]; target_unit = target["units"][0]["id"]
     source_lineage = TokenLineage(

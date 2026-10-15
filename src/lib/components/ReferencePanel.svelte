@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
   import { bridge } from "../api/bridgeClient";
-  import { currentChapter, project, selectedVerse } from "../stores";
+  import { currentChapter, project, selectedVerse, targetLang } from "../stores";
   import type { ReferenceChapter } from "../types/languageQa";
 
   // The reference Bible (an Old Version) beside the text, on the same chapter
@@ -74,7 +74,7 @@
         <li data-ref-verse={row.verse} class:current={row.verse === $selectedVerse}>
           <button type="button" on:click={() => onSelectVerse(row.verse)}
             aria-label={`Verse ${row.verse} in the reference: show it in the text`}>
-            <span class="num">{row.verse}</span><span class="text">{row.text}</span>
+            <span class="num">{row.verse}</span><span class="text" lang={$targetLang}>{row.text}</span>
           </button>
         </li>
       {/each}

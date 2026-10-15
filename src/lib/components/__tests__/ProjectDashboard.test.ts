@@ -15,6 +15,10 @@ const books = [{
     checkedChapterCount: 2,
     verseCount: 85,
     reviewedVerseCount: 10,
+    alignedVerseCount: 7,
+    alignedKnownVerseCount: 40,
+    languageQaCheckedVerseCount: 40,
+    languageQaCleanVerseCount: 31,
     updatedAt: "",
   },
 }] as never;

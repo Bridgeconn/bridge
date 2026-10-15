@@ -139,7 +139,9 @@ def persisted_findings(
     project: TranslationCoreProject, chapters: Iterable[str],
 ) -> dict[tuple[str, str], dict[str, dict[str, Any]]]:
     """{(chapter, verse): {finding id: finding}} from the chapter snapshots,
-    then whatever the whole-book USFM/Names cache adds. The snapshot wins on
+    then whatever the whole-book USFM/Names cache adds. Wildebeest findings
+    come from the snapshots only: a Greek Room run saves them there, and no
+    `wildebeest` cache section was ever written outside tests (#275). The snapshot wins on
     a shared id (it carries the verse key the job used, which keeps bridged
     verses like '3-4' intact).
 
@@ -157,7 +159,7 @@ def persisted_findings(
                 if isinstance(finding, dict) and finding.get("id"):
                     bucket.setdefault(str(finding["id"]), finding)
     cache = project.load_check_cache()
-    for section in ("wildebeest", "usfm", "names"):
+    for section in ("usfm", "names"):
         for finding in (cache.get(section) or {}).get("findings", []) or []:
             if not isinstance(finding, dict) or not finding.get("id"):
                 continue

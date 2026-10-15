@@ -73,6 +73,11 @@ class QaFinding:
     category: FindingCategory = FindingCategory.CONSISTENCY
     severity: Severity = Severity.MEDIUM
     confidence: float = 0.0     # 0.0 - 1.0
+    # Which elective check produced it (#251): "tN", "tW", "tc", "alignment",
+    # "text", "usfm", "names", "wildebeest" -- check_jobs.finding_check. A run
+    # of some checks replaces only those checks' findings. Empty on a finding
+    # stored before the field existed; the same function derives it.
+    check: str = ""
 
     # Content
     suggested_replacement: Optional[str] = None
@@ -91,6 +96,10 @@ class QaFinding:
     # Human review state
     status: FindingStatus = FindingStatus.OPEN
     human_comment: Optional[str] = None
+    # A decision recorded under this finding's id before #273 changed how ids
+    # are built, that could not be matched to exactly one finding: shown in
+    # the Review panel, never applied ({decision, note, decidedAt, findingId}).
+    unmatched_decision: Optional[dict[str, Any]] = None
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     resolved_at: Optional[str] = None
 

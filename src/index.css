@@ -114,8 +114,12 @@
   --font-ui: -apple-system, "Inter", Segoe UI, Helvetica, Arial, var(--font-indic), sans-serif;
 
   /* Scripture panes use this directly so line-height can be tuned for Indic
-     ascender/descender depth without touching the UI chrome's rhythm. */
-  --font-target: var(--font-indic), var(--font-ui);
+     ascender/descender depth without touching the UI chrome's rhythm.
+     Latin faces first (#286): Vijaya's Latin glyphs are oblique, so with
+     Vijaya first an English project's whole text was drawn in italics.
+     A script the Latin faces lack still falls through to --font-indic per
+     glyph; Tamil keeps Vijaya first through its :lang() rule below. */
+  --font-target: var(--font-ui);
 
   /* Source scripts. Ezra SIL is preferred over SBL Hebrew because SBL's
      licence requires individual registration, which does not survive
@@ -125,7 +129,62 @@
      bundled polytonic face and plain Noto Serif is the named fallback. */
   --font-hebrew: "Ezra SIL", "SBL Hebrew", serif;
   --font-greek: "Gentium Plus", "Noto Serif", serif;
+
+  /* Stacking layers (#288). Every overlay, floating panel, dialog, popover and
+     toast takes its z-index from one of these, lowest to highest, so a surface
+     says which kind of thing it is rather than picking a number -- Settings
+     at a hand-picked 30 sat under the floating Language QA panel at 45. A
+     z-index that only orders things inside one component (a sticky header, a
+     close button, a resize handle) stays a small literal there.
+       --z-dropdown   a menu anchored to a control (Checks, export, language)
+       --z-panel      a floating panel (Language QA)
+       --z-dialog     an app dialog and its backdrop (Settings, Export,
+                      Diagnostics, Align Words, Cross-verse alignment, a
+                      correction's confirm)
+       --z-dialog-over-dialog  a dialog or popup opened from a dialog (Checker
+                      settings, History, Lexicon, Flag, Scope confirm,
+                      Occurrences, Verse notes, the cross-verse issue menu)
+       --z-popover    a pointer-anchored popover, context menu or drag ghost
+       --z-toast      a notice that sits over everything on the page
+       --z-startup    the startup screen and the user picker, above all
+     App.svelte's file-drop overlay (100) and its error (101) sit between
+     --z-toast and --z-startup on purpose: a file dragged over the window is
+     above any dialog. */
+  --z-dropdown: 40;
+  --z-panel: 45;
+  --z-dialog: 50;
+  --z-dialog-over-dialog: 60;
+  --z-popover: 70;
+  --z-toast: 80;
+  --z-startup: 200;
 }
+
+/* #286: the target face in the project language's own order. Fallback is per
+   glyph, so with Vijaya first every ASCII character of a Gurmukhi, Devanagari,
+   Malayalam or Odia text -- digits, the full stop, and the danda U+0964 too --
+   was drawn from Vijaya, whose Latin is oblique, beside letters drawn from
+   Nirmala UI: Amos's "full stops in italics". (Confirmed 2026-10-15 in Edge
+   155, the WebView2 runtime's build, with this stylesheet: a lone "." under
+   --font-target came from Vijaya.) A container that carries the project's
+   language (`lang`, the import's ISO 639 code) puts the face that holds
+   that script first, so letters and punctuation come from one font: Nirmala
+   UI where Windows has it, else the bundled Noto face. Tamil keeps Vijaya,
+   its chosen face, first. A Latin-script language needs no rule: the default
+   above is Latin-first, which the 0.18.0 walk showed it must be, since every
+   English verse rendered in Vijaya's italic Latin. The UI chrome keeps
+   --font-ui. */
+:lang(ta), :lang(tam) { --font-target: var(--font-indic), var(--font-ui); }
+:lang(pa), :lang(pan) { --font-target: "Nirmala UI", "Noto Serif Gurmukhi", var(--font-indic), var(--font-ui); }
+:lang(hi), :lang(hin), :lang(mr), :lang(mar), :lang(ne), :lang(nep), :lang(npi), :lang(sa), :lang(san) {
+  --font-target: "Nirmala UI", "Noto Serif Devanagari", var(--font-indic), var(--font-ui);
+}
+:lang(ml), :lang(mal) { --font-target: "Nirmala UI", "Noto Serif Malayalam", var(--font-indic), var(--font-ui); }
+:lang(or), :lang(ori), :lang(ory), :lang(od) { --font-target: "Nirmala UI", "Noto Serif Oriya", var(--font-indic), var(--font-ui); }
+:lang(bn), :lang(ben), :lang(as), :lang(asm) { --font-target: "Nirmala UI", "Noto Serif Bengali", var(--font-indic), var(--font-ui); }
+:lang(te), :lang(tel) { --font-target: "Nirmala UI", "Noto Serif Telugu", var(--font-indic), var(--font-ui); }
+:lang(kn), :lang(kan) { --font-target: "Nirmala UI", "Noto Serif Kannada", var(--font-indic), var(--font-ui); }
+:lang(gu), :lang(guj) { --font-target: "Nirmala UI", "Noto Serif Gujarati", var(--font-indic), var(--font-ui); }
+:lang(ur), :lang(urd) { --font-target: "Noto Nastaliq Urdu", var(--font-indic), var(--font-ui); }
 
 body { margin: 0; font-family: var(--font-ui); }
 

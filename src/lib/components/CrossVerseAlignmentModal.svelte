@@ -10,16 +10,19 @@
   // in its own verse's word bank; only the annotations change.
   import { onMount } from "svelte";
   import { bridge } from "../api/bridgeClient";
+  import { recheckVerse } from "../verseChecks";
   import {
-    alignmentStatusByVerse, checkStatusByVerse, currentChapter, findingsByVerse, verseKey, verseNums,
+    alignmentStatusByVerse, checkStatusByVerse, currentChapter, noteAlignmentChanged, targetLang, verseKey, verseNums,
   } from "../stores";
+  import { alignmentStatusLabel } from "../alignmentStatus";
   import type {
-    AlignmentContext, AlignmentCounts, AlignmentToken, AutoAlignIssue, AutoAlignSuggestion, AutoAlignVerdict,
+    AlignmentContext, AlignmentCounts, AlignmentToken, AutoAlignIssue, AutoAlignJobStatus, AutoAlignSuggestion,
+    AutoAlignVerdict,
     CrossVerseLink, CrossVerseLinkResult, CrossVerseProposal, NullDecisionEntry, NullReason,
   } from "../types/finding";
   import {
-    idFor, liveIssues, liveSuggestions, placedByPass, relationTag, signatureOf, suggestionKey,
-    suggestionsForSource, suggestionsForTarget, verdictView, windowProblem,
+    idFor, liveIssues, liveSuggestions, passLabel, placedByPass, providerProblem, relationTag, signatureOf,
+    suggestionKey, suggestionsForSource, suggestionsForTarget, verdictView, windowJobError, windowProblem,
   } from "../autoAlign";
   import { createPointerDrag } from "../alignmentDrag";
   import {
@@ -53,6 +56,9 @@
   let loading = true;
   let busy = false;
   let error = "";
+  /** The raw text behind a plain error (#243), shown under "Show details"
+   *  only while `error` is still the message it explains. */
+  let errorDetail: { message: string; raw: string } | null = null;
   let notice = "";
   /** When set, both columns show only that verse's gaps. */
   let gapFilterVerse: string | null = null;
@@ -210,13 +216,17 @@
     busy = true;
     error = "";
     notice = "";
-    autoStage = "Aligning… pass 1 of 2";
-    // The two passes are one request; this only tells the reviewer it is the
-    // longer of the two waits once the first has had time to return.
-    const stageTimer = setTimeout(() => { autoStage = "Aligning… pass 2 of 2"; }, 20000);
+    errorDetail = null;
+    // The window is a job (#242): the label follows the pass its status
+    // reports (#243), and the last status keeps the window's own error.
+    autoStage = passLabel(null);
+    let lastStatus: AutoAlignJobStatus | null = null;
     try {
       const wanted = [...selection];
-      const result = await bridge.autoAlignWindow(chapter, wanted);
+      const result = await bridge.autoAlignWindow(chapter, wanted, true, (status) => {
+        lastStatus = status;
+        autoStage = passLabel(status);
+      });
       if (result.unavailable) {
         error = result.unavailable.message;
         return;
@@ -256,9 +266,11 @@
       notice = "";
       error = result.failures?.length ? `Some agreed changes were not applied: ${result.failures.join("; ")}` : "";
     } catch (value) {
-      error = value instanceof Error ? value.message : String(value);
+      const raw = windowJobError(lastStatus, value instanceof Error ? value.message : String(value));
+      const plain = providerProblem(raw);
+      error = plain ?? raw;
+      errorDetail = plain ? { message: plain, raw } : null;
     } finally {
-      clearTimeout(stageTimer);
       autoStage = "";
       autoBusy = false;
       busy = false;
@@ -274,6 +286,11 @@
     error = "";
     try {
       const result = await bridge.autoAlignRevert(chapter, v);
+      // A reverted link reaches its other verse, which the result does not
+      // name: every verse of the window the pass ran on counts as written (#291).
+      for (const other of verdicts[v]?.window ?? []) {
+        if (other !== v) noteAlignmentChanged(verseKey(chapter, other));
+      }
       verdicts = { ...verdicts, [v]: null };
       contexts = { ...contexts, [v]: result.context };
       await refreshChecks(v, result.context, "");
@@ -508,17 +525,18 @@
     chapterStatus = updated.chapterStatus;
     const key = verseKey(chapter, v);
     alignmentStatusByVerse.update((values) => ({ ...values, [key]: updated.status }));
+    // Same-verse saves, null decisions, both ends of a link or unlink, each
+    // verse of an automatic window and a revert all land here (#291).
+    noteAlignmentChanged(key);
     checkStatusByVerse.update((values) => ({ ...values, [key]: "pending" }));
     try {
-      // `alignment` runs the verse-local QA set without the slow whole-book
-      // USFM preflight -- exactly what AlignmentModal does after a save.
-      const findings = await bridge.runVerseChecks(chapter, v, ["alignment", "greekroom"]);
-      findingsByVerse.update((values) => ({ ...values, [key]: findings }));
-      checkStatusByVerse.update((values) => ({ ...values, [key]: "succeeded" }));
+      // Only the alignment checks, as AlignmentModal does after a save: the
+      // verse's other findings are kept (#251), Greek Room is on demand (#252).
+      await recheckVerse(chapter, v, ["alignment"]);
       // `message` is empty when the caller reports its own aggregate result
       // (the AI auto-link batch, #146), so join rather than interpolate --
       // otherwise every notice starts with a stray space.
-      notice = [message, `Local and Greek Room checks for ${chapter}:${v} are current.`]
+      notice = [message, `The alignment checks for ${chapter}:${v} are current.`]
         .filter(Boolean).join(" ");
     } catch (value) {
       checkStatusByVerse.update((values) => ({ ...values, [key]: "failed" }));
@@ -754,7 +772,7 @@
             <span>Range: {totalGaps.sourceUnmatched} source · {totalGaps.targetUnmatched} target unmatched</span>
           {/if}
           {#if chapterStatus}
-            <span>Chapter: {chapterStatus.complete} complete · {chapterStatus.partial} partial · {chapterStatus.untouched} untouched{#if chapterStatus.invalid} · {chapterStatus.invalid} invalid{/if}</span>
+            <span>Chapter: {chapterStatus.complete} complete{#if chapterStatus.complete_cross_verse} · {chapterStatus.complete_cross_verse} via cross-verse{/if} · {chapterStatus.partial} partial · {chapterStatus.untouched} untouched{#if chapterStatus.invalid} · {chapterStatus.invalid} invalid{/if}</span>
           {/if}
           {#if suggested.length > 0}
             <span class="widened">↔ widened with v.{suggested.join(", ")} <button type="button" class="link" on:click={resetToDefaultRange} disabled={busy}>Back to {verse} ±1</button></span>
@@ -781,7 +799,14 @@
       {/if}
 
       {#if notice}<div class="notice">{notice}</div>{/if}
-      {#if error}<div class="error">{error}</div>{/if}
+      {#if error}
+        <div class="error" role="alert">
+          {error}
+          {#if errorDetail?.message === error}
+            <details class="error-detail"><summary>Show details</summary><code>{errorDetail.raw}</code></details>
+          {/if}
+        </div>
+      {/if}
       {#if loading}<div class="reloading"><span class="spin" /> Updating range…</div>{/if}
 
       <div class="columns">
@@ -817,6 +842,7 @@
                       class:drop-hover={$dragState.overColumn === columnKey}
                       data-drop-column={columnKey}
                       dir={context.targetDirection}
+                      lang={$targetLang}
                       role="button"
                       tabindex="0"
                       aria-label={pickedUpKey ? `Align picked-up word to ${src.word} in verse ${v}` : `Target words aligned to ${src.word} in verse ${v}`}
@@ -923,13 +949,14 @@
               <div class="verse-block">
                 <div class="verse-head">
                   <span class="vnum">{chapter}:{v}</span>
-                  <span class="status {context.status}">{context.status}</span>
+                  <span class="status {context.status}">{alignmentStatusLabel(context.status)}</span>
                 </div>
                 <div
                   class="bank"
                   class:drop-hover={$dragState.overBank === v}
                   data-drop-bank={v}
                   dir={context.targetDirection}
+                  lang={$targetLang}
                   role="button"
                   tabindex="0"
                   aria-label={pickedUpKey ? `Return picked-up word to the word bank of verse ${v}` : `Word bank of verse ${v}`}
@@ -1032,11 +1059,11 @@
 {/if}
 
 {#if $dragState.tokenId && $dragState.moved}
-  <div class="drag-ghost" style="left:{$dragState.ghost.x}px; top:{$dragState.ghost.y}px;">{ghostLabel}</div>
+  <div class="drag-ghost" lang={$targetLang} style="left:{$dragState.ghost.x}px; top:{$dragState.ghost.y}px;">{ghostLabel}</div>
 {/if}
 
 <style>
-  .overlay { position: fixed; inset: 0; z-index: 50; background: rgba(15, 20, 26, .58); display: grid; place-items: center; padding: 16px; }
+  .overlay { position: fixed; inset: 0; z-index: var(--z-dialog); background: rgba(15, 20, 26, .58); display: grid; place-items: center; padding: 16px; }
   .page {
     width: min(1340px, 100%); height: calc(100vh - 32px); display: flex; flex-direction: column; min-height: 0;
     background: var(--surface); border-radius: 14px; box-shadow: 0 24px 80px rgba(0,0,0,.24); padding: 14px 18px; color: var(--text);
@@ -1121,19 +1148,22 @@
   .option .greek { font-family: var(--font-greek); }
   .null-word { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; border: 1px dashed var(--border-strong); background: var(--surface-2); color: var(--text-2); border-radius: 7px; padding: 4px 8px; }
   .null-word small { font-family: var(--font-ui); font-size: var(--fs-3xs); color: var(--text-3); }
-  .menu-overlay { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: rgba(15, 20, 26, .2); }
+  .menu-overlay { position: fixed; inset: 0; z-index: var(--z-dialog-over-dialog); display: grid; place-items: center; background: rgba(15, 20, 26, .2); }
   .issue-menu { background: var(--surface); border: 1px solid var(--border-strong); border-radius: 9px; box-shadow: 0 10px 30px rgba(0, 0, 0, .18); padding: 6px; display: grid; gap: 2px; min-width: 260px; }
   .issue-menu .menu-title { font-size: var(--fs-3xs); color: var(--text-3); padding: 4px 8px 6px; font-weight: 700; }
   .issue-menu button { border: 0; text-align: left; padding: 6px 8px; font-size: var(--fs-xs); border-radius: 6px; }
   .issue-menu button small { display: block; color: var(--text-3); font-size: var(--fs-3xs); }
   .issue-menu button:hover { background: var(--accent-bg); }
   .status { border-radius: 999px; padding: 1px 7px; background: var(--surface-2); font-weight: 700; font-size: var(--fs-2xs); color: var(--text-2); }
-  .status.complete { color: var(--success); background: #EAF7EF; }
+  .status.complete, .status.complete_cross_verse { color: var(--success); background: #EAF7EF; }
   .status.partial { color: var(--warning); background: var(--warning-bg); }
   .status.invalid { color: var(--danger); background: var(--danger-bg); }
   .notice, .error { border-radius: 9px; padding: 8px 12px; margin-bottom: 8px; font-size: var(--fs-sm); line-height: 1.45; flex-shrink: 0; }
   .notice { background: #EAF7EF; color: var(--success); }
   .error { background: #FFF0F0; color: var(--danger); }
+  .error-detail { margin-top: 4px; color: var(--text-2); }
+  .error-detail summary { cursor: pointer; font-size: var(--fs-xs); }
+  .error-detail code { display: block; margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-xs); }
 
   /* Two vertically scrolling columns: the range view never scrolls sideways (#72). */
   .columns { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 12px; flex: 1; min-height: 0; }
@@ -1199,7 +1229,7 @@
   .unalign-x { border: 0; background: none; padding: 0; width: 16px; height: 16px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; color: var(--text-2); font-size: var(--fs-md); flex-shrink: 0; }
   .unalign-x:hover:not(:disabled) { color: var(--danger); background: var(--danger-bg); }
   .bank { display: flex; flex-wrap: wrap; gap: 6px; min-height: 44px; align-content: flex-start; border-radius: 8px; padding: 4px; }
-  .drag-ghost { position: fixed; z-index: 999; transform: translate(-50%, -130%); pointer-events: none; background: var(--accent); color: white; font-family: var(--font-target); font-size: var(--fs-sm); font-weight: 700; border-radius: 7px; padding: 6px 10px; box-shadow: 0 8px 20px rgba(0,0,0,.28); }
+  .drag-ghost { position: fixed; z-index: var(--z-popover); transform: translate(-50%, -130%); pointer-events: none; background: var(--accent); color: white; font-family: var(--font-target); font-size: var(--fs-sm); font-weight: 700; border-radius: 7px; padding: 6px 10px; box-shadow: 0 8px 20px rgba(0,0,0,.28); }
   .empty { color: var(--text-3); font-size: var(--fs-xs); margin: 6px; }
   @media (max-width: 900px) {
     .columns { grid-template-columns: 1fr; }

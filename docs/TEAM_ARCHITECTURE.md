@@ -7,6 +7,12 @@ under *Decisions*. `docs/DECISIONS.md` carries the five-line versions; this file
 long form. Verify any claim here against the code before building on it — the repo's
 standing rule applies to this document too.
 
+**Scope note, 2026-10-12.** §5–§8 (identity and roles, engine session model, hub,
+dashboard) are v1 scope: Benz reversed the 2026-09-16 "one local user; the hub after
+v1" decision by email (`docs/DECISIONS.md` 2026-10-12, #226). The dashboard is Option A
+of the October requirements — the browser app the hub serves, not a web workbench. §10
+carries the issue numbers.
+
 The framing from the 2026-09-09 comment on #44 holds: Bridge already has a per-project
 SQLite database (`FoundationRepository`, schema v14) for the semantic pipeline. This is
 not "files → database". It is *which remaining file-based stores get a database home,
@@ -62,9 +68,11 @@ resolve.
 
 `engine/tc_ai_bridge/workbench_repository.py`, `WorkbenchRepository`,
 `WORKBENCH_SCHEMA_VERSION` starting at 1 with its own `schema_migrations` ladder. Connection
-discipline copied from `FoundationRepository` (`passage_semantic_repository.py:1070-1086`):
-one fresh `sqlite3.connect` per call, `row_factory=Row`, `foreign_keys ON`, `busy_timeout
-5000`, `synchronous FULL`, `journal_mode WAL`, `query_only` when read-only; a
+discipline shared with `FoundationRepository` (`tc_ai_bridge/sqlite_pool.py`, #113,
+2026-10-12): one connection per thread per file, reused within a request and released
+after it, `row_factory=Row`, `foreign_keys ON`, `busy_timeout 5000`, `synchronous NORMAL`
+under `journal_mode WAL`, `query_only` when read-only (before #113: a fresh connection per
+call with `synchronous FULL`); a
 pre-migration backup before every version bump. Every version bump gets a
 `test_workbench_vN_to_vN+1_keeps_vN_rows_readable` test in the established style.
 
@@ -257,6 +265,12 @@ events. `sync_conflicts` as a table, and any UI, remain ss7's.
   `project_admin` of one's own projects. One `authorize(user, project, action)` helper is
   used by the engine dispatcher so the hub and the desktop share the rules.
 
+> Sections 6 to 8 were reviewed against the v8 workbench on 2026-10-15 (#227,
+> `HUB_ARCHITECTURE_REVIEW_2026-10-15.md`). The review is the current word where the
+> two differ: the table list that syncs, the hub-project-id linking rule, the conflict
+> semantics for links and batches, and packaging as a pip `[server]` extra behind
+> Task Scheduler.
+
 ## 6. Engine process model (prerequisite for the hub)
 
 - `BridgeEngine` state (`bridge_service.py:429-536`) splits into `Workspace` (settings,
@@ -327,10 +341,18 @@ events. `sync_conflicts` as a table, and any UI, remain ss7's.
    not a lazy migration (#76, done); derived stores + workspace rollup cache;
    registry/settings into the workspace DB; sync readiness (cursor API, offline event
    export/import) (#77, done 2026-09-15).
-3. Identity: users, devices, required `actor_id`, roles enum, `authorize()`.
-4. Engine session model + HTTP transport + `--serve`.
-5. Hub first slice: join codes, push/pull, conflicts.
-6. Dashboard.
+3. Identity: users, devices, required `actor_id` (#78, done); whether a client may
+   assert its own `actorId` (#183, decided before #46 builds on it); roles enum and
+   `authorize()` with a refusal test per role (#236); Users screen, startup display-name
+   picker and `legacy:human` rendering (#237); assignments and My work (#240). Milestone
+   1, requirement 4.
+4. Hub and dashboard architecture review (#227) — the review the SRS §14 asks for before
+   `FUTURE-002`/`FUTURE-003` are built; it settles the hub's shape before #79 starts.
+5. Engine session model + HTTP transport + `--serve` (#79).
+6. Hub first slice: join codes, push/pull, conflicts (#80). Requirement 6.
+7. Dashboard, served by the hub (#81) — Option A only (2026-10-12).
+
+Steps 3–7 were "after v1" from 2026-09-16 to 2026-10-12 and are v1 scope since.
 
 ## 11. Performance expectations (to be measured, not assumed)
 

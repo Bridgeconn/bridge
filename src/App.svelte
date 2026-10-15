@@ -1,6 +1,11 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { bridge } from "./lib/api/bridgeClient";
+  import { bridgeReference } from "./lib/navigationReference";
+  import {
+    formatPerfLine, perfAbort, perfBegin, perfEnd, perfInFlight, perfResponded, registerPerfRunner, setPerfSink,
+  } from "./lib/perf";
+  import { BUSY_LABEL, MAX_BUSY_TIMEOUTS, checkFailureMessage, isBusyTimeout } from "./lib/checkMonitor";
   import ImportScreen from "./lib/components/ImportScreen.svelte";
   import TopBar from "./lib/components/TopBar.svelte";
   import VerseList from "./lib/components/VerseList.svelte";
@@ -11,6 +16,7 @@
   import { resetScopedApply, scopeDialog } from "./lib/scopedApply";
   import { startFlagLoader } from "./lib/flags";
   import ReferencePanel from "./lib/components/ReferencePanel.svelte";
+  import SourceTextPanel from "./lib/components/SourceTextPanel.svelte";
   import FindingContextMenu from "./lib/components/FindingContextMenu.svelte";
   import { TEXT_SCALES, bumpTextScale, rawView, sidePanels, textScale, toggleSidePanel } from "./lib/editorPrefs";
   import SidePanel from "./lib/components/SidePanel.svelte";
@@ -29,8 +35,13 @@
   import ExportModal from "./lib/components/ExportModal.svelte";
   import ProjectDashboard from "./lib/components/ProjectDashboard.svelte";
   import DiagnosticsPanel from "./lib/components/DiagnosticsPanel.svelte";
+  import StartupScreen from "./lib/components/StartupScreen.svelte";
+  import UserPicker from "./lib/components/UserPicker.svelte";
+  import AssignmentsDialog from "./lib/components/AssignmentsDialog.svelte";
+  import { STARTUP_TIMEOUT_MS, mergeStage } from "./lib/startup";
+  import type { EngineStartupStage, EngineStartupState } from "./lib/api/bridgeClient";
   import ProjectReportScreen from "./lib/components/ProjectReportScreen.svelte";
-  import type { AiCheckReview, AlignmentWorkStatus, BookProgressEntry, CheckJobSnapshot, ProjectReport, QaFinding, VerseDisplay, VerseHeading } from "./lib/types/finding";
+  import type { AiCheckReview, AlignmentWorkStatus, BookProgressEntry, CheckJobSnapshot, ProjectReport, QaFinding, StoredChapterFindings, UserRole, VerseDisplay, VerseHeading, WorkspaceUser } from "./lib/types/finding";
   import type {
     QaReport, ReportJobSnapshot, TriageJobSnapshot, TriageRecord,
   } from "./lib/types/report";
@@ -41,7 +52,16 @@
     checkStatusByVerse, alignmentStatusByVerse, loadedChapters, selectedVerse, selectedVerseSet, checkingProgress, approvedCount, verseNums,
     verseKey, settingsOpen, exportOpen, bookApprovedSummary, resetBookState, reviewerMode,
     aiCheckReviewsByVerse, diagnosticsOpen, engineLog, appendEngineLog, navigationStatus,
+    bookAssignments, localUserId, checkGroupsByVerse, type CheckStatus,
   } from "./lib/stores";
+  import { get } from "svelte/store";
+  import {
+    boxesRan, checkListLabel, coversSelection, editorCheckList, groupsOf, mergeFindings, selectedEditorChecks,
+  } from "./lib/checkSelection";
+  import { planChapterEntry, shouldReadStored } from "./lib/chapterEntry";
+  import { greekRoomChapterSummary, runVerseGreekRoom } from "./lib/verseChecks";
+  import { projectRoles, refreshProjectRoles } from "./lib/projectRole";
+  import CheckMenu from "./lib/components/CheckMenu.svelte";
   import { editingChapter, editingVerse, editSaving } from "./lib/verseEditor";
   import { languageQaChannel, nudgeLanguageQa, startLanguageQaInline } from "./lib/languageQaInline";
   import { toggleLanguageQaPanel } from "./lib/languageQaPanelUi";
@@ -53,6 +73,8 @@
   let activeJobId = "";
   let monitorGeneration = 0;
   let openingBook = "";
+  // #210: while a lazy sibling is prepared on the worker, which chapter it is on.
+  let openingDetail = "";
   let bookOpenError = "";
   let droppedPath = "";
   let dropSequence = 0;
@@ -107,8 +129,7 @@
   }
 
   function currentBridgeReference(): string {
-    if (!$project || !$selectedVerse) return "";
-    return `${$project.bookId.toUpperCase()} ${$currentChapter}:${$selectedVerse}`;
+    return bridgeReference($project, $currentChapter, $selectedVerse);
   }
 
   function navigationContext(): string {
@@ -128,9 +149,54 @@
     : null;
   $: placesActions = placesMenu ? buildPlacesMenu($bookmarks, $recentChapters, collectionOf($project), currentPlace) : [];
 
+  // #232: every finished responsiveness sample goes to the diagnostics log
+  // through the shell, where scripts/perf_table.py reads it; a logging
+  // failure is nobody's problem but the log's.
+  setPerfSink((sample) => { void bridge.logFrontend("info", formatPerfLine(sample)).catch(() => {}); });
+  // A side-panel toggle (#232, Tier A) is timed at the store: the rail and the
+  // toolbar both go through toggleSidePanel, whose update notifies here
+  // synchronously inside the click, and the paint after it is the response.
+  let sidePanelsSeen = false;
+  const unsubscribeSidePanels = sidePanels.subscribe(() => {
+    if (!sidePanelsSeen) { sidePanelsSeen = true; return; }
+    perfBegin("panel.toggle");
+    void perfEnd("panel.toggle");
+  });
+  onDestroy(() => { unsubscribeSidePanels(); registerPerfRunner(null); setPerfSink(null); });
+  // The in-app runner for the measurement day (#232): the actions App.svelte
+  // can drive without a mouse, each already instrumented. Registered while a
+  // book is open in the editor, cleared otherwise.
+  $: registerPerfRunner(opened && $project && !showingDashboard ? {
+    navigateVerse: async () => {
+      const verses = $chapterVerseNums[$currentChapter] ?? [];
+      if (verses.length < 2) return;
+      const index = verses.indexOf($selectedVerse ?? "");
+      selectedVerse.set(verses[(index + 1) % verses.length]);
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    },
+    openChapter: async () => {
+      const chapters = $project?.chapters ?? [];
+      if (chapters.length < 2) return;
+      const index = chapters.indexOf($currentChapter);
+      await activateChapter(chapters[(index + 1) % chapters.length]);
+    },
+    togglePanel: async () => {
+      toggleSidePanel("reference");
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    },
+    switchBook: ($project?.importedProjects?.length ?? 0) > 1 ? async () => {
+      const siblings = $project?.importedProjects ?? [];
+      const index = siblings.findIndex((book) => book.path === $project?.path);
+      await switchBook(siblings[(index + 1) % siblings.length].path);
+    } : null,
+    openReport: async () => { await loadReport(); },
+  } : null);
+
   function openPlacesMenu(event: MouseEvent): void {
+    perfBegin("menu.open", "places");
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
     placesMenu = { x: rect.left, y: rect.bottom + 4 };
+    void perfEnd("menu.open");
   }
 
   async function onPlacesAction(event: CustomEvent<{ id: string }>): Promise<void> {
@@ -333,23 +399,123 @@
     checkingProgress.update((p) => ({ ...p, running: false, label: "Collection QA finished", state: "succeeded" }));
   }
   $: if (!$project || !opened) stopCollectionQa();
+  // #279: the signed-in user's role on the open project, re-read when the
+  // project or the user changes (a role set in Settings > Users refreshes it too).
+  $: projectRoleKey = $project && opened && engineStatus === "ready" ? `${$project.path}|${$localUserId}` : "";
+  $: void refreshProjectRoles(Boolean(projectRoleKey));
+
+  // Startup (#233). The loading screen covers the window until the engine
+  // answers its first ping; its status line is the latest stage the shell
+  // reported. Listen first, then fetch the stages that accumulated before
+  // this webview existed (the sidecar usually spawns before the page loads),
+  // merged by sequence number so a stage seen both ways counts once. A
+  // failure is shown the moment a "failed" or "exited" stage arrives, or
+  // after STARTUP_TIMEOUT_MS with no answer; Retry pings again, which
+  // respawns a dead sidecar (sidecar.rs send_request).
+  let startupState: EngineStartupState | null = null;
+  let startupStages: EngineStartupStage[] = [];
+  let startupFailure = "";
+  let startupDone = false;
+  // #237: several users and none chosen yet: the picker comes before Home.
+  let needsUserChoice = false;
+  // #240: who is signed in (for "My work") and the assignments dialog.
+  let localUserRole: UserRole = "project_admin";
+  let assigningPath = "";
+  let assigningUsers: WorkspaceUser[] = [];
+  let assigningBusy = false;
+  let assigningError = "";
+  let startupTimer: ReturnType<typeof setTimeout> | undefined;
+  let startupAttempt = 0;
+  let unlistenFileDrop: (() => void) | null = null;
+  let appDisposed = false;
+
+  function noteStartupStage(stage: EngineStartupStage): void {
+    startupStages = mergeStage(startupStages, stage);
+    if (startupDone) return;
+    if (stage.stage === "spawning") startupFailure = "";
+    else if (stage.stage === "failed" || stage.stage === "exited") startupFailure = stage.label;
+  }
+
+  function armStartupTimeout(attempt: number): void {
+    if (startupTimer) clearTimeout(startupTimer);
+    startupTimer = setTimeout(() => {
+      if (attempt !== startupAttempt || startupDone || appDisposed) return;
+      startupFailure = startupFailure || `The engine did not answer within ${STARTUP_TIMEOUT_MS / 1000} seconds.`;
+    }, STARTUP_TIMEOUT_MS);
+  }
+
+  async function connectEngine(): Promise<void> {
+    const attempt = ++startupAttempt;
+    engineStatus = "checking";
+    startupFailure = "";
+    armStartupTimeout(attempt);
+    try {
+      await bridge.ping();
+      if (appDisposed || attempt !== startupAttempt) return;
+      if (startupTimer) clearTimeout(startupTimer);
+      engineStatus = "ready";
+      startupDone = true;
+      await refreshNavigationStatus();
+      try {
+        const settings = await bridge.getSettings();
+        reviewerMode.set(settings.reviewerMode);
+        needsUserChoice = Boolean(settings.needsUserChoice);
+        localUserId.set(settings.localUserId || "");
+        localUserRole = settings.localUserRole ?? "project_admin";
+        setPlaces(settings);
+        triageThreshold = settings.triageHideThreshold > 0 ? settings.triageHideThreshold : null;
+      } catch (error) {
+        console.error("Could not load reviewer mode", error);
+      }
+      if (!unlistenFileDrop) {
+        const stopListening = await bridge.onFileDrop(
+          (paths) => void handleDroppedPaths(paths),
+          (phase) => { draggingOver = phase === "over"; },
+        );
+        if (appDisposed) stopListening();
+        else unlistenFileDrop = stopListening;
+      }
+    } catch (error) {
+      if (attempt !== startupAttempt) return;
+      engineStatus = "error";
+      // A stage that already named the failure (spawn error, early exit) is
+      // the better text; the ping's own error is the fallback.
+      startupFailure = startupFailure
+        || `The engine did not answer: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
 
   onMount(() => {
-    let unlisten: (() => void) | null = null;
     let unlistenLog: (() => void) | null = null;
     let unlistenRespawn: (() => void) | null = null;
-    let disposed = false;
+    let unlistenStage: (() => void) | null = null;
     const navigationTimer = window.setInterval(() => void pollNavigation(), 800);
     void (async () => {
       try {
+        const stopStage = await bridge.onEngineStage(noteStartupStage);
+        if (appDisposed) stopStage();
+        else unlistenStage = stopStage;
+      } catch (error) {
+        console.error("Could not subscribe to engine startup stages", error);
+      }
+      try {
+        const state = await bridge.engineStartupState();
+        if (!appDisposed) {
+          startupState = state;
+          for (const stage of state.stages) noteStartupStage(stage);
+        }
+      } catch (error) {
+        console.error("Could not read engine startup state", error);
+      }
+      try {
         const initialLog = await bridge.engineLogRecent(200);
-        if (!disposed) engineLog.set(initialLog);
+        if (!appDisposed) engineLog.set(initialLog);
       } catch (error) {
         console.error("Could not load engine diagnostics", error);
       }
       try {
         const stopLog = await bridge.onEngineLog(appendEngineLog);
-        if (disposed) stopLog();
+        if (appDisposed) stopLog();
         else unlistenLog = stopLog;
       } catch (error) {
         // Diagnostics are helpful but must never prevent the engine, settings,
@@ -358,39 +524,20 @@
       }
       try {
         const stopRespawn = await bridge.onEngineRespawned(() => void handleEngineRespawn());
-        if (disposed) stopRespawn();
+        if (appDisposed) stopRespawn();
         else unlistenRespawn = stopRespawn;
       } catch (error) {
         console.error("Could not subscribe to engine restart events", error);
       }
-
-      try {
-        await bridge.ping();
-        engineStatus = "ready";
-        await refreshNavigationStatus();
-        try {
-          const settings = await bridge.getSettings();
-          reviewerMode.set(settings.reviewerMode);
-          setPlaces(settings);
-          triageThreshold = settings.triageHideThreshold > 0 ? settings.triageHideThreshold : null;
-        } catch (error) {
-          console.error("Could not load reviewer mode", error);
-        }
-        const stopListening = await bridge.onFileDrop(
-          (paths) => void handleDroppedPaths(paths),
-          (phase) => { draggingOver = phase === "over"; },
-        );
-        if (disposed) stopListening();
-        else unlisten = stopListening;
-      } catch {
-        engineStatus = "error";
-      }
+      await connectEngine();
     })();
     return () => {
-      disposed = true;
-      unlisten?.();
+      appDisposed = true;
+      unlistenFileDrop?.();
       unlistenLog?.();
       unlistenRespawn?.();
+      unlistenStage?.();
+      if (startupTimer) clearTimeout(startupTimer);
       if (engineNoticeTimer) clearTimeout(engineNoticeTimer);
       if (navigationRetryTimer) clearTimeout(navigationRetryTimer);
       window.clearInterval(navigationTimer);
@@ -425,12 +572,49 @@
     bookOpenError = "";
   }
 
+  // #240: the open book's assignments, for the chapter list's marks.
+  async function loadAssignments(): Promise<void> {
+    try {
+      bookAssignments.set((await bridge.assignmentsList()).assignments);
+    } catch {
+      bookAssignments.set([]);
+    }
+  }
+
+  async function openAssignments(path: string): Promise<void> {
+    assigningError = "";
+    if ($project && path !== $project.path && !(await switchBook(path, false))) return;
+    try {
+      assigningUsers = (await bridge.usersList()).users;
+      await loadAssignments();
+      assigningPath = path;
+    } catch (error) {
+      assigningError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  async function assign(chapter: string, userId: string): Promise<void> {
+    assigningBusy = true;
+    assigningError = "";
+    try {
+      const listed = userId ? await bridge.assignmentsSet(chapter, userId) : await bridge.assignmentsClear(chapter);
+      bookAssignments.set(listed.assignments);
+      void loadDashboard();
+    } catch (error) {
+      assigningError = error instanceof Error ? error.message : String(error);
+    } finally {
+      assigningBusy = false;
+    }
+  }
+
   async function handleOpened() {
     opened = true;
     showingDashboard = true;
     report = null;
     reportError = "";
-    void loadDashboard();
+    void loadAssignments();
+    // #232: "open a project" ends when the dashboard it lands on has painted.
+    void loadDashboard().then(() => perfEnd("project.open"));
     // The QA report is deliberately NOT built here. Measured on Genesis of a
     // real Hindi IRV import: build_book_report() takes ~130 s (project_scan
     // 78 s + exception_first_queue 44 s), and the sidecar's stdio loop is
@@ -452,14 +636,17 @@
   }
 
   async function loadReport(): Promise<void> {
+    perfBegin("book.report", $project?.bookId ?? "");
     reportLoading = true;
     reportError = "";
+    perfResponded("book.report");
     try {
       report = await bridge.projectReport();
     } catch (error) {
       reportError = error instanceof Error ? error.message : String(error);
     } finally {
       reportLoading = false;
+      void perfEnd("book.report");
     }
   }
 
@@ -710,18 +897,29 @@
     }
     const siblings = $project.importedProjects;
     const destination = siblings?.find((book) => book.path === path);
+    perfBegin("book.switch", destination?.bookId ?? "");
     openingBook = destination?.bookName ?? "book";
+    openingDetail = "";
     bookOpenError = "";
+    perfResponded("book.switch");
     try {
       await stopActiveJob();
-      const info = await bridge.openProject(path);
+      const info = await bridge.openProject(path, undefined, (snapshot) => {
+        openingDetail = snapshot.chapter && snapshot.chapterCount
+          ? `preparing chapter ${snapshot.chapter} of ${snapshot.chapterCount}`
+          : snapshot.state === "succeeded" ? "" : "preparing";
+      });
+      openingDetail = "";
       if (!info.importedProjects && siblings) info.importedProjects = siblings;
       resetBookState();
     resetReviewState();
       project.set(info);
+      void loadAssignments();
       if (enterEditor) await enterCurrentProject();
+      void perfEnd("book.switch");
       return true;
     } catch (error) {
+      perfAbort("book.switch");
       bookOpenError = error instanceof Error ? error.message : String(error);
       return false;
     } finally {
@@ -791,15 +989,30 @@
   ): void {
     chapterVerseNums.update((existing) => ({ ...existing, ...snapshot.chapterVerses }));
 
-    const findingUpdates: Record<string, QaFinding[]> = {};
-    const statusUpdates: Record<string, "succeeded" | "failed"> = {};
-    for (const [key, result] of Object.entries(snapshot.results)) {
-      findingUpdates[key] = result.findings;
-      statusUpdates[key] = result.status;
-      seen[key] = result.status;
-    }
-    if (Object.keys(findingUpdates).length > 0) {
-      findingsByVerse.update((existing) => ({ ...existing, ...findingUpdates }));
+    // #251: the job ran some checks. Each verse keeps its findings of the
+    // others, remembers what has run, and earns its ✓ only once every check
+    // in the reviewer's selection has run on it.
+    const groups = snapshot.checkGroups ?? groupsOf(snapshot.checks);
+    const selection = editorCheckList();
+    const results = Object.entries(snapshot.results);
+    for (const [key, result] of results) seen[key] = result.status;
+    if (results.length > 0) {
+      const ranByVerse = get(checkGroupsByVerse);
+      const groupUpdates: Record<string, string[]> = {};
+      const statusUpdates: Record<string, CheckStatus> = {};
+      for (const [key, result] of results) {
+        const ran = result.status === "succeeded"
+          ? [...new Set([...(ranByVerse[key] ?? []), ...groups])] : (ranByVerse[key] ?? []);
+        groupUpdates[key] = ran;
+        statusUpdates[key] = result.status === "failed" ? "failed"
+          : coversSelection(ran, selection) ? "succeeded" : "pending";
+      }
+      findingsByVerse.update((existing) => {
+        const next = { ...existing };
+        for (const [key, result] of results) next[key] = mergeFindings(existing[key], result.findings, groups);
+        return next;
+      });
+      checkGroupsByVerse.update((existing) => ({ ...existing, ...groupUpdates }));
       checkStatusByVerse.update((existing) => ({ ...existing, ...statusUpdates }));
     }
 
@@ -832,10 +1045,14 @@
     const reference = snapshot.currentChapter
       ? ` · ${snapshot.currentChapter}${snapshot.currentVerse ? `:${snapshot.currentVerse}` : ""}`
       : "";
+    // The stage names the checks running; at the end, say which ran (#251).
+    const label = snapshot.state === "succeeded"
+      ? `Checked: ${checkListLabel(snapshot.checks)}`
+      : `${snapshot.currentStage}${reference}`;
     checkingProgress.set({
       running: !terminal,
       percent: snapshot.percent,
-      label: `${snapshot.currentStage}${reference}`,
+      label,
       jobId: snapshot.jobId,
       state: snapshot.state,
       error: snapshot.error ?? "",
@@ -848,11 +1065,21 @@
     const seen: Record<string, "succeeded" | "failed"> = {};
     for (const [key, result] of Object.entries(initial.results)) seen[key] = result.status;
     let cursor = initial.resultsCursor ?? 0;
+    let busyTimeouts = 0;
     try {
       while (!["succeeded", "failed", "cancelled"].includes(snapshot.state)) {
         await new Promise((resolve) => setTimeout(resolve, 750));
         if (generation !== monitorGeneration) return;
-        snapshot = await bridge.checkStatus(snapshot.jobId, cursor);
+        try {
+          snapshot = await bridge.checkStatus(snapshot.jobId, cursor);
+        } catch (error) {
+          // A busy sidecar, not a failed check (#210): say so and poll again.
+          if (!isBusyTimeout(error) || ++busyTimeouts >= MAX_BUSY_TIMEOUTS) throw error;
+          if (generation !== monitorGeneration) return;
+          checkingProgress.update((progress) => ({ ...progress, label: BUSY_LABEL }));
+          continue;
+        }
+        busyTimeouts = 0;
         if (generation !== monitorGeneration) return;
         cursor = snapshot.resultsCursor ?? cursor;
         applyJobSnapshot(snapshot, seen);
@@ -865,7 +1092,7 @@
         label: "Checking failed",
         jobId: snapshot.jobId,
         state: "failed",
-        error: error instanceof Error ? error.message : String(error),
+        error: checkFailureMessage(error),
         scope: snapshot.scope,
       });
     } finally {
@@ -883,11 +1110,15 @@
     });
   }
 
-  async function beginChecks(scope: "chapter" | "book", chapters: string[]): Promise<void> {
-    if (activeJobId) return;
-    // Language QA is a stage of the same job (layered-rules Phase 4.1): its
-    // pass is the authoritative one and shares the live-edit path's cache.
-    const snapshot = await bridge.startChecks(scope, chapters, ["local", "greekroom", "languageQa"]);
+  /** `checks`: the reviewer's selection (#251), or ["greekroom"] for Run Greek
+   *  Room (#252). Language QA is a stage of the same job (layered-rules Phase
+   *  4.1): its pass is the authoritative one and shares the live-edit cache.
+   *  Nothing starts while Collection QA runs; the engine would refuse it. */
+  async function beginChecks(
+    scope: "chapter" | "book", chapters: string[], checks: string[] = editorCheckList(),
+  ): Promise<void> {
+    if (activeJobId || $collectionQaRunning) return;
+    const snapshot = await bridge.startChecks(scope, chapters, checks);
     activeJobId = snapshot.jobId;
     const generation = ++monitorGeneration;
     markJobPending(snapshot);
@@ -897,18 +1128,75 @@
 
   async function activateChapter(chapter: string, targetVerse?: string): Promise<void> {
     const sequence = ++chapterLoadSequence;
+    // #232 (Tier B): the chapter number is the first visible change; the
+    // chapter is open once its verses are in the stores and one is selected.
+    // A book switch owns the whole span, so its chapter open is not timed.
+    const timed = !perfInFlightBookOrProject();
+    if (timed) perfBegin("chapter.open", chapter);
     currentChapter.set(chapter);
     selectedVerseSet.set([]); // the multi-selection is chapter-scoped (#118)
+    if (timed) perfResponded("chapter.open");
     await ensureChapterData(chapter);
-    if (sequence !== chapterLoadSequence || chapter !== $currentChapter) return;
+    if (sequence !== chapterLoadSequence || chapter !== $currentChapter) {
+      if (timed) perfAbort("chapter.open");
+      return;
+    }
     const verses = $chapterVerseNums[chapter] ?? [];
     selectedVerse.set(
       targetVerse && verses.includes(targetVerse) ? targetVerse : (verses.length > 0 ? verses[0] : null),
     );
+    if (timed) void perfEnd("chapter.open");
     void hydrateChapterAIReviews(chapter, $project?.path ?? "", sequence);
     if ($project) recordRecentChapter({ collection: collectionOf($project), book: $project.bookId.toLowerCase(), chapter });
-    if (!$loadedChapters[chapter] && !activeJobId) {
-      await beginChecks("chapter", [chapter]);
+    await enterChapterChecks(chapter, sequence);
+  }
+
+  /** #272: on first entry, show the chapter's stored findings when they still
+   *  describe it, and run only the selected checks they do not cover; with
+   *  nothing current stored, run the chapter job as before (#114). */
+  async function enterChapterChecks(chapter: string, sequence: number): Promise<void> {
+    const state = () => ({
+      loaded: Boolean($loadedChapters[chapter]), jobActive: Boolean(activeJobId), collectionRunning: $collectionQaRunning,
+    });
+    if (!shouldReadStored(state())) return;
+    let stored: StoredChapterFindings | null = null;
+    try {
+      stored = await bridge.loadChapterFindings(chapter);
+    } catch (error) {
+      console.error("Stored chapter findings could not be read", error);
+    }
+    if (sequence !== chapterLoadSequence) return;
+    const selection = editorCheckList();
+    const plan = planChapterEntry(state(), stored, selection);
+    if (plan.kind === "stored" && stored) showStoredChapter(chapter, stored, selection, plan.run.length === 0);
+    if ((plan.kind === "stored" || plan.kind === "job") && plan.run.length) {
+      await beginChecks("chapter", [chapter], plan.run);
+    }
+  }
+
+  function showStoredChapter(
+    chapter: string, stored: StoredChapterFindings, selection: string[], complete: boolean,
+  ): void {
+    const verses = $chapterVerseNums[chapter] ?? [];
+    const covered = coversSelection(stored.checkGroups, selection);
+    const findings: Record<string, QaFinding[]> = {};
+    const groups: Record<string, string[]> = {};
+    const statuses: Record<string, CheckStatus> = {};
+    for (const verse of verses) {
+      const key = verseKey(chapter, verse);
+      findings[key] = stored.verses[verse] ?? [];
+      groups[key] = [...stored.checkGroups];
+      statuses[key] = covered ? "succeeded" : "pending";
+    }
+    findingsByVerse.update((existing) => ({ ...existing, ...findings }));
+    checkGroupsByVerse.update((existing) => ({ ...existing, ...groups }));
+    checkStatusByVerse.update((existing) => ({ ...existing, ...statuses }));
+    if (complete) {
+      loadedChapters.update((existing) => ({ ...existing, [chapter]: true }));
+      checkingProgress.set({
+        running: false, percent: 100, jobId: "", state: "succeeded", error: "", scope: "chapter",
+        label: `Stored results, text unchanged: ${checkListLabel(boxesRan(stored.checkGroups))}`,
+      });
     }
   }
 
@@ -970,6 +1258,20 @@
     await beginChecks("book", chapters);
   }
 
+  async function runChapterChecks() {
+    await beginChecks("chapter", [$currentChapter]);
+  }
+
+  /** Run Greek Room (#252), on demand and last: the verse in place, the
+   *  chapter or the book as a job with the usual progress and cancel. */
+  async function runGreekRoom(scope: "verse" | "chapter" | "book") {
+    if (scope === "verse") {
+      if ($selectedVerse) await runVerseGreekRoom($currentChapter, $selectedVerse);
+      return;
+    }
+    await beginChecks(scope, scope === "book" ? ($project?.chapters ?? []) : [$currentChapter], ["greekroom"]);
+  }
+
   // #118: a finding may name verses of another chapter. Switch first (the
   // page is chapter-scoped and closes itself on a chapter change), then open.
   $: if ($crossVerseRequest && opened) void resolveCrossVerseRequest($crossVerseRequest);
@@ -980,6 +1282,10 @@
     openCrossVerse(request.verses[0], request.verses);
   }
 
+  function perfInFlightBookOrProject(): boolean {
+    return perfInFlight("book.switch") || perfInFlight("project.open");
+  }
+
   function selectVerse(v: string) {
     selectedVerse.set(v);
   }
@@ -988,7 +1294,11 @@
     if (($chapterVerseNums[$currentChapter] ?? []).includes(v)) selectedVerse.set(v);
   }
 
-  $: navigationReference = currentBridgeReference();
+  // The stores are named here, not read inside a function: Svelte 4 re-runs a
+  // `$:` statement only for the names written in it, and the old
+  // `currentBridgeReference()` call never re-ran, so Bridge never published a
+  // verse change to Paratext or Logos (#110).
+  $: navigationReference = bridgeReference($project, $currentChapter, $selectedVerse);
   $: if (!navigationReference) {
     lastNavigationReference = "";
   } else if (engineStatus === "ready" && navigationReference !== lastNavigationReference) {
@@ -1049,11 +1359,39 @@
       counts[status] += 1;
       return counts;
     },
-    { complete: 0, partial: 0, untouched: 0, invalid: 0 },
+    { complete: 0, complete_cross_verse: 0, partial: 0, untouched: 0, invalid: 0 },
   );
 </script>
 
 <div class="frame print-expand">
+  {#if assigningPath && $project}
+    <AssignmentsDialog
+      bookName={$project.bookName || $project.bookId.toUpperCase()}
+      chapters={$project.chapters}
+      users={assigningUsers}
+      assignments={$bookAssignments}
+      busy={assigningBusy}
+      error={assigningError}
+      onSet={(chapter, userId) => void assign(chapter, userId)}
+      onClear={(chapter) => void assign(chapter, "")}
+      onClose={() => { assigningPath = ""; }}
+    />
+  {/if}
+  {#if startupDone && needsUserChoice}
+    <UserPicker onDone={() => { needsUserChoice = false; }} />
+  {/if}
+  {#if !startupDone}
+    <StartupScreen
+      version={startupState?.version ?? ""}
+      stages={startupStages}
+      failure={startupFailure}
+      log={$engineLog}
+      paths={startupState
+        ? { logPath: startupState.logPath, dataDir: startupState.dataDir, resourceDir: startupState.resourceDir, exePath: startupState.exePath }
+        : null}
+      onRetry={() => void connectEngine()}
+    />
+  {/if}
   <TopBar
     {screen}
     {projectName}
@@ -1073,7 +1411,7 @@
   {#if openingBook}
     <div class="progress-row checking-row">
       <div class="spin" />
-      <span class="progress-label">Opening {openingBook}…</span>
+      <span class="progress-label">Opening {openingBook}…{openingDetail ? ` ${openingDetail}` : ""}</span>
       <div class="track"><div class="fill indeterminate" /></div>
       <span />
     </div>
@@ -1126,6 +1464,9 @@
       openBookName={$project?.bookName || $project?.bookId?.toUpperCase() || ""}
       onLoadReport={loadReport}
       onNavigateToFinding={navigateToFinding}
+      myUserId={$localUserId}
+      canAssign={localUserRole === "project_admin"}
+      onAssign={(path) => void openAssignments(path)}
     />
   {:else if screen === "report"}
     <ProjectReportScreen
@@ -1160,11 +1501,24 @@
       <!-- The toolbar spans the text and the reference panel, so the two start
            at the same height under it. The review panel keeps the full height. -->
       <div class="work-col" style:--verse-scale={$textScale}>
+        {#if $projectRoles?.effectiveRole === "reporter"}
+          <!-- #279: the engine refuses every change; say so before a click finds out. -->
+          <p class="role-banner" role="status">You are a reporter on this project: you can read, report and export, and changes are refused.</p>
+        {/if}
         <div class="editor-toolbar">
           <span>Chapter {$currentChapter} of {$project?.chapters.length ?? "?"}</span>
-          <button class="whole-book-btn" on:click={runWholeBook} disabled={Boolean(activeJobId)}>
+          <button class="whole-book-btn" on:click={runWholeBook} disabled={Boolean(activeJobId)}
+            title={`Run ${checkListLabel($selectedEditorChecks)} on every chapter`}>
             {$checkingProgress.scope === "book" && $checkingProgress.running ? "Running…" : "Run whole book"}
           </button>
+          <CheckMenu
+            disabled={Boolean(activeJobId) || $checkingProgress.running}
+            verse={$selectedVerse ? `${$currentChapter}:${$selectedVerse}` : ""}
+            chapter={$currentChapter}
+            onRunChapter={runChapterChecks}
+            onRunBook={runWholeBook}
+            onRunGreekRoom={runGreekRoom}
+          />
           <button class="whole-book-btn" on:click={() => (showingAlignmentReview = true)}>
             Alignment Review
           </button>
@@ -1210,6 +1564,9 @@
             <VerseList onSelect={selectVerse} onNavigate={navigateToReportRow} />
           </div>
           {#if $project}
+            <SidePanel id="source" label="Source text">
+              {#key $project.path}<SourceTextPanel onSelectVerse={selectVerse} />{/key}
+            </SidePanel>
             <SidePanel id="reference" label="Reference">
               {#key $project.path}
                 <ReferencePanel onOpenSettings={() => openSettings("languageQa")} onSelectVerse={selectVerse} />
@@ -1235,10 +1592,13 @@
         <span>Chapter: <b>{$currentChapter}</b></span>
         <span style="color:var(--success);">✓ Approved: {$approvedCount}/{$verseNums.length}</span>
         <span title="Word-alignment status for this chapter">
-          Alignment: {alignmentChapterSummary.complete} complete · {alignmentChapterSummary.partial} partial
+          Alignment: {alignmentChapterSummary.complete} complete{#if alignmentChapterSummary.complete_cross_verse} · {alignmentChapterSummary.complete_cross_verse} via cross-verse{/if} · {alignmentChapterSummary.partial} partial
           {#if alignmentChapterSummary.invalid} · {alignmentChapterSummary.invalid} invalid{/if}
         </span>
         <span>{bookSummary.approvedChapters}/{bookSummary.totalChapters} chapters approved</span>
+        <span title="Greek Room on this chapter: open findings and verses checked">
+          Greek Room: {$greekRoomChapterSummary.checkedVerses === 0 ? "not run" : `${$greekRoomChapterSummary.openFindings} open · ${$greekRoomChapterSummary.checkedVerses}/${$greekRoomChapterSummary.totalVerses} verses`}
+        </span>
       {/if}
       <span class="grow" />
       {#if $project && opened}
@@ -1335,6 +1695,7 @@
   .whole-book-btn { font-size: var(--fs-xs); font-weight: 600; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); cursor: pointer; }
   .whole-book-btn:disabled { opacity: 0.6; cursor: not-allowed; }
   .whole-book-btn.on { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
+  .role-banner { margin: 0; padding: 6px 14px; background: var(--accent-bg); color: var(--accent); font-size: var(--fs-xs); font-weight: 600; border-bottom: 1px solid var(--border); }
   .toolbar-divider { width: 1px; height: 20px; background: var(--border-strong); }
   .grow { flex: 1; }
   .statusbar { height: 28px; background: var(--surface); border-top: 1px solid var(--border); display: flex; align-items: center; padding: 0 16px; gap: 16px; font-size: var(--fs-xs); color: var(--text-2); flex-shrink: 0; }

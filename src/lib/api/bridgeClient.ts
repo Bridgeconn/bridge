@@ -43,11 +43,15 @@ import type {
   AutoAlignWindowResult,
   AutoAlignVerdict,
   AutoAlignJobStatus,
+  AutoAlignScope,
   AutoAlignEstimate,
   CrossVerseProposalResult,
   BookProgressEntry,
   CheckJobSnapshot,
+  StoredChapterFindings,
   DesktopConnectorState,
+  ParatextConnectorStatus,
+  ImportJobSnapshot,
   ImportMetadata,
   ImportPreview,
   CheckSelectionMutation,
@@ -59,6 +63,14 @@ import type {
   NavigationSyncState,
   ProjectInfo,
   RegisteredProject,
+  Assignment,
+  AssignmentsList,
+  HubConflict,
+  HubStatus,
+  UserRole,
+  TeamRoles,
+  UsersList,
+  WorkspaceUser,
   VerseAlignment,
   VerseData,
   VerseHeading,
@@ -189,6 +201,39 @@ async function onEngineRespawned(onRespawn: () => void): Promise<() => void> {
   return listen("engine-respawned", () => onRespawn());
 }
 
+/** One startup stage as sidecar.rs records it (#233): the shell's spawn
+ * steps, the engine's own `__stage__` lines, the ready handshake, or the
+ * failure that ended startup. `seq` is the shell's running number, so a
+ * stage received both from `engineStartupState()` and as an event is the
+ * same stage. */
+export interface EngineStartupStage {
+  seq: number;
+  stage: string;
+  label: string;
+  tsMs: number;
+}
+
+/** Everything the loading screen needs in one call: the stages that already
+ * happened (the sidecar usually spawns before this webview loads, so their
+ * events went to nobody), whether the engine is up or failed, the version,
+ * and the paths "Copy diagnostics" prints. */
+export interface EngineStartupState {
+  version: string;
+  ready: boolean;
+  failed: string | null;
+  stages: EngineStartupStage[];
+  logPath: string;
+  dataDir: string;
+  resourceDir: string;
+  exePath: string;
+}
+
+/** Live startup stages after the `engineStartupState()` catch-up. */
+async function onEngineStage(onStage: (stage: EngineStartupStage) => void): Promise<() => void> {
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<EngineStartupStage>("engine-stage", (event) => onStage(event.payload));
+}
+
 interface EngineEnvelope<T> {
   id: string;
   success: boolean;
@@ -251,6 +296,16 @@ export type EngineMethod =
   | "alignment.null.set"
   | "alignment.null.clear"
   | "alignment.window.autoAlign"
+  | "assignments.clear"
+  | "hub.conflicts"
+  | "hub.join"
+  | "hub.leave"
+  | "hub.link"
+  | "hub.resolveConflict"
+  | "hub.status"
+  | "hub.syncNow"
+  | "assignments.list"
+  | "assignments.set"
   | "alignment.autoAlign.revert"
   | "alignment.autoAlign.verdict"
   | "alignment.autoAlign.start"
@@ -274,6 +329,7 @@ export type EngineMethod =
   | "chapter.verses"
   | "check.clearSelection"
   | "check.listForVerse"
+  | "check.loadChapterFindings"
   | "check.saveSelection"
   | "check.validateSelection"
   | "checks.cancel"
@@ -307,11 +363,19 @@ export type EngineMethod =
   | "navigation.poll"
   | "navigation.resolve"
   | "navigation.status"
+  | "paratext.connectorStatus"
   | "paratext.getState"
+  | "paratext.installConnector"
   | "ping"
   | "project.delete"
   | "project.forget"
   | "project.import"
+  | "project.import.cancel"
+  | "project.import.start"
+  | "project.import.status"
+  | "project.rename"
+  | "project.archive"
+  | "project.unarchive"
   | "project.inspectImport"
   | "project.list"
   | "project.listBookProgress"
@@ -333,6 +397,14 @@ export type EngineMethod =
   | "terminology.list"
   | "terminology.record"
   | "triage.cancel"
+  | "users.create"
+  | "users.deactivate"
+  | "users.list"
+  | "users.rename"
+  | "users.setCurrent"
+  | "users.setRole"
+  | "team.roles"
+  | "team.setRole"
   | "triage.override"
   | "triage.results"
   | "triage.run"
@@ -354,6 +426,29 @@ async function call<T>(method: EngineMethod, params?: Record<string, unknown>): 
   }
   return (envelope.result ?? (envelope as unknown)) as T;
 }
+
+const AUTO_ALIGN_TERMINAL = new Set<AutoAlignJobStatus["state"]>(["succeeded", "failed", "cancelled"]);
+
+/** project.open's answer for a lazy sibling being prepared on a worker (#210). */
+interface PreparingResult {
+  state: "preparing";
+  path: string;
+  jobId: string;
+  job: ImportJobSnapshot;
+}
+
+function isPreparing(value: ProjectInfo | PreparingResult): value is PreparingResult {
+  return (value as PreparingResult).state === "preparing" && typeof (value as PreparingResult).jobId === "string";
+}
+
+const IMPORT_JOB_TERMINAL = new Set<ImportJobSnapshot["state"]>(["succeeded", "failed", "cancelled"]);
+/** Preparing a book is chapters being written; a quarter second keeps the
+ *  "chapter x of y" label honest without crowding the dispatcher. */
+export const PREPARE_POLL_MS = 250;
+/** How often the window job is polled (#242): the engine's pass changes are
+ *  tens of seconds apart, so half a second keeps the label honest without
+ *  crowding the dispatcher. */
+export const AUTO_ALIGN_WINDOW_POLL_MS = 500;
 
 export const bridge = {
   /** One page of one list: every open finding, only those shown again for
@@ -551,6 +646,19 @@ export const bridge = {
     return invoke<EngineLogEntry[]>("engine_log_recent", { limit });
   },
 
+  /** One line of the frontend's own into the diagnostics log (#232): the
+   *  buffer, the `engine-log` event and engine-events.log, like a sidecar
+   *  event. Not an engine method. */
+  logFrontend(level: "info" | "warn" | "error", message: string): Promise<void> {
+    return invoke<void>("frontend_log", { level, message });
+  },
+
+  engineStartupState(): Promise<EngineStartupState> {
+    return invoke<EngineStartupState>("engine_startup_state");
+  },
+
+  onEngineStage,
+
   async pickProjectFolder(): Promise<string | null> {
     return invoke<string | null>("pick_project_folder");
   },
@@ -564,8 +672,128 @@ export const bridge = {
     return invoke<string | null>("pick_import_file");
   },
 
-  openProject(path: string, projectId?: string): Promise<ProjectInfo> {
-    return call("project.open", { path, projectId });
+  /** Open a book. A lazy sibling of a collection (never opened since the
+   *  import) is prepared first as a background job (#210): the engine answers
+   *  `{state: "preparing", jobId}` at once, this polls `project.import.status`
+   *  (the same snapshot the import banner draws, so `onProgress` can say
+   *  "chapter 12 of 150") and opens again when the job has succeeded. The
+   *  request thread stays free meanwhile, so a running check's status polls
+   *  keep answering. */
+  async openProject(
+    path: string, projectId?: string, onProgress?: (snapshot: ImportJobSnapshot) => void,
+  ): Promise<ProjectInfo> {
+    const first = await call<ProjectInfo | PreparingResult>("project.open", { path, projectId, prepareInBackground: true });
+    if (!isPreparing(first)) return first;
+    let snapshot = first.job;
+    for (;;) {
+      onProgress?.(snapshot);
+      if (IMPORT_JOB_TERMINAL.has(snapshot.state)) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, PREPARE_POLL_MS));
+      snapshot = await call<ImportJobSnapshot>("project.import.status", { jobId: first.jobId });
+    }
+    if (snapshot.state !== "succeeded") {
+      throw new Error(snapshot.state === "cancelled"
+        ? "Preparing the book was cancelled. Nothing was changed."
+        : snapshot.error || "Preparing the book failed.");
+    }
+    const opened = await call<ProjectInfo | PreparingResult>("project.open", { path, projectId, prepareInBackground: true });
+    if (isPreparing(opened)) throw new Error("The book is still being prepared.");
+    return opened;
+  },
+
+  /** #238: a display name in the registry only; the folder is untouched. An
+   *  empty name clears it. */
+  renameProject(projectId: string, name: string): Promise<{ projectId: string; displayName: string; books: number }> {
+    return call("project.rename", { projectId, name });
+  },
+
+  archiveProject(projectId: string): Promise<{ projectId: string; archived: boolean; books: number }> {
+    return call("project.archive", { projectId });
+  },
+
+  unarchiveProject(projectId: string): Promise<{ projectId: string; archived: boolean; books: number }> {
+    return call("project.unarchive", { projectId });
+  },
+
+  // -- the team hub (#80). join and link are explicit setup clicks; syncNow
+  // only wakes the engine's sync thread and never waits on the network.
+  hubStatus(): Promise<HubStatus> {
+    return call("hub.status");
+  },
+
+  hubJoin(url: string, joinCode: string, displayName: string): Promise<HubStatus> {
+    return call("hub.join", { url, joinCode, displayName });
+  },
+
+  hubLeave(): Promise<HubStatus> {
+    return call("hub.leave");
+  },
+
+  hubLink(): Promise<HubStatus & { created: boolean }> {
+    return call("hub.link");
+  },
+
+  hubSyncNow(): Promise<HubStatus> {
+    return call("hub.syncNow");
+  },
+
+  hubConflicts(): Promise<{ hubProjectId: string; conflicts: HubConflict[] }> {
+    return call("hub.conflicts");
+  },
+
+  hubResolveConflict(conflictId: number, resolution: "kept-mine" | "redecided"): Promise<{ hubProjectId: string; conflicts: HubConflict[] }> {
+    return call("hub.resolveConflict", { conflictId, resolution });
+  },
+
+  // -- assignments (#240): for the open book. set and clear are a
+  // project_admin's; "" as the chapter means the whole book.
+  assignmentsList(): Promise<AssignmentsList> {
+    return call("assignments.list");
+  },
+
+  assignmentsSet(chapter: string, userId: string): Promise<AssignmentsList> {
+    return call("assignments.set", { chapter, userId });
+  },
+
+  assignmentsClear(chapter: string): Promise<AssignmentsList> {
+    return call("assignments.clear", { chapter });
+  },
+
+  // -- users (#237). list and setCurrent are anyone's; the rest is a
+  // project_admin's, refused with "forbidden" otherwise.
+  usersList(): Promise<UsersList> {
+    return call("users.list");
+  },
+
+  usersCreate(displayName: string, role: UserRole): Promise<WorkspaceUser> {
+    return call("users.create", { displayName, role });
+  },
+
+  usersRename(userId: string, displayName: string): Promise<WorkspaceUser> {
+    return call("users.rename", { userId, displayName });
+  },
+
+  usersDeactivate(userId: string): Promise<WorkspaceUser> {
+    return call("users.deactivate", { userId });
+  },
+
+  usersSetRole(userId: string, role: UserRole): Promise<WorkspaceUser> {
+    return call("users.setRole", { userId, role });
+  },
+
+  /** #279: roles on the open project. */
+  teamRoles(): Promise<TeamRoles> {
+    return call("team.roles");
+  },
+
+  /** #279: a user's role on the open project (and its collection); null
+   *  returns them to their installation role. A project_admin's. */
+  teamSetRole(userId: string, role: UserRole | null): Promise<TeamRoles> {
+    return call("team.setRole", { userId, role });
+  },
+
+  usersSetCurrent(userId: string): Promise<{ currentUserId: string; displayName: string; role: UserRole }> {
+    return call("users.setCurrent", { userId });
   },
 
   listProjects(): Promise<{ projects: RegisteredProject[] }> {
@@ -652,6 +880,21 @@ export const bridge = {
     return call("project.import", { path, metadata, allowDuplicate });
   },
 
+  /** The same import as a background job (#231): the snapshot comes back at
+   * once, `importStatus` is polled, and the caller opens the primary book
+   * itself from the result's `primaryProjectPath`. */
+  importStart(path: string, metadata: ImportMetadata, allowDuplicate = false): Promise<ImportJobSnapshot> {
+    return call("project.import.start", { path, metadata, allowDuplicate });
+  },
+
+  importStatus(jobId: string): Promise<ImportJobSnapshot> {
+    return call("project.import.status", { jobId });
+  },
+
+  importCancel(jobId: string): Promise<ImportJobSnapshot> {
+    return call("project.import.cancel", { jobId });
+  },
+
   chapterVerses(chapter: string): Promise<{ verses: string[] }> {
     return call("chapter.verses", { chapter });
   },
@@ -725,6 +968,12 @@ export const bridge = {
     learned?: VerseEditLearned;
   }> {
     return call("verse.edit", { chapter, verse, newText });
+  },
+
+  /** #272: the chapter's stored findings, decisions applied, when they still
+   *  describe the chapter (`current`); `checkGroups` says which checks they cover. */
+  loadChapterFindings(chapter: string): Promise<StoredChapterFindings> {
+    return call("check.loadChapterFindings", { chapter });
   },
 
   listChecksForVerse(chapter: string, verse: string): Promise<NativeCheckListResponse> {
@@ -865,9 +1114,39 @@ export const bridge = {
 
   /** #219: ask the window twice and write what both passes agree on. Sends the
    *  window's words to the configured provider; returns `unavailable` without
-   *  a key. Never called on open, import or check. */
-  autoAlignWindow(chapter: string, verses: string[], apply = true): Promise<AutoAlignWindowResult> {
-    return call("alignment.window.autoAlign", { chapter, verses, apply });
+   *  a key. Never called on open, import or check.
+   *
+   *  Since #242 this is the window-scoped background job, started and polled
+   *  here, so the two provider calls run on the engine's worker and every
+   *  other request keeps answering. `onProgress` receives each snapshot;
+   *  `currentPass.number` is the pass in flight. The sync engine method
+   *  (`alignment.window.autoAlign`) still exists for scripts and tests. A
+   *  cancelled job rejects; nothing was written in that case. */
+  async autoAlignWindow(
+    chapter: string, verses: string[], apply = true,
+    onProgress?: (snapshot: AutoAlignJobStatus) => void,
+  ): Promise<AutoAlignWindowResult> {
+    const offline = (unavailable: { reason: string; message: string }): AutoAlignWindowResult =>
+      ({ chapter, verses, runId: "", calibrationVersion: "", results: [], unavailable });
+    let snapshot = await call<AutoAlignJobStatus & { unavailable?: { reason: string; message: string } | null }>(
+      "alignment.autoAlign.start", { scope: "window", chapters: [chapter], verses, apply },
+    );
+    if (!snapshot.jobId) {
+      if (snapshot.unavailable) return offline(snapshot.unavailable);
+      throw new Error(snapshot.error || "Automatic alignment did not start.");
+    }
+    for (;;) {
+      onProgress?.(snapshot);
+      if (AUTO_ALIGN_TERMINAL.has(snapshot.state)) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, AUTO_ALIGN_WINDOW_POLL_MS));
+      snapshot = await call("alignment.autoAlign.status", { jobId: snapshot.jobId });
+    }
+    if (snapshot.state === "succeeded" && snapshot.windowResult) return snapshot.windowResult;
+    if (snapshot.unavailable) return offline(snapshot.unavailable);
+    if (snapshot.state === "cancelled") {
+      throw new Error("Automatic alignment was cancelled. Nothing was written.");
+    }
+    throw new Error(snapshot.error || "Automatic alignment failed.");
   },
 
   /** Undo what the last automatic pass wrote in one verse, where it is still
@@ -884,16 +1163,16 @@ export const bridge = {
 
   /** #221: what aligning a chapter (or the book) would cost, worked out
    *  offline. Shown before the job is started. */
-  autoAlignEstimate(scope: "chapter" | "book", chapters: string[] = []): Promise<AutoAlignEstimate> {
-    return call("alignment.autoAlign.estimate", { scope, chapters });
+  autoAlignEstimate(scope: AutoAlignScope, chapters: string[] = [], verses?: string[]): Promise<AutoAlignEstimate> {
+    return call("alignment.autoAlign.estimate", { scope, chapters, verses });
   },
 
   /** Start the background job; returns its first snapshot, or `unavailable`
    *  without a key. */
-  autoAlignStart(scope: "chapter" | "book", chapters: string[] = [], apply = true): Promise<AutoAlignJobStatus & {
+  autoAlignStart(scope: AutoAlignScope, chapters: string[] = [], apply = true, verses?: string[]): Promise<AutoAlignJobStatus & {
     unavailable?: { reason: string; message: string } | null;
   }> {
-    return call("alignment.autoAlign.start", { scope, chapters, apply });
+    return call("alignment.autoAlign.start", { scope, chapters, apply, verses });
   },
 
   autoAlignStatus(jobId = ""): Promise<AutoAlignJobStatus> {
@@ -985,6 +1264,17 @@ export const bridge = {
 
   paratextGetState(): Promise<DesktopConnectorState> {
     return call("paratext.getState");
+  },
+
+  /** #282: whether Bridge's Paratext connector is installed on this PC. */
+  paratextConnectorStatus(): Promise<ParatextConnectorStatus> {
+    return call("paratext.connectorStatus");
+  },
+
+  /** #282: start installing (or updating) the connector; returns at once, and
+   *  paratextConnectorStatus().install says how it went. One Windows admin prompt. */
+  paratextInstallConnector(): Promise<Pick<ParatextConnectorStatus, "install">> {
+    return call("paratext.installConnector");
   },
 
   navigationStatus(context?: string): Promise<NavigationSyncState> {
@@ -1153,7 +1443,6 @@ export const bridge = {
     humanProposedText?: string;
     explanation?: string;
     requestSuggestion?: boolean;
-    actorId?: string;
   }): Promise<CorrectionProposal> {
     return call("correction.createProposal", options);
   },
@@ -1162,14 +1451,12 @@ export const bridge = {
     proposedText: string;
     explanation?: string;
     expectedProposalRevision: number;
-    actorId?: string;
   }): Promise<CorrectionProposal> {
     return call("correction.editProposal", { proposalId, ...options });
   },
 
   correctionRejectProposal(proposalId: string, options: {
     expectedProposalRevision: number;
-    actorId?: string;
     note?: string;
   }): Promise<CorrectionProposal> {
     return call("correction.rejectProposal", { proposalId, ...options });
@@ -1177,7 +1464,6 @@ export const bridge = {
 
   correctionRegenerateProposal(proposalId: string, options: {
     expectedProposalRevision: number;
-    actorId?: string;
   }): Promise<CorrectionProposal> {
     return call("correction.regenerateProposal", { proposalId, ...options });
   },
@@ -1194,8 +1480,9 @@ export const bridge = {
     findingId: string;
     expectedFindingRevision: number;
     applicationId: string;
-    actor: { actorType: "HUMAN"; actorId: string };
   }): Promise<CorrectionApplicationIntent> {
+    // The engine attributes the write to the signed-in user (#183); a
+    // request naming its actor is refused.
     return call("correction.applyProposal", options);
   },
 
@@ -1205,7 +1492,6 @@ export const bridge = {
 
   correctionReanalyzeAffected(options: {
     applicationId: string;
-    requestedBy: string;
     retry?: boolean;
   }): Promise<CorrectionAffectedAnalysisResult> {
     return call("correction.reanalyzeAffected", options);
@@ -1215,7 +1501,6 @@ export const bridge = {
   // verdict and evidence; it never computes one.
   correctionVerifyApplication(options: {
     applicationId: string;
-    requestedBy: string;
   }): Promise<CorrectionVerificationState> {
     return call("correction.verifyApplication", options);
   },
@@ -1229,7 +1514,6 @@ export const bridge = {
     verificationId: string;
     expectedVerificationRevision: number;
     expectedFindingRevision: number;
-    actor: { actorType: "HUMAN"; actorId: string };
     note?: string;
   }): Promise<CorrectionVerificationState> {
     return call("correction.acknowledgeCorrected", options);

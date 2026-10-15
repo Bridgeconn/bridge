@@ -222,8 +222,8 @@ describe("AlignmentQaMode analysis states", () => {
       expectedProposalRevision: 4,
       findingId: "qa-finding-0001",
       expectedFindingRevision: 2,
-      actor: { actorType: "HUMAN", actorId: "user-7f3a" },
     })));
+    expect(correctionApply.mock.calls[0][0]).not.toHaveProperty("actor");
     expect(await screen.findByText(/Fix applied. Semantic verification is pending/i)).toBeInTheDocument();
   });
 

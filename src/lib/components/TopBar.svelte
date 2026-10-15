@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { bridge, type EngineInfo } from "../api/bridgeClient";
-  import { project, currentChapter, navigationStatus } from "../stores";
+  import { project, currentChapter, navigationStatus, bookAssignments, localUserId, assignedToMe } from "../stores";
+  import { projectRoles, ROLE_NAMES } from "../projectRole";
 
   export let screen: "home" | "dashboard" | "validation" | "review" | "editor" | "report";
   export let projectName = "";
@@ -107,6 +108,11 @@
       {:else}
         <span class="crumb current">{$project?.bookName ?? ""}</span>
       {/if}
+      {#if $projectRoles?.projectRole}
+        <!-- #279: a role given on this project, which overrides the installation role here. -->
+        <span class="project-role" title="Your role on this project; it decides what you can do here">
+          {ROLE_NAMES[$projectRoles.projectRole] ?? $projectRoles.projectRole} on this project</span>
+      {/if}
     {/if}
   </nav>
 
@@ -120,9 +126,11 @@
         aria-label="Previous chapter"
         on:click={() => stepChapter(-1)}
       >‹</button>
-      <select class="select" style="width:72px;" value={$currentChapter} on:change={handleChapterSelect}>
+      <!-- Sized by its widest option, not a fixed 72px: "Ch 119 ●" was cut to
+           "Ch 11" at that width, and the in-app text size makes it wider still (#209). -->
+      <select class="select chapter-select" value={$currentChapter} on:change={handleChapterSelect}>
         {#each chapters as ch}
-          <option value={ch}>Ch {ch}</option>
+          <option value={ch}>Ch {ch}{assignedToMe($bookAssignments, ch, $localUserId) ? " ●" : ""}</option>
         {/each}
       </select>
       <button
@@ -180,6 +188,7 @@
   .crumb.current { color: var(--text); cursor: default; }
   .crumb.current:hover { background: transparent; }
   .crumb-sep { color: var(--text-3); font-size: var(--fs-sm); flex-shrink: 0; }
+  .project-role { margin-left: 6px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--text-2); font-size: var(--fs-2xs); font-weight: 650; white-space: nowrap; flex-shrink: 0; }
   .crumb-select { height: 28px; border: 1px solid transparent; border-radius: 6px; font-size: var(--fs-sm); font-weight: 600; padding: 0 4px; background: transparent; color: var(--text); max-width: 200px; }
   .crumb-select:hover { background: var(--surface-2); }
   /* Chapter stepper (issue #53): the two arrows read as one control with the
@@ -198,6 +207,7 @@
   }
   .chapter-step:disabled { opacity: .4; cursor: not-allowed; }
   .select { height: 28px; border: 1px solid var(--border); border-radius: 6px; font-size: var(--fs-sm); padding: 0 6px; background: var(--surface); color: var(--text); flex-shrink: 0; }
+  .chapter-select { min-width: 72px; width: auto; }
   .goto { display: flex; align-items: center; gap: 6px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 0 8px; height: 28px; width: 150px; flex-shrink: 0; }
   .goto input { border: none; background: transparent; font-size: var(--fs-sm); color: var(--text); outline: none; width: 100%; }
   .grow { flex: 1; }

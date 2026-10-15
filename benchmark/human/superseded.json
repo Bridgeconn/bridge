@@ -1,0 +1,19 @@
+{
+ "about": "Committed human labels whose verdict a later decision replaced. The label stays in its round, unedited; the benchmark lists it and does not score it (language_qa_benchmark.load_superseded). Add a row only with a DECISIONS.md entry naming who decided.",
+ "labels": [
+  {"round": "2026-10-13", "id": "R0267", "rule": "common/spacing.extra", "where": "MAT 16:8, verse-final space",
+   "reason": "a verse-final space is flagged with a fix that removes it; rounds 2026-09-28 and 2026-09-29 confirmed 18 of 18", "decision": "DECISIONS.md 2026-10-13, Benz"},
+  {"round": "2026-10-13", "id": "R0272", "rule": "common/spacing.extra", "where": "MAT 16:9, verse-final space",
+   "reason": "a verse-final space is flagged with a fix that removes it; rounds 2026-09-28 and 2026-09-29 confirmed 18 of 18", "decision": "DECISIONS.md 2026-10-13, Benz"},
+  {"round": "2026-10-13", "id": "R0263", "rule": "common/spacing.extra", "where": "MAT 16:17, verse-final space",
+   "reason": "a verse-final space is flagged with a fix that removes it; rounds 2026-09-28 and 2026-09-29 confirmed 18 of 18", "decision": "DECISIONS.md 2026-10-13, Benz"},
+  {"round": "2026-10-13", "id": "R0275", "rule": "common/spacing.extra", "where": "MAT 16:26, verse-final space",
+   "reason": "a verse-final space is flagged with a fix that removes it; rounds 2026-09-28 and 2026-09-29 confirmed 18 of 18", "decision": "DECISIONS.md 2026-10-13, Benz"},
+  {"round": "2026-10-13", "id": "R0273", "rule": "common/spacing.extra", "where": "PSA 68:32, verse-final space",
+   "reason": "a verse-final space is flagged with a fix that removes it; rounds 2026-09-28 and 2026-09-29 confirmed 18 of 18", "decision": "DECISIONS.md 2026-10-13, Benz"},
+  {"round": "2026-10-13", "id": "R0270", "rule": "common/spacing.extra", "where": "PSA 84:8, verse-final space",
+   "reason": "a verse-final space is flagged with a fix that removes it; rounds 2026-09-28 and 2026-09-29 confirmed 18 of 18", "decision": "DECISIONS.md 2026-10-13, Benz"},
+  {"round": "2026-10-13", "id": "R0277", "rule": "common/spacing.extra", "where": "REV 3:6, verse-final space",
+   "reason": "a verse-final space is flagged with a fix that removes it; rounds 2026-09-28 and 2026-09-29 confirmed 18 of 18", "decision": "DECISIONS.md 2026-10-13, Benz"}
+ ]
+}

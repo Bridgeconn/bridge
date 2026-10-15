@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
-  import { verseNums, verseTexts, verseDisplay, headingsByVerse, findingsByVerse, checkStatusByVerse, alignmentStatusByVerse, selectedVerse, selectedVerseSet, currentChapter, verseKey, nativeChecksByVerse, aiCheckReviewsByVerse, checkingProgress, languageQaFindingsByVerse, project, flagsByVerse, historyCountByVerse, activeLanguageQaFindingId } from "../stores";
+  import { verseNums, verseTexts, verseDisplay, headingsByVerse, findingsByVerse, checkStatusByVerse, alignmentStatusByVerse, selectedVerse, selectedVerseSet, currentChapter, verseKey, nativeChecksByVerse, aiCheckReviewsByVerse, checkingProgress, languageQaFindingsByVerse, project, flagsByVerse, historyCountByVerse, activeLanguageQaFindingId, checkGroupsByVerse, targetLang } from "../stores";
+  import { checksRunNote } from "../checkSelection";
+  import { alignmentStatusLabel, isAlignmentComplete } from "../alignmentStatus";
   import { rangeBetween } from "../crossVerseRange";
   import { unionInChapterOrder } from "../crossVerseSuggest";
   import { buildSegments } from "../utils/highlight";
@@ -25,7 +27,7 @@
   import { addProjectWords, canAddProjectWord } from "../projectWords";
   import { bridge } from "../api/bridgeClient";
   import { wordAtPoint } from "../utils/wordAt";
-  import { orderedSuggestions, suggestionTag } from "../languageQaSuggestions";
+  import { findingWhy, orderedSuggestions, suggestionTag } from "../languageQaSuggestions";
   import OccurrencesPopup from "./OccurrencesPopup.svelte";
   import type { HouseStyleScope } from "../types/houseStyle";
   import type { QaFinding } from "../types/finding";
@@ -224,6 +226,12 @@
         label: "Mark as false positive",
         disabled: busy,
         title: "This is not a problem: hide it and list it under False positives in the Language QA panel.",
+      },
+      {
+        id: "why",
+        label: "Why is this flagged?",
+        title: "What the rule found, how far reviewers have confirmed it, and why it is underlined",
+        submenu: findingWhy(finding).map((line, i) => ({ id: `why:${i}`, label: line, header: true })),
       },
       {
         id: "flag",
@@ -954,8 +962,13 @@
     const missing = [];
     if (check !== "succeeded") missing.push("not checked yet");
     if (open) missing.push(`${open} open ${open === 1 ? "finding" : "findings"}`);
-    if (alignment !== "complete") missing.push(alignment === "untouched" ? "not aligned" : `alignment ${alignment}`);
-    return missing.length ? `Not clear: ${missing.join(", ")}` : "Checked: no open findings, alignment complete";
+    if (!isAlignmentComplete(alignment)) missing.push(alignment === "untouched" ? "not aligned" : `alignment ${alignment}`);
+    if (missing.length) return `Not clear: ${missing.join(", ")}`;
+    // #228: a verse aligned through a cross-verse link earns the tick too, and
+    // the title says which kind of complete it is.
+    return alignment === "complete_cross_verse"
+      ? "Checked: no open findings, alignment complete (cross-verse)"
+      : "Checked: no open findings, alignment complete";
   }
 
   function selectFromList(verse: string): void {
@@ -1035,7 +1048,10 @@
   }
 </script>
 
-<div class="editor-scroll" bind:this={scrollContainer}>
+<!-- `lang` is the project's language (#286): index.css puts that script's face
+     first in --font-target under it, so a full stop or danda is drawn from the
+     same font as the letters beside it. -->
+<div class="editor-scroll" bind:this={scrollContainer} lang={$targetLang}>
   <div class="chapter-label">Chapter {$currentChapter}</div>
 
   {#each $verseNums as v}
@@ -1053,8 +1069,8 @@
     {@const alignmentStatus = $alignmentStatusByVerse[key] ?? "untouched"}
     {@const langFindings = $languageQaFindingsByVerse[key] ?? []}
     {@const openCount = findings.filter((f) => f.status === "open").length + langFindings.length}
-    {@const clear = checkStatus === "succeeded" && openCount === 0 && alignmentStatus === "complete"}
-    {@const clearTitle = verseClearTitle(checkStatus, openCount, alignmentStatus)}
+    {@const clear = checkStatus === "succeeded" && openCount === 0 && isAlignmentComplete(alignmentStatus)}
+    {@const clearTitle = verseClearTitle(checkStatus, openCount, alignmentStatus) + checksRunNote($checkGroupsByVerse[key])}
     {@const highlightFindings = findings.filter((f) => f.status !== "ignored" && f.status !== "accepted")}
     {@const display = shownDisplay(key, $rawView, $verseDisplay, $verseTexts)}
     {@const remapped = remapFindings(highlightFindings, display)}
@@ -1134,7 +1150,7 @@
                 data-finding-ids={piece.seg.findingIds.join(" ")}
                 title={piece.seg.title}
                 on:contextmenu={(event) => onMarkContextMenu(event, piece.seg.findingIds, findings, langFindings, v)}
-              >{piece.seg.text}</mark>{#if piece.seg.numbers.length}<sup class="finding-num">{piece.seg.numbers.join(",")}</sup>{/if}{:else}{piece.seg.text}{/if}
+              >{piece.seg.text}</mark>{#if piece.seg.numbers.length}<sup class="finding-num">{piece.seg.numbers.join(",")}</sup>{/if}{:else}{piece.seg.text}{#if piece.seg.numbers.length}<sup class="finding-num">{piece.seg.numbers.join(",")}</sup>{/if}{/if}
           {/each}
           </span>{#if $historyCountByVerse[key]}<button
               type="button"
@@ -1169,8 +1185,8 @@
             disabled={$checkingProgress.running || $editSaving || Boolean($recheckingKey)}
             title={$checkingProgress.running || $editSaving || $recheckingKey
               ? "Wait for background checking to finish before aligning"
-              : `Alignment: ${alignmentStatus} — click to open Align Words`}
-            aria-label={`Alignment ${alignmentStatus} for verse ${v}. Open Align Words.`}
+              : `Alignment: ${alignmentStatusLabel(alignmentStatus)} — click to open Align Words`}
+            aria-label={`Alignment ${alignmentStatusLabel(alignmentStatus)} for verse ${v}. Open Align Words.`}
             on:click|stopPropagation={() => openAlignmentFromList(v)}
             on:dblclick|stopPropagation
           >⇄</button>
@@ -1372,12 +1388,13 @@
   .alignment-state:disabled, .edit-pencil:disabled { opacity: .55; cursor: not-allowed; }
   .edit-pencil:hover:not(:disabled), .edit-pencil:focus-visible { color: var(--accent); }
   .alignment-state.complete { color: var(--success); background: var(--success-bg); }
+  .alignment-state.complete_cross_verse { color: var(--success); background: var(--success-bg); box-shadow: inset 0 0 0 1px var(--success); }
   .alignment-state.partial { color: var(--warning); background: var(--warning-bg, #fff4dc); }
   .alignment-state.invalid { color: var(--danger); background: var(--danger-bg); font-weight: 800; }
   .verse.multi { box-shadow: inset 3px 0 0 var(--accent); background: var(--accent-bg); }
   .empty { color: var(--text-3); font-size: var(--fs-md); }
   .context-notice {
-    position: fixed; left: 50%; bottom: 34px; z-index: 9000; transform: translateX(-50%);
+    position: fixed; left: 50%; bottom: 34px; z-index: var(--z-toast); transform: translateX(-50%);
     margin: 0; padding: 7px 11px; border-radius: 6px; background: var(--success-bg);
     color: var(--success); font-size: var(--fs-sm); box-shadow: 0 4px 14px rgba(15, 23, 42, .18);
   }

@@ -150,7 +150,6 @@ def test_installed_style_apply_persists_completed_ledger_after_disk_reopen(
         "findingId": finding["id"],
         "expectedFindingRevision": finding["revision"],
         "applicationId": "installed-style-apply-1",
-        "actor": {"actorType": "HUMAN", "actorId": "Reviewer"},
     })
     assert applied["success"] is True, applied
     assert applied["result"]["applicationState"] == "COMPLETED"
@@ -181,7 +180,8 @@ def test_installed_style_apply_persists_completed_ledger_after_disk_reopen(
     assert count == 1
     persisted_proposal = repository.correction_proposal(proposal.id)
     assert persisted_proposal["appliedTargetRevision"]
-    assert persisted_proposal["appliedBy"] == "Reviewer"
+    # #183: the engine stamps its own user id; the request may not name one.
+    assert persisted_proposal["appliedBy"] == engine.current_actor_id()
     assert persisted_proposal["appliedAt"]
     assert persisted_proposal["verificationStatus"] == "PENDING"
     persisted_finding = repository.qa_finding(finding["id"])

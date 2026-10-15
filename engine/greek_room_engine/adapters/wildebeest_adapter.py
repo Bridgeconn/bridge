@@ -21,7 +21,8 @@ import logging
 import re
 import sys
 import threading
-from collections import OrderedDict
+import unicodedata
+from collections import Counter, OrderedDict
 from typing import Any
 
 from .base import CheckAdapter
@@ -58,11 +59,147 @@ except Exception as exc:
           file=sys.stderr, flush=True)
 
 
-# Very small illustrative script-mixing check used only when the real
-# `wildebeest` package isn't installed. NOT a substitute for the real thing.
-_LATIN_RE = re.compile(r"[A-Za-z]")
-_TAMIL_RE = re.compile(r"[\u0B80-\u0BFF]")
-_DEVANAGARI_RE = re.compile(r"[\u0900-\u097F]")
+# -- Bridge's own reading of what Wildebeest tallies but does not flag ---------
+#
+# Two of the reporter's cases in #204 are real gaps in the report itself:
+# Wildebeest lists a lone `@` only under `pattern`, beside every token that
+# merely ends in a full stop, and a whole Malayalam word inside an English
+# verse only as a count under `letter-script`. The helpers below turn those
+# into findings. They are shared by the real path and the mock so the two
+# raise the same check types for the same verse.
+
+# Symbols with no place in Scripture text. Wildebeest reports every token
+# holding one of its "characters of interest" under `pattern`, but that set
+# also holds ordinary sentence punctuation (`.`, `,`, `-`, `'`, `?`), so the
+# adapter keeps the subset a reviewer should see, and scans for it itself on
+# both paths (see `_token_level_findings` for why the report is not read).
+_SUSPICIOUS_SYMBOLS = frozenset("@#$%&*+~_|\u00A6\u00A7\u20AC\u00A3\u00A5\u20AA\u00A2\u00A4\u20A8\u20B9\u00B5")
+
+# Usual script per language id (the manifest's target_language.id: an ISO 639
+# code, optionally with a region, `ta-IN`). The same table as
+# tc_ai_bridge.language_qa.LANGUAGE_SCRIPTS, copied rather than imported: this
+# package stays free of tc_ai_bridge imports (see names_adapter).
+_LANGUAGE_SCRIPTS = {
+    "ta": "TAMIL", "tam": "TAMIL", "hi": "DEVANAGARI", "hin": "DEVANAGARI",
+    "mr": "DEVANAGARI", "mar": "DEVANAGARI", "ne": "DEVANAGARI", "nep": "DEVANAGARI",
+    "sa": "DEVANAGARI", "san": "DEVANAGARI", "bn": "BENGALI", "ben": "BENGALI",
+    "as": "BENGALI", "asm": "BENGALI", "te": "TELUGU", "tel": "TELUGU",
+    "kn": "KANNADA", "kan": "KANNADA", "ml": "MALAYALAM", "mal": "MALAYALAM",
+    "gu": "GUJARATI", "guj": "GUJARATI", "pa": "GURMUKHI", "pan": "GURMUKHI",
+    "or": "ORIYA", "ori": "ORIYA", "od": "ORIYA", "ory": "ORIYA",
+    "ur": "ARABIC", "urd": "ARABIC", "ar": "ARABIC", "ara": "ARABIC",
+    "he": "HEBREW", "heb": "HEBREW", "el": "GREEK", "ell": "GREEK",
+    "ru": "CYRILLIC", "rus": "CYRILLIC", "en": "LATIN", "eng": "LATIN",
+}
+
+# A letter's script is the first word of its Unicode name ("TAMIL LETTER A",
+# "LATIN SMALL LETTER A"). A letter named otherwise ("MODIFIER LETTER ...",
+# "CJK UNIFIED ...") has no script here and never decides anything.
+_SCRIPT_NAMES = frozenset((
+    "TAMIL", "DEVANAGARI", "BENGALI", "TELUGU", "KANNADA", "MALAYALAM",
+    "GUJARATI", "GURMUKHI", "ORIYA", "SINHALA", "ARABIC", "HEBREW", "LATIN",
+    "CYRILLIC", "GREEK", "SYRIAC", "THAI", "MYANMAR", "ETHIOPIC", "ARMENIAN",
+    "GEORGIAN", "TIBETAN", "KHMER",
+))
+
+_WORD_CHUNK_RE = re.compile(r"\S+")
+# A USFM marker. Findings are offsets into the raw stored verse string, which
+# an aligned or styled import keeps verbatim (`\zaln-s |x-strong="H430"\*\w
+# ...`, `\wj ...\wj*`), so a token scan of such a verse would flag its markup
+# as Latin words and symbols. Wildebeest's own checks tokenise at punctuation
+# and are not misled; the token-level checks below run on the lifted plain
+# text the caller passes, and stand down on such a verse when it does not
+# (`_token_level_findings`). Presence only; this never parses USFM (gotcha 14).
+_USFM_MARKER_RE = re.compile(r"\\[A-Za-z]")
+
+
+def _script_of(char: str) -> str | None:
+    if not char.isalpha():
+        return None
+    first = unicodedata.name(char, "").split(" ", 1)[0]
+    return first if first in _SCRIPT_NAMES else None
+
+
+def _expected_script(lang_code: str, text: str) -> str | None:
+    """The script this verse is expected in: the language's usual script, or,
+    for a language id the table does not know, the script of a strict majority
+    of the verse's letters. None when neither decides."""
+    code = (lang_code or "").strip().lower().replace("_", "-").split("-", 1)[0]
+    known = _LANGUAGE_SCRIPTS.get(code)
+    if known:
+        return known
+    counts = Counter(script for script in map(_script_of, text) if script)
+    if not counts:
+        return None
+    (top, n), = counts.most_common(1)
+    return top if n * 2 > sum(counts.values()) else None
+
+
+def _word_span(chunk: str) -> tuple[int, int] | None:
+    """The chunk minus its leading and trailing punctuation."""
+    keep = [i for i, c in enumerate(chunk) if c.isalnum() or unicodedata.category(c).startswith("M")]
+    if not keep:
+        return None
+    return keep[0], keep[-1] + 1
+
+
+def _foreign_script_words(text: str, expected: str) -> list[tuple[str, int, int, str]]:
+    """Whole words written in one script that is not `expected`, as
+    (word, start, end, script). A token with letters from two scripts is
+    Wildebeest's mixed-script case and is left to it."""
+    out: list[tuple[str, int, int, str]] = []
+    for match in _WORD_CHUNK_RE.finditer(text):
+        chunk = match.group()
+        scripts = {script for script in map(_script_of, chunk) if script}
+        if len(scripts) != 1 or expected in scripts:
+            continue
+        span = _word_span(chunk)
+        if span is None:
+            continue
+        out.append((chunk[span[0]:span[1]], match.start() + span[0], match.start() + span[1], next(iter(scripts))))
+    return out
+
+
+def _symbol_tokens(text: str) -> list[tuple[str, int, int, str]]:
+    """Whitespace tokens holding a suspicious symbol, as (token, start, end,
+    symbol): the first such symbol in the token, one finding per token."""
+    out: list[tuple[str, int, int, str]] = []
+    for match in _WORD_CHUNK_RE.finditer(text):
+        chunk = match.group()
+        symbol = next((c for c in chunk if c in _SUSPICIOUS_SYMBOLS), None)
+        if symbol is not None:
+            out.append((chunk, match.start(), match.end(), symbol))
+    return out
+
+
+def _non_canonical_runs(text: str) -> list[tuple[str, int, int, str]]:
+    """Base-plus-combining-mark runs that are not in NFC, first occurrence of
+    each distinct run, as (run, start, end, nfc). The mock's equivalent of
+    Wildebeest's `non-canonical` report, which is also per distinct form."""
+    out: list[tuple[str, int, int, str]] = []
+    seen: set[str] = set()
+    i, n = 0, len(text)
+    while i < n:
+        j = i + 1
+        while j < n and unicodedata.combining(text[j]):
+            j += 1
+        run = text[i:j]
+        if j > i + 1 and run not in seen:
+            nfc = unicodedata.normalize("NFC", run)
+            if nfc != run:
+                seen.add(run)
+                out.append((run, i, j, nfc))
+        i = j
+    return out
+
+
+def _symbol_explanation(symbol: str) -> str:
+    name = unicodedata.name(symbol, "symbol")
+    return f"Contains {symbol} (U+{ord(symbol):04X} {name}), a symbol not expected in Scripture text."
+
+
+def _foreign_script_explanation(script: str, expected: str) -> str:
+    return f"{script.capitalize()} word in {expected.capitalize()}-script text."
 
 
 # The parts of a Wildebeest report this adapter reads, per (language, text).
@@ -130,13 +267,13 @@ class WildebeestAdapter(CheckAdapter):
     def check_verse(self, *, project_id: str, lang_code: str, ref: str,
                      text: str, params: dict[str, Any]) -> list[QaFinding]:
         if _WILDEBEEST_AVAILABLE:
-            return self._check_with_wildebeest(project_id, lang_code, ref, text)
-        return self._check_mock(project_id, lang_code, ref, text)
+            return self._check_with_wildebeest(project_id, lang_code, ref, text, params)
+        return self._check_mock(project_id, lang_code, ref, text, params)
 
     # -- real integration -------------------------------------------------
 
     def _check_with_wildebeest(self, project_id: str, lang_code: str,
-                                ref: str, text: str) -> list[QaFinding]:
+                                ref: str, text: str, params: dict[str, Any]) -> list[QaFinding]:
         """
         Adapts real Wildebeest analysis into QaFindings.
 
@@ -163,11 +300,23 @@ class WildebeestAdapter(CheckAdapter):
             (e.g. NFD-decomposed instead of NFC-composed).
           - zero-width/invisible characters, read from `block.ZERO_WIDTH`
             (bidi/formatting characters that are invisible but real).
-        Not yet wired: `char-conflict` and `pattern` — real categories in
-        the schema, but no input was found in this session that populated
-        them, so their exact shape is still unverified. Don't guess it;
-        that's exactly the mistake that made this function wrong the first
-        time. Verify against real triggering input before adding them.
+        Two more checks come from `_token_level_findings`, Bridge's own scan
+        of the verse, not from the report (#204). The report does hold the
+        raw material — a lone `@` is filed under `pattern` as "TOKENS WITH @
+        (U+0040 COMMERCIAL AT)", and a Malayalam word inside an English verse
+        is a count under `letter-script` — but `pattern` files `dark.` under
+        "TOKENS WITH . (U+002E FULL STOP)" beside it, and `letter-script`
+        says nothing per token; and the report is of the raw stored verse,
+        where every `\\wj*` would be a token with an asterisk. So the scan
+        runs on the lifted plain text when the caller supplies it (see
+        `_token_level_findings`) and only its symbol set is taken from
+        Wildebeest's: `_SUSPICIOUS_SYMBOLS` is the subset of its characters
+        of interest a reviewer should see.
+        Not yet wired: `char-conflict` and `pattern` — real categories in the
+        schema. `pattern`'s shape is now verified (above); `char-conflict`'s
+        is not: no input was found that populated it. Don't guess it; that's
+        exactly the mistake that made this function wrong the first time.
+        Verify against real triggering input before adding it (#125).
         """
         findings: list[QaFinding] = []
         book = ref.split()[0] if " " in ref else ""
@@ -218,19 +367,101 @@ class WildebeestAdapter(CheckAdapter):
                 explanation=f"Contains a zero-width/invisible character: {name}.",
             ))
 
+        findings.extend(self._token_level_findings(project_id, lang_code, book, text, params))
+        return findings
+
+    def _token_level_findings(self, project_id: str, lang_code: str, book: str, text: str,
+                              params: dict[str, Any], *, mixed_script: bool = False,
+                              extra_evidence: list[EvidenceItem] = ()) -> list[QaFinding]:
+        """Bridge's own per-token checks (#204): a token holding a suspicious
+        symbol, a whole word in a script other than the verse's, and — for the
+        mock only — a token mixing scripts, which the real engine reports
+        itself as `notable-token`.
+
+        A finding's offsets are into the raw stored verse string, which an
+        aligned or styled import keeps verbatim (`\\wj ...\\wj*`, `\\f + ...\\f*`,
+        `\\zaln-s |x-strong="H430"\\*`), and a scan of that string would flag
+        its markup as Latin words and asterisks. So the scan runs on the lifted
+        plain text when the caller hands it over as `params["lifted"]` — a
+        `tc_ai_bridge.usfm_verse.LiftedVerse`, duck-typed here: `plain` and
+        `raw_span(start, end)` are all that is used, so this package stays free
+        of tc_ai_bridge imports, the way the names check is tokenised by its
+        caller. Without it, a verse that carries any marker is left alone by
+        these checks rather than mis-scanned; one without markup is scanned
+        directly, its plain text being the raw string.
+        """
+        lifted = params.get("lifted") if isinstance(params, dict) else None
+        if lifted is not None and hasattr(lifted, "plain") and hasattr(lifted, "raw_span"):
+            plain = str(lifted.plain)
+            to_raw = lifted.raw_span
+        elif _USFM_MARKER_RE.search(text):
+            return []
+        else:
+            plain = text
+            to_raw = lambda start, end: (start, end)  # noqa: E731
+
+        def raw_offsets(start: int, end: int) -> tuple[int | None, int | None]:
+            span = to_raw(start, end)
+            return (span[0], span[1]) if span else (None, None)
+
+        findings: list[QaFinding] = []
+        extra = list(extra_evidence)
+
+        if mixed_script:
+            for match in _WORD_CHUNK_RE.finditer(plain):
+                chunk = match.group()
+                scripts = sorted({script for script in map(_script_of, chunk) if script})
+                if len(scripts) < 2:
+                    continue
+                start, end = raw_offsets(match.start(), match.end())
+                findings.append(self._make_finding(
+                    project_id=project_id, book=book, text=text, flagged=chunk, start=start, end=end,
+                    check_type="wildebeest.script.mixed",
+                    severity=Severity.HIGH, confidence=0.9,
+                    explanation=f"Token contains characters from more than one script ({', '.join(s.lower() for s in scripts)}).",
+                    evidence=list(extra),
+                ))
+
+        for token, start, end, symbol in _symbol_tokens(plain):
+            start, end = raw_offsets(start, end)
+            findings.append(self._make_finding(
+                project_id=project_id, book=book, text=text, flagged=token, start=start, end=end,
+                check_type="wildebeest.special_character",
+                severity=Severity.MEDIUM, confidence=0.8,
+                explanation=_symbol_explanation(symbol), evidence=list(extra),
+            ))
+
+        expected = _expected_script(lang_code, plain)
+        if expected is None:
+            return findings
+        code = (lang_code or "").strip().lower().replace("_", "-").split("-", 1)[0]
+        basis = f"language id {lang_code!r}" if _LANGUAGE_SCRIPTS.get(code) else "the script of most letters in the verse"
+        for word, start, end, script in _foreign_script_words(plain, expected):
+            start, end = raw_offsets(start, end)
+            findings.append(self._make_finding(
+                project_id=project_id, book=book, text=text, flagged=word, start=start, end=end,
+                check_type="wildebeest.foreign_script",
+                severity=Severity.MEDIUM, confidence=0.7,
+                explanation=_foreign_script_explanation(script, expected),
+                evidence=[EvidenceItem(label="Expected script", value=f"{expected.capitalize()}, from {basis}"), *extra],
+            ))
         return findings
 
     def _make_finding(self, *, project_id: str, book: str, text: str, flagged: str,
                        check_type: str, severity: Severity, confidence: float,
                        explanation: str, suggested_replacement: str | None = None,
-                       evidence: list[EvidenceItem] | None = None) -> QaFinding:
-        start = text.find(flagged) if flagged else -1
+                       evidence: list[EvidenceItem] | None = None,
+                       start: int | None = None, end: int | None = None) -> QaFinding:
+        if start is None:
+            found = text.find(flagged) if flagged else -1
+            start = found if found >= 0 else None
+            end = (found + len(flagged)) if found >= 0 else None
         return QaFinding(
             project_id=project_id,
             book=book,
             original_text=flagged,
-            start_offset=start if start >= 0 else None,
-            end_offset=(start + len(flagged)) if start >= 0 else None,
+            start_offset=start,
+            end_offset=end,
             engine=self.engine_name,
             check_type=check_type,
             category=FindingCategory.UNICODE,
@@ -245,30 +476,28 @@ class WildebeestAdapter(CheckAdapter):
     # -- fallback mock ------------------------------------------------------
 
     def _check_mock(self, project_id: str, lang_code: str, ref: str,
-                     text: str) -> list[QaFinding]:
+                     text: str, params: dict[str, Any]) -> list[QaFinding]:
+        """The same check types the real path raises, from the same helpers,
+        so a build on the mock (Python 3.13, a missing extra) still surfaces
+        them; the Mode evidence says which engine produced them. The mixed-
+        script check is per token here as the real engine's `notable-token`
+        is (#204): the mock used to flag the first Latin letter anywhere in a
+        verse that also had Tamil or Devanagari, so a whole English word in a
+        Tamil verse was "mixed script" and a Malayalam one was nothing."""
+        book = ref.split()[0] if " " in ref else ""
+        mode = EvidenceItem(label="Mode", value="mock adapter (wildebeest not installed)")
         findings: list[QaFinding] = []
-
-        has_latin = bool(_LATIN_RE.search(text))
-        has_tamil = bool(_TAMIL_RE.search(text))
-        has_deva = bool(_DEVANAGARI_RE.search(text))
-
-        if has_latin and (has_tamil or has_deva):
-            match = _LATIN_RE.search(text)
-            start, end = match.start(), match.end()
-            findings.append(QaFinding(
-                project_id=project_id,
-                book=ref.split()[0] if " " in ref else "",
-                original_text=text[start:end],
-                start_offset=start,
-                end_offset=end,
-                engine=self.engine_name,
-                check_type="wildebeest.script.mixed",
-                category=FindingCategory.UNICODE,
-                severity=Severity.HIGH,
-                confidence=0.9,
-                explanation="Token contains a Latin character mixed into non-Latin script text.",
-                evidence=[EvidenceItem(label="Mode", value="mock adapter (wildebeest not installed)")],
-                engine_version=self.version(),
+        # NFD is found on the raw string: markup is ASCII and has no combining
+        # marks, so the raw offsets are exact without a lift.
+        for run, start, end, nfc in _non_canonical_runs(text):
+            findings.append(self._make_finding(
+                project_id=project_id, book=book, text=text, flagged=run, start=start, end=end,
+                check_type="wildebeest.non_canonical",
+                severity=Severity.MEDIUM, confidence=0.75,
+                explanation="Not in Unicode Normalization Form C (NFD instead of NFC).",
+                suggested_replacement=nfc, evidence=[mode],
             ))
-
+        findings.extend(self._token_level_findings(
+            project_id, lang_code, book, text, params, mixed_script=True, extra_evidence=[mode],
+        ))
         return findings

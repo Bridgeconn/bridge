@@ -279,9 +279,19 @@ export function actorLabel(
   actorType: string | null | undefined, actorId: string | null | undefined,
 ): string {
   const type = String(actorType || "").trim();
-  const id = String(actorId || "").trim();
+  const id = actorDisplayId(actorId);
   if (type && id) return `${type} · ${id}`;
   return type || id || "Unknown actor";
+}
+
+/** #237: a row written before identity existed carries the literal actor id
+ *  "human". It is shown as `legacy:human` and never rewritten or reassigned:
+ *  that row genuinely has no known author (#78 settled there is no backfill). */
+export const LEGACY_HUMAN_LABEL = "legacy:human";
+
+export function actorDisplayId(actorId: string | null | undefined): string {
+  const id = String(actorId || "").trim();
+  return id === "human" ? LEGACY_HUMAN_LABEL : id;
 }
 
 /**

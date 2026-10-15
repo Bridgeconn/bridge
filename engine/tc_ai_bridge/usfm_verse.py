@@ -66,14 +66,23 @@ WHITESPACE_TOKEN_TRIM_CHARS = ' \t\r\n.,;:!?“”‘’"\'()[]{}<>—–…।�
 PAIRED_MARKERS = ('f', 'x', 'add', 'nd', 'wj', 'qt', 'k', 'bd', 'it', 'em')
 
 
-def marker_balance_issues(text: str) -> list[str]:
-    issues: list[str] = []
+def unbalanced_markers(text: str) -> list[tuple[str, int, int]]:
+    """Each paired marker whose opens and closes differ: (marker, opens, closes)."""
+    found: list[tuple[str, int, int]] = []
     for marker in PAIRED_MARKERS:
         opens = len(re.findall(rf'\\{re.escape(marker)}(?:\s|\+)', text))
         closes = len(re.findall(rf'\\{re.escape(marker)}\*', text))
         if opens != closes:
-            issues.append(f'Unbalanced \\{marker}: {opens} open, {closes} close')
-    return issues
+            found.append((marker, opens, closes))
+    return found
+
+
+def balance_message(marker: str, opens: int, closes: int) -> str:
+    return f'Unbalanced \\{marker}: {opens} open, {closes} close'
+
+
+def marker_balance_issues(text: str) -> list[str]:
+    return [balance_message(*found) for found in unbalanced_markers(text)]
 
 
 def plain_text(raw: str) -> str:

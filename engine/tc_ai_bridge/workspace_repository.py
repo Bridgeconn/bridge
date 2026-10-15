@@ -50,7 +50,7 @@ import os
 import uuid
 
 
-WORKSPACE_SCHEMA_VERSION = 2
+WORKSPACE_SCHEMA_VERSION = 5
 WORKSPACE_SCHEMA_ID = "bridge-workspace"
 
 # v1: exactly the two tables the unversioned first cut of this module created.
@@ -113,9 +113,44 @@ CREATE TABLE project_progress_cache(
 );
 """
 
+# v3 (#238): the projects list's archive flag and who opened a project last.
+# Both are lifted from `entry_json` (`archivedAt`, `lastOpenedBy`) the way
+# `last_opened_at` is, so a list can filter and sort without parsing JSON;
+# the entry stays the record. Additive: nothing is rebuilt.
+_MIGRATION_V3 = r"""
+ALTER TABLE projects ADD COLUMN archived_at TEXT;
+ALTER TABLE projects ADD COLUMN last_opened_by TEXT;
+"""
+
+# v4 (#236): the user's role. The default is project_admin because a
+# single-user installation always was one; a second user is given a role by
+# a project_admin on the Users screen (#237). Additive.
+_MIGRATION_V4 = r"""
+ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'project_admin';
+"""
+
+# v5 (#240): one cached list of assignments per book, keyed like the
+# progress cache and refreshed from the same `change_log.seq` discipline,
+# so the dashboard's "My work" reads 66 books in one query and never opens a
+# sibling's database. The workbench row is the record; this is a copy.
+_MIGRATION_V5 = r"""
+CREATE TABLE project_assignments_cache(
+    path_key TEXT PRIMARY KEY,
+    project_path TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    book_id TEXT NOT NULL,
+    assignments_json TEXT NOT NULL,
+    source_seq INTEGER NOT NULL,
+    refreshed_at TEXT NOT NULL
+);
+"""
+
 _MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, _MIGRATION_V1),
     (2, _MIGRATION_V2),
+    (3, _MIGRATION_V3),
+    (4, _MIGRATION_V4),
+    (5, _MIGRATION_V5),
 )
 
 
@@ -259,7 +294,14 @@ class WorkspaceRepository:
             conn.commit()
             return device_id
 
-    def get_or_create_local_user(self, display_name: str) -> dict[str, str]:
+    def user_display_names(self) -> dict[str, str]:
+        """user_id -> display name for every user this installation knows
+        (#238: the projects list's "last opened by")."""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT user_id, display_name FROM users").fetchall()
+        return {str(row["user_id"]): str(row["display_name"]) for row in rows}
+
+    def get_or_create_local_user(self, display_name: str, current_user_id: str = "") -> dict[str, str]:
         """Return this installation's local user, minting one on first call.
 
         The ``user_id`` is stable for the life of the workspace database and
@@ -274,11 +316,20 @@ class WorkspaceRepository:
         """
         name = str(display_name or "").strip() or "Unnamed Reviewer"
         now = self._now()
+        chosen = str(current_user_id or "").strip()
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute(
-                "SELECT user_id, display_name FROM users WHERE active=1 ORDER BY created_at LIMIT 1"
-            ).fetchone()
+            row = None
+            if chosen:
+                # #237: the user chosen at startup or on the Users screen, if
+                # still active; otherwise the oldest active row as before.
+                row = conn.execute(
+                    "SELECT user_id, display_name, role FROM users WHERE user_id=? AND active=1", (chosen,)
+                ).fetchone()
+            if row is None:
+                row = conn.execute(
+                    "SELECT user_id, display_name, role FROM users WHERE active=1 ORDER BY created_at LIMIT 1"
+                ).fetchone()
             if row is not None:
                 user_id = str(row["user_id"])
                 if str(row["display_name"]) != name:
@@ -287,15 +338,86 @@ class WorkspaceRepository:
                         (name, now, user_id),
                     )
                 conn.commit()
-                return {"userId": user_id, "displayName": name}
+                return {"userId": user_id, "displayName": name, "role": str(row["role"] or "project_admin")}
             user_id = str(uuid.uuid4())
             conn.execute(
-                "INSERT INTO users(user_id, display_name, created_at, updated_at, active) "
-                "VALUES(?,?,?,?,1)",
+                "INSERT INTO users(user_id, display_name, created_at, updated_at, active, role) "
+                "VALUES(?,?,?,?,1,'project_admin')",
                 (user_id, name, now, now),
             )
             conn.commit()
-            return {"userId": user_id, "displayName": name}
+            return {"userId": user_id, "displayName": name, "role": "project_admin"}
+
+    def list_users(self) -> list[dict[str, Any]]:
+        """Every user this installation knows, active or not, oldest first."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT user_id, display_name, role, active, created_at, updated_at FROM users ORDER BY created_at, user_id"
+            ).fetchall()
+        return [self._user_row(row) for row in rows]
+
+    def get_user(self, user_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT user_id, display_name, role, active, created_at, updated_at FROM users WHERE user_id=?",
+                (str(user_id),),
+            ).fetchone()
+        return self._user_row(row) if row is not None else None
+
+    @staticmethod
+    def _user_row(row: Any) -> dict[str, Any]:
+        return {
+            "userId": str(row["user_id"]), "displayName": str(row["display_name"]),
+            "role": str(row["role"] or "project_admin"), "active": bool(row["active"]),
+            "createdAt": str(row["created_at"]), "updatedAt": str(row["updated_at"]),
+        }
+
+    def create_user(self, display_name: str, role: str) -> dict[str, Any]:
+        name = str(display_name or "").strip()
+        if not name:
+            raise WorkspaceError("A user needs a display name.")
+        now = self._now()
+        user_id = str(uuid.uuid4())
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO users(user_id, display_name, created_at, updated_at, active, role) VALUES(?,?,?,?,1,?)",
+                (user_id, name, now, now, str(role)),
+            )
+            conn.commit()
+        return self.get_user(user_id) or {}
+
+    def rename_user(self, user_id: str, display_name: str) -> dict[str, Any]:
+        """The id never changes: every row this person wrote re-labels."""
+        name = str(display_name or "").strip()
+        if not name:
+            raise WorkspaceError("A user needs a display name.")
+        with self._connect() as conn:
+            changed = conn.execute(
+                "UPDATE users SET display_name=?, updated_at=? WHERE user_id=?", (name, self._now(), str(user_id)),
+            ).rowcount
+            conn.commit()
+        if not changed:
+            raise WorkspaceError("Unknown user.")
+        return self.get_user(user_id) or {}
+
+    def set_user_active(self, user_id: str, active: bool) -> dict[str, Any]:
+        with self._connect() as conn:
+            changed = conn.execute(
+                "UPDATE users SET active=?, updated_at=? WHERE user_id=?", (1 if active else 0, self._now(), str(user_id)),
+            ).rowcount
+            conn.commit()
+        if not changed:
+            raise WorkspaceError("Unknown user.")
+        return self.get_user(user_id) or {}
+
+    def set_user_role(self, user_id: str, role: str) -> None:
+        """#236: give a user one of the three roles. The caller has checked
+        the value against `authorization.Role`."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE users SET role=?, updated_at=? WHERE user_id=?", (str(role), self._now(), str(user_id)),
+            )
+            conn.commit()
 
     # -- per-project progress rollup cache (TEAM_ARCHITECTURE.md section 4) --
     #
@@ -390,6 +512,62 @@ class WorkspaceRepository:
                     }
         return out
 
+    # -- per-book assignments cache (#240) --------------------------------
+
+    def upsert_assignments_cache(self, project_path: str | Path, *, project_id: str, book_id: str,
+                                 assignments: list[dict[str, Any]], source_seq: int) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO project_assignments_cache(path_key, project_path, project_id, book_id, "
+                "assignments_json, source_seq, refreshed_at) VALUES(?,?,?,?,?,?,?) "
+                "ON CONFLICT(path_key) DO UPDATE SET project_path=excluded.project_path, "
+                "project_id=excluded.project_id, book_id=excluded.book_id, "
+                "assignments_json=excluded.assignments_json, source_seq=excluded.source_seq, "
+                "refreshed_at=excluded.refreshed_at",
+                (
+                    project_path_key(project_path), str(project_path), str(project_id), str(book_id),
+                    json.dumps(list(assignments), ensure_ascii=False), int(source_seq), self._now(),
+                ),
+            )
+            conn.commit()
+
+    def assignments_cache_by_keys(self, keys: list[str]) -> dict[str, dict[str, Any]]:
+        if not keys:
+            return {}
+        out: dict[str, dict[str, Any]] = {}
+        with self._connect() as conn:
+            for i in range(0, len(keys), 500):
+                chunk = keys[i:i + 500]
+                rows = conn.execute(
+                    "SELECT path_key, project_id, book_id, assignments_json, source_seq FROM project_assignments_cache "
+                    f"WHERE path_key IN ({','.join('?' * len(chunk))})", chunk,
+                ).fetchall()
+                for row in rows:
+                    try:
+                        assignments = json.loads(row["assignments_json"])
+                    except (TypeError, ValueError):
+                        assignments = []
+                    out[str(row["path_key"])] = {
+                        "projectId": str(row["project_id"]), "bookId": str(row["book_id"]),
+                        "assignments": assignments if isinstance(assignments, list) else [],
+                        "sourceSeq": int(row["source_seq"]),
+                    }
+        return out
+
+    def assignments_cache_entry(self, project_path: str | Path) -> dict[str, Any] | None:
+        return self.assignments_cache_by_keys([project_path_key(project_path)]).get(project_path_key(project_path))
+
+    def forget_assignments_cache(self, paths: list[str | Path]) -> int:
+        keys = [project_path_key(path) for path in paths]
+        if not keys:
+            return 0
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"DELETE FROM project_assignments_cache WHERE path_key IN ({','.join('?' * len(keys))})", keys,
+            )
+            conn.commit()
+            return int(cur.rowcount)
+
     def forget_progress_cache(self, paths: list[str | Path]) -> int:
         """Drop cache entries for folders that are being deleted, forgotten or
         re-imported, so a stale rollup cannot outlive the project it described."""
@@ -440,13 +618,16 @@ class WorkspaceRepository:
                     continue
                 conn.execute(
                     "INSERT INTO projects(project_id, collection_id, path, path_key, managed, missing, "
-                    "last_opened_at, position, entry_json) VALUES(?,?,?,?,?,?,?,?,?)",
+                    "last_opened_at, position, entry_json, archived_at, last_opened_by) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         str(entry.get("projectId") or ""), str(entry.get("collectionId") or "") or None,
                         str(entry.get("path") or ""), str(entry.get("pathKey") or ""),
                         1 if entry.get("managed") else 0, 1 if entry.get("missing") else 0,
                         str(entry.get("lastOpenedAt") or "") or None, position,
                         json.dumps(entry, ensure_ascii=False),
+                        str(entry.get("archivedAt") or "") or None,
+                        str(entry.get("lastOpenedBy") or "") or None,
                     ),
                 )
             conn.commit()

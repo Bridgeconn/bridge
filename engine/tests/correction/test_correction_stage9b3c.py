@@ -168,7 +168,7 @@ def test_bridge_api_owns_scope_and_rejects_frontend_manufactured_correction_scop
 
     response = engine.handle_request(EngineRequest(
         id="affected", method="correction.reanalyzeAffected",
-        params={"applicationId": application["applicationId"], "requestedBy": "Reviewer"},
+        params={"applicationId": application["applicationId"]},
     )).to_dict()
     assert response["success"] is True
     result = response["result"]

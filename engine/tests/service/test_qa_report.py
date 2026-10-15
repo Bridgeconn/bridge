@@ -96,7 +96,8 @@ def test_check_job_leaves_a_finding_snapshot_the_report_reads(fixture_project, m
         )]
 
     monkeypatch.setattr(engine, "_run_verse_checks_for_project", fake_checks)
-    started = call(engine, "checks.start", {"scope": "chapter", "chapters": ["1"], "checks": ["greekroom"]})["result"]
+    # Wildebeest alone: "greekroom" also runs the book USFM and names scans (#252).
+    started = call(engine, "checks.start", {"scope": "chapter", "chapters": ["1"], "checks": ["wildebeest"]})["result"]
     assert wait_for_job(engine, started["jobId"])["state"] == "succeeded"
 
     snapshot = engine.project.load_check_findings_snapshot("1")
@@ -174,7 +175,7 @@ def test_language_qa_rows_carry_their_rule_columns_and_follow_decisions(lqa_engi
     rows = [r for r in report["rows"] if r["category"] == CATEGORY_LANGUAGE_QA]
     [row] = [r for r in rows if r["ruleId"] == "ta-irv/sandhi.vallinam.demonstrative"]
     assert (row["languageQaCategory"], row["layer"], row["confidence"]) == ("sandhi", "pattern", "medium")
-    assert row["packVersion"] == "ta-irv@1.1.0" and row["suggestions"] == "அந்தக் காகம்"
+    assert row["packVersion"] == "ta-irv@1.3.0" and row["suggestions"] == "அந்தக் காகம்"
     assert row["issue"] == "அந்த காகம்" and row["resolution"] == "unresolved"
     book = report["books"][0]["checks"]["languageQa"]
     assert book["state"] == "partial" and book["open"] == len(rows) and book["byCategory"]["sandhi"]["open"] == 1
@@ -209,7 +210,9 @@ def test_a_high_high_language_qa_finding_blocks_the_gate_and_joins_the_exception
     assert gate["languageQaBlocking"] == 1 and gate["readyForHumanPublicationSignoff"] is False
     assert report["languageQa"]["blockingFindings"][0]["originalText"] == "தேவன்"
     [row] = [r for r in exception_first_queue(engine.project) if (r["chapter"], r["verse"]) == ("1", "1")]
-    assert row["languageQa"] == 1 and row["languageQaFindings"][0]["ruleId"].endswith("terminology.deprecated-form")
+    # the bare fixture USFM has no book header: header.missing (#253) sits at the first verse too
+    verse_rules = [f["ruleId"] for f in row["languageQaFindings"] if not f["ruleId"].startswith("common/header.")]
+    assert len(verse_rules) == 1 and verse_rules[0].endswith("terminology.deprecated-form")
 
 
 def test_many_open_medium_findings_add_an_advisory_line_that_never_blocks():

@@ -291,7 +291,6 @@
           findingId,
           findingRevision: contextCorrection.eligibility.findingRevision,
           proposal: contextCorrection.proposal,
-          actorId: contextCorrection.actorId,
         });
         closeFindingMenu();
         if (application.applicationState === "COMPLETED") {

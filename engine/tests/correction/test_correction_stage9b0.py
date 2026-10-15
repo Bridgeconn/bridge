@@ -461,7 +461,7 @@ def test_applying_a_proposal_is_not_a_corrected_finding(tmp_path: Path) -> None:
     repo.save_correction_proposal_v2(_v2_proposal())
 
     repo.record_correction_application_metadata(
-        "prop-v2", actor_type="HUMAN", applied_target_revision="rev-2", expected_revision=1)
+        "prop-v2", actor_type="HUMAN", applied_target_revision="rev-2", expected_revision=1, actor_id="Reviewer")
 
     proposal = repo.correction_proposal("prop-v2")
     finding = repo.qa_finding("qa-1")
@@ -482,7 +482,7 @@ def test_deprecated_record_correction_applied_cannot_mark_corrected(tmp_path: Pa
         "qa-1", QaDisposition.CONFIRMED_TRANSLATION_ERROR, 1, "Reviewer")
     repo.save_correction_proposal(CorrectionProposal.example("prop-v1", "qa-1"))
     repo.record_correction_applied(
-        "prop-v1", actor_type="HUMAN", applied_target_revision="rev-2", expected_revision=1)
+        "prop-v1", actor_type="HUMAN", applied_target_revision="rev-2", expected_revision=1, actor_id="Reviewer")
     assert repo.qa_finding("qa-1")["qaDisposition"] != QaDisposition.CORRECTED.value
 
 
@@ -495,7 +495,7 @@ def test_verification_passed_alone_does_not_produce_corrected(tmp_path: Path) ->
     proposal = _v2_proposal()
     repo.save_correction_proposal_v2(proposal)
     repo.record_correction_application_metadata(
-        "prop-v2", actor_type="HUMAN", applied_target_revision="rev-2", expected_revision=1)
+        "prop-v2", actor_type="HUMAN", applied_target_revision="rev-2", expected_revision=1, actor_id="Reviewer")
 
     with sqlite3.connect(tmp_path / "semantic.sqlite3") as conn:
         conn.execute(

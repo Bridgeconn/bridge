@@ -13,7 +13,8 @@
   import { graphemeDiff } from "../utils/unicodeDiff";
   import { LANGUAGE_QA_CATEGORY_LABELS, LANGUAGE_QA_CATEGORY_MARKS } from "../utils/highlight";
   import {
-    activeLanguageQaFindingId, chapterVerseNums, currentChapter, languageQaFindingsByVerse, project, selectedVerse, verseKey,
+    activeLanguageQaFindingId, chapterVerseNums, currentChapter, languageQaFindingsByVerse, project, selectedVerse, targetLang,
+    verseKey,
   } from "../stores";
   import { editingChapter } from "../verseEditor";
   import type { LanguageQaCategory, LanguageQaFinding } from "../types/languageQa";
@@ -254,6 +255,7 @@
   let infoButton: HTMLButtonElement | null = null;
   let aboutBox: HTMLDivElement | null = null;
   let headHeight = 0;
+  let tabsHeight = 0;
 
   function onWindowPointerdown(event: PointerEvent): void {
     if (!aboutOpen) return;
@@ -507,7 +509,7 @@
 <aside class="language-qa" class:docked aria-label="Language QA">
   <p class="walk-status" role="status" aria-live="polite">{walkStatus}</p>
   {#if expanded}
-    <section id="language-qa-results" aria-label="Language QA results" style:--head-h="{headHeight}px">
+    <section id="language-qa-results" aria-label="Language QA results" style:--head-h="{headHeight}px" style:--tabs-h="{tabsHeight}px">
       <!-- The header stays put while the panel scrolls: title, the (i), Pause and
            Close, then one status line and, when a pass left text out, the warning. -->
       <div class="panel-head" bind:clientHeight={headHeight}>
@@ -585,19 +587,17 @@
       {/if}
       </div>
       {#if status}
-        <div class="panel-tabs" role="tablist" aria-label="Language QA panel">
+        <div class="panel-tabs" role="tablist" aria-label="Language QA panel" bind:clientHeight={tabsHeight}>
           <button role="tab" aria-selected={panelTab === "findings"} on:click={() => showPanelTab("findings")}>Issues</button>
           <button role="tab" aria-selected={panelTab === "bookWords"} on:click={() => showPanelTab("bookWords")}>Book words</button>
           <button role="tab" aria-selected={panelTab === "flags"} on:click={() => showPanelTab("flags")}>Flags</button>
           <button role="tab" aria-selected={panelTab === "edits"} on:click={() => showPanelTab("edits")}>Edits</button>
           <button role="tab" aria-selected={panelTab === "dictionary"} on:click={() => showPanelTab("dictionary")}>Dictionary</button>
         </div>
-        <div class="panel-body">
         {#if panelTab === "findings"}
-        <!-- The filters, one labelled row each: which list, how much of the
-             book, which kinds. -->
-        <div class="filters">
-          <div class="filter-row">
+          <!-- Which list stays in reach with the header and tabs (#178); the
+               other filters scroll with the list. -->
+          <div class="filter-row list-row">
             <span class="filter-label">List</span>
             <div class="views segmented" role="tablist" aria-label="Language QA lists">
               <button role="tab" aria-selected={view === "findings"} on:click={() => showView("findings")}>Findings</button>
@@ -609,6 +609,12 @@
               </button>
             </div>
           </div>
+        {/if}
+        <div class="panel-body">
+        {#if panelTab === "findings"}
+        <!-- The filters, one labelled row each: how much of the book, which
+             kinds. -->
+        <div class="filters">
           {#if view === "recheck"}
             <p class="filter-hint">Ignored before, under an older version of the rule. Check each one again.</p>
           {:else if view === "falsePositives"}
@@ -661,8 +667,9 @@
               {#if finding.category}<span class="category">{finding.category}</span>{/if}
               {#if finding.previouslyIgnored}<span class="recheck">Re-check</span>{/if}
               {#if finding.context}<span class="where">in {finding.context}</span>{/if}
-              <p class="evidence">{finding.originalText}</p>
+              <p class="evidence" lang={$targetLang}>{finding.originalText}</p>
               {#if finding.context === "heading" && finding.contextText}<p class="muted">Heading: {finding.contextText}</p>{/if}
+              {#if finding.context === "introduction" && finding.contextText}<p class="muted">Book introduction: {finding.contextText}</p>{/if}
               <p>{finding.message}</p>
               {#if finding.reference}
                 <p class="reference"><b>{finding.reference.label} {finding.reference.ref}:</b> {finding.reference.text}</p>
@@ -708,7 +715,7 @@
                       <tr class:added={row.status === "added"}>
                         <td><input type="checkbox" aria-label={`Tick ${row.word}`} checked={ticked.has(row.word)}
                           disabled={row.status === "added"} on:change={() => toggleTick(row.word)} /></td>
-                        <td class="word">
+                        <td class="word" lang={$targetLang}>
                           <button class="link" on:click={() => onNavigate(status?.book ?? "", row.firstRef.chapter, row.firstRef.verse)}
                             title="Open its first verse">{row.word}</button>
                         </td>
@@ -748,7 +755,7 @@
                     </button>
                     <span class="category">⚑ {flag.type}</span>
                     <span class="severity">{flag.status}</span>
-                    <p class="evidence">{flag.text}</p>
+                    <p class="evidence" lang={$targetLang}>{flag.text}</p>
                     {#if flag.note}<p>{flag.note}</p>{/if}
                     {#if flag.suggested}<p>Suggested: <b>{flag.suggested}</b></p>{/if}
                     <p class="muted">{flag.reviewer} · {new Date(flag.createdAt).toLocaleDateString()}</p>
@@ -784,7 +791,7 @@
                       <span class="category">{entry.username || "unknown"}</span>
                       <span class="severity">{new Date(entry.timestamp).toLocaleTimeString()}</span>
                       {#if entry.batchId}<span class="severity">{entry.undoes ? "undo of a change set" : "change set"}</span>{/if}
-                      <p class="evidence">{#each graphemeDiff(entry.plainBefore, entry.plainAfter) as part}{#if part.kind === "removed"}<del>{part.text}</del>{:else if part.kind === "inserted"}<ins>{part.text}</ins>{:else}{part.text}{/if}{/each}</p>
+                      <p class="evidence" lang={$targetLang}>{#each graphemeDiff(entry.plainBefore, entry.plainAfter) as part}{#if part.kind === "removed"}<del>{part.text}</del>{:else if part.kind === "inserted"}<ins>{part.text}</ins>{:else}{part.text}{/if}{/each}</p>
                     </li>
                   {/each}
                 </ol>
@@ -799,7 +806,7 @@
             {:else}
               <ul class="words">
                 {#each projectWords as entry (entry.key)}
-                  <li><span class="word">{entry.word}</span> <span class="muted">{entry.scope === "word-in-project" ? "every book" : "this book"}</span>
+                  <li><span class="word" lang={$targetLang}>{entry.word}</span> <span class="muted">{entry.scope === "word-in-project" ? "every book" : "this book"}</span>
                     <button on:click={() => removeProjectWord(entry)}>Remove</button></li>
                 {/each}
               </ul>
@@ -822,8 +829,8 @@
                 <tbody>
                   {#each learned as fix (`${fix.old} → ${fix.new}`)}
                     <tr class:forgotten={!fix.enabled || fix.count <= 0}>
-                      <td class="word">{fix.old}</td>
-                      <td class="word">{fix.new}</td>
+                      <td class="word" lang={$targetLang}>{fix.old}</td>
+                      <td class="word" lang={$targetLang}>{fix.new}</td>
                       <td>{Math.max(0, fix.count)}</td>
                       <td>{(fix.books ?? []).map((b) => b.toUpperCase()).join(", ")}</td>
                       <td>{fix.lastRef}</td>
@@ -860,7 +867,8 @@
 </aside>
 
 <style>
-  .language-qa { position: fixed; bottom: 40px; right: 16px; z-index: 45; font-size: 12px; }
+  /* --z-panel (#288): a floating panel sits below every dialog. */
+  .language-qa { position: fixed; bottom: 40px; right: 16px; z-index: var(--z-panel); font-size: 12px; }
   /* Docked: the column is the box; the section fills it and scrolls. */
   .language-qa.docked { position: static; flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .language-qa.docked section { width: auto; max-height: none; flex: 1; min-height: 0; margin: 0; border: 0;
@@ -893,7 +901,9 @@
   p { margin: 8px 0; overflow-wrap: anywhere; }
   ol { padding-left: 22px; }
   li { padding: 8px 0; border-bottom: 1px solid var(--border, #ddd); }
-  .evidence { font-size: 16px; white-space: pre-wrap; }
+  /* Target text, in the target face (#286): under --font-ui a Gurmukhi line's
+     danda was drawn from Vijaya, slanted, beside letters from Nirmala UI. */
+  .evidence { font-family: var(--font-target); font-size: 16px; white-space: pre-wrap; }
   .severity, .category { margin-left: 8px; }
   .recheck { margin-left: 8px; font-weight: 600; color: var(--warning); }
   .where { margin-left: 8px; font-style: italic; }
@@ -907,6 +917,9 @@
   .panel-tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
   .filters { margin: 4px 0 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); }
   .filter-row { display: grid; grid-template-columns: 44px 1fr; align-items: center; gap: 8px; margin: 4px 0; }
+  /* The list switch, pinned under the tab bar; padded to line up with the filter box's rows. */
+  .list-row { position: sticky; top: calc(var(--head-h, 0px) + var(--tabs-h, 0px)); z-index: 2; margin: 0;
+    padding: 6px 25px; background: var(--surface); border-bottom: 1px solid var(--border); }
   .filter-label { font-size: 11px; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: .03em; }
   .filter-hint { margin: 2px 0 2px 52px; font-size: 11px; color: var(--text-3); }
   .segmented { display: inline-flex; flex-wrap: wrap; justify-self: start; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }

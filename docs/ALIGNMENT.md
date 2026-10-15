@@ -44,8 +44,13 @@ target tokens and marks the alignment invalid for review.
 
 ## Completion and status
 
-Verse status is `untouched`, `partial`, `complete`, or `invalid`. The editor and
-chapter toolbar expose these states. Completion is blocked when:
+Verse status is `untouched`, `partial`, `complete`, `complete_cross_verse` or
+`invalid`. The editor and chapter toolbar expose these states. `complete_cross_verse`
+(#228, 2026-10-12) is Bridge's own: the verse is not complete in translationCore's
+terms, but every remaining gap is closed by an active cross-verse link or a null
+decision, so the verse ✓ shows and the title says "complete (cross-verse)".
+Completion in translationCore's sense (`canComplete`, `completionState`) is
+unchanged. Completion is blocked when:
 
 - original-language tokens are absent;
 - a source or target token remains unaligned;
@@ -90,8 +95,11 @@ alignment.crossVerse.unlink              {linkId}
   `crossVerseAccountedIds`, `crossVerseRealizedIds`, counts and `fullyAccounted`,
   and its `gaps` are net of active links. `status` and `completionState` are
   unchanged and keep telling the translationCore truth: a fully-accounted verse
-  still reads `partial` or `untouched` and `pending`, and `canComplete` stays
-  false, because aligned USFM cannot express the link.
+  still reads `pending`, and `canComplete` stays false, because aligned USFM
+  cannot express the link. Since #228 the `status` field alone says
+  `complete_cross_verse` for such a verse (every remaining gap closed by a link
+  or a null decision), so the verse list can tick it; `completionState` and
+  `canComplete` still answer translationCore's question.
 - A target edit that removes a linked word marks the link `invalid` with a
   reason, inside the same journal transaction as the edit, rather than deleting
   it.

@@ -1,9 +1,15 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { iso6393 } from "iso-639-3";
   import { bridge } from "../api/bridgeClient";
+  import { perfAbort, perfBegin, perfResponded } from "../perf";
   import { project } from "../stores";
-  import type { DuplicateMatch, ImportMetadata, ImportPreview, RegisteredProject } from "../types/finding";
+  import type {
+    DuplicateMatch, ImportJobSnapshot, ImportMetadata, ImportPreview, RegisteredProject,
+  } from "../types/finding";
+
+  const IMPORT_TERMINAL = new Set<ImportJobSnapshot["state"]>(["succeeded", "failed", "cancelled"]);
+  const IMPORT_POLL_MS = 250;
 
   export let onOpened: () => void;
   export let droppedPath = "";
@@ -23,6 +29,13 @@
   // see the "slowEngineStart" escalation below), not just the registry
   // scan.
   let projectsLoading = true;
+  // The background import (#231). The screen stays usable while it runs:
+  // the banner at the top shows the phase, the book and Cancel, and when
+  // the job succeeds the primary book is opened from here.
+  let importJob: ImportJobSnapshot | null = null;
+  let importNotice = "";
+  let importGeneration = 0;
+  let importPollTimer: ReturnType<typeof setTimeout> | undefined;
   let slowEngineStart = false;
   let slowEngineStartTimer: ReturnType<typeof setTimeout> | undefined;
   let preview: ImportPreview | null = null;
@@ -35,6 +48,9 @@
   };
 
   onMount(() => { void loadProjects(); });
+  onDestroy(() => { importGeneration += 1; clearTimeout(importPollTimer); });
+
+  $: importing = importJob !== null && !IMPORT_TERMINAL.has(importJob.state);
 
   $: if (dropSequence > handledDropSequence && droppedPath) {
     handledDropSequence = dropSequence;
@@ -63,6 +79,69 @@
   $: visibleMatchedGroups = matchedGroups.slice(0, 5);
   $: hiddenMatchedGroupCount = Math.max(0, matchedGroups.length - visibleMatchedGroups.length);
   let confirmingId = "";
+  // #238: the list's management. Archived rows stay behind a filter; a
+  // rename is a display name in the registry, never the folder.
+  let showArchived = false;
+  let renamingId = "";
+  let renameDraft = "";
+  $: activeProjects = projects.filter((item) => !item.archivedAt);
+  $: archivedProjects = projects.filter((item) => Boolean(item.archivedAt));
+  $: visibleProjects = showArchived ? [...activeProjects, ...archivedProjects] : activeProjects;
+
+  function displayName(item: RegisteredProject): string {
+    return item.displayName || item.projectName || item.bookName || "Unnamed project";
+  }
+
+  function startRename(item: RegisteredProject) {
+    renamingId = item.projectId;
+    renameDraft = displayName(item);
+  }
+
+  async function commitRename(item: RegisteredProject) {
+    const name = renameDraft.trim();
+    renamingId = "";
+    if (!name || name === displayName(item)) return;
+    loading = true;
+    error = null;
+    try {
+      await bridge.renameProject(item.projectId, name);
+      await loadProjects();
+    } catch (value) {
+      error = message(value);
+    } finally {
+      loading = false;
+    }
+  }
+
+  async function setArchived(item: RegisteredProject, archived: boolean) {
+    loading = true;
+    error = null;
+    try {
+      if (archived) await bridge.archiveProject(item.projectId);
+      else await bridge.unarchiveProject(item.projectId);
+      await loadProjects();
+    } catch (value) {
+      error = message(value);
+    } finally {
+      loading = false;
+    }
+  }
+
+  function lastOpened(item: RegisteredProject): string {
+    if (!item.lastOpenedAt) return "never opened";
+    const when = new Date(item.lastOpenedAt);
+    const stamp = Number.isNaN(when.getTime()) ? item.lastOpenedAt : when.toLocaleString();
+    return item.lastOpenedByName ? `opened ${stamp} by ${item.lastOpenedByName}` : `opened ${stamp}`;
+  }
+
+  function progressLine(item: RegisteredProject): string {
+    const p = item.progress;
+    if (!p) return "no progress recorded yet";
+    const parts = [`checked ${p.checkedChapterCount}/${p.chapterCount} ch`, `reviewed ${p.reviewedVerseCount}/${p.verseCount}`];
+    if ((p.alignedKnownVerseCount ?? 0) > 0) parts.push(`aligned ${p.alignedVerseCount ?? 0}/${p.alignedKnownVerseCount}`);
+    if ((p.languageQaCheckedVerseCount ?? 0) > 0) parts.push(`LQA clean ${p.languageQaCleanVerseCount ?? 0}/${p.languageQaCheckedVerseCount}`);
+    return parts.join(" · ");
+  }
 
   function message(value: unknown): string {
     return value instanceof Error ? value.message : String(value);
@@ -107,13 +186,18 @@
   }
 
   async function openPath(path: string, projectId?: string) {
+    // #232 (Tier B): begins at the click; App.svelte ends it when the
+    // dashboard has painted. The disabled buttons are the first response.
+    perfBegin("project.open", path.split(/[\\/]/).pop() ?? "");
     loading = true;
     error = null;
+    perfResponded("project.open");
     try {
       const info = await bridge.openProject(path, projectId);
       project.set(info);
       onOpened();
     } catch (value) {
+      perfAbort("project.open");
       error = message(value);
       await loadProjects();
     } finally {
@@ -169,7 +253,7 @@
   }
 
   async function inspect(path: string) {
-    if (loading) {
+    if (loading || importing) {
       error = "Please wait for the current operation to finish, then drop the source again.";
       return;
     }
@@ -210,14 +294,75 @@
       if (previousClassification === "new" && refreshed.duplicates.classification !== "new") {
         return;
       }
-      const info = await bridge.importProject(preview.sourcePath, metadata, allowDuplicate);
-      project.set(info);
-      onOpened();
+      importNotice = "";
+      let snapshot: ImportJobSnapshot;
+      try {
+        snapshot = await bridge.importStart(preview.sourcePath, metadata, allowDuplicate);
+      } catch (value) {
+        // An import is already running (a double click): follow it instead.
+        if (!/already running/i.test(message(value))) throw value;
+        snapshot = await bridge.importStatus("");
+      }
+      importJob = snapshot;
+      void pollImport(snapshot.jobId, ++importGeneration);
     } catch (value) {
       error = message(value);
     } finally {
       loading = false;
     }
+  }
+
+  async function pollImport(jobId: string, generation: number) {
+    try {
+      while (generation === importGeneration) {
+        const snapshot = await bridge.importStatus(jobId);
+        if (generation !== importGeneration) return;
+        importJob = snapshot;
+        if (IMPORT_TERMINAL.has(snapshot.state)) {
+          if (snapshot.state === "succeeded" && snapshot.result) {
+            const primary = snapshot.result.projects[0];
+            const info = await bridge.openProject(snapshot.result.primaryProjectPath, primary?.projectId);
+            if (generation !== importGeneration) return;
+            // project.open does not echo the collection's siblings; only the
+            // import knows them, and the book switcher reads them from here.
+            info.importedProjects = snapshot.result.projects;
+            importJob = null;
+            project.set(info);
+            onOpened();
+          } else if (snapshot.state === "cancelled") {
+            importJob = null;
+            importNotice = "Import cancelled. Nothing was written.";
+          } else {
+            importJob = null;
+            error = snapshot.error || "The import failed.";
+          }
+          return;
+        }
+        await new Promise<void>((resolve) => { importPollTimer = setTimeout(resolve, IMPORT_POLL_MS); });
+      }
+    } catch (value) {
+      if (generation !== importGeneration) return;
+      importJob = null;
+      error = message(value);
+    }
+  }
+
+  async function cancelImport() {
+    if (!importJob) return;
+    try {
+      importJob = await bridge.importCancel(importJob.jobId);
+    } catch (value) {
+      error = message(value);
+    }
+  }
+
+  function importLabel(job: ImportJobSnapshot): string {
+    const lead = job.state === "cancelling" ? "Cancelling" : job.phaseLabel;
+    const book = job.totalBooks > 1 && job.currentBook
+      ? ` (book ${Math.min(job.completedBooks + 1, job.totalBooks)} of ${job.totalBooks})`
+      : "";
+    const chapter = job.chapter && job.chapterCount ? `, chapter ${job.chapter} of ${job.chapterCount}` : "";
+    return `${lead}${book}${chapter}`;
   }
 
   function reset() {
@@ -229,6 +374,17 @@
 </script>
 
 <div class="screen">
+  {#if importJob}
+    <div class="import-banner" role="status" aria-live="polite">
+      <span class="import-label" title={importJob.sourcePath}>
+        Importing: {importLabel(importJob)} — {importJob.percent}%
+      </span>
+      <div class="track"><div class="fill" style="width:{importJob.percent}%"></div></div>
+      <button class="small-button" on:click={cancelImport} disabled={importJob.state === "cancelling"}>
+        {importJob.state === "cancelling" ? "Cancelling…" : "Cancel"}
+      </button>
+    </div>
+  {/if}
   {#if preview === null}
     <div class="header">
       <div class="eyebrow">PROJECT HOME</div>
@@ -244,13 +400,27 @@
             : "Scanning for projects…"}
         </p>
       {:else if projects.length > 0}
+        {#if archivedProjects.length > 0}
+          <label class="archived-filter">
+            <input type="checkbox" bind:checked={showArchived} />
+            Show archived ({archivedProjects.length})
+          </label>
+        {/if}
         <section class="projects" aria-label="Known projects">
-          {#each projects as item}
-            <article class:missing={item.missing} class="project-row">
+          {#each visibleProjects as item (item.projectId)}
+            <article class:missing={item.missing} class:archived={Boolean(item.archivedAt)} class="project-row">
               <div class="book-badge">{item.bookId?.toUpperCase() || "?"}</div>
               <div class="project-copy">
-                <strong>{item.projectName || item.bookName || "Unnamed project"}</strong>
+                {#if renamingId === item.projectId}
+                  <input class="rename-input" aria-label="Project name" bind:value={renameDraft}
+                    on:keydown={(event) => { if (event.key === "Enter") void commitRename(item); if (event.key === "Escape") renamingId = ""; }}
+                    on:blur={() => void commitRename(item)} />
+                {:else}
+                  <strong>{displayName(item)}{item.archivedAt ? " (archived)" : ""}</strong>
+                {/if}
                 <span>{item.collectionId ? `${item.bookCount ?? 1}-book collection` : item.bookName}{item.bibleName ? ` · ${item.bibleName}` : ""}{item.targetLanguage ? ` · ${item.targetLanguage}` : ""}</span>
+                <span class="progress-line">{progressLine(item)}</span>
+                <small>{lastOpened(item)}</small>
                 <small title={item.path}>{item.missing ? "Project folder is missing" : item.path}</small>
               </div>
               {#if item.missing}
@@ -262,6 +432,12 @@
                 <button class="small-button" on:click={() => (confirmingId = "")} disabled={loading}>Cancel</button>
               {:else}
                 <button class="small-button primary" on:click={() => openPath(item.path, item.projectId)} disabled={loading}>Open</button>
+                <button class="small-button" on:click={() => startRename(item)} disabled={loading}>Rename</button>
+                {#if item.archivedAt}
+                  <button class="small-button" on:click={() => setArchived(item, false)} disabled={loading}>Unarchive</button>
+                {:else}
+                  <button class="small-button" on:click={() => setArchived(item, true)} disabled={loading}>Archive</button>
+                {/if}
                 {#if item.managed}
                   <button class="small-button danger" on:click={() => (confirmingId = item.projectId)} disabled={loading}>Delete</button>
                 {/if}
@@ -288,6 +464,7 @@
 
       <button class="link-button" on:click={openExisting} disabled={loading}>Open an existing Bridge/translationCore project without copying it</button>
       {#if loading}<p class="working">Reading, validating, or opening the selected project…</p>{/if}
+      {#if importNotice}<p class="working">{importNotice}</p>{/if}
       {#if error}<p class="error">{error}</p>{/if}
     </div>
   {:else}
@@ -372,18 +549,19 @@
           <label><span>Bible / translation name</span><input bind:value={metadata.bibleName} placeholder="e.g. Unlocked Literal Text" /></label>
 
           {#if exactMatch}
-            <button class="import-button" on:click={() => openPath(exactMatch.path, exactMatch.projectId)} disabled={loading}>Open existing project</button>
-            <button class="separate-button" on:click={() => runImport(true)} disabled={loading || !canImport}>Import as a separate copy</button>
+            <button class="import-button" on:click={() => openPath(exactMatch.path, exactMatch.projectId)} disabled={loading || importing}>Open existing project</button>
+            <button class="separate-button" on:click={() => runImport(true)} disabled={loading || importing || !canImport}>Import as a separate copy</button>
           {:else}
-            <button class="import-button" on:click={() => runImport(false)} disabled={loading || !canImport}>
-              {loading ? `Importing ${preview.books.length === 1 ? "book" : `${preview.books.length} books`}…` : preview.duplicates.classification === "new" ? `Import ${preview.books.length === 1 ? "book" : `${preview.books.length} books`}` : "Continue with separate import"}
+            <button class="import-button" on:click={() => runImport(false)} disabled={loading || importing || !canImport}>
+              {importing ? `Importing ${preview.books.length === 1 ? "book" : `${preview.books.length} books`}…` : preview.duplicates.classification === "new" ? `Import ${preview.books.length === 1 ? "book" : `${preview.books.length} books`}` : "Continue with separate import"}
             </button>
           {/if}
           {#if !canImport}<p class="required">Select a language and complete both project names.</p>{/if}
         </section>
       </div>
 
-      {#if loading}<p class="working">Importing…</p>{/if}
+      {#if loading}<p class="working">Checking the source…</p>{/if}
+      {#if importNotice}<p class="working">{importNotice}</p>{/if}
       {#if error}<p class="error">{error}</p>{/if}
     </div>
   {/if}
@@ -391,6 +569,10 @@
 
 <style>
   .screen { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--surface); }
+  .import-banner { flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 10px 40px; border-bottom: 1px solid var(--border); background: var(--surface-2, var(--surface)); max-width: 900px; width: 100%; margin: 0 auto; box-sizing: border-box; }
+  .import-label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-sm); color: var(--text); }
+  .import-banner .track { flex: 1 1 120px; height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+  .import-banner .fill { height: 100%; background: var(--accent); transition: width .2s linear; }
   .header { flex-shrink: 0; padding: 28px 40px 18px; border-bottom: 1px solid var(--border); }
   .list-area { flex: 1; overflow: auto; padding: 20px 40px; }
   .footer { flex-shrink: 0; padding: 16px 40px 24px; border-top: 1px solid var(--border); background: var(--surface); }
@@ -407,6 +589,10 @@
   .project-copy { display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 2px; }
   .project-copy strong { font-size: var(--fs-sm); color: var(--text); }
   .project-copy span, .project-copy small { color: var(--text-2); font-size: var(--fs-2xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .archived-filter { display: flex; align-items: center; gap: 6px; font-size: var(--fs-2xs); color: var(--text-2); margin: 0 0 8px; }
+  .project-row.archived { opacity: .7; }
+  .progress-line { font-size: var(--fs-2xs); color: var(--text-2); }
+  .rename-input { font: inherit; font-weight: 700; padding: 2px 6px; border: 1px solid var(--accent); border-radius: 4px; background: var(--surface); color: var(--text); width: 100%; box-sizing: border-box; }
   .small-button { border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); color: var(--text); padding: 6px 10px; cursor: pointer; font-size: var(--fs-2xs); }
   .small-button.primary { border-color: var(--accent); color: var(--accent); }
   .small-button.danger { color: var(--danger); }
@@ -446,7 +632,7 @@
   input[readonly] { background: var(--surface-2); color: var(--text-2); }
   .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .language-field { position: relative; }
-  .language-menu { position: absolute; z-index: 5; left: 0; right: 0; top: 40px; max-height: 215px; overflow: auto; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); box-shadow: 0 10px 25px rgba(25, 35, 55, .16); }
+  .language-menu { position: absolute; z-index: var(--z-dropdown); left: 0; right: 0; top: 40px; max-height: 215px; overflow: auto; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); box-shadow: 0 10px 25px rgba(25, 35, 55, .16); }
   .language-menu button { width: 100%; display: flex; justify-content: space-between; align-items: center; border: 0; border-bottom: 1px solid var(--border); background: var(--surface); color: var(--text); padding: 8px 10px; cursor: pointer; font-size: var(--fs-xs); text-align: left; }
   .language-menu button:hover { background: var(--accent-bg); }
   .language-menu code { color: var(--text-2); font-size: var(--fs-2xs); }

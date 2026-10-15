@@ -403,6 +403,9 @@ that Bridge already checks; applying a fix to a heading; turning
 `indicqa.lex.unknown` on without counts; changing ta-irv's version for the layer.
 **Revisit when:** reviewer labels exist for an `indicqa.*` rule (inline gate), or
 a heading writer exists.
+**Superseded in part (2026-10-12):** the version line. ta-irv is 1.2.0, and the
+layer is one of the changes it records; see "Every ta-irv change ships as a new
+pack version with a changelog" below.
 
 ## 2026-10-07 — indic-qa findings are drawn in the text by default, behind the reviewer's own threshold
 **Decision:** Every enabled indic-qa rule (pa/ml/hi/or packs and ta-irv's
@@ -796,3 +799,376 @@ boundary of the offline engine (2026-09-24, LQA-3).
 **Revisit when:** a reviewer or consultant reads a clean Language QA result as
 a review of grammar, meaning or the source; then bring a one-line boundary
 back into view (the alternative offered on 2026-10-08).
+
+## 2026-10-12 — Full user management and the team hub are v1 scope; the dashboard is a browser app, not a web workbench
+**Decision:** Full user management (October requirement 4: a display-name picker at
+startup, the stable user id on every human write, three roles behind one `authorize()`,
+a Users screen, `legacy:human` rendering) is v1 scope: #45, built as #236, #237 and
+#240 under milestone 1. The team hub and the browser dashboard it serves (requirement
+6) are v1 scope: #46, built as #227 (the architecture review first, the step the SRS
+§14 requires for `FUTURE-002`/`FUTURE-003`), then #79, #80, #81. That is the
+maintainer's decision to add a server, the first bullet of CLAUDE.md's stop-and-ask
+list, taken for the hub only. Requirement 7 is Option A only: the browser surface is
+the dashboard inside the hub (progress, assignments, reports, users) at its own URL in
+Chrome and Edge; there is no full Bridge workbench in the browser.
+**Because:** Benz's email of 2026-10-12, answering the 2026-10-09 requirements list
+("Requirements Final", items 4, 6 and 7). Teams are the product's users; #78 already
+stamps a stable user id on every write, so a picker and roles attribute new rows
+correctly without touching old ones; and the hub is the sync-based collaboration the
+2026-09-11 offline decision allows. Option B was estimated and declined: it moves the
+engine's process boundary and the local project files into a server and gives up the
+offline desktop.
+**Rules out:** a full web workbench (Option B); any network dependency on a translator's
+desktop path other than hub sync, which never blocks (2026-09-11 stands); skipping a
+later stop-and-ask on the strength of this one — an account, a login or a hosted
+service beyond the hub is still a fresh question. #97 stays closed; its scope is #237.
+**Revisit when:** not planned. The hub's shape (join codes, push/pull, conflicts) is
+#227's to review before #79.
+**Supersedes:** 2026-09-16, "One local user per installation until after v1; the hub
+after v1".
+
+## 2026-10-12 — Language QA accuracy: the 0.90 human-precision gate is the standard; recall is the abstain-class proxy
+**Decision:** Requirement 3's 70% inline-precision target is dropped. The existing gate
+(2026-09-28: at least 0.90 human-labelled precision on at least 20 labelled findings) is
+the standard for every inline rule. Recall is not measured directly: the measure is the
+still-missed rate per abstain class in `docs/LANGUAGE_QA_BENCHMARK.md` (items the
+reviewer said were missed that the pack still does not flag, over that class's reviewed
+abstains). Proposed per-class target, awaiting Benz's reply: at most 10%, on at least
+20 reviewed abstains per class. Labels arrive as JSONL in the existing verdict format
+(`benchmark/human/<date>/human_labels.jsonl`), 50 or more per rule; the word list as a
+CSV with the columns of `lexicon_curated.csv`. First batch 2026-10-13.
+**Because:** Benz's email of 2026-10-12. A 70% gate would draw inline the rules the
+2026-09-28 review showed reviewers stop trusting; and the harness requirement 3 named
+measures precision against human labels, with recall only as a proxy, because the
+labels sample the abstains and not the text.
+**Rules out:** a second, lower inline threshold; quoting the proxy as recall (the
+benchmark doc says it is not); editing or regenerating committed labels.
+**Revisit when:** a labelled sample of the text itself exists, which would make real
+recall measurable.
+
+## 2026-10-12 — "Scalable" source text means the in-app text-size control; Windows scaling must only not break layout
+**Decision:** Requirement 8's scaling acceptance is read against `editorPrefs.textScale`,
+the in-app text-size control: Hebrew and Greek must render correctly, right-to-left
+where the script is, at every step of that control. Windows 125% and 150% display
+scaling must only not break the layout.
+**Because:** Benz's email of 2026-10-12, clarifying "100/125/150% scaling" in item 8's
+acceptance. The control exists; #67 needed a definition of "scales" it can be tested
+against.
+**Rules out:** a separate font-size setting for the source column; treating a
+Windows-scaling rendering glitch as a #67 blocker.
+**Revisit when:** a reviewer works at a Windows scale where the source column is
+unreadable.
+
+## 2026-10-12 — Translator feedback covers the automatic alignment path; a cross-verse-aligned verse must be able to show complete
+**Decision:** Requirement 9's "verify, not build" covers the two-pass automatic alignment
+(#219) as well as cross-verse links (#146): the verification on the installed 0.14.0
+build (#241) exercises both and its gap list reports on both. The verse ✓ dead end — a
+verse aligned only through a cross-verse link can never show complete, because the ✓
+requires complete tC same-verse alignment (894b4a8) — is not accepted. It gets a
+"complete via cross-verse" state (#228), which does not block the interim release.
+**Because:** Benz's email of 2026-10-12. The translator's feedback will come from
+using the whole alignment surface, and a tick that cannot be earned on a verse the
+tool itself linked contradicts what the link means.
+**Rules out:** closing #241 on cross-verse links alone; keeping the ✓ rule as it is.
+**Revisit when:** not planned.
+
+## 2026-10-12 — The engine stamps its own actor id; a request never names its actor (#183)
+**Decision:** Every write is attributed to the identity the engine itself holds for the
+caller — today `current_actor_id()`, the one local user; under the hub (#79, #80), the
+user bound to the device token the request arrived with. The wire fields that let a
+client name an actor — `actorId` on `correction.createProposal`, `editProposal`,
+`rejectProposal` and `regenerateProposal`; the `actor` object on `applyProposal` and
+`acknowledgeCorrected`; `requestedBy` on `reanalyzeAffected` and `verifyApplication`
+(`bridge_service.py:7049-7111`) — leave the contract. A request that carries one is
+refused with a clear error, not silently re-attributed: a stale client fails loudly and
+a forged one writes nothing. The service-layer `actor_id` parameters stay; they and
+`settings.reviewer_name` are the test injection points, so no test needs the wire field.
+The removal lands with #236, the first code that depends on it, with a test that a
+request asserting another actor is refused and nothing is written.
+**Because:** Benz left it to us (2026-10-12). `authorize()` (#236) checks the role of the
+caller the engine knows; if the body could still name someone else, it would authorize
+one person and the append-only ledger (`change_log` triggers, proposal history
+snapshots) would record another, permanently. The alternative — keep the field and let
+`authorize()` verify the claim — is a second identity path to keep consistent with the
+first, for no gain: the desktop already sends `localUserId`, the same id the engine
+stamps, so dropping the field changes no row today; and the service layer already
+refuses a non-HUMAN wire actor (`correction_application.py:59`,
+`correction_verification.py:987`), so the `actor` object could only ever carry what the
+engine would build itself. The issue's "26 tests use the wire field" overstated the cost:
+seven calls do (`test_correction_stage9b1.py` ×3, `_stage9b3b.py`, `_stage9b4.py` ×2,
+`_stage9b3c.py`); the rest assert on returned history or call the services directly.
+**Rules out:** any wire field, on any method, that names the acting user; a client-side
+`"human"` fallback (`correctionApplication.ts:70`); a hub endpoint that trusts a body
+field for identity. The engine's own AI and migration actors (`ActorType.AI`,
+`MIGRATION`) are unaffected: they are stamped by engine paths, never by a request.
+**Revisit when:** a legitimate delegated write appears — one person recording a decision
+on another's behalf. That would be an explicit `onBehalfOf` field with its own audit
+column and its own `authorize()` action, not a return of `actorId`.
+
+## 2026-10-12 — Repositories reuse one SQLite connection per thread, `synchronous NORMAL` under WAL (#113)
+**Decision:** `FoundationRepository` (the semantic database) and `WorkbenchRepository`
+share one connection discipline (`tc_ai_bridge/sqlite_pool.py`): one connection per
+thread per file, opened on first use and reused; the dispatcher releases its thread's
+connections after every request, a finished job thread's are closed on the next
+acquire, and a project lets go of its files when it is replaced, deleted or restored.
+The pragmas are `foreign_keys ON`, `busy_timeout 5000`, `journal_mode WAL`,
+`synchronous NORMAL`. A block that ends without committing still discards its work.
+The test suite's `synchronous OFF` patch is removed; tests run the product pragmas.
+**Because:** measured on the profiled file (`test_qa_target_hash_contract_stage8_9b.py`,
+9 tests, serial, 2026-10-12): 95 s with a connection per call and FULL, 90 s with
+NORMAL and still a connection per call, 29 s with the old test patch, 10–11 s with
+one connection per thread. The cost was the open and close (each close checkpointed
+the WAL), not the fsync. NORMAL under WAL is durable across an application crash —
+every committed transaction is in the WAL — and loses at most the last transactions to
+a power cut or an OS crash; FULL only added an fsync per commit for that case.
+`WorkspaceRepository` (app level, a few calls) keeps its per-call FULL connections.
+**Rules out:** `synchronous OFF` anywhere in the product; sharing one connection between
+threads (`check_same_thread=False` exists so `release()` can *close* a dead thread's
+connection, never for two threads to use one); closing a live thread's connection from
+outside — a restore while a job holds the file fails cleanly instead.
+**Revisit when:** a team reports a lost decision after a power cut (then FULL for the
+workbench only, measured), or the hub (#80) needs a different durability contract.
+
+## 2026-10-12 — Every ta-irv change ships as a new pack version with a changelog (#234)
+**Decision:** ta-irv goes from 1.1.0 to 1.2.0, and `engine/language_packs/ta-irv/CHANGELOG.md`
+records 1.0.0, 1.1.0 and 1.2.0. From now on a change to the pack's rules, inline flags or
+layers bumps `pack.json` `version` (and the builder's `PACK_VERSION`) with a changelog entry
+in the same commit. Benz confirmed the bump on 2026-10-12, knowing what it expires.
+**Because:** Requirement 3 asks for it: since 1.1.0 (2026-09-28) the pack gained inline
+promotions, revision 3 with the தான் contexts, seven rules moved out of code, the indic-qa
+layer and a new rule, all under the same version, so "ta-irv@1.1.0" no longer names one
+rule set. The alternative, keeping 1.1.0 so no ignore expires, leaves the version meaningless.
+**Cost:** every reviewer ignore or rejection of a ta-irv rule stamped with the pack version
+comes back once as `previouslyIgnored` (2026-09-24, "An ignore expires…"): the 13 pack-native
+rules and the 18 `indicqa.*` layer rules. The seven rules that carry `legacyVersion`
+(`language-qa-7`) keep their stamp and their ignores.
+**Supersedes:** the version line of 2026-10-07, "indic-qa's Tamil checker runs as a layer of ta-irv".
+**Rules out:** changing ta-irv's findings without a version bump and a changelog entry.
+**Revisit when:** per-rule revisions alone decide expiry (the 2026-09-24 entry's own revisit).
+
+## 2026-10-12 — A wording-only ta-irv change gets a changelog line, not a new version (#235)
+**Decision:** A change that only rewords text a rule shows (a title, a finding message, a
+fix rationale, an indic-qa grammar rule's name) is recorded in the pack's CHANGELOG.md and
+does not bump `pack.json` `version`. Anything that can change which findings appear, their
+confidence, or their inline flag still bumps it. Benz, 2026-10-12, on the #235 review.
+**Because:** a bump expires every reviewer ignore of 31 rules (the 1.2.0 entry above). For
+a reworded title that is a re-check of findings that did not change. The stamp
+(`ta-irv@<version>#<rule version>`) is about what a rule finds, not what it says.
+**Amends:** "Every ta-irv change ships as a new pack version with a changelog", above.
+**Rules out:** using a wording entry for anything that touches a match, abstain, context
+condition, fix, confidence or inline flag.
+**Revisit when:** a reviewer needs an old ignore to come back because a message changed.
+
+## 2026-10-12 — No ஒற்று verdict after கூட, சொந்த or கள்ள; போல still doubles (#235)
+**Decision:** In indic-qa's Tamil sandhi grammar (ta-irv's layer), கூட moves to a new
+`amb_kooda` row and சொந்த, கள்ள to `amb_sontha_kalla`: the grammar gives no verdict on the
+ஒற்று after them. `particle_dbl` keeps போல, மற்ற, கிட்ட. `no_clitic` (no ஒற்று before கூட /
+போல) is unchanged. ta-irv 1.3.0. Benz, 2026-10-12.
+**Because:** Benz's rule: house style wins over prescriptive grammar, and a word whose
+corpus departs from a verdict more than one time in five gets an `amb_` row ("look at",
+not "fix"). Measured in the IRV after கூட: 52 doubled or fused, 31 bare (both "with" and
+"even"). After போல: 28 of 29 doubled, so doubling is the house style and stays a verdict.
+Without கூட, `particle_dbl` fell to 89.5% OV agreement, under indic-qa's 90% test; Benz
+chose to move its two weakest words (சொந்த 15/3, கள்ள 5/1) out rather than lower the guard
+to four-fifths. The reviewer's "no_clitic contradicts particle_dbl" was a misreading: the
+two rows are about different boundaries.
+**Rules out:** an amb_ row read as "never flag": it only removes the grammar's vote, and
+the OV habit still leads where the OV is near-unanimous for a pair (7 கூடப் before ப).
+**Revisit when:** a review round labels the remaining கூட leads, or the IRV text after
+போல stops being doubled.
+
+
+## 2026-10-13 — A verse-edge space is flagged with a fix that removes it; a later round's contrary verdict is superseded, not re-labelled (#230)
+**Decision:** `common/spacing.extra` keeps flagging repeated spaces and a space at the
+start or end of a verse, and every finding now offers its fix: repeated spaces become one,
+an edge space is removed (a poetry line break after it stays). Rule revision 2. The seven
+round-3 (2026-10-13) labels that called a verse-final space "not an error" (MAT 16:8, 16:9,
+16:17, 16:26; PSA 68:32, 84:8; REV 3:6) are listed in `benchmark/human/superseded.json`:
+kept unedited in their round, reported by the benchmark, not scored. Benz, 2026-10-13.
+**Because:** the same reviewer ruled both ways on the same shape: rounds 2026-09-28 and
+2026-09-29 confirmed 18 of 18 verse-final spaces ("remove for clean text/USFM"; "remove the
+line-end space, keep the line break"), round 2026-10-13 rejected 7 of 7 ("meaningless in
+USFM"). Scoring both would hold an inline rule at 81.6% (31/38) over a disagreement, not
+over a defect. Benz chose the earlier rounds, with the fix offered so removing the space is
+one click.
+**Rules out:** editing, deleting or re-labelling a committed label to settle a conflict;
+a `superseded.json` row without an entry here naming who decided.
+**Revisit when:** a project's house style keeps verse-final spaces (a house-style
+suppression then, not a rule change).
+
+## 2026-10-14 — The file-era team scaffold goes; the workbench team tables stay (#111)
+**Decision:** `tc_ai_bridge/team.py` and `tc_ai_bridge/session.py` are deleted with #236.
+`security.py` stays. The workbench tables `team_members` and `team_assignments` stay at
+schema v7 and are not rebuilt. Roles live in `workspace.users.role` (v4) and one
+`authorize()` in `tc_ai_bridge/authorization.py`; assignments (#240) will be the first
+writer of `team_assignments`.
+**Because:** nothing imported `session.py`; `team.py` was read only by `reporting.py`,
+which put its constant `team` section into the project report that no reader opened
+(#93 found `TeamWorkflow` never wrote `team.json`). `security.py`'s `ai_payload_manifest`
+is used by the AI client and the correction wording service. #45/#46 are v1 scope
+(2026-10-12), so the tables, which already carry `actor_id`/`device_id` and the
+immutability triggers, are the right home for members and assignments; dropping and
+re-creating them would be a migration for nothing.
+**Rules out:** mapping `team.py`'s `translator / reviewer / consultant / administrator`
+to the new roles (there is no data to map; the mapping in TEAM_ARCHITECTURE.md §5 is
+historical); a per-project `team.json`.
+**Revisit when:** the hub (#80) needs per-project roles; then `team_members` gains the
+role column, and `authorize()`'s `project` argument starts to matter.
+
+## 2026-10-15 — The hub syncs twelve workbench tables; derived and device-local ones never travel (#227)
+**Decision:** The first hub slice (#80) carries `human_decisions`, `issue_resolutions`,
+`alignment_cross_verse_links`, `alignment_null_decisions`, `alignment_history`,
+`team_assignments`, `team_members`, `language_qa_batches`, `language_qa_flags`,
+`language_qa_learned_fixes`, `project_state` and `ai_review_results`. The other fourteen
+`MUTABLE_TABLES` entries (progress, check findings and cache, triage verdicts, metrics,
+the backups index, semantic mappings and validation runs, alignment diagnostics and
+verdicts, the Language QA scan cache) never sync; the hub keeps its own progress rollup
+from the events it receives. `language-packs/<pack>/overrides.json` and the reference
+cache stay on disk. A frozen `SYNCED_TABLES` tuple, pinned against `MUTABLE_TABLES` by a
+test, is the record.
+**Because:** the human-owned rows are the product and are small; the derived ones are
+large, reproducible on every device from its own checks, and a copy of them would be
+stale the moment a check ran. A learned fix carries a token's old and new wording, not
+verse text, so "Scripture text never travels" (2026-09-11) holds.
+**Rules out:** syncing check snapshots to spare a device a check run; carrying
+`overrides.json` through the log in this slice.
+**Revisit when:** the second slice mirrors `overrides.json` into `project_state`.
+
+## 2026-10-15 — A hub project is linked by a hub project id per book, matched on natural keys (#227)
+**Decision:** The hub assigns a project id when the first device registers a book; a
+second device links its own import of the same book by choosing it on the hub, with the
+book id and the source sha256 as the check. Change-log rows keep each device's local
+`projectId`; the hub maps local id to hub id per device at push time and matches rows by
+the lifted natural-key columns. `natural_row_id` takes the hub project id once one is
+set (#80), so a project linked from the start gets identical row ids everywhere.
+**Because:** two devices importing the same Paratext folder mint different local ids and
+collection ids, and the same source imported twice on one device must stay two projects
+(#91's duplicate rule), so neither the id nor the sha256 alone can link. Lifting the
+natural keys into columns (v3 to v8) was what made natural-key matching possible.
+**Rules out:** rewriting existing change-log rows or row ids on link; linking at the
+collection level (a device may hold a subset of books, and a lazy sibling has no workbench).
+**Revisit when:** a team needs to merge two projects that were worked on unlinked.
+
+## 2026-10-15 — The hub is a pip `[server]` extra behind Task Scheduler, not a second exe (#227)
+**Decision:** `bridge-engine --serve --data-dir <hub>` installs from the `[server]` extra
+(FastAPI, uvicorn), excluded from `bridge-engine.spec`; it runs as a Windows Task
+Scheduler task that starts at boot and restarts on failure, written by
+`scripts/install-hub-task.ps1`; a nightly `sqlite3 .backup` keeps seven days. The hub
+machine is the requirement's: one LAN host, 2 cores, 4 GB, a fixed hostname, one open
+port, no internet.
+**Because:** one administrator installs the hub once; a frozen hub exe would double the
+release gate for one install, and NSSM would be a download the field machine cannot make.
+A lost hub costs a re-sync, not data, because every device holds its own copy.
+**Rules out:** the hub in the desktop sidecar (2026-09-11 stands); any hosted hub.
+**Revisit when:** a team without a Windows machine wants to host the hub.
+
+## 2026-10-13 — Every Language QA finding is drawn behind the Settings slider; the 0.90 tier is always drawn (#250)
+**Decision:** Every Language QA finding is underlined in the verse text, with its fix one
+right-click away, unless the reviewer's Settings > Language QA threshold hides it. That covers
+ta-irv's own rules, the indic-qa layer and profile packs, the common checks and the project's
+house-style rules. The threshold is unchanged: a minimum measured reviewer precision (default 0)
+and a lowest rule confidence (default low). A rule with no labels passes the slider. A rule
+reviewed inline (at least 0.90 human precision on at least 20 labels, 2026-09-28) is always drawn,
+and the slider cannot hide it. A book-header finding (`context: "introduction"`, #253) is never
+drawn, because it is not in the verse text. The editor's menu adds "Why is this flagged?". It
+shows what was found, the rule's measured precision and label count, why the finding is
+underlined, the reason for the first fix, and the rule id. Use (with Chapter and Book), Ignore,
+Ignore this rule and False positive are unchanged. Benz decided this on 2026-10-13.
+**Because:** Benz wants Language QA to show any typo, sandhi or grammar error in the editor
+itself, with the action on the word. Most ta-irv findings were panel-only, so the reviewer had to
+leave the text to act on them. The slider already gave the reviewer a way to narrow indic-qa
+findings (2026-10-07), and it now does the same for every rule.
+**Consequences:**
+- A verse with any drawn mark is not shown as clean, so by default more rows lose their ✓
+  (layered-rules 4.3, unchanged).
+- The indic-qa layer's de-duplication still defers only to reviewed-inline findings. That is a
+  pass-time rule, and the threshold never touches a pass. A pack finding and a layer finding on
+  the same span can therefore both be drawn.
+- The common checks have no shipped precision (`rule_precision.json` lists pack rules only), so
+  the precision slider never hides them. The confidence floor does.
+**Rules out:** treating `drawn` as review evidence. The CI human gate, the benchmark and the
+`inline` flag are unchanged, and promoting a rule to the always-drawn tier is still a
+`rule_versions.json` edit with its own entry here. Also ruled out: applying the threshold during a
+pass, and applying any fix without a click.
+**Supersedes:** for what the text draws, the first sentence of 2026-09-28 "Inline means at least
+0.90 human-labelled precision". That entry now decides only the always-drawn tier. Also, the
+indic-qa-only scope of 2026-10-07 "indic-qa findings are drawn in the text by default", and the
+"never drawn inline" clause of 2026-10-07 "Corpus-attested agreement leads ... listed only". A
+grammar lead is drawn under the slider, and it still never carries the reviewed `inline` flag.
+**Revisit when:** reviewers find the default too noisy (raise the default floor), or the hub
+(#46) shares one threshold across a team.
+
+## 2026-10-13 — Greek Room runs on demand, last; it no longer re-checks live on verse focus (#252)
+
+**Decision:** Greek Room (Wildebeest, the USFM structural checker and names spelling: the three
+engines the Review panel's Greek Room tab shows) runs only when asked: Run Greek Room on the
+verse (Review panel, Checks menu), the chapter or the book (Checks menu, a job with progress and
+cancel), or as a ticked elective check (#251). It is off by default in the editor's selection,
+on by default in Collection QA, and refused while Collection QA runs. A chapter or book run
+clears the book's in-memory USFM and names results first, so findings an edit made stale come
+back fresh; a verse run reads them from memory and never scans on the dispatcher.
+**Because:** Rina and Benz both asked for it on 2026-10-13. Greek Room was 58–68 % of a
+whole-book job, ran on every chapter open, after every edit and on every verse selection, and
+the selection run had no debounce. The alternative, keeping it live and making it cheaper, still
+spends the reviewer's machine on a check they reach for last.
+**Rules out:** Greek Room on chapter open, after an edit or on verse selection unless the
+reviewer ticks it; a verse being shown as fully checked before its selected checks have run
+(the ✓ means every selected check ran clean; the verse-number title says "Greek Room not run").
+**Supersedes:** the "approved design" in which Greek Room was the one engine that re-checked
+live on focus (stated in `ReviewPanel.svelte`'s comment, never entered here).
+**Revisit when:** Greek Room gets a cache that makes a chapter run cheap enough to be automatic.
+
+## 2026-10-14 — The recall proxy's target: at most 10% still missed per abstain class with at least 20 reviewed abstains (#230)
+**Decision:** Benz accepts Revant's proposal of 2026-10-12 as it stands. For every abstain
+class with at least 20 reviewed abstains (missed, correct skip and house form together), the
+still-missed rate in `docs/LANGUAGE_QA_BENCHMARK.md` must be at most 10%. A class with fewer
+than 20 is reported, not gated. On the labels committed by 2026-10-13 (three rounds), the gated
+classes stand at:
+- `A_ai_rootnoun`: 3.3% (30 reviewed);
+- `B_ai_baremajority`: 0.0% (50 reviewed);
+- `T_theva_abstain`: 0.0% (20 reviewed).
+
+The reported classes (`D_rku_dative` 17, `E_kku_exception` 12, `split` 13,
+`H_demonstrative_houseform` 9, `G_marker` 4) are all at 0.0%.
+**Because:** the proxy is the only recall measure the labels support (2026-10-12), and a rate
+over fewer than 20 abstains moves by 5 points or more on a single label.
+**Rules out:** quoting the proxy as recall; gating a class under 20 reviewed abstains.
+**Not yet done:** the human gate (`language_qa_benchmark.py --gate`) prints the table but does
+not fail on it. Adding the check is a separate change, to be proposed.
+**Revisit when:** a labelled sample of the text itself makes real recall measurable (as
+2026-10-12).
+
+## 2026-10-14 — Hub row ids: adopting the hub's project id is the mechanism; no natural-key fallback (#278)
+
+**Decision:** A book shares row ids with the hub because linking adopts the hub's project id
+(#80, `adopt_project_id`): every row is then built from it, so one decision is one row id on every
+device and two first decisions on one finding are one row with a conflict. A book that already holds
+synced-table rows under its own id is refused at link time with a plain message, and nothing is
+rewritten. There is no natural-key matching on push or pull.
+**Because:** the hub review (§3) planned `natural_row_id` to take the hub id once linked, with a
+natural-key fallback for books linked after use. Adoption delivered the first part. The fallback
+cannot be built on what is stored: row ids are one-way hashes of their natural keys, so matching
+old rows would need the natural key kept per row (a workbench v10 column) and a translation step on
+both push and pull, risk on the sync path for a case a fresh import already covers. Revant chose
+this on 2026-10-14.
+**Rules out:** linking a book after decisions were made in it; any rewrite of existing rows to new
+ids (the change log is append-only).
+**Revisit when:** a team needs to bring an in-use book onto the hub without a fresh import.
+
+## 2026-10-14 — A role on a project decides everything there but managing users (#279)
+
+**Decision:** A user may have a role on a project (`team_members`, one row per user per book,
+written to every book of a collection). Where they have one, it decides every action on that
+project: read, run checks, write, and manage the project (assignments, rename, archive). Managing
+users, including giving someone a role on a project, stays with the installation role on the desktop
+and the token role on the hub, because the user list is not a project's. `authorize()` is the one
+place this is decided: the desktop dispatcher, `/rpc`, and the hub's dashboard endpoints and push
+all call it. The desktop shows the per-project role in the top bar and a banner for a reporter. It
+hides no controls: a refused action says why, as it has since #236.
+**Because:** Revant chose both on 2026-10-14. One user can be an editor on one book and a reporter
+on another. A per-project admin can run their project without being able to change who exists.
+Hiding controls one by one is a separate piece of work across the editor, panels and modals, which
+the installation roles do not do either.
+**Rules out:** a per-project role that changes the user list; role checks outside `authorize()`.
+**Revisit when:** reviewers ask for disabled controls rather than refusals, or a project needs its
+own admins to invite people.

@@ -42,7 +42,7 @@ def _runtime(tmp_path: Path, *, book: str = "PHP", language: str = "ta",
             lines.append(f"\\c {chapter}")
             lines.extend(f"\\v {v} OLD IMPORTED WORDING" for v in verses)
         (root / f"{lower}.usfm").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return PassageSemanticRuntime(TranslationCoreProject(root), f"project-{book}-{language}")
+    return PassageSemanticRuntime(TranslationCoreProject(root), f"project-{book}-{language}", actor_id="Reviewer")
 
 
 def test_stage5_golden_freeze_and_tamil_target_inventory_without_source_leakage(tmp_path: Path) -> None:

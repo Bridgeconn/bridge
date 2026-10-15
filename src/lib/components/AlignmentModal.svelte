@@ -1,16 +1,19 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { bridge } from "../api/bridgeClient";
+  import { recheckVerse } from "../verseChecks";
   import {
-    alignmentStatusByVerse, checkStatusByVerse, findingsByVerse, project,
+    alignmentStatusByVerse, checkStatusByVerse, noteAlignmentChanged, project, targetLang,
     verseKey,
   } from "../stores";
+  import { alignmentStatusLabel } from "../alignmentStatus";
   import { bookDisplayName } from "../utils/reportStats";
   import type { AlignmentContext, AlignmentToken } from "../types/finding";
   import { createPointerDrag } from "../alignmentDrag";
   import { openCrossVerse } from "../alignmentUi";
   import {
-    alignedTargetsFor, bottomIdsAfterDrop, groupForTarget, occurrenceLabel as occurrence, unaccountedTargets,
+    alignedTargetsFor, bottomIdsAfterDrop, groupForSource, groupForTarget, occurrenceLabel as occurrence,
+    sourceColumns, topIdsFor, unaccountedTargets, undoTargetId,
   } from "../alignmentGroups";
   import { SourceGlossCache } from "../lexiconGloss";
   import LexiconPopup from "./LexiconPopup.svelte";
@@ -27,25 +30,43 @@
   let notice = "";
   let restoreId = "";
 
-  // Interlinear drag/click-to-align state. `pickedUpId` is the click-based
+  // Interlinear drag/click-to-align state. `picked` is the click-based
   // accessible alternative to dragging: click a target word to pick it up,
   // click a column (or the word bank) to drop it there — same one-step
-  // "drop" semantics as dragging, just keyboard/click operable.
-  let pickedUpId: string | null = null;
+  // "drop" semantics as dragging, just keyboard/click operable. Several words
+  // can be picked together (#285): Ctrl-click adds or removes one, Shift-click
+  // takes the run from the last picked word, in the word bank and in the
+  // aligned columns alike; they are placed in one save, so one undo step.
+  // `anchor` is the last word picked on its own, where a Shift-click starts.
+  let picked: string[] = [];
+  let anchor: string | null = null;
 
   // Pointer-based drag lives in alignmentDrag.ts (shared with the cross-verse
   // page, #116); see that file for why it is not native HTML5 drag-and-drop.
   // `data-drop-column` carries the source token id, `data-drop-bank` is "true".
+  // A drag that starts on a picked word carries the whole selection; one that
+  // starts elsewhere supersedes it, as a real drag always superseded pick-up.
   const drag = createPointerDrag({
-    onDragStart: () => { pickedUpId = null; }, // a real drag supersedes click-to-pick-up mode
+    onDragStart: (tokenId) => { if (!picked.includes(tokenId)) picked = []; },
     onDrop: ({ tokenId, column, bank }) => {
-      if (column) dropOntoColumn(tokenId, column);
-      else if (bank) returnToBank(tokenId);
+      const ids = picked.includes(tokenId) ? picked : [tokenId];
+      picked = [];
+      if (column) dropOntoColumn(ids, column);
+      else if (bank) returnToBank(ids);
     },
   });
   const dragState = drag.state;
 
-  $: ghostLabel = $dragState.tokenId ? (context?.bottomTokens.find((t) => t.id === $dragState.tokenId)?.word ?? "") : "";
+  $: carried = $dragState.tokenId ? (picked.includes($dragState.tokenId) ? picked : [$dragState.tokenId]) : [];
+  $: ghostLabel = carried.length
+    ? (context?.bottomTokens ?? []).filter((t) => carried.includes(t.id)).map((t) => t.word).join(" ")
+    : "";
+
+  /** The target words that can be picked, in verse order: every word of the
+   *  verse except one a cross-verse link accounts for. A Shift-click takes a
+   *  run of this list. */
+  $: pickable = context ? context.bottomTokens.filter((t) => !accountedIds.has(t.id)).map((t) => t.id) : [];
+  $: pickedWords = (context?.bottomTokens ?? []).filter((t) => picked.includes(t.id)).map((t) => t.word);
 
   // Resolved lexicon glosses for the source tokens: the English sense goes
   // under the word and the lemma moves into the tooltip, because a lemma is
@@ -109,7 +130,7 @@
   // total is the chapter's verse count, and saying so is what makes the row
   // readable. "Chapter:" alone read as a count of chapters.
   $: chapterVerseTotal = context
-    ? context.chapterStatus.complete + context.chapterStatus.partial
+    ? context.chapterStatus.complete + (context.chapterStatus.complete_cross_verse ?? 0) + context.chapterStatus.partial
       + context.chapterStatus.untouched + context.chapterStatus.invalid
     : 0;
 
@@ -135,6 +156,8 @@
     if (busy || lexiconToken) return;
     // A pinned popover swallows the first Escape; a second one closes the modal.
     if (issuesPinned) { issuesPinned = false; return; }
+    // So does a selection (#285): Escape puts the picked words down first.
+    if (picked.length) { picked = []; return; }
     onClose();
   }
 
@@ -143,15 +166,15 @@
     restoreId = updated.history[0]?.id ?? "";
     const key = verseKey(chapter, verse);
     alignmentStatusByVerse.update((values) => ({ ...values, [key]: updated.status }));
+    // Every save, unalign, undo and restore lands here; the Source text panel
+    // re-reads the verse on this, not on the status, which most edits keep (#291).
+    noteAlignmentChanged(key);
     checkStatusByVerse.update((values) => ({ ...values, [key]: "pending" }));
     try {
-      // `alignment` runs the verse-local QA set without starting the much
-      // slower whole-book USFM preflight. The background job remains the
-      // source of book-structural findings.
-      const findings = await bridge.runVerseChecks(chapter, verse, ["alignment", "greekroom"]);
-      findingsByVerse.update((values) => ({ ...values, [key]: findings }));
-      checkStatusByVerse.update((values) => ({ ...values, [key]: "succeeded" }));
-      notice = `${message} Local and Greek Room checks are current.`;
+      // Only the alignment checks: the verse's other findings are kept, and
+      // Greek Room runs on demand (#251, #252).
+      await recheckVerse(chapter, verse, ["alignment"]);
+      notice = `${message} The alignment checks are current.`;
     } catch (value) {
       checkStatusByVerse.update((values) => ({ ...values, [key]: "failed" }));
       error = `${message} The save succeeded, but rechecking failed: ${value instanceof Error ? value.message : String(value)}`;
@@ -173,43 +196,105 @@
   }
 
   // Every drop/click-drop realigns the source column's FULL target set
-  // (existing members + the newly placed word); bottomIdsAfterDrop explains why.
-  function dropOntoColumn(targetId: string, sourceId: string) {
-    if (!context) return;
-    const bottomIds = bottomIdsAfterDrop(context, sourceId, targetId);
+  // (existing members + the newly placed words); bottomIdsAfterDrop explains
+  // why. Several words picked together (#285) are one realign call, so one
+  // history row, one undo step and one re-check.
+  function dropOntoColumn(targetIds: string[], sourceId: string) {
+    if (!context || targetIds.length === 0) return;
+    const bottomIds = bottomIdsAfterDrop(context, sourceId, targetIds);
     if (!bottomIds) return; // already in this column
+    // Every source word of the column (#207): a drop on a joined column must
+    // not split it back into one word's group.
+    const topIds = topIdsFor(context, sourceId);
+    const moved = bottomIds.length - (groupForSource(context, sourceId)?.bottomIds.length ?? 0);
     void mutate(
-      () => bridge.realignWords(chapter, verse, [sourceId], bottomIds, context!.alignment),
-      "Alignment saved.",
+      () => bridge.realignWords(chapter, verse, topIds, bottomIds, context!.alignment),
+      moved > 1 ? `${moved} words placed together.` : "Alignment saved.",
     );
   }
 
-  function returnToBank(targetId: string) {
-    if (!context || !groupForTarget(context, targetId)) return;
+  // #207: a source word split into several tokens whose translation is one
+  // joined target word is one tC group with several topWords. The engine's
+  // realign has always accepted that; the surface could not ask for it.
+  // "Join" folds a column into the one before it (split source words sit
+  // side by side); "Split" takes the last source word out again, which the
+  // engine keeps as its own empty group. realign needs at least one target
+  // word, so a join of two empty columns and a split of a joined column with
+  // no target are disabled rather than refused after the click.
+  $: columns = context ? sourceColumns(context) : [];
+  function columnBottomIds(ids: string[]): string[] {
+    return context ? (alignedTargetsFor(context, ids[0]).map((t) => t.id)) : [];
+  }
+  function joinWithPrevious(index: number) {
+    if (!context || index <= 0) return;
+    const previous = columns[index - 1];
+    const current = columns[index];
+    const bottomIds = [...columnBottomIds(previous.ids), ...columnBottomIds(current.ids)];
+    if (bottomIds.length === 0) return;
     void mutate(
-      () => bridge.unalignWords(chapter, verse, [targetId], context!.alignment),
-      "Returned to word bank.",
+      () => bridge.realignWords(chapter, verse, [...previous.ids, ...current.ids], bottomIds, context!.alignment),
+      "Source words joined.",
+    );
+  }
+  function splitLast(index: number) {
+    if (!context) return;
+    const column = columns[index];
+    const bottomIds = columnBottomIds(column.ids);
+    if (column.ids.length < 2 || bottomIds.length === 0) return;
+    void mutate(
+      () => bridge.realignWords(chapter, verse, column.ids.slice(0, -1), bottomIds, context!.alignment),
+      "Source word split out.",
     );
   }
 
-  function handleWordClick(id: string) {
+  // The aligned ones among `targetIds` go back in one unalign call; a word
+  // already in the bank has nowhere to go.
+  function returnToBank(targetIds: string[]) {
+    if (!context) return;
+    const aligned = targetIds.filter((id) => groupForTarget(context!, id));
+    if (aligned.length === 0) return;
+    void mutate(
+      () => bridge.unalignWords(chapter, verse, aligned, context!.alignment),
+      aligned.length > 1 ? `${aligned.length} words returned to the word bank.` : "Returned to word bank.",
+    );
+  }
+
+  // A plain click picks one word up, or puts the only picked word down: the
+  // one-word path as it was. Ctrl (or ⌘) adds or removes a word; Shift takes
+  // the run from the anchor to this word, in verse order (#285).
+  function handleWordClick(id: string, event?: MouseEvent) {
     if (busy) return;
     if (drag.consumeSuppressedClick(id)) return;
-    pickedUpId = pickedUpId === id ? null : id;
+    if (event?.ctrlKey || event?.metaKey) {
+      picked = picked.includes(id) ? picked.filter((p) => p !== id) : [...picked, id];
+      anchor = id;
+      return;
+    }
+    if (event?.shiftKey && anchor && anchor !== id) {
+      const from = pickable.indexOf(anchor);
+      const to = pickable.indexOf(id);
+      if (from >= 0 && to >= 0) {
+        const run = pickable.slice(Math.min(from, to), Math.max(from, to) + 1);
+        picked = [...picked, ...run.filter((p) => !picked.includes(p))];
+        return;
+      }
+    }
+    picked = picked.length === 1 && picked[0] === id ? [] : [id];
+    anchor = id;
   }
 
   function handleColumnClick(sourceId: string) {
-    if (!pickedUpId || busy) return;
-    const id = pickedUpId;
-    pickedUpId = null;
-    dropOntoColumn(id, sourceId);
+    if (!picked.length || busy) return;
+    const ids = picked;
+    picked = [];
+    dropOntoColumn(ids, sourceId);
   }
 
   function handleBankAreaClick() {
-    if (!pickedUpId || busy) return;
-    const id = pickedUpId;
-    pickedUpId = null;
-    returnToBank(id);
+    if (!picked.length || busy) return;
+    const ids = picked;
+    picked = [];
+    returnToBank(ids);
   }
 
   function startPointerTrack(event: PointerEvent, id: string) {
@@ -217,10 +302,17 @@
     drag.start(event, id);
   }
 
+  // #122: each undo is a `restore` row whose backup is the pre-undo state, and
+  // alignment.undo restores the newest backup, so a second press re-applied
+  // what the first undid. Undo now names the backup it wants (the newest edit
+  // not yet undone, undoTargetId) through alignment.restore; the engine path
+  // is unchanged. Disabled once every edit is undone.
+  $: undoId = context ? undoTargetId(context.history) : null;
   function undo() {
-    if (!context) return;
+    if (!context || !undoId) return;
+    const id = undoId;
     void mutate(
-      () => bridge.undoAlignment(chapter, verse, context!.alignment),
+      () => bridge.restoreAlignment(chapter, verse, id, context!.alignment),
       "Last alignment change undone.",
     );
   }
@@ -257,10 +349,11 @@
       <div class="loading"><span class="spin" /> Loading alignment…</div>
     {:else if context}
       <div class="summary">
-        <span class="status {context.status}">Verse: {context.status}</span>
+        <span class="status {context.status}">Verse: {alignmentStatusLabel(context.status)}</span>
         <span class="tally">
           Chapter {chapter} — {chapterVerseTotal} verse{chapterVerseTotal === 1 ? "" : "s"}:
           <span title="Every target word is placed, and no source word is left without one.">{context.chapterStatus.complete} complete</span> ·
+          {#if context.chapterStatus.complete_cross_verse}<span title="Every remaining word is accounted for by a cross-verse link or a null decision; translationCore itself cannot mark these complete.">{context.chapterStatus.complete_cross_verse} via cross-verse</span> ·{/if}
           <span title="Some target words are placed, but the word bank is not empty or a source word has none.">{context.chapterStatus.partial} partial</span> ·
           <span title="No target word has been placed in this verse yet.">{context.chapterStatus.untouched} untouched</span>
           {#if context.chapterStatus.invalid}· <span class="danger" title="Marked invalid in translationCore.">{context.chapterStatus.invalid} invalid</span>{/if}
@@ -312,37 +405,77 @@
             <small>Click a word for its lexicon entry — its target words sit in the column beneath it</small>
           </div>
           <div class="interlinear" dir={context.sourceDirection}>
-          {#each context.topTokens as src (src.id)}
-            <div class="column">
-              <button
-                class="token source"
-                on:click={() => (lexiconToken = src)}
-                disabled={busy}
-                title={sourceTitle(src, glossVersion)}
-              >
-                <span>{src.word}{#if src.occurrences > 1}<span class="occ">{occurrence(src)}</span>{/if}</span>
-                {#if sourceGloss(src, glossVersion)}<small class="gloss">{sourceGloss(src, glossVersion)}</small>{/if}
-              </button>
+          {#each columns as column, index (column.ids.join("+"))}
+            {@const src = column.tokens[0]}
+            {@const label = column.tokens.map((t) => t.word).join(" ")}
+            <div class="column" class:joined={column.ids.length > 1}>
+              <div class="source-words">
+                {#if index > 0}
+                  <button
+                    type="button"
+                    class="join-x"
+                    on:click|stopPropagation={() => joinWithPrevious(index)}
+                    disabled={busy || columnBottomIds(columns[index - 1].ids).length + columnBottomIds(column.ids).length === 0}
+                    aria-label={`Join ${label} with the previous source word`}
+                    title={columnBottomIds(columns[index - 1].ids).length + columnBottomIds(column.ids).length === 0
+                      ? "Drop a target word on one of the two columns first, then join"
+                      : "Join with the previous source word: one target word for both"}
+                  >⟵</button>
+                {/if}
+                {#each column.tokens as token (token.id)}
+                  <button
+                    class="token source"
+                    on:click={() => (lexiconToken = token)}
+                    disabled={busy}
+                    title={sourceTitle(token, glossVersion)}
+                  >
+                    <span>{token.word}{#if token.occurrences > 1}<span class="occ">{occurrence(token)}</span>{/if}</span>
+                    {#if sourceGloss(token, glossVersion)}<small class="gloss">{sourceGloss(token, glossVersion)}</small>{/if}
+                  </button>
+                {/each}
+                {#if column.ids.length > 1}
+                  <button
+                    type="button"
+                    class="join-x"
+                    on:click|stopPropagation={() => splitLast(index)}
+                    disabled={busy || columnBottomIds(column.ids).length === 0}
+                    aria-label={`Split ${column.tokens[column.tokens.length - 1].word} out of this column`}
+                    title="Split the last source word out of this column"
+                  >⟶</button>
+                {/if}
+              </div>
               <div
                 class="target-cell"
                 class:drop-hover={$dragState.overColumn === src.id}
                 data-drop-column={src.id}
                 dir={context.targetDirection}
+                lang={$targetLang}
                 role="button"
                 tabindex="0"
-                aria-label={pickedUpId ? `Align picked-up word to ${src.word}` : `Target words aligned to ${src.word}`}
+                aria-label={picked.length > 1 ? `Align ${picked.length} picked-up words to ${label}`
+                  : picked.length ? `Align picked-up word to ${label}` : `Target words aligned to ${label}`}
                 on:click={() => handleColumnClick(src.id)}
                 on:keydown={(event) => (event.key === "Enter" || event.key === " ") && (event.preventDefault(), handleColumnClick(src.id))}
               >
                 {#each alignedTargetsFor(context, src.id) as item (item.id)}
-                  <div class="token target aligned-card" title={`Aligned to ${src.word}`}>
-                    <span class="word">{item.word}{#if item.occurrences > 1}<span class="occ">{occurrence(item)}</span>{/if}</span>
+                  <!-- The word itself can be picked up and moved to another
+                       column, alone or with others (#285); × still returns it. -->
+                  <div class="token target aligned-card" class:picked={picked.includes(item.id)} title={`Aligned to ${label}`}>
+                    <button
+                      type="button"
+                      class="pick"
+                      on:pointerdown={(event) => startPointerTrack(event, item.id)}
+                      on:click|stopPropagation={(event) => handleWordClick(item.id, event)}
+                      disabled={busy}
+                      aria-label={`Pick up ${item.word} from ${label}`}
+                      aria-pressed={picked.includes(item.id)}
+                    ><span class="word">{item.word}{#if item.occurrences > 1}<span class="occ">{occurrence(item)}</span>{/if}</span></button>
                     <button
                       type="button"
                       class="unalign-x"
-                      on:click|stopPropagation={() => returnToBank(item.id)}
+                      on:click|stopPropagation={() => returnToBank([item.id])}
                       disabled={busy}
-                      aria-label={`Unalign ${item.word} from ${src.word}`}
+                      aria-label={`Unalign ${item.word} from ${label}`}
                       title="Remove from this column"
                     >×</button>
                   </div>
@@ -367,17 +500,22 @@
               {#if linkedCount > 0}
                 <span class="chip linked" title={accountedNote}>↔ {linkedCount} linked across verses</span>
               {/if}
+              {#if picked.length > 1}
+                <span class="chip picked-count" role="status" title={pickedWords.join(" ")}>{picked.length} picked · click a column to place them, Esc to put them down</span>
+              {/if}
             </span>
-            <small>In verse order — drag an unaligned (blue) word into a column above, or click it then click a column</small>
+            <small>In verse order — drag an unaligned (blue) word into a column above, or click it then click a column. Ctrl-click adds a word, Shift-click a run, to place several at once</small>
           </div>
           <div
             class="tokens bank-tokens"
             class:drop-hover={$dragState.overBank !== null}
             data-drop-bank="true"
             dir={context.targetDirection}
+            lang={$targetLang}
             role="button"
             tabindex="0"
-            aria-label={pickedUpId ? "Return picked-up word to the word bank" : "Word bank"}
+            aria-label={picked.length > 1 ? `Return ${picked.length} picked-up words to the word bank`
+              : picked.length ? "Return picked-up word to the word bank" : "Word bank"}
             on:click={handleBankAreaClick}
             on:keydown={(event) => (event.key === "Enter" || event.key === " ") && (event.preventDefault(), handleBankAreaClick())}
           >
@@ -390,9 +528,10 @@
                 <button
                   type="button"
                   class="token target unaligned"
-                  class:picked={pickedUpId === item.id}
+                  class:picked={picked.includes(item.id)}
+                  aria-pressed={picked.includes(item.id)}
                   on:pointerdown={(event) => startPointerTrack(event, item.id)}
-                  on:click|stopPropagation={() => handleWordClick(item.id)}
+                  on:click|stopPropagation={(event) => handleWordClick(item.id, event)}
                   disabled={busy}
                 ><span class="word">{item.word}{#if item.occurrences > 1}<span class="occ">{occurrence(item)}</span>{/if}</span></button>
               {/if}
@@ -405,7 +544,8 @@
 
       <footer>
         <div class="history-controls">
-          <button on:click={undo} disabled={busy || context.history.length === 0}>Undo last change</button>
+          <button on:click={undo} disabled={busy || !undoId}
+            title="Steps back through your changes, one per press">Undo last change</button>
           <select bind:value={restoreId} disabled={busy || context.history.length === 0} aria-label="Alignment backup">
             {#each context.history as item}
               <option value={item.id}>{item.timestamp} · {item.operation}</option>
@@ -432,11 +572,11 @@
 {/if}
 
 {#if $dragState.tokenId && $dragState.moved}
-  <div class="drag-ghost" style="left:{$dragState.ghost.x}px; top:{$dragState.ghost.y}px;">{ghostLabel}</div>
+  <div class="drag-ghost" lang={$targetLang} style="left:{$dragState.ghost.x}px; top:{$dragState.ghost.y}px;">{ghostLabel}</div>
 {/if}
 
 <style>
-  .overlay { position: fixed; inset: 0; z-index: 50; background: rgba(15, 20, 26, .58); display: grid; place-items: center; padding: 24px; }
+  .overlay { position: fixed; inset: 0; z-index: var(--z-dialog); background: rgba(15, 20, 26, .58); display: grid; place-items: center; padding: 24px; }
   .modal { width: min(1040px, 100%); max-height: calc(100vh - 48px); overflow: auto; background: var(--surface); border-radius: 16px; box-shadow: 0 24px 80px rgba(0,0,0,.24); padding: 20px; color: var(--text); }
   header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; border-bottom: 1px solid var(--border); padding-bottom: 14px; }
   .eyebrow { color: var(--accent); font-size: var(--fs-2xs); letter-spacing: .12em; font-weight: 800; }
@@ -453,7 +593,7 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   .summary { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: var(--fs-xs); color: var(--text-2); padding: 12px 0; }
   .status { border-radius: 999px; padding: 3px 8px; background: var(--surface-2); font-weight: 700; }
-  .status.complete, .completed { color: var(--success); background: #EAF7EF; }
+  .status.complete, .status.complete_cross_verse, .completed { color: var(--success); background: #EAF7EF; }
   .status.partial { color: var(--warning); background: var(--warning-bg); }
   .status.invalid, .danger { color: var(--danger); }
   .tally span { border-bottom: 1px dotted var(--border-strong); cursor: help; }
@@ -466,7 +606,7 @@
   .issues-button { border: 0; background: none; padding: 3px 6px; font-size: var(--fs-xs); font-weight: 700; color: var(--danger); border-radius: 7px; }
   .issues-button:hover:not(:disabled), .issues-button[aria-expanded="true"] { background: var(--danger-bg); border-color: transparent; }
   .issues-panel {
-    position: absolute; top: calc(100% + 4px); right: 0; z-index: 20; width: max(260px, 26vw);
+    position: absolute; top: calc(100% + 4px); right: 0; z-index: var(--z-dropdown); width: max(260px, 26vw);
     background: #FFF5F5; color: var(--danger); border: 1px solid var(--danger); border-radius: 9px;
     padding: 10px 12px; font-size: var(--fs-sm); line-height: 1.45; text-align: left;
     box-shadow: 0 10px 28px rgba(0,0,0,.16);
@@ -550,12 +690,25 @@
     background: #EFF7FF; color: var(--text); cursor: default; font: inherit;
   }
   .aligned-card .word { font-size: var(--fs-sm); }
+  /* #285: the word of an aligned card is a pick-up button, drawn as the plain
+     word; the card shows the pick, like a bank word does. */
+  .aligned-card .pick { border: 0; background: none; padding: 0; margin: 0; font: inherit; color: inherit; cursor: pointer; touch-action: none; user-select: none; }
+  .aligned-card.picked { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .chip.picked-count { color: var(--accent); background: var(--accent-bg); font-weight: 600; }
   .unalign-x {
     border: 0; background: none; padding: 0; width: 16px; height: 16px; line-height: 1;
     display: inline-flex; align-items: center; justify-content: center; border-radius: 50%;
     color: var(--text-2); font-size: var(--fs-md); cursor: pointer; flex-shrink: 0;
   }
   .unalign-x:hover:not(:disabled) { color: var(--danger); background: var(--danger-bg); }
+  /* #207: a joined column shows every source word of its group side by side;
+     the arrow buttons join a column with the one before it or split the last
+     word out again. */
+  .source-words { display: flex; align-items: stretch; gap: 3px; width: 100%; }
+  .column.joined .source-words .token.source { width: auto; flex: 1; }
+  .join-x { border: 1px solid var(--border); background: var(--surface); color: var(--text-2); border-radius: 4px; font-size: var(--fs-xs); padding: 0 3px; cursor: pointer; line-height: 1; }
+  .join-x:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+  .join-x:disabled { opacity: 0.4; cursor: default; }
   .word-bank, .source-bank { border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
   /* The interlinear carries its own border today; inside the titled section it
      would be a second box around the same thing. */
@@ -563,7 +716,7 @@
   .bank-tokens { display: flex; flex-wrap: wrap; gap: 7px; min-height: 46px; align-content: flex-start; border-radius: 8px; padding: 4px; }
   .bank-tokens.drop-hover { background: var(--accent-bg); outline: 2px dashed var(--accent); }
   .drag-ghost {
-    position: fixed; z-index: 999; transform: translate(-50%, -130%); pointer-events: none;
+    position: fixed; z-index: var(--z-popover); transform: translate(-50%, -130%); pointer-events: none;
     background: var(--accent); color: white; font-family: var(--font-target); font-size: var(--fs-sm); font-weight: 700;
     border-radius: 7px; padding: 6px 10px; box-shadow: 0 8px 20px rgba(0,0,0,.28);
   }

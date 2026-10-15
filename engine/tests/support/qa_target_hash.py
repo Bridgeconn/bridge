@@ -95,7 +95,7 @@ def _project(tmp_path: Path, verses: dict[str, str]) -> PassageSemanticRuntime:
     lines.extend(f"\\v {verse} OLD IMPORTED" for verse in verses)
     (root / "php.usfm").write_text("\n".join(lines) + "\n", encoding="utf-8")
     project = TranslationCoreProject(root)
-    runtime = PassageSemanticRuntime(project, f"stage8-9b-{tmp_path.name}")
+    runtime = PassageSemanticRuntime(project, f"stage8-9b-{tmp_path.name}", actor_id="Reviewer")
     project.attach_passage_semantic_runtime(runtime)
     return runtime
 

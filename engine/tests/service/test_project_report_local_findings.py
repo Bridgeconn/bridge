@@ -7,18 +7,19 @@ different pictures of the same data. `_local_findings_by_verse` now merges
 them in, filtered to still-open status via the same progress rollup the
 coverage bar reads.
 
-`_local_findings_by_verse` reads checkCache.json's wildebeest/usfm/names
-sections directly, whatever is already there — it never triggers
-computation itself. BridgeEngine originally also warmed a whole-book
-Wildebeest cache synchronously inside build_project_report so a
-never-opened verse would have real data; that was reverted the same day
-(see build_project_report's docstring) after it blocked the
-single-threaded stdio dispatcher long enough on a real ~800-verse book to
-time out an unrelated project.open. These tests inject a finding directly
-into checkCache.json the way a real whole-book Wildebeest pass would have
-left one behind, without exercising a real Wildebeest engine dependency.
+`_local_findings_by_verse` reads checkCache.json's usfm/names sections and
+the chapter snapshots' Wildebeest findings (#275), whatever is already
+there — it never triggers computation itself. BridgeEngine originally also
+warmed a whole-book Wildebeest cache synchronously inside
+build_project_report so a never-opened verse would have real data; that was
+reverted the same day (see build_project_report's docstring) after it
+blocked the single-threaded stdio dispatcher long enough on a real
+~800-verse book to time out an unrelated project.open. These tests write a
+Wildebeest finding into the chapter's stored snapshot the way a Greek Room
+chapter run leaves one (#252, #272), without a real Wildebeest engine. They
+used to fill a `wildebeest` checkCache section that nothing in production
+ever wrote (#275).
 """
-import hashlib
 import json
 from pathlib import Path
 
@@ -54,15 +55,7 @@ def fixture_project(tmp_path):
     return root, verse_text
 
 
-def _wildebeest_content_hash(chapter: str, verse: str, text: str) -> str:
-    text_map = {f"{chapter}:{verse}": text}
-    return hashlib.sha256(
-        "\n".join(f"{k}={v}" for k, v in sorted(text_map.items())).encode("utf-8")
-    ).hexdigest()
-
-
 def _inject_wildebeest_finding(project, chapter: str, verse: str, text: str, finding_id: str) -> None:
-    content_hash = _wildebeest_content_hash(chapter, verse, text)
     finding = {
         "id": finding_id, "project_id": str(project.summary.path), "run_id": "", "project_hash": "",
         "book": project.book_id, "chapter": int(chapter), "verse": int(verse),
@@ -73,7 +66,7 @@ def _inject_wildebeest_finding(project, chapter: str, verse: str, text: str, fin
         "evidence": [], "engine_version": "", "resource_versions": {},
         "status": "open", "human_comment": None, "created_at": "2026-08-31T00:00:00+00:00", "resolved_at": None,
     }
-    project.save_check_cache_section("wildebeest", content_hash, [finding])
+    project.save_check_findings_snapshot(chapter, {verse: [finding]})
 
 
 def test_project_report_surfaces_local_finding_never_ai_reviewed(fixture_project):
@@ -99,20 +92,20 @@ def test_project_report_surfaces_local_finding_never_ai_reviewed(fixture_project
 
 def test_project_report_does_not_touch_the_cached_finding_on_disk(fixture_project):
     """build_project_report must not recompute or overwrite an existing
-    checkCache.json section — it only reads whatever local findings are
+    stored chapter snapshot — it only reads whatever local findings are
     already there (see module docstring for why eager computation was
     reverted)."""
     root, verse_text = fixture_project
     engine = BridgeEngine()
     call(engine, "project.open", {"path": str(root)})
     _inject_wildebeest_finding(engine.project, "1", "1", verse_text, "wb-test-2")
-    before = engine.project.load_check_cache().get("wildebeest")
+    before = engine.project.load_check_findings_snapshot("1")
 
     call(engine, "project.report")
 
-    after = engine.project.load_check_cache().get("wildebeest")
+    after = engine.project.load_check_findings_snapshot("1")
     assert after == before
-    assert after["findings"][0]["id"] == "wb-test-2"
+    assert after["1"][0]["id"] == "wb-test-2"
 
 
 def test_accepted_local_finding_drops_out_of_the_row(fixture_project):
@@ -264,3 +257,35 @@ def test_a_stale_ai_review_is_still_an_exception(fixture_project):
     assert engine.project.ai_review_cache_status("1", "1") == "stale"
     queue = result["result"]["exceptionQueue"]
     assert [(r["chapter"], r["verse"], r["cache"]) for r in queue] == [("1", "1", "stale")]
+
+
+def test_a_greek_room_runs_wildebeest_findings_reach_the_report_and_triage(fixture_project, monkeypatch):
+    """#275: the writer and the readers agree. A Greek Room job saves its
+    Wildebeest findings in the chapter snapshot; the report's exception queue
+    and triage read them from there."""
+    import time
+
+    from greek_room_engine.models.finding import FindingCategory, QaFinding
+    from tc_ai_bridge.triage import persisted_findings
+
+    root, _verse_text = fixture_project
+    engine = BridgeEngine()
+    call(engine, "project.open", {"path": str(root)})
+    monkeypatch.setattr(engine, "_usfm_findings_for_book", lambda project=None, cancel_event=None: [])
+    monkeypatch.setattr(engine, "_names_findings_for_book", lambda project=None: [])
+    monkeypatch.setattr(engine.greek_room, "check_verse", lambda **_kwargs: [QaFinding(
+        engine="wildebeest", check_type="wildebeest.script.mixed", category=FindingCategory.UNICODE,
+        start_offset=0, end_offset=3, original_text="ஆதி", explanation="Mixed script.")])
+    started = call(engine, "checks.start", {"scope": "chapter", "chapters": ["1"], "checks": ["greekroom"]})
+    job_id = started["result"]["jobId"]
+    deadline = time.monotonic() + 30
+    while call(engine, "checks.status", {"jobId": job_id})["result"]["state"] not in {"succeeded", "failed"}:
+        assert time.monotonic() < deadline
+        time.sleep(0.02)
+
+    queue = call(engine, "project.report")["result"]["exceptionQueue"]
+    row = next(r for r in queue if r["verse"] == "1")
+    assert [f["checkType"] for f in row["localFindings"]] == ["wildebeest.script.mixed"]
+    triaged = persisted_findings(engine.project, ["1"])[("1", "1")]
+    assert [(f["engine"], f["chapter"], f["verse"]) for f in triaged.values()] == [("wildebeest", 1, 1)]
+    assert "wildebeest" not in engine.project.load_check_cache()

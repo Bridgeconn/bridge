@@ -4,6 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Bridge</title>
+    <!-- #276: the loading screen's --bg before any CSS has loaded, so the first
+         paint matches the window's backgroundColor in tauri.conf.json. -->
+    <style>html, body { background: #F3F4F6; }</style>
   </head>
   <body>
     <div id="app"></div>

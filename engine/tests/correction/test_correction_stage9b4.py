@@ -1289,7 +1289,7 @@ def test_verification_and_corrected_persist_across_a_runtime_restart(
     from tc_ai_bridge.tc_project import TranslationCoreProject
 
     reopened_project = TranslationCoreProject(runtime.project.path)
-    reopened = PassageSemanticRuntime(reopened_project, runtime.project_id)
+    reopened = PassageSemanticRuntime(reopened_project, runtime.project_id, actor_id="Reviewer")
     reopened_project.attach_passage_semantic_runtime(reopened)
     restarted = CorrectionVerificationService(reopened, _Jobs(reopened.repository))
 
@@ -1358,7 +1358,7 @@ def test_protocol_verify_acknowledge_and_restart_on_the_managed_project(
     assert Path(opened["result"]["path"]).resolve() == managed.resolve()
 
     verified = _call(engine, "correction.verifyApplication", {
-        "applicationId": application["applicationId"], "requestedBy": "Reviewer",
+        "applicationId": application["applicationId"],
     })
     assert verified["success"] is True, verified
     assert verified["result"]["verificationStatus"] == "PASSED"
@@ -1376,7 +1376,7 @@ def test_protocol_verify_acknowledge_and_restart_on_the_managed_project(
         "verificationId": verified["result"]["verificationId"],
         "expectedVerificationRevision": verified["result"]["verificationRevision"],
         "expectedFindingRevision": read["result"]["findingRevision"],
-        "actorId": "Reviewer", "note": "Verified in context.",
+        "note": "Verified in context.",
     })
     assert acknowledged["success"] is True, acknowledged
     assert acknowledged["result"]["qaDisposition"] == "CORRECTED"
@@ -1398,7 +1398,8 @@ def test_protocol_verify_acknowledge_and_restart_on_the_managed_project(
     assert after["result"]["verificationCurrent"] is True
     assert after["result"]["qaDisposition"] == "CORRECTED"
     assert after["result"]["applicationState"] == "COMPLETED"
-    assert after["result"]["correctedAcknowledgement"]["acknowledgedBy"] == "Reviewer"
+    # #183: the engine stamps its own user id; the request may not name one.
+    assert after["result"]["correctedAcknowledgement"]["acknowledgedBy"] == engine.current_actor_id()
     assert len(after["result"]["history"]) == 1
     # Neither verification nor the correction application ran a second time.
     assert (managed / "php" / "1.json").read_bytes() == scripture

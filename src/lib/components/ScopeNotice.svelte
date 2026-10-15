@@ -28,7 +28,7 @@
 
 <style>
   .scope-notice {
-    position: fixed; left: 50%; bottom: 110px; z-index: 9000; transform: translateX(-50%);
+    position: fixed; left: 50%; bottom: 110px; z-index: var(--z-toast); transform: translateX(-50%);
     margin: 0; padding: 7px 11px; border-radius: 6px; max-width: min(640px, calc(100vw - 32px));
     background: var(--surface); color: var(--text); border: 1px solid var(--border);
     font-size: var(--fs-sm); box-shadow: 0 4px 14px rgba(15, 23, 42, .18);

@@ -18,8 +18,8 @@
   import { aiJobAppliesToReference, isAIReviewJobActive } from "../utils/aiJobScope";
   import { categoryClass, findingNumbers } from "../utils/highlight";
   import {
-    selectedVerse, selectedFindings, findingsByVerse, currentChapter,
-    checkStatusByVerse, checkingProgress, verseKey,
+    selectedVerse, selectedFindings, currentChapter,
+    checkingProgress, verseKey, checkGroupsByVerse,
     aiCheckReviewsByVerse, nativeChecksByVerse, project, reviewerMode,
   } from "../stores";
   import {
@@ -28,48 +28,32 @@
     setPendingAcceptFinding, applyLanguageQaSuggestedFix,
   } from "../verseEditor";
   import { alignmentOpen, alignmentKey, openAlignment } from "../alignmentUi";
+  import { greekRoomChapterSummary, greekRoomVerseRunning, runVerseGreekRoom } from "../verseChecks";
   import { aiReviewRequest, aiJobActive } from "../aiReviewUi";
   import { setSidePanel } from "../editorPrefs";
-  import type { AiExplainResult, AIReviewJobSnapshot, FindingStatus } from "../types/finding";
+  import type { AiExplainResult, AIReviewJobSnapshot, FindingStatus, QaFinding } from "../types/finding";
 
   $: openFindingCount = $selectedFindings.filter((f) => f.status === "open").length;
-  let greekRoomChecking = false;
-  let lastCheckedKey = "";
-  let liveCheckSequence = 0;
-  let displayedLiveCheck = 0;
-  const latestLiveCheckByVerse = new Map<string, number>();
   type DecisionSaveState = "saving" | "saved" | "error";
   let decisionSaveState: Record<string, DecisionSaveState> = {};
   let decisionSaveError: Record<string, string> = {};
 
-  // Re-run Greek Room live whenever the selected verse changes — per the
-  // approved design, Greek Room is the one engine that re-checks live on
-  // focus; tN/tW/Alignment are already-computed background-pass results.
-  $: if ($selectedVerse) {
-    const key = verseKey($currentChapter, $selectedVerse);
-    if (key !== lastCheckedKey) {
-      lastCheckedKey = key;
-      runLiveGreekRoomCheck($currentChapter, $selectedVerse);
-    }
-  }
+  // Greek Room runs on demand (#252, Rina and Benz 2026-10-13; it re-ran live
+  // on every verse selection until then): this verse from the button below,
+  // the chapter or book from the toolbar's Checks menu.
+  $: selectedKey = $selectedVerse ? verseKey($currentChapter, $selectedVerse) : "";
+  $: greekRoomChecking = Boolean(selectedKey) && $greekRoomVerseRunning === selectedKey;
+  $: greekRoomRan = ($checkGroupsByVerse[selectedKey] ?? []).includes("wildebeest");
+  let greekRoomError = "";
+  $: if (selectedKey) greekRoomError = "";
 
-  async function runLiveGreekRoomCheck(chapter: string, verse: string) {
-    const key = verseKey(chapter, verse);
-    const requestToken = ++liveCheckSequence;
-    latestLiveCheckByVerse.set(key, requestToken);
-    displayedLiveCheck = requestToken;
-    greekRoomChecking = true;
+  async function runGreekRoomHere(): Promise<void> {
+    if (!$selectedVerse) return;
+    greekRoomError = "";
     try {
-      const findings = await bridge.runVerseChecks(chapter, verse, ["greekroom"]);
-      if (latestLiveCheckByVerse.get(key) !== requestToken) return;
-      findingsByVerse.update((map) => {
-        const existing = (map[key] ?? []).filter((f) => f.engine !== "wildebeest");
-        return { ...map, [key]: [...existing, ...findings] };
-      });
+      await runVerseGreekRoom($currentChapter, $selectedVerse);
     } catch (e) {
-      console.error("Greek Room live check failed", e);
-    } finally {
-      if (displayedLiveCheck === requestToken) greekRoomChecking = false;
+      greekRoomError = e instanceof Error ? e.message : String(e);
     }
   }
 
@@ -532,11 +516,6 @@
   onMount(() => {
     setVerseEditSavedHook(({ chapter, verse, issueResolutionsNeedingRecheck, acceptFindingId }) => {
       const key = verseKey(chapter, verse);
-      // Invalidate any live Greek-Room-only check still in flight from when
-      // this verse was first selected, so it can't resolve after this point
-      // and overwrite saveVerseEdit's own fresh (post-edit) findings with a
-      // stale pre-edit wildebeest result.
-      latestLiveCheckByVerse.set(key, ++liveCheckSequence);
       if ($selectedVerse && verseKey($currentChapter, $selectedVerse) === key) {
         void translationHelpsReview?.refresh();
         // Record the human decision unconditionally — the same "a decision
@@ -562,11 +541,36 @@
 
   type ReviewTab = "greekroom" | "tntw" | "lqa" | "ai";
   let activeTab: ReviewTab = "greekroom";
+
+  // #202: a Greek Room result lands where the reader is looking. When a run
+  // finishes for the selected verse -- the button here, or a chapter or book
+  // job writing this verse's result -- the panel shows the Greek Room tab,
+  // so the finding is on screen without a click on the verse's mark. Only on
+  // the transition: a reader who then moves to another tab is left there.
+  // Selecting a verse that ran earlier is not a landing: the switch happens
+  // only when, for the same selected verse, the run goes from running to
+  // done or from not run to run.
+  let greekRoomSeen = { key: "", ran: false, checking: false };
+  $: {
+    const now = { key: selectedKey, ran: greekRoomRan, checking: greekRoomChecking };
+    const sameVerse = now.key !== "" && now.key === greekRoomSeen.key;
+    const finished = sameVerse && greekRoomSeen.checking && !now.checking && now.ran;
+    const arrived = sameVerse && !greekRoomSeen.ran && now.ran && !now.checking;
+    if (finished || arrived) activeTab = "greekroom";
+    greekRoomSeen = now;
+  }
   // The three real Greek Room engines (see each adapter's own engine_name:
   // wildebeest_adapter.py, usfm_adapter.py, names_adapter.py) — everything
   // else on a finding's `engine` field (tN/tW/alignment's own QAIssue.source,
   // or "local" as its fallback) is native tC/Bridge QA, not Greek Room.
   const GREEK_ROOM_ENGINES = new Set(["wildebeest", "usfm", "names"]);
+  /** #273: an earlier decision on this item that is not applied to it. */
+  function unmatchedText(prior: NonNullable<QaFinding["unmatched_decision"]>): string {
+    const when = prior.decidedAt ? `, ${new Date(prior.decidedAt).toLocaleDateString()}` : "";
+    return `An earlier decision on this item (${prior.decision}${when}) was recorded under another finding id `
+      + "and is not applied here. Decide it again if it still holds.";
+  }
+
   function isGreekRoom(engine: string): boolean {
     return GREEK_ROOM_ENGINES.has(engine);
   }
@@ -698,6 +702,7 @@
                 {/if}
               </div>
               <p class="explain">{f.explanation}</p>
+              {#if f.unmatched_decision}<p class="unmatched" title={`Recorded under id ${f.unmatched_decision.findingId}`}>{unmatchedText(f.unmatched_decision)}</p>{/if}
             </div>
           {:else}
             <p class="none">No local QA findings.</p>
@@ -715,9 +720,28 @@
             <div class="section-title">
               Greek Room QA
               {#if greekRoomChecking}
-                <span class="live"><span class="spin" /> live check</span>
+                <span class="live"><span class="spin" /> running</span>
               {/if}
             </div>
+            <div class="greek-room-run">
+              <button type="button" class="run-greek-room"
+                disabled={!$selectedVerse || greekRoomChecking || $checkingProgress.running || Boolean($editingChapter) || $editSaving}
+                title={$checkingProgress.running ? "Wait for background checking to finish" : "Run Greek Room's checks on this verse"}
+                on:click={runGreekRoomHere}>{greekRoomRan ? "Run Greek Room again" : "Run Greek Room on this verse"}</button>
+              {#if !greekRoomRan && !greekRoomChecking}
+                <span class="not-run">Not run on this verse yet. The Checks menu runs it for the chapter or the book.</span>
+              {/if}
+            </div>
+            <!-- #202: the chapter's result, visible without a click on any verse's mark. -->
+            <p class="chapter-summary" data-testid="greek-room-chapter-summary">
+              {#if $greekRoomChapterSummary.checkedVerses === 0}
+                Greek Room: not run in this chapter.
+              {:else}
+                Greek Room: {$greekRoomChapterSummary.openFindings} open in this chapter
+                · {$greekRoomChapterSummary.checkedVerses} of {$greekRoomChapterSummary.totalVerses} verses checked.
+              {/if}
+            </p>
+            {#if greekRoomError}<p class="none failed">Greek Room could not run: {greekRoomError}</p>{/if}
             {#each grOpenFindings as f}
               <div class="finding source-{categoryClass(f.category)}">
                 <div class="verdict">
@@ -735,6 +759,7 @@
                   {/if}
                 </div>
                 <p class="explain">{f.explanation}</p>
+                {#if f.unmatched_decision}<p class="unmatched" title={`Recorded under id ${f.unmatched_decision.findingId}`}>{unmatchedText(f.unmatched_decision)}</p>{/if}
                 {#if f.evidence.length > 0}
                   <ul class="evidence">
                     {#each f.evidence as e}<li>{e.label}: {e.value}</li>{/each}
@@ -751,7 +776,7 @@
                 </div>
               </div>
             {/each}
-            {#if grFindings.length === 0 && !greekRoomChecking}<p class="none">No Greek Room findings.</p>{/if}
+            {#if grFindings.length === 0 && !greekRoomChecking && greekRoomRan}<p class="none">No Greek Room findings.</p>{/if}
           </div>
 
           {#if grAcceptedFindings.length > 0}
@@ -827,7 +852,7 @@
                   <span class="engine-badge">{isLearnedFinding(f) ? "learned fix" : f.category}</span>
                   <span class="check-id">{f.ruleId}</span>
                   {#if f.previouslyIgnored}<span class="badge badge-decided" title="Ignored under an older rule version; check it again">re-check</span>{/if}
-                  {#if f.context}<span class="engine-badge" title={f.context === "heading" ? `Section heading: ${f.contextText ?? ""}` : "Footnote text"}>in {f.context}</span>{/if}
+                  {#if f.context}<span class="engine-badge" title={f.context === "heading" ? `Section heading: ${f.contextText ?? ""}` : f.context === "introduction" ? `Book introduction: ${f.contextText ?? ""}` : "Footnote text"}>in {f.context}</span>{/if}
                 </div>
                 <p class="explain"><b>{f.originalText}</b> — {f.message}</p>
                 {#if f.reference}<p class="explain lqa-reference"><b>{f.reference.label} {f.reference.ref}:</b> {f.reference.text}</p>{/if}
@@ -1132,6 +1157,14 @@
   .undo-ignore, .undo-accept { background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border-strong); }
   .edit-inline { background: var(--accent-bg); color: var(--accent); }
   .none { font-size: var(--fs-xs); color: var(--text-3); }
+  .none.failed { color: var(--danger); }
+  .unmatched { margin: 4px 0; font-size: var(--fs-2xs); color: var(--warning); }
+  .greek-room-run { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 8px; }
+  .run-greek-room { font-size: var(--fs-xs); font-weight: 600; padding: 3px 9px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--text); cursor: pointer; }
+  .run-greek-room:disabled { opacity: 0.6; cursor: not-allowed; }
+  .not-run { font-size: var(--fs-2xs); color: var(--text-2); }
+  /* #202: the chapter's Greek Room result, under the run button. */
+  .chapter-summary { margin: 4px 0 8px; font-size: var(--fs-xs); color: var(--text-2); }
   .decision-row button:disabled { opacity: .55; cursor: not-allowed; }
   .verse-actions { display: flex; gap: 6px; flex: 0 0 auto; }
   .edit-btn { padding: 5px 9px; font-size: var(--fs-2xs); font-weight: 700; border-radius: 6px; border: none; background: var(--accent-bg); color: var(--accent); cursor: pointer; white-space: nowrap; }

@@ -17,6 +17,70 @@ from tc_ai_bridge import check_timing
 
 
 TERMINAL_STATES = {"succeeded", "failed", "cancelled"}
+
+# Elective checks (#251, #252). A request names checks; each name stands for
+# one or more groups, and a group is what a finding is attributed to. "local"
+# keeps its old meaning (every Bridge-side group plus the book USFM and names
+# scans) for callers that predate the selector. "greekroom" is the three Greek
+# Room tools the Review panel groups under its tab: Wildebeest per verse, the
+# USFM structural checker and names spelling per book. "text" is Bridge's own
+# verse USFM marker checks and the repeated-word check.
+LOCAL_GROUPS = ("tN", "tW", "alignment", "text")
+GREEK_ROOM_GROUPS = ("wildebeest", "usfm", "names")
+FINDING_GROUPS = (*LOCAL_GROUPS, *GREEK_ROOM_GROUPS)
+_CHECK_ALIASES: dict[str, tuple[str, ...]] = {
+    "local": (*LOCAL_GROUPS, "usfm", "names"),
+    "greekroom": GREEK_ROOM_GROUPS,
+}
+GREEK_ROOM_CHECK = "greekroom"
+# Every name checks.start, collection.runChecks and verse.runChecks accept.
+CHECK_NAMES = frozenset({*_CHECK_ALIASES, *FINDING_GROUPS})
+_STAGE_LABELS = {
+    "tN": "tN", "tW": "tW", "alignment": "Alignment", "text": "Text",
+    "usfm": "USFM", "names": "Names", "consistency": "Consistency",
+}
+
+
+def expand_checks(checks: Any) -> frozenset[str]:
+    """The groups a list of check names runs (unknown names pass through)."""
+    groups: set[str] = set()
+    for name in checks or ():
+        groups.update(_CHECK_ALIASES.get(name, (name,)))
+    return frozenset(groups)
+
+
+def groups_ran(checks: Any) -> frozenset[str]:
+    """The finding groups a run of `checks` refreshes: its groups, plus "tc"
+    (translationCore comments, edit history, other tools' items) when tN or tW
+    ran, since local_checks reports those with either."""
+    groups = expand_checks(checks)
+    return groups | {"tc"} if groups & {"tN", "tW"} else groups
+
+
+_TC_CATEGORY_GROUP = {"translation_note": "tN", "translation_word": "tW"}
+
+
+def finding_check(engine: Any, category: Any, check_type: Any) -> str:
+    """The group a finding belongs to, from what every stored finding carries."""
+    engine = str(engine or "")
+    category = str(getattr(category, "value", category) or "")
+    check_type = str(check_type or "")
+    if engine in GREEK_ROOM_GROUPS:
+        return engine
+    if engine == "alignment-corpus":
+        return "consistency"
+    if category in _TC_CATEGORY_GROUP:
+        return _TC_CATEGORY_GROUP[category]
+    if category == "alignment" or check_type.startswith("alignment."):
+        return "alignment"
+    if engine == "translationCore":
+        return "tc"
+    return "text"
+
+
+def finding_dict_check(finding: dict[str, Any]) -> str:
+    return str(finding.get("check") or "") or finding_check(
+        finding.get("engine"), finding.get("category"), finding.get("check_type"))
 # Every verse is checked and the completion hook is writing the rollup and the
 # findings snapshots. Not terminal: a poll keeps polling, and never sees the
 # outcome before those writes land (#235).
@@ -104,6 +168,9 @@ class _CheckJob:
                 "projectPath": self.spec.project_path,
                 "state": self.state,
                 "checks": list(self.spec.checks),
+                # The finding groups this job refreshes (#251): a verse's
+                # findings of any other group are kept, not replaced.
+                "checkGroups": sorted(groups_ran(self.spec.checks)),
                 "chapters": list(self.spec.chapters),
                 "chapterVerses": copy.deepcopy(self.spec.chapter_verses),
                 "totalVerses": total_verses,
@@ -205,11 +272,21 @@ class CheckJobManager:
     @staticmethod
     def _stages(checks: tuple[str, ...]) -> list[tuple[str, list[str]]]:
         stages: list[tuple[str, list[str]]] = []
-        if any(c in checks for c in ("local", "tN", "tW", "alignment", "usfm")):
-            local = [c for c in checks if c in {"local", "tN", "tW", "alignment", "usfm"}]
-            stages.append(("tN · tW · Alignment", local or ["local"]))
-        if any(c in checks for c in ("greekroom", "wildebeest")):
-            stages.append(("QA", ["greekroom"]))
+        groups = expand_checks(checks)
+        # The book USFM and names scans are Greek Room's when it was asked
+        # for, and part of the local stage otherwise ("local", "usfm").
+        greek_room = [
+            g for g in GREEK_ROOM_GROUPS
+            if g in groups and (GREEK_ROOM_CHECK in checks or g == "wildebeest")
+        ]
+        local = [
+            g for g in (*LOCAL_GROUPS, "usfm", "names", "consistency")
+            if g in groups and g not in greek_room
+        ]
+        if local:
+            stages.append((" · ".join(_STAGE_LABELS[g] for g in local), local))
+        if greek_room:
+            stages.append(("Greek Room", greek_room))
         # Language QA findings are not QaFindings: the stage returns
         # {"findings": [...], "decided": {id: decision}} and the verse result
         # carries it under "languageQa", so every reader of "findings" keeps

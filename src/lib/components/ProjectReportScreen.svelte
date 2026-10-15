@@ -653,7 +653,7 @@
   .export { position: relative; }
   .export summary { list-style: none; display: inline-block; }
   .export summary::-webkit-details-marker { display: none; }
-  .export .menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; width: 240px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.12); padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+  .export .menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: var(--z-dropdown); width: 240px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.12); padding: 6px; display: flex; flex-direction: column; gap: 2px; }
   .export .menu button { text-align: left; border: 0; background: transparent; padding: 8px 10px; border-radius: 6px; font-size: var(--fs-sm); color: var(--text); cursor: pointer; }
   .export .menu button:hover:not(:disabled) { background: var(--surface-2); }
   .export .menu button:disabled { opacity: .55; cursor: not-allowed; }

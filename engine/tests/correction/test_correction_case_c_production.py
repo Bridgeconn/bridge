@@ -48,7 +48,7 @@ def test_real_case_c_survives_help_resource_revision_and_affected_reanalysis(
     root = tmp_path / "case-c"
     seeded = seed_case_c(root)
     project = TranslationCoreProject(root)
-    runtime = PassageSemanticRuntime(project, str(seeded["projectId"]))
+    runtime = PassageSemanticRuntime(project, str(seeded["projectId"]), actor_id="Reviewer")
     project.attach_passage_semantic_runtime(runtime)
 
     finding = runtime.repository.qa_finding(str(seeded["findingId"]))

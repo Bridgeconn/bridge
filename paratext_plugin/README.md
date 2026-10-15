@@ -26,7 +26,30 @@ Only one connector may be installed: every version uses the same named pipe.
 The earlier navigation-only v1.0 experiment is retained outside Paratext under
 `disabled-TranslationCoreAIBridgePlugin-v1/` for recovery and is git-ignored.
 
-## Build and deploy
+## Installing it for a translator (#282)
+
+A translator never needs the steps below. Bridge carries this source and
+installs the connector itself, in two places:
+
+- **Bridge's installer** offers it after Bridge is installed, when Paratext 9 is
+  registered on the PC (`src-tauri/windows/hooks.nsh`).
+- **Settings › Connections** shows **Install Paratext connector** (or **Update
+  …**) when Paratext 9 is found and the connector is missing or older than the
+  one this Bridge carries.
+
+Either way, `engine/tc_ai_bridge/paratext_install.py`:
+1. finds Paratext 9 through its registry entry;
+2. compiles these three files with the Windows .NET Framework `csc.exe` against
+   that PC's own `PluginInterfaces.dll`, as `build.ps1` does;
+3. copies the result in as `translationCoreAIBridge.ptxplg`, with a
+   `connector-version.txt` beside it, through one Windows administrator prompt.
+
+It refuses while Paratext is running. The frozen engine ships the three `.cs`
+files as data (`engine/bridge-engine.spec`). Bump `PluginVersion` in
+`AiBridgeConnectorPlugin.cs` whenever the connector changes: Bridge offers
+**Update** when the installed version is lower.
+
+## Build and deploy by hand (developers)
 
 The build uses the .NET Framework C# compiler bundled with Windows and the
 plugin-interface DLLs from the installed Paratext 9 directory.
