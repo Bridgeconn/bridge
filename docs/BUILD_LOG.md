@@ -20948,3 +20948,36 @@ screen mounted after closing a book never re-inspects the last drop. Two tests t
 component and pass with the fix. **#303** is a decision, recommendation posted on the issue.
 
 **Gates** as recorded on the issues. **Not watched:** an installed build with these changes.
+
+## 2026-10-15 — USFM checker: an instance line ending in a count is not a header (#283)
+
+**Cause.** The structural checker's .txt report can end an *instance* line with a repeat count when the
+same problem occurs twice in a verse: `LUK 18:14: \wj …\f + \fr 18:14 …\f*\wj* (2)`. `_parse_report`
+tested `_LABELED_COUNT_RE` ("label (n)") before the location shapes, so it pushed that line onto the
+header stack. Two faults followed: the 18:14 finding itself was never emitted, and the nine instances
+after it in the same group (LUK 19:9 … 23:43) took the 18:14 line as their subcategory, so their check
+type was `usfm.luk_18_14_wj_f_fr_18_14_ft_f_f_fr_18_14_ft_f_wj`. That is the "excerpt in the
+subcategory" #273's audit saw; the upstream report has a real subcategory for every one of them
+("Nested tags '\wj … \f … \f* … \wj*' should be changed to …"). Found by running the vendored checker
+on `43LUKIRVTam.SFM` and reading the report, not from the issue's description.
+
+**Fix (adapter only; the vendor tree is untouched).** A line matching `_LOC_WITH_VERSE_RE`,
+`_LOC_WITH_LINE_RE` or `_LOC_FILE_ONLY_RE` is an instance before it is tried as a header. Luke now gives
+80 findings (79 before), and no check type contains a reference or verse text.
+
+**Old decisions.** The parser keeps a second stack updated by the old rule and reports
+`legacy_subcategory`; the adapter sets `_legacy_check_type` where it differs; `_usfm_findings_for_book`
+derives the post-#273 id under that type (`#k` among the old type's findings of the verse) as
+`_legacy_id`, so #273's re-key carries a decision once, journalled with `rekeyedFrom`. A decision from
+before #273 (explanation-keyed) on one of these nine is not carried. The usfm check-cache marker is now
+`|ids-273-283`, so cached sections holding the old check types are rebuilt on the next check.
+
+**Ran.** New `tests/service/test_usfm_check_types.py` (3): the parser on a report excerpt of this shape,
+the real checker on Luke before and after an edit to 19:9, and a decision under the old check type
+moving once. All three fail on the old code and pass now; `test_finding_ids.py` 15 passed. Engine
+`pytest -n auto`: 5439 passed, 3 xfailed, 2 failed under parallel load
+(`test_logos_connector.py::test_get_state_round_trips_through_the_real_helper_process`,
+`test_language_qa.py::test_continuous_foreground_polling_does_not_starve_worker`), both passing when
+re-run alone. After pulling #302/#304: the three affected service files, 87 passed. Sidecars rebuilt;
+frozen `smoke_sidecars.py` passed. **Not watched:** the finding in the desktop app (T31 on the manual
+sheet, next build).
