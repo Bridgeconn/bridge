@@ -875,8 +875,12 @@
 </div>
 
 <style>
-  .modal-overlay { position: absolute; inset: 0; background: rgba(15, 20, 26, 0.45); display: flex; align-items: center; justify-content: center; z-index: 30; }
-  .settings-modal { width: 640px; height: 480px; background: var(--surface); border-radius: 14px; display: flex; overflow: hidden; position: relative; }
+  /* --z-dialog (#288): above the floating Language QA panel, which covered
+     this dialog at a hand-picked 30. 1.5x the old 640x480, capped at 80% of
+     the window (960x614 on a 1366x768 laptop); the nav keeps its width and
+     the pane scrolls inside. */
+  .modal-overlay { position: absolute; inset: 0; background: rgba(15, 20, 26, 0.45); display: flex; align-items: center; justify-content: center; z-index: var(--z-dialog); }
+  .settings-modal { width: min(960px, 80vw); height: min(720px, 80vh); background: var(--surface); border-radius: 14px; display: flex; overflow: hidden; position: relative; }
   .close-btn { position: absolute; top: 10px; right: 10px; z-index: 2; width: 28px; height: 28px; border-radius: 6px; border: none; background: transparent; color: var(--text-2); font-size: var(--fs-lg); cursor: pointer; }
   .close-btn:hover { background: var(--surface-2); }
   .settings-nav { width: 170px; background: var(--surface-2); border-right: 1px solid var(--border); padding: 14px 8px; flex-shrink: 0; display: flex; flex-direction: column; }

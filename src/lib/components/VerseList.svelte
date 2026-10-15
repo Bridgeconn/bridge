@@ -1394,7 +1394,7 @@
   .verse.multi { box-shadow: inset 3px 0 0 var(--accent); background: var(--accent-bg); }
   .empty { color: var(--text-3); font-size: var(--fs-md); }
   .context-notice {
-    position: fixed; left: 50%; bottom: 34px; z-index: 9000; transform: translateX(-50%);
+    position: fixed; left: 50%; bottom: 34px; z-index: var(--z-toast); transform: translateX(-50%);
     margin: 0; padding: 7px 11px; border-radius: 6px; background: var(--success-bg);
     color: var(--success); font-size: var(--fs-sm); box-shadow: 0 4px 14px rgba(15, 23, 42, .18);
   }

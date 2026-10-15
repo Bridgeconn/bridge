@@ -73,7 +73,7 @@
 {/if}
 
 <style>
-  .overlay { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: rgba(15, 20, 26, 0.45); }
+  .overlay { position: fixed; inset: 0; z-index: var(--z-dialog-over-dialog); display: grid; place-items: center; background: rgba(15, 20, 26, 0.45); }
   .dialog { width: min(600px, calc(100vw - 32px)); max-height: calc(100vh - 48px); display: flex; flex-direction: column;
     background: var(--surface); color: var(--text); border-radius: 14px; padding: 20px 24px; box-sizing: border-box;
     box-shadow: 0 20px 50px rgba(0, 0, 0, .25); }

@@ -20756,3 +20756,42 @@ rule; the pa/pan rule's order; the hi/ml/or rules and aliases; `--font-ui` uncha
 `AlignmentModal.test.ts` (1): target cells and bank carry it, source words do not. jsdom picks no
 platform font, so the rendered-font fact stays with the Edge probe above. Gates as recorded on
 the issue.
+
+## 2026-10-15 — Named stacking layers; Settings at 1.5x, capped at 80% of the window (#288)
+
+**Reproduced from the code.** `SettingsModal`'s overlay was `z-index: 30` and the floating Language
+QA panel `45`, so Settings opened under the panel and could not be used until the panel was closed;
+Export, Diagnostics and Assignments shared the 30. Every z-index in `src/` was a hand-picked
+literal (5, 20, 25, 30, 40, 45, 50, 60, 100, 200, 999, 9000, 10000) with nothing saying which kind
+of surface goes above which.
+
+**Change, frontend only.** `index.css` defines seven layers as custom properties, lowest to
+highest: `--z-dropdown` 40 (a menu anchored to a control), `--z-panel` 45 (the floating Language QA
+panel), `--z-dialog` 50 (Settings, Export, Diagnostics, Align Words, Cross-verse alignment, a
+correction's confirm backdrop), `--z-dialog-over-dialog` 60 (Checker settings, Language QA
+History, Lexicon, Flag, Scope confirm, Occurrences, Verse notes, the cross-verse issue menu),
+`--z-popover` 70 (finding context menu, flag and verse-history popovers, the two drag ghosts),
+`--z-toast` 80 (ScopeNotice, the verse list's context notice), `--z-startup` 200. Twenty-six
+rules in twenty-two components now name their layer; a literal survives only where it orders
+things inside one component (sticky headers 1–3, close buttons 2, the side panel's handle 5/6).
+The three files on Revant's side keep their numbers and are listed for him on the issue:
+`AssignmentsDialog` (30, the one dialog still under the panel), `StartupScreen` (200) and
+`UserPicker` (25), whose one-line moves are `--z-dialog` and `--z-startup`; `App.svelte`'s file-drop
+overlay (100) and error (101) sit between `--z-toast` and `--z-startup` on purpose and the
+index.css comment says so. The docked Language QA panel is in flow with no z-index, so any dialog
+is above it already.
+
+**Settings.** `.settings-modal` is `min(960px, 80vw)` by `min(720px, 80vh)`: 1.5x the old 640x480,
+960x614 at 1366x768. The nav keeps its 170px (`flex-shrink: 0`) and the pane scrolls
+(`overflow-y: auto`), both as before. Nothing else in `SettingsModal.svelte` changed.
+
+**Tests.** `stackingLayers.test.ts` (6): the layer order; every dialog on `--z-dialog` and the panel
+on `--z-panel`; the over-dialog set; popovers, toasts and dropdowns; no literal of 10 or more left
+in the converted components; the Settings size and its scrolling pane. The test reads the files
+from disk because vitest serves a CSS import as an empty module (the same reason
+`targetFont.test.ts` does; both carry `@ts-expect-error` on the node imports, since the app tsconfig
+has no node types — svelte-check flagged the first commit's `node:fs` import, fixed here). Gates
+as recorded on the issue. **Not run:** the desktop app; the issue's verification list (floating
+and docked panel against Settings, Export and Diagnostics; Checker settings and History above
+Settings; context menus and toasts; the 80% cap on the field laptop) is a walk on the next
+installed build, and jsdom does not paint.

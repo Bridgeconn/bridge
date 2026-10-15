@@ -319,7 +319,7 @@
 <style>
   .finding-menu {
     position: fixed;
-    z-index: 10000;
+    z-index: var(--z-popover);
     box-sizing: border-box;
     min-width: 14rem;
     max-width: min(34rem, calc(100vw - 16px));

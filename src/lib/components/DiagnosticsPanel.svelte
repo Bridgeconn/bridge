@@ -111,7 +111,7 @@
 </div>
 
 <style>
-  .modal-overlay { position: absolute; inset: 0; background: rgba(15, 20, 26, 0.45); display: flex; align-items: center; justify-content: center; z-index: 30; }
+  .modal-overlay { position: absolute; inset: 0; background: rgba(15, 20, 26, 0.45); display: flex; align-items: center; justify-content: center; z-index: var(--z-dialog); }
   .diagnostics-modal { width: 720px; height: 520px; background: var(--surface); border-radius: 14px; display: flex; flex-direction: column; overflow: hidden; position: relative; }
   .close-btn { position: absolute; top: 10px; right: 10px; z-index: 2; width: 28px; height: 28px; border-radius: 6px; border: none; background: transparent; color: var(--text-2); font-size: var(--fs-lg); cursor: pointer; }
   .close-btn:hover { background: var(--surface-2); }

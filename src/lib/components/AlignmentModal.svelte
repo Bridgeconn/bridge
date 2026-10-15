@@ -576,7 +576,7 @@
 {/if}
 
 <style>
-  .overlay { position: fixed; inset: 0; z-index: 50; background: rgba(15, 20, 26, .58); display: grid; place-items: center; padding: 24px; }
+  .overlay { position: fixed; inset: 0; z-index: var(--z-dialog); background: rgba(15, 20, 26, .58); display: grid; place-items: center; padding: 24px; }
   .modal { width: min(1040px, 100%); max-height: calc(100vh - 48px); overflow: auto; background: var(--surface); border-radius: 16px; box-shadow: 0 24px 80px rgba(0,0,0,.24); padding: 20px; color: var(--text); }
   header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; border-bottom: 1px solid var(--border); padding-bottom: 14px; }
   .eyebrow { color: var(--accent); font-size: var(--fs-2xs); letter-spacing: .12em; font-weight: 800; }
@@ -606,7 +606,7 @@
   .issues-button { border: 0; background: none; padding: 3px 6px; font-size: var(--fs-xs); font-weight: 700; color: var(--danger); border-radius: 7px; }
   .issues-button:hover:not(:disabled), .issues-button[aria-expanded="true"] { background: var(--danger-bg); border-color: transparent; }
   .issues-panel {
-    position: absolute; top: calc(100% + 4px); right: 0; z-index: 20; width: max(260px, 26vw);
+    position: absolute; top: calc(100% + 4px); right: 0; z-index: var(--z-dropdown); width: max(260px, 26vw);
     background: #FFF5F5; color: var(--danger); border: 1px solid var(--danger); border-radius: 9px;
     padding: 10px 12px; font-size: var(--fs-sm); line-height: 1.45; text-align: left;
     box-shadow: 0 10px 28px rgba(0,0,0,.16);
@@ -716,7 +716,7 @@
   .bank-tokens { display: flex; flex-wrap: wrap; gap: 7px; min-height: 46px; align-content: flex-start; border-radius: 8px; padding: 4px; }
   .bank-tokens.drop-hover { background: var(--accent-bg); outline: 2px dashed var(--accent); }
   .drag-ghost {
-    position: fixed; z-index: 999; transform: translate(-50%, -130%); pointer-events: none;
+    position: fixed; z-index: var(--z-popover); transform: translate(-50%, -130%); pointer-events: none;
     background: var(--accent); color: white; font-family: var(--font-target); font-size: var(--fs-sm); font-weight: 700;
     border-radius: 7px; padding: 6px 10px; box-shadow: 0 8px 20px rgba(0,0,0,.28);
   }

@@ -62,7 +62,7 @@
 </div>
 
 <style>
-  .overlay { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: rgba(15, 20, 26, 0.35); }
+  .overlay { position: fixed; inset: 0; z-index: var(--z-dialog-over-dialog); display: grid; place-items: center; background: rgba(15, 20, 26, 0.35); }
   .popup { width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; box-sizing: border-box;
     background: var(--surface); color: var(--text); border-radius: 12px; padding: 16px 20px; box-shadow: 0 20px 50px rgba(0,0,0,.25); }
   .head { display: flex; align-items: center; gap: 8px; }

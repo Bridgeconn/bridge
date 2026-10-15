@@ -125,6 +125,34 @@
      bundled polytonic face and plain Noto Serif is the named fallback. */
   --font-hebrew: "Ezra SIL", "SBL Hebrew", serif;
   --font-greek: "Gentium Plus", "Noto Serif", serif;
+
+  /* Stacking layers (#288). Every overlay, floating panel, dialog, popover and
+     toast takes its z-index from one of these, lowest to highest, so a surface
+     says which kind of thing it is rather than picking a number -- Settings
+     at a hand-picked 30 sat under the floating Language QA panel at 45. A
+     z-index that only orders things inside one component (a sticky header, a
+     close button, a resize handle) stays a small literal there.
+       --z-dropdown   a menu anchored to a control (Checks, export, language)
+       --z-panel      a floating panel (Language QA)
+       --z-dialog     an app dialog and its backdrop (Settings, Export,
+                      Diagnostics, Align Words, Cross-verse alignment, a
+                      correction's confirm)
+       --z-dialog-over-dialog  a dialog or popup opened from a dialog (Checker
+                      settings, History, Lexicon, Flag, Scope confirm,
+                      Occurrences, Verse notes, the cross-verse issue menu)
+       --z-popover    a pointer-anchored popover, context menu or drag ghost
+       --z-toast      a notice that sits over everything on the page
+       --z-startup    the startup screen and the user picker, above all
+     App.svelte's file-drop overlay (100) and its error (101) sit between
+     --z-toast and --z-startup on purpose: a file dragged over the window is
+     above any dialog. */
+  --z-dropdown: 40;
+  --z-panel: 45;
+  --z-dialog: 50;
+  --z-dialog-over-dialog: 60;
+  --z-popover: 70;
+  --z-toast: 80;
+  --z-startup: 200;
 }
 
 /* #286: the target face in the project language's own order. Fallback is per

@@ -1063,7 +1063,7 @@
 {/if}
 
 <style>
-  .overlay { position: fixed; inset: 0; z-index: 50; background: rgba(15, 20, 26, .58); display: grid; place-items: center; padding: 16px; }
+  .overlay { position: fixed; inset: 0; z-index: var(--z-dialog); background: rgba(15, 20, 26, .58); display: grid; place-items: center; padding: 16px; }
   .page {
     width: min(1340px, 100%); height: calc(100vh - 32px); display: flex; flex-direction: column; min-height: 0;
     background: var(--surface); border-radius: 14px; box-shadow: 0 24px 80px rgba(0,0,0,.24); padding: 14px 18px; color: var(--text);
@@ -1148,7 +1148,7 @@
   .option .greek { font-family: var(--font-greek); }
   .null-word { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; border: 1px dashed var(--border-strong); background: var(--surface-2); color: var(--text-2); border-radius: 7px; padding: 4px 8px; }
   .null-word small { font-family: var(--font-ui); font-size: var(--fs-3xs); color: var(--text-3); }
-  .menu-overlay { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: rgba(15, 20, 26, .2); }
+  .menu-overlay { position: fixed; inset: 0; z-index: var(--z-dialog-over-dialog); display: grid; place-items: center; background: rgba(15, 20, 26, .2); }
   .issue-menu { background: var(--surface); border: 1px solid var(--border-strong); border-radius: 9px; box-shadow: 0 10px 30px rgba(0, 0, 0, .18); padding: 6px; display: grid; gap: 2px; min-width: 260px; }
   .issue-menu .menu-title { font-size: var(--fs-3xs); color: var(--text-3); padding: 4px 8px 6px; font-weight: 700; }
   .issue-menu button { border: 0; text-align: left; padding: 6px 8px; font-size: var(--fs-xs); border-radius: 6px; }
@@ -1229,7 +1229,7 @@
   .unalign-x { border: 0; background: none; padding: 0; width: 16px; height: 16px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; color: var(--text-2); font-size: var(--fs-md); flex-shrink: 0; }
   .unalign-x:hover:not(:disabled) { color: var(--danger); background: var(--danger-bg); }
   .bank { display: flex; flex-wrap: wrap; gap: 6px; min-height: 44px; align-content: flex-start; border-radius: 8px; padding: 4px; }
-  .drag-ghost { position: fixed; z-index: 999; transform: translate(-50%, -130%); pointer-events: none; background: var(--accent); color: white; font-family: var(--font-target); font-size: var(--fs-sm); font-weight: 700; border-radius: 7px; padding: 6px 10px; box-shadow: 0 8px 20px rgba(0,0,0,.28); }
+  .drag-ghost { position: fixed; z-index: var(--z-popover); transform: translate(-50%, -130%); pointer-events: none; background: var(--accent); color: white; font-family: var(--font-target); font-size: var(--fs-sm); font-weight: 700; border-radius: 7px; padding: 6px 10px; box-shadow: 0 8px 20px rgba(0,0,0,.28); }
   .empty { color: var(--text-3); font-size: var(--fs-xs); margin: 6px; }
   @media (max-width: 900px) {
     .columns { grid-template-columns: 1fr; }

@@ -1,4 +1,6 @@
+// @ts-expect-error The app tsconfig has no node types; vitest runs under node.
 import { readFileSync } from "node:fs";
+// @ts-expect-error As above.
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { get } from "svelte/store";

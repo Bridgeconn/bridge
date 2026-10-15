@@ -1242,7 +1242,7 @@
   .verification-reasons li { overflow-wrap: anywhere; }
   .verification-evidence { margin-bottom: .45rem; }
   .affected-analysis dl, .relationship-truth { margin: 0 0 .45rem; }
-  .confirm-backdrop { position: fixed; inset: 0; z-index: 50; background: rgba(15, 23, 42, .55); display: grid; place-items: center; padding: 1rem; pointer-events: auto; }
+  .confirm-backdrop { position: fixed; inset: 0; z-index: var(--z-dialog); background: rgba(15, 23, 42, .55); display: grid; place-items: center; padding: 1rem; pointer-events: auto; }
   .confirm-dialog { width: min(42rem, 100%); max-height: calc(100vh - 2rem); overflow-y: auto; background: #fff; border-radius: 8px; padding: 1rem; box-shadow: 0 20px 50px rgba(15,23,42,.35); }
   .confirmation-text { border: 1px solid #e2e8f0; border-radius: 4px; padding: .5rem; }
   .apply-warning { margin-top: .75rem; padding: .55rem; border-left: 4px solid #d97706; background: #fffbeb; font-size: var(--fs-sm); }

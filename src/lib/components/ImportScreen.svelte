@@ -632,7 +632,7 @@
   input[readonly] { background: var(--surface-2); color: var(--text-2); }
   .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .language-field { position: relative; }
-  .language-menu { position: absolute; z-index: 5; left: 0; right: 0; top: 40px; max-height: 215px; overflow: auto; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); box-shadow: 0 10px 25px rgba(25, 35, 55, .16); }
+  .language-menu { position: absolute; z-index: var(--z-dropdown); left: 0; right: 0; top: 40px; max-height: 215px; overflow: auto; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); box-shadow: 0 10px 25px rgba(25, 35, 55, .16); }
   .language-menu button { width: 100%; display: flex; justify-content: space-between; align-items: center; border: 0; border-bottom: 1px solid var(--border); background: var(--surface); color: var(--text); padding: 8px 10px; cursor: pointer; font-size: var(--fs-xs); text-align: left; }
   .language-menu button:hover { background: var(--accent-bg); }
   .language-menu code { color: var(--text-2); font-size: var(--fs-2xs); }

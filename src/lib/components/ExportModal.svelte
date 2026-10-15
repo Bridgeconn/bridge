@@ -113,7 +113,7 @@
 </div>
 
 <style>
-  .modal-overlay { position: absolute; inset: 0; background: rgba(15, 20, 26, 0.45); display: flex; align-items: center; justify-content: center; z-index: 30; }
+  .modal-overlay { position: absolute; inset: 0; background: rgba(15, 20, 26, 0.45); display: flex; align-items: center; justify-content: center; z-index: var(--z-dialog); }
   .modal { width: 460px; background: var(--surface); border-radius: 14px; padding: 22px; }
   h2 { font-size: var(--fs-xl); margin: 0 0 6px; color: var(--text); }
   .sub { font-size: var(--fs-sm); color: var(--text-2); margin: 0 0 18px; }

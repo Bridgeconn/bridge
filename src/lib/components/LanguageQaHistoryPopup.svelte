@@ -27,7 +27,7 @@
 
 <style>
   .overlay {
-    position: fixed; inset: 0; z-index: 60; background: rgba(15, 20, 26, .58);
+    position: fixed; inset: 0; z-index: var(--z-dialog-over-dialog); background: rgba(15, 20, 26, .58);
     display: grid; place-items: center; padding: 24px;
   }
   .popup {

@@ -75,7 +75,7 @@
 <style>
   .check-menu { position: relative; display: inline-flex; }
   .menu-btn { font-size: var(--fs-xs); font-weight: 600; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); cursor: pointer; }
-  .panel { position: absolute; top: calc(100% + 4px); left: 0; z-index: 40; min-width: 250px; padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); box-shadow: 0 8px 24px rgba(0,0,0,.14); display: flex; flex-direction: column; gap: 4px; }
+  .panel { position: absolute; top: calc(100% + 4px); left: 0; z-index: var(--z-dropdown); min-width: 250px; padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); box-shadow: 0 8px 24px rgba(0,0,0,.14); display: flex; flex-direction: column; gap: 4px; }
   .heading { margin: 4px 0 2px; font-size: var(--fs-2xs); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-2); }
   .box { display: flex; align-items: center; gap: 8px; font-size: var(--fs-xs); color: var(--text); cursor: pointer; }
   .hint { margin: 2px 0 4px; font-size: var(--fs-2xs); color: var(--text-2); }

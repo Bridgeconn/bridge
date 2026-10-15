@@ -867,7 +867,8 @@
 </aside>
 
 <style>
-  .language-qa { position: fixed; bottom: 40px; right: 16px; z-index: 45; font-size: 12px; }
+  /* --z-panel (#288): a floating panel sits below every dialog. */
+  .language-qa { position: fixed; bottom: 40px; right: 16px; z-index: var(--z-panel); font-size: 12px; }
   /* Docked: the column is the box; the section fills it and scrolls. */
   .language-qa.docked { position: static; flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .language-qa.docked section { width: auto; max-height: none; flex: 1; min-height: 0; margin: 0; border: 0;
