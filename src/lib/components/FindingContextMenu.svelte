@@ -160,7 +160,12 @@
       return;
     }
     if (event.key === "Tab") {
-      close();
+      // #304: Tab closes the menu like Escape and puts focus back where the
+      // menu was opened from (the verse row). Without preventDefault the
+      // browser then moved focus to the next tabbable element after the menu,
+      // which sits at the end of the page: the side panel's resize handle.
+      event.preventDefault();
+      close(true);
       return;
     }
     if ((event.key === "ArrowRight" || event.key === "ArrowLeft") && !inSubmenu

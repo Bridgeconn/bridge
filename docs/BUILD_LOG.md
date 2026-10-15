@@ -21006,3 +21006,67 @@ ok. Engine `pytest -n auto`: 5437 passed, 3 xfailed, 1 failed:
 `test_passage_semantic_runtime.py::test_moved_project_retains_identity_but_live_copy_is_rejected`,
 which passed alone and in three runs of its whole file (37/37); it touches neither change. Smoke
 of the frozen sidecars not run: no build was made. **Not watched:** both changes in the desktop app.
+
+## 2026-10-15 — Verse bridges and segments in reading order (#302); Tab in the finding menu returns focus (#304)
+
+**#302, cause confirmed in two places.** The 0.18.0 walk drew 2 John 1 as 1, 2, 6 … 13, 3-4, 5a, 5b.
+(1) The engine's own order was wrong: `TranslationCoreProject.verses()` sorted pure numbers first and
+every other key after them as text, so `3-4`, `5a`, `5b` came after 13 in every engine list (job
+snapshots, `chapterVerses`, anything iterating a chapter). (2) The frontend could not have kept a
+correct order anyway: App.svelte builds the list with `Object.keys(verses)`, and JavaScript puts
+integer-like keys first whatever order the map was sent in.
+**Change.** Engine: `verse_order_key` in `tc_project.py` (`front` first, then the leading verse
+number, then the rest of the key; keys with no number last) used by `verses()`. Frontend:
+`src/lib/verseOrder.ts` with the same rule, and `chapterVerseNums` in `stores.ts` puts every
+chapter's list in reading order on each `set`/`update`, so both App.svelte writers (the chapter load
+and a job snapshot) are covered without editing App.svelte, which is Revant's this week. The three
+Language QA `_verse_order` helpers are separate and unchanged.
+**Tests.** `engine/tests/project_io/test_verse_order.py` (3): the key on bridges, segments, `front`
+and unnumbered keys; `verses()` on a stub chapter. `src/lib/__tests__/verseOrder.test.ts` (4): the
+comparator, an already-ordered list kept as the same array, `Object.keys` of a bridge chapter
+through the store and `verseNums`, and a job-snapshot style `set`.
+
+**#304.** `FindingContextMenu.svelte`: Tab now closes the menu like Escape, restoring focus to where
+it was opened from, and prevents the browser's own Tab move, which had sent focus to the next
+tabbable element after the menu at the end of the page (the side panel's resize handle).
+`FindingContextMenu.test.ts` (1 new) fails on the old component and passes now.
+
+**#301** is fixed on branch `fix/301-stale-drop` for Revant to review and merge, because the fix is in
+ImportScreen.svelte, his projects-list code: the handled drop sequence moves to module scope, so a
+screen mounted after closing a book never re-inspects the last drop. Two tests there fail on the old
+component and pass with the fix. **#303** is a decision, recommendation posted on the issue.
+
+**Gates** as recorded on the issues. **Not watched:** an installed build with these changes.
+
+## 2026-10-15 — USFM checker: an instance line ending in a count is not a header (#283)
+
+**Cause.** The structural checker's .txt report can end an *instance* line with a repeat count when the
+same problem occurs twice in a verse: `LUK 18:14: \wj …\f + \fr 18:14 …\f*\wj* (2)`. `_parse_report`
+tested `_LABELED_COUNT_RE` ("label (n)") before the location shapes, so it pushed that line onto the
+header stack. Two faults followed: the 18:14 finding itself was never emitted, and the nine instances
+after it in the same group (LUK 19:9 … 23:43) took the 18:14 line as their subcategory, so their check
+type was `usfm.luk_18_14_wj_f_fr_18_14_ft_f_f_fr_18_14_ft_f_wj`. That is the "excerpt in the
+subcategory" #273's audit saw; the upstream report has a real subcategory for every one of them
+("Nested tags '\wj … \f … \f* … \wj*' should be changed to …"). Found by running the vendored checker
+on `43LUKIRVTam.SFM` and reading the report, not from the issue's description.
+
+**Fix (adapter only; the vendor tree is untouched).** A line matching `_LOC_WITH_VERSE_RE`,
+`_LOC_WITH_LINE_RE` or `_LOC_FILE_ONLY_RE` is an instance before it is tried as a header. Luke now gives
+80 findings (79 before), and no check type contains a reference or verse text.
+
+**Old decisions.** The parser keeps a second stack updated by the old rule and reports
+`legacy_subcategory`; the adapter sets `_legacy_check_type` where it differs; `_usfm_findings_for_book`
+derives the post-#273 id under that type (`#k` among the old type's findings of the verse) as
+`_legacy_id`, so #273's re-key carries a decision once, journalled with `rekeyedFrom`. A decision from
+before #273 (explanation-keyed) on one of these nine is not carried. The usfm check-cache marker is now
+`|ids-273-283`, so cached sections holding the old check types are rebuilt on the next check.
+
+**Ran.** New `tests/service/test_usfm_check_types.py` (3): the parser on a report excerpt of this shape,
+the real checker on Luke before and after an edit to 19:9, and a decision under the old check type
+moving once. All three fail on the old code and pass now; `test_finding_ids.py` 15 passed. Engine
+`pytest -n auto`: 5439 passed, 3 xfailed, 2 failed under parallel load
+(`test_logos_connector.py::test_get_state_round_trips_through_the_real_helper_process`,
+`test_language_qa.py::test_continuous_foreground_polling_does_not_starve_worker`), both passing when
+re-run alone. After pulling #302/#304: the three affected service files, 87 passed. Sidecars rebuilt;
+frozen `smoke_sidecars.py` passed. **Not watched:** the finding in the desktop app (T31 on the manual
+sheet, next build).

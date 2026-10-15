@@ -5245,8 +5245,9 @@ class BridgeEngine:
                 usfm_text = ""
             if usfm_text:
                 # "|ids-273": sections written before #273 hold ids built from
-                # the explanation, which embeds verse text; rebuild them once.
-                content_hash = hashlib.sha256((usfm_text + "|ids-273").encode("utf-8")).hexdigest()
+                # the explanation, which embeds verse text; "-283": and before
+                # #283 some check types were verse text. Rebuild them once.
+                content_hash = hashlib.sha256((usfm_text + "|ids-273-283").encode("utf-8")).hexdigest()
                 cached_section = project.load_check_cache().get("usfm") or {}
                 if cached_section.get("contentHash") == content_hash:
                     findings = [QaFinding.from_dict(d) for d in cached_section.get("findings", [])]
@@ -5265,6 +5266,7 @@ class BridgeEngine:
                     self._usfm_errors_by_book[book_key] = str(exc)
                     raise
                 ordinals: Counter[tuple[str, str, str]] = Counter()
+                legacy_ordinals: Counter[tuple[str, str, str]] = Counter()
                 for f in findings:
                     # Same stabilization as Greek Room findings (see
                     # run_verse_checks below) — otherwise a fresh subprocess
@@ -5281,6 +5283,18 @@ class BridgeEngine:
                         chapter=str(f.chapter), verse=str(f.verse), engine=f.engine,
                         check_type=f.check_type, disambiguator=f"#{ordinals[slot]}",
                     )
+                    # Before #283 a few check types were built from verse
+                    # text; the id under that check type is the one an
+                    # existing decision is keyed by, carried once by #273's
+                    # re-key. The old type's ordinals count the same way.
+                    legacy_type = getattr(f, "_legacy_check_type", None) or f.check_type
+                    legacy_slot = (str(f.chapter), str(f.verse), legacy_type)
+                    legacy_ordinals[legacy_slot] += 1
+                    if legacy_type != f.check_type:
+                        f._legacy_id = _stable_finding_id(  # type: ignore[attr-defined]
+                            chapter=str(f.chapter), verse=str(f.verse), engine=f.engine,
+                            check_type=legacy_type, disambiguator=f"#{legacy_ordinals[legacy_slot]}",
+                        )
                 # Persist after id stabilization so a cache hit hands back
                 # the same stable ids a fresh run would — required for prior
                 # decisions (keyed by finding id) to keep matching.
