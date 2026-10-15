@@ -3,7 +3,8 @@ import { render, screen, fireEvent, waitFor, within } from "@testing-library/sve
 import { get } from "svelte/store";
 import CrossVerseAlignmentModal from "../CrossVerseAlignmentModal.svelte";
 import {
-  alignmentStatusByVerse, chapterVerseNums, checkStatusByVerse, checkGroupsByVerse, currentChapter, findingsByVerse,
+  alignmentRevisionByVerse, alignmentStatusByVerse, chapterVerseNums, checkStatusByVerse, checkGroupsByVerse,
+  currentChapter, findingsByVerse,
 } from "../../stores";
 import type {
   AlignmentContext, AlignmentRange, AlignmentToken, AutoAlignJobStatus, AutoAlignWindowResult, CrossVerseLink, CrossVerseLinkResult,
@@ -128,6 +129,7 @@ function seed() {
   chapterVerseNums.set({ "1": ["1", "2", "3-4", "5"] });
   currentChapter.set("1");
   alignmentStatusByVerse.set({});
+  alignmentRevisionByVerse.set({});
   checkStatusByVerse.set({});
   checkGroupsByVerse.set({});
   findingsByVerse.set({});
@@ -268,6 +270,8 @@ describe("CrossVerseAlignmentModal", () => {
     const strip = screen.getByLabelText("Verse verdicts");
     expect(within(strip).getByText(/Range: 1 source · 2 target unmatched/)).toBeInTheDocument();
     expect(get(alignmentStatusByVerse)["1:2"]).toBe("partial");
+    // Both ends of the link count as written (#291); neither verse's status moved.
+    expect(get(alignmentRevisionByVerse)).toEqual({ "1:3-4": 1, "1:2": 1 });
   });
 
   it("the × on a linked chip or an accounted word removes the link through alignment.crossVerse.unlink", async () => {

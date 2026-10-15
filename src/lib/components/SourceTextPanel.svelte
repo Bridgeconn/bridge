@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
-  import { alignmentStatusByVerse, currentChapter, project, selectedVerse, verseNums, verseKey } from "../stores";
-  import { cachedSourceChapter, loadSourceChapter, refreshSourceVerse } from "../sourceText";
+  import { alignmentRevisionByVerse, currentChapter, project, selectedVerse, verseNums } from "../stores";
+  import { cachedSourceChapter, loadSourceChapter, refreshSourceVerse, staleSourceVerses } from "../sourceText";
   import type { SourceChapter, SourceWord } from "../sourceText";
 
   // The original-language text beside the translation (#67, requirement 8
@@ -16,12 +16,11 @@
   let follow = true;
   let list: HTMLOListElement | null = null;
   let ticket = 0;
-  let seen: Record<string, string> = {};
 
   $: path = $project?.path ?? "";
   $: void show(path, $currentChapter, $verseNums);
   $: if (follow && $selectedVerse && source) void scrollTo($selectedVerse);
-  $: void refreshChanged($alignmentStatusByVerse);
+  $: void refreshStale(source, $alignmentRevisionByVerse);
   $: language = source?.verses.find((row) => row.available)?.direction === "ltr" ? "Greek" : "Hebrew / Aramaic";
 
   async function show(projectPath: string, chapter: string, verses: string[]): Promise<void> {
@@ -45,22 +44,19 @@
     }
   }
 
-  /** A verse's alignment or text changed (its status moved): read that verse again. */
-  async function refreshChanged(statuses: Record<string, string>): Promise<void> {
-    const before = seen;
-    seen = { ...statuses };
-    if (!path || !source) return;
-    const chapter = $currentChapter;
-    const changed = $verseNums.filter((verse) => {
-      const key = verseKey(chapter, verse);
-      return key in statuses && statuses[key] !== before[key] && key in before;
-    });
-    for (const verse of changed) {
+  /** A verse's alignment was written since it was read (#291) -- whether the
+   *  write came from Align Words, the cross-verse page, an automatic pass or
+   *  a text edit, and whether this column was open at the time: read that
+   *  verse again. The rest of the chapter is kept. */
+  async function refreshStale(kept: SourceChapter | null, revisions: Record<string, number>): Promise<void> {
+    if (!path || !kept) return;
+    const chapter = kept.chapter;
+    for (const verse of staleSourceVerses(kept, revisions)) {
       try {
         const updated = await refreshSourceVerse(path, chapter, verse);
         if (updated && chapter === $currentChapter) source = updated;
       } catch {
-        // the kept words stay; the next chapter load reads them again
+        // the kept words stay; the next write or chapter load reads them again
       }
     }
   }

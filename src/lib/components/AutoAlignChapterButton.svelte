@@ -9,6 +9,7 @@
   // watches and reports it.
   import { onDestroy, onMount } from "svelte";
   import { bridge } from "../api/bridgeClient";
+  import { noteAlignmentChanged } from "../stores";
   import type { AutoAlignEstimate, AutoAlignJobStatus } from "../types/finding";
 
   export let chapter: string;
@@ -96,6 +97,9 @@
       stopPolling();
       phase = "finished";
       if (job.state === "failed" && job.error) error = job.error;
+      // Every verse with a verdict was written, whichever way the job ended;
+      // its keys are already "chapter:verse" (#291).
+      for (const key of Object.keys(job.verdicts ?? {})) noteAlignmentChanged(key);
       onFinished();
     }
   }

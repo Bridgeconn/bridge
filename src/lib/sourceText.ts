@@ -1,4 +1,6 @@
+import { get } from "svelte/store";
 import { bridge } from "./api/bridgeClient";
+import { alignmentRevisionByVerse, verseKey } from "./stores";
 import type { AlignmentContext } from "./types/finding";
 
 /**
@@ -9,6 +11,11 @@ import type { AlignmentContext } from "./types/finding";
  * fetched once and kept here, so opening the panel or moving between verses
  * is immediate (Tier A); a verse whose alignment or text changed is fetched
  * again on its own (`alignment.get`).
+ *
+ * Each kept verse is stamped with the alignment revision it was read at
+ * (`alignmentRevisionByVerse`, #291). A verse whose revision has moved since
+ * -- the panel was open or not -- is stale, and `staleSourceVerses` names it
+ * so the panel re-reads just that verse and keeps the rest of the chapter.
  */
 
 export interface SourceWord {
@@ -33,6 +40,19 @@ export interface SourceVerse {
 export interface SourceChapter {
   chapter: string;
   verses: SourceVerse[];
+  /** The alignment revision each verse was read at, by verse string. */
+  revisions: Record<string, number>;
+}
+
+function revisionOf(chapter: string, verse: string): number {
+  return get(alignmentRevisionByVerse)[verseKey(chapter, verse)] ?? 0;
+}
+
+/** The kept verses whose alignment has been written since they were read. */
+export function staleSourceVerses(kept: SourceChapter, revisions: Record<string, number>): string[] {
+  return kept.verses
+    .map((row) => row.verse)
+    .filter((verse) => (revisions[verseKey(kept.chapter, verse)] ?? 0) !== (kept.revisions[verse] ?? 0));
 }
 
 /** Only what the panel draws: a long chapter's contexts are about 1 MB
@@ -84,22 +104,47 @@ export function cachedSourceChapter(projectPath: string, chapter: string): Sourc
 export async function loadSourceChapter(projectPath: string, chapter: string, verses: string[]): Promise<SourceChapter> {
   const cached = cachedSourceChapter(projectPath, chapter);
   if (cached) return cached;
+  // Stamped before the read: a write that lands while the range is in flight
+  // leaves its verse stale, so it is read again rather than shown as it was.
+  const revisions: Record<string, number> = {};
+  for (const verse of verses) revisions[verse] = revisionOf(chapter, verse);
   const range = await bridge.getAlignmentRange(chapter, verses);
-  return remember(keyOf(projectPath, chapter), { chapter, verses: range.verses.map(sourceVerseOf) });
+  return remember(keyOf(projectPath, chapter), { chapter, verses: range.verses.map(sourceVerseOf), revisions });
 }
+
+/** One read per verse and revision: a second request for the same verse while
+ * the first is in flight joins it instead of asking the engine again. */
+const inFlight = new Map<string, Promise<SourceChapter | undefined>>();
 
 /** Read one verse again (its alignment or its text changed) and put it in the
  * kept chapter. Nothing happens for a chapter that is not kept. */
-export async function refreshSourceVerse(projectPath: string, chapter: string, verse: string): Promise<SourceChapter | undefined> {
+export function refreshSourceVerse(projectPath: string, chapter: string, verse: string): Promise<SourceChapter | undefined> {
   const key = keyOf(projectPath, chapter);
-  if (!cache.has(key)) return undefined;
-  const fresh = sourceVerseOf(await bridge.getAlignment(chapter, verse));
-  const kept = cache.get(key);
-  if (!kept) return undefined;
-  return remember(key, { ...kept, verses: kept.verses.map((row) => (row.verse === verse ? fresh : row)) });
+  if (!cache.has(key)) return Promise.resolve(undefined);
+  const revision = revisionOf(chapter, verse);
+  const ticket = `${key}\u0000${verse}\u0000${revision}`;
+  const pending = inFlight.get(ticket);
+  if (pending) return pending;
+  const read = (async () => {
+    try {
+      const fresh = sourceVerseOf(await bridge.getAlignment(chapter, verse));
+      const kept = cache.get(key);
+      if (!kept) return undefined;
+      return remember(key, {
+        ...kept,
+        verses: kept.verses.map((row) => (row.verse === verse ? fresh : row)),
+        revisions: { ...kept.revisions, [verse]: revision },
+      });
+    } finally {
+      inFlight.delete(ticket);
+    }
+  })();
+  inFlight.set(ticket, read);
+  return read;
 }
 
 /** For tests, and when the project changes. */
 export function clearSourceCache(): void {
   cache.clear();
+  inFlight.clear();
 }

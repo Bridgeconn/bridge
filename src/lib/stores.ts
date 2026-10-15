@@ -33,6 +33,17 @@ export const checkStatusByVerse = writable<Record<string, CheckStatus>>({});
  *  show (checkSelection.coversSelection). */
 export const checkGroupsByVerse = writable<Record<string, string[]>>({});
 export const alignmentStatusByVerse = writable<Record<string, AlignmentWorkStatus>>({});
+/** How many times each verse's alignment has been written this session, keyed
+ *  by verseKey (#291). Every frontend alignment writer -- an Align Words save,
+ *  unalign, undo, restore, a null decision, a cross-verse link or unlink, an
+ *  automatic pass, and a verse text edit, which reshapes the groups -- calls
+ *  noteAlignmentChanged. A reader that keeps its own copy of a verse's
+ *  alignment (the Source text panel) re-reads the verse when its count moves.
+ *  The status is not a change signal: most edits leave it as it was. */
+export const alignmentRevisionByVerse = writable<Record<string, number>>({});
+export function noteAlignmentChanged(key: string): void {
+  alignmentRevisionByVerse.update((values) => ({ ...values, [key]: (values[key] ?? 0) + 1 }));
+}
 export const nativeChecksByVerse = writable<Record<string, NativeCheckReview[]>>({});
 export const aiCheckReviewsByVerse = writable<Record<string, AiCheckReview[]>>({});
 // Populated only by languageQaInline.ts (started from App.svelte) from the
@@ -114,6 +125,7 @@ export function resetBookState(): void {
   checkStatusByVerse.set({});
   checkGroupsByVerse.set({});
   alignmentStatusByVerse.set({});
+  alignmentRevisionByVerse.set({});
   nativeChecksByVerse.set({});
   aiCheckReviewsByVerse.set({});
   languageQaFindingsByVerse.set({});

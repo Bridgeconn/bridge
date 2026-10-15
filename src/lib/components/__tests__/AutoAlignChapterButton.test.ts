@@ -1,6 +1,8 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
+import { get } from "svelte/store";
 import AutoAlignChapterButton from "../AutoAlignChapterButton.svelte";
+import { alignmentRevisionByVerse } from "../../stores";
 
 const { getSettings, autoAlignEstimate, autoAlignStart, autoAlignStatus, autoAlignCancel } = vi.hoisted(() => ({
   getSettings: vi.fn(),
@@ -31,6 +33,7 @@ function snapshot(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
+  alignmentRevisionByVerse.set({});
   getSettings.mockResolvedValue({ hasApiKey: true });
   autoAlignEstimate.mockResolvedValue(ESTIMATE);
 });
@@ -70,6 +73,8 @@ describe("AutoAlignChapterButton", () => {
     await vi.advanceTimersByTimeAsync(1100);
     expect(await screen.findByText(/Chapter 1 aligned: 24 verses clean, 6 need review/)).toBeInTheDocument();
     expect(onFinished).toHaveBeenCalledTimes(1);
+    // Every verse the job gave a verdict was written (#291); the keys are already verseKeys.
+    expect(get(alignmentRevisionByVerse)).toEqual({ "1:5": 1, "1:1": 1, "1:9": 1 });
     await fireEvent.click(screen.getByRole("button", { name: "Open review" }));
     expect(onOpenReview).toHaveBeenCalledWith("5", ["5", "9"]);
   });

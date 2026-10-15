@@ -16,6 +16,7 @@ import {
   startVerseEdit,
 } from "../../verseEditor";
 import {
+  alignmentRevisionByVerse,
   checkingProgress,
   historyCountByVerse,
   findingsByVerse,
@@ -250,6 +251,7 @@ describe("saveVerseEdit and the change history", () => {
     checkingProgress.set({ running: false, percent: 0, label: "", jobId: "", state: "idle", error: "", scope: "chapter" });
     verseTexts.set({ [verseKey("1", "6")]: "alpha beta" });
     historyCountByVerse.set({ [verseKey("1", "6")]: 1 });
+    alignmentRevisionByVerse.set({});
     runVerseChecks.mockResolvedValue([]);
   });
 
@@ -259,6 +261,8 @@ describe("saveVerseEdit and the change history", () => {
     editText.set("alpha \\nd beta");
     expect(await saveVerseEdit()).toBe(true);
     expect(get(historyCountByVerse)[verseKey("1", "6")]).toBe(2);
+    // New text means new groups: announced as an alignment write once the engine has it (#291).
+    expect(get(alignmentRevisionByVerse)[verseKey("1", "6")]).toBe(1);
     expect(get(editWarnings)).toEqual({ key: verseKey("1", "6"), warnings: ["unclosed \\nd"] });
     startVerseEdit("1", "6");
     expect(get(editWarnings)).toBeNull();
@@ -270,5 +274,7 @@ describe("saveVerseEdit and the change history", () => {
     editText.set("gamma");
     expect(await saveVerseEdit()).toBe(false);
     expect(get(historyCountByVerse)[verseKey("1", "6")]).toBe(1);
+    // The engine's alignment is as it was, so no reader needs to re-read the verse.
+    expect(get(alignmentRevisionByVerse)[verseKey("1", "6")]).toBeUndefined();
   });
 });

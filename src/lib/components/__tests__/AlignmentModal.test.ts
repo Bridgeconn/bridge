@@ -4,7 +4,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import AlignmentModal from "../AlignmentModal.svelte";
 // @ts-expect-error Vite's test-only raw loader is not part of the app tsconfig.
 import alignmentModalSource from "../AlignmentModal.svelte?raw";
-import { project } from "../../stores";
+import { get } from "svelte/store";
+import { alignmentRevisionByVerse, project } from "../../stores";
 import type { AlignmentContext, AlignmentToken, ProjectInfo } from "../../types/finding";
 
 const {
@@ -175,6 +176,8 @@ describe("AlignmentModal", () => {
     await fireEvent.click(screen.getByLabelText("Align picked-up word to בָּרָא"));
 
     await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "1", ["H002"], ["T002"], ctx.alignment));
+    // The save is announced as a write (#291), although the status is still "partial".
+    await waitFor(() => expect(get(alignmentRevisionByVerse)["1:1"]).toBe(1));
   });
 });
 

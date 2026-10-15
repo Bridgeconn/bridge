@@ -10,7 +10,10 @@ vi.mock("../../api/bridgeClient", () => ({ bridge: { getAlignmentRange, getAlign
 
 import SourceTextPanel from "../SourceTextPanel.svelte";
 import { clearSourceCache, sourceVerseOf } from "../../sourceText";
-import { alignmentStatusByVerse, chapterVerseNums, currentChapter, project, selectedVerse } from "../../stores";
+import {
+  alignmentRevisionByVerse, alignmentStatusByVerse, chapterVerseNums, currentChapter, noteAlignmentChanged, project,
+  selectedVerse,
+} from "../../stores";
 import type { AlignmentContext } from "../../types/finding";
 
 // PSA 23:1 in the UHB, as alignment.getRange returns it: three source words,
@@ -54,6 +57,7 @@ describe("SourceTextPanel", () => {
     currentChapter.set("23");
     selectedVerse.set("1");
     alignmentStatusByVerse.set({});
+    alignmentRevisionByVerse.set({});
     getAlignmentRange.mockResolvedValue({ chapter: "23", verses: [context("1", false), context("2", true)] });
   });
 
@@ -87,16 +91,61 @@ describe("SourceTextPanel", () => {
     expect(getAlignmentRange).toHaveBeenCalledTimes(1);
   });
 
-  it("reads one verse again when its alignment changes", async () => {
+  // #291: the panel re-reads a verse when its alignment is written, not when
+  // its status moves. Most edits leave the status as it was.
+  it("reads one verse again when its alignment is written and the status stays the same", async () => {
+    alignmentStatusByVerse.set({ "23:1": "partial", "23:2": "complete" });
     render(SourceTextPanel);
     await screen.findByText("Source · Hebrew / Aramaic");
-    // The chapter's statuses arrive first (a separate update), then one changes.
-    alignmentStatusByVerse.set({ "23:1": "partial", "23:2": "complete" });
-    await tick();
+    expect(screen.getByText("2 of 3 source words aligned")).toBeTruthy();
+    // One more word aligned in 23:1; the verse is still partial.
     getAlignment.mockResolvedValue(context("1", true));
-    alignmentStatusByVerse.set({ "23:1": "complete", "23:2": "complete" });
+    noteAlignmentChanged("23:1");
     await waitFor(() => expect(getAlignment).toHaveBeenCalledWith("23", "1"));
     await waitFor(() => expect(screen.getByText("3 of 3 source words aligned")).toBeTruthy());
+    expect(getAlignment).toHaveBeenCalledTimes(1);
+    expect(getAlignmentRange).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not read a verse again when only its status arrives or moves", async () => {
+    render(SourceTextPanel);
+    await screen.findByText("Source · Hebrew / Aramaic");
+    alignmentStatusByVerse.set({ "23:1": "partial", "23:2": "complete" });
+    await tick();
+    alignmentStatusByVerse.set({ "23:1": "complete", "23:2": "complete" });
+    await tick();
+    await tick();
+    expect(getAlignment).not.toHaveBeenCalled();
+  });
+
+  it("re-reads a verse written while the column was closed, and keeps the rest of the chapter", async () => {
+    const first = render(SourceTextPanel);
+    await screen.findByText("Source · Hebrew / Aramaic");
+    first.unmount();
+    getAlignment.mockResolvedValue(context("1", true));
+    noteAlignmentChanged("23:1");
+    render(SourceTextPanel);
+    await waitFor(() => expect(getAlignment).toHaveBeenCalledWith("23", "1"));
+    await waitFor(() => expect(screen.getByText("3 of 3 source words aligned")).toBeTruthy());
+    expect(getAlignment).toHaveBeenCalledTimes(1);
+    expect(getAlignmentRange).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads a verse once per write, even when the write is noted twice before the read lands", async () => {
+    render(SourceTextPanel);
+    await screen.findByText("Source · Hebrew / Aramaic");
+    let release: (value: AlignmentContext) => void = () => {};
+    getAlignment.mockReturnValueOnce(new Promise<AlignmentContext>((resolve) => { release = resolve; }));
+    getAlignment.mockResolvedValue(context("1", true));
+    noteAlignmentChanged("23:1");
+    await waitFor(() => expect(getAlignment).toHaveBeenCalledTimes(1));
+    // A second write while the first read is in flight: the verse is read
+    // again for the newer revision, not a third time.
+    noteAlignmentChanged("23:1");
+    release(context("1", false));
+    await waitFor(() => expect(screen.getByText("3 of 3 source words aligned")).toBeTruthy());
+    await tick();
+    expect(getAlignment).toHaveBeenCalledTimes(2);
   });
 
   it("uses the Greek face left to right for a New Testament chapter", async () => {

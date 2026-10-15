@@ -3,7 +3,7 @@
   import { bridge } from "../api/bridgeClient";
   import { recheckVerse } from "../verseChecks";
   import {
-    alignmentStatusByVerse, checkStatusByVerse, project,
+    alignmentStatusByVerse, checkStatusByVerse, noteAlignmentChanged, project,
     verseKey,
   } from "../stores";
   import { alignmentStatusLabel } from "../alignmentStatus";
@@ -146,6 +146,9 @@
     restoreId = updated.history[0]?.id ?? "";
     const key = verseKey(chapter, verse);
     alignmentStatusByVerse.update((values) => ({ ...values, [key]: updated.status }));
+    // Every save, unalign, undo and restore lands here; the Source text panel
+    // re-reads the verse on this, not on the status, which most edits keep (#291).
+    noteAlignmentChanged(key);
     checkStatusByVerse.update((values) => ({ ...values, [key]: "pending" }));
     try {
       // Only the alignment checks: the verse's other findings are kept, and

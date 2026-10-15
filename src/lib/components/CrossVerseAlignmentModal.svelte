@@ -12,7 +12,7 @@
   import { bridge } from "../api/bridgeClient";
   import { recheckVerse } from "../verseChecks";
   import {
-    alignmentStatusByVerse, checkStatusByVerse, currentChapter, verseKey, verseNums,
+    alignmentStatusByVerse, checkStatusByVerse, currentChapter, noteAlignmentChanged, verseKey, verseNums,
   } from "../stores";
   import { alignmentStatusLabel } from "../alignmentStatus";
   import type {
@@ -286,6 +286,11 @@
     error = "";
     try {
       const result = await bridge.autoAlignRevert(chapter, v);
+      // A reverted link reaches its other verse, which the result does not
+      // name: every verse of the window the pass ran on counts as written (#291).
+      for (const other of verdicts[v]?.window ?? []) {
+        if (other !== v) noteAlignmentChanged(verseKey(chapter, other));
+      }
       verdicts = { ...verdicts, [v]: null };
       contexts = { ...contexts, [v]: result.context };
       await refreshChecks(v, result.context, "");
@@ -520,6 +525,9 @@
     chapterStatus = updated.chapterStatus;
     const key = verseKey(chapter, v);
     alignmentStatusByVerse.update((values) => ({ ...values, [key]: updated.status }));
+    // Same-verse saves, null decisions, both ends of a link or unlink, each
+    // verse of an automatic window and a revert all land here (#291).
+    noteAlignmentChanged(key);
     checkStatusByVerse.update((values) => ({ ...values, [key]: "pending" }));
     try {
       // Only the alignment checks, as AlignmentModal does after a save: the

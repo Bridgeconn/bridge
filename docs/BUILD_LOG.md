@@ -20626,3 +20626,39 @@ switches, selecting an already-run verse does not; the summary line counts. `ver
 (2): the summary counts open Greek Room findings only, across the chapter's verses, and checked
 verses by their run record. Gates as recorded on the issue. **Not run:** the desktop app; the
 reporter's sample book with U+200B is on the #156 walk.
+
+## 2026-10-15 — The Source text panel re-reads a verse on every alignment write, not on a status move (#291)
+
+**Cause, confirmed by a test.** `SourceTextPanel.svelte` refreshed a verse only when its entry in
+`alignmentStatusByVerse` changed, and skipped a key seen for the first time. Aligning one more word
+in a partly aligned verse leaves it `partial`, moving a word between columns of a complete verse
+leaves it `complete`, so the kept chapter (`sourceText.ts`, a module-level cache a restart clears)
+showed the old alignment until the app was reopened. The same gap covered the cross-verse page,
+automatic alignment, undo and restore, and a write made while the column was closed: reopening it
+drew the kept chapter as it was.
+
+**Change.** A per-verse alignment revision, `alignmentRevisionByVerse` in `stores.ts`, bumped by
+`noteAlignmentChanged(verseKey)` from every frontend alignment writer: `AlignmentModal`'s
+`refreshChecks` (save, unalign, Join, Split, Undo, restore), `CrossVerseAlignmentModal`'s
+`refreshChecks` (same-verse saves, null decisions, both ends of a link or unlink, each verse of an
+automatic window, a revert — plus the other verses of the reverted pass's window, which the revert
+result does not name), `AutoAlignChapterButton` when the job ends in any state (every key of its
+`verdicts` is already a verseKey), and `verseEditor.saveVerseEdit` once the engine has accepted the
+text — not on the optimistic show, which precedes the engine's write, and not on a refused save,
+which leaves the engine's groups as they were. `sourceText.ts` stamps each kept verse with the
+revision it was read at (taken before the read, so a write landing during a chapter load leaves its
+verse stale) and `staleSourceVerses` names the verses whose revision moved; the panel re-reads only
+those and keeps the rest of the chapter, whether the write happened while it was open or closed.
+One in-flight read per verse and revision, so a second write during a read asks once more, not a
+third time. `resetBookState` clears the revision map like the other verse-keyed stores (gotcha 7).
+The status store is no longer a refresh trigger anywhere.
+
+**Tests.** `SourceTextPanel.test.ts` (4 new, 1 replaced): a write that keeps the status re-reads the
+verse once and the chapter not at all; a status arriving or moving on its own reads nothing; a write
+while the column is closed is re-read on reopen with the chapter kept; two writes during one read
+cost two reads, not three. All four fail against the pre-fix panel (run and watched).
+`AlignmentModal.test.ts`, `CrossVerseAlignmentModal.test.ts`, `AutoAlignChapterButton.test.ts`,
+`verseEditor.test.ts`: each writer's bump asserted, the refused save's absence too. `npm run check`
+0/0 and the five touched Vitest files green at commit; `npm run test` and `npm run build` run once
+for the batch with #285. **Not run:** the engine suite (frontend only) and the desktop app; the
+#291 steps on 0.18.0 belong to the #156 walk.
