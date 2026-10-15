@@ -114,8 +114,12 @@
   --font-ui: -apple-system, "Inter", Segoe UI, Helvetica, Arial, var(--font-indic), sans-serif;
 
   /* Scripture panes use this directly so line-height can be tuned for Indic
-     ascender/descender depth without touching the UI chrome's rhythm. */
-  --font-target: var(--font-indic), var(--font-ui);
+     ascender/descender depth without touching the UI chrome's rhythm.
+     Latin faces first (#286): Vijaya's Latin glyphs are oblique, so with
+     Vijaya first an English project's whole text was drawn in italics.
+     A script the Latin faces lack still falls through to --font-indic per
+     glyph; Tamil keeps Vijaya first through its :lang() rule below. */
+  --font-target: var(--font-ui);
 
   /* Source scripts. Ezra SIL is preferred over SBL Hebrew because SBL's
      licence requires individual registration, which does not survive
@@ -162,10 +166,14 @@
    Nirmala UI: Amos's "full stops in italics". (Confirmed 2026-10-15 in Edge
    155, the WebView2 runtime's build, with this stylesheet: a lone "." under
    --font-target came from Vijaya.) A container that carries the project's
-   language (`lang`, the import's ISO 639 code; Tamil needs no rule because
-   Vijaya is the Tamil face) puts the face that holds that script first, so
-   letters and punctuation come from one font: Nirmala UI where Windows has
-   it, else the bundled Noto face. The UI chrome keeps --font-ui. */
+   language (`lang`, the import's ISO 639 code) puts the face that holds
+   that script first, so letters and punctuation come from one font: Nirmala
+   UI where Windows has it, else the bundled Noto face. Tamil keeps Vijaya,
+   its chosen face, first. A Latin-script language needs no rule: the default
+   above is Latin-first, which the 0.18.0 walk showed it must be, since every
+   English verse rendered in Vijaya's italic Latin. The UI chrome keeps
+   --font-ui. */
+:lang(ta), :lang(tam) { --font-target: var(--font-indic), var(--font-ui); }
 :lang(pa), :lang(pan) { --font-target: "Nirmala UI", "Noto Serif Gurmukhi", var(--font-indic), var(--font-ui); }
 :lang(hi), :lang(hin), :lang(mr), :lang(mar), :lang(ne), :lang(nep), :lang(npi), :lang(sa), :lang(san) {
   --font-target: "Nirmala UI", "Noto Serif Devanagari", var(--font-indic), var(--font-ui);

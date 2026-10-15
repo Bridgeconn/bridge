@@ -42,10 +42,18 @@ describe("targetLang", () => {
 });
 
 describe("index.css target font order (#286)", () => {
-  it("keeps Vijaya first in the default stack, so Tamil is as it was", () => {
+  it("draws Latin first by default, so an English project is not in Vijaya's italic Latin (0.18.0 walk)", () => {
+    expect(indexCss).toMatch(/--font-target:\s*var\(--font-ui\);/);
+    // --font-ui is Latin faces, then the Indic chain: a script they lack still falls through per glyph.
+    const ui = familiesOf(indexCss.match(/--font-ui:([^;]*);/)?.[1] ?? "");
+    expect(ui.indexOf("var(--font-indic)")).toBeGreaterThan(0);
+  });
+
+  it("keeps Vijaya first for a Tamil project, under both ISO codes, so Tamil is as it was", () => {
     expect(familiesOf(ruleFor(":root").match(/--font-indic:([^;]*);/)?.[1] ?? "")[0]).toBe("Vijaya");
-    expect(indexCss).toMatch(/--font-target:\s*var\(--font-indic\),\s*var\(--font-ui\);/);
-    expect(indexCss).not.toMatch(/:lang\(ta\)/);
+    for (const code of ["ta", "tam"]) {
+      expect(familiesOf(ruleFor(`:lang(${code})`)), code).toEqual(["var(--font-indic)", "var(--font-ui)"]);
+    }
   });
 
   it("puts the Gurmukhi faces before Vijaya for a Punjabi project, under both ISO codes", () => {

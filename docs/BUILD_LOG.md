@@ -20839,3 +20839,24 @@ measure a second book each since #204/#205 changed it on 2026-10-14.
 stop-and-ask item); the DECISIONS.md entry is drafted on the issue and not committed. With remedy
 (1) or (2) in place Greek Room on these two books is 36 and 1 findings, which bears on how much the
 filter would have to hide.
+
+## 2026-10-15 — The target face is Latin-first by default; Tamil keeps Vijaya through its own rule (#286, follow-up)
+
+**Found on the 0.18.0 walk.** Every verse of an English project rendered in italics: the whole
+line, not only its full stops. The cause is the one bfec7e1 fixed for Indic languages: the default
+`--font-target` began with Vijaya, whose Latin glyphs are oblique, and bfec7e1 added `:lang()`
+rules only for Indic codes, so a Latin-script project (and any surface without `lang`) still drew
+every Latin letter from Vijaya. bfec7e1 alone would not have fixed English on the next build.
+
+**Change.** The default `--font-target` is `var(--font-ui)` (Latin faces, then the Indic chain, so
+a script the Latin faces lack still falls through per glyph), and `:lang(ta), :lang(tam)` keeps the
+old order with Vijaya first, so Tamil is drawn as it was. The Indic rules from bfec7e1 are
+unchanged.
+
+**Watched,** with the probe of bfec7e1 (Playwright on Edge 155.0.4283.45, the WebView2 runtime's
+build, serving the rebuilt `dist/`, `CSS.getPlatformFontsForNode`): an English line under the
+default stack, 70 of 70 glyphs from Segoe UI (before: Vijaya); a Tamil line under `lang="ta"`, 50 of
+50 from Vijaya, as before; the same Tamil line with no `lang` (surfaces outside Benz's files), Tamil
+letters from Vijaya and the 10 ASCII glyphs from Segoe UI. `targetFont.test.ts` now pins the
+Latin-first default and the Tamil rule (6 tests). `npm run check` 0/0, `npm run test` 829 passed,
+`npm run build` ok. **Not watched:** the installed app with this commit.
