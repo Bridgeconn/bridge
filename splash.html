@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bridge</title>
+    <!-- #287: the splash window's own page. White before any CSS loads, so the
+         first paint matches the window's backgroundColor in tauri.conf.json. -->
+    <style>html, body { margin: 0; background: #FFFFFF; overflow: hidden; }</style>
+  </head>
+  <body>
+    <div id="splash"></div>
+    <script type="module" src="/src/splash.ts"></script>
+  </body>
+</html>

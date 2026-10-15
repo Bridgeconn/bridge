@@ -64,6 +64,13 @@ pub async fn engine_startup_state(
     Ok(sidecar.startup_state(&app).await)
 }
 
+/// #287: the main window starts hidden behind the splash window. The frontend
+/// calls this once startup has succeeded or failed; see `crate::reveal_main`.
+#[tauri::command]
+pub fn reveal_main_window(app: tauri::AppHandle) {
+    crate::reveal_main(&app);
+}
+
 #[tauri::command]
 pub async fn pick_project_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
     let (tx, rx) = tokio::sync::oneshot::channel();
