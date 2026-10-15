@@ -12,8 +12,8 @@
   import { createPointerDrag } from "../alignmentDrag";
   import { openCrossVerse } from "../alignmentUi";
   import {
-    alignedTargetsFor, bottomIdsAfterDrop, groupForTarget, occurrenceLabel as occurrence, sourceColumns,
-    topIdsFor, unaccountedTargets, undoTargetId,
+    alignedTargetsFor, bottomIdsAfterDrop, groupForSource, groupForTarget, occurrenceLabel as occurrence,
+    sourceColumns, topIdsFor, unaccountedTargets, undoTargetId,
   } from "../alignmentGroups";
   import { SourceGlossCache } from "../lexiconGloss";
   import LexiconPopup from "./LexiconPopup.svelte";
@@ -30,25 +30,43 @@
   let notice = "";
   let restoreId = "";
 
-  // Interlinear drag/click-to-align state. `pickedUpId` is the click-based
+  // Interlinear drag/click-to-align state. `picked` is the click-based
   // accessible alternative to dragging: click a target word to pick it up,
   // click a column (or the word bank) to drop it there — same one-step
-  // "drop" semantics as dragging, just keyboard/click operable.
-  let pickedUpId: string | null = null;
+  // "drop" semantics as dragging, just keyboard/click operable. Several words
+  // can be picked together (#285): Ctrl-click adds or removes one, Shift-click
+  // takes the run from the last picked word, in the word bank and in the
+  // aligned columns alike; they are placed in one save, so one undo step.
+  // `anchor` is the last word picked on its own, where a Shift-click starts.
+  let picked: string[] = [];
+  let anchor: string | null = null;
 
   // Pointer-based drag lives in alignmentDrag.ts (shared with the cross-verse
   // page, #116); see that file for why it is not native HTML5 drag-and-drop.
   // `data-drop-column` carries the source token id, `data-drop-bank` is "true".
+  // A drag that starts on a picked word carries the whole selection; one that
+  // starts elsewhere supersedes it, as a real drag always superseded pick-up.
   const drag = createPointerDrag({
-    onDragStart: () => { pickedUpId = null; }, // a real drag supersedes click-to-pick-up mode
+    onDragStart: (tokenId) => { if (!picked.includes(tokenId)) picked = []; },
     onDrop: ({ tokenId, column, bank }) => {
-      if (column) dropOntoColumn(tokenId, column);
-      else if (bank) returnToBank(tokenId);
+      const ids = picked.includes(tokenId) ? picked : [tokenId];
+      picked = [];
+      if (column) dropOntoColumn(ids, column);
+      else if (bank) returnToBank(ids);
     },
   });
   const dragState = drag.state;
 
-  $: ghostLabel = $dragState.tokenId ? (context?.bottomTokens.find((t) => t.id === $dragState.tokenId)?.word ?? "") : "";
+  $: carried = $dragState.tokenId ? (picked.includes($dragState.tokenId) ? picked : [$dragState.tokenId]) : [];
+  $: ghostLabel = carried.length
+    ? (context?.bottomTokens ?? []).filter((t) => carried.includes(t.id)).map((t) => t.word).join(" ")
+    : "";
+
+  /** The target words that can be picked, in verse order: every word of the
+   *  verse except one a cross-verse link accounts for. A Shift-click takes a
+   *  run of this list. */
+  $: pickable = context ? context.bottomTokens.filter((t) => !accountedIds.has(t.id)).map((t) => t.id) : [];
+  $: pickedWords = (context?.bottomTokens ?? []).filter((t) => picked.includes(t.id)).map((t) => t.word);
 
   // Resolved lexicon glosses for the source tokens: the English sense goes
   // under the word and the lemma moves into the tooltip, because a lemma is
@@ -138,6 +156,8 @@
     if (busy || lexiconToken) return;
     // A pinned popover swallows the first Escape; a second one closes the modal.
     if (issuesPinned) { issuesPinned = false; return; }
+    // So does a selection (#285): Escape puts the picked words down first.
+    if (picked.length) { picked = []; return; }
     onClose();
   }
 
@@ -176,17 +196,20 @@
   }
 
   // Every drop/click-drop realigns the source column's FULL target set
-  // (existing members + the newly placed word); bottomIdsAfterDrop explains why.
-  function dropOntoColumn(targetId: string, sourceId: string) {
-    if (!context) return;
-    const bottomIds = bottomIdsAfterDrop(context, sourceId, targetId);
+  // (existing members + the newly placed words); bottomIdsAfterDrop explains
+  // why. Several words picked together (#285) are one realign call, so one
+  // history row, one undo step and one re-check.
+  function dropOntoColumn(targetIds: string[], sourceId: string) {
+    if (!context || targetIds.length === 0) return;
+    const bottomIds = bottomIdsAfterDrop(context, sourceId, targetIds);
     if (!bottomIds) return; // already in this column
     // Every source word of the column (#207): a drop on a joined column must
     // not split it back into one word's group.
     const topIds = topIdsFor(context, sourceId);
+    const moved = bottomIds.length - (groupForSource(context, sourceId)?.bottomIds.length ?? 0);
     void mutate(
       () => bridge.realignWords(chapter, verse, topIds, bottomIds, context!.alignment),
-      "Alignment saved.",
+      moved > 1 ? `${moved} words placed together.` : "Alignment saved.",
     );
   }
 
@@ -224,32 +247,54 @@
     );
   }
 
-  function returnToBank(targetId: string) {
-    if (!context || !groupForTarget(context, targetId)) return;
+  // The aligned ones among `targetIds` go back in one unalign call; a word
+  // already in the bank has nowhere to go.
+  function returnToBank(targetIds: string[]) {
+    if (!context) return;
+    const aligned = targetIds.filter((id) => groupForTarget(context!, id));
+    if (aligned.length === 0) return;
     void mutate(
-      () => bridge.unalignWords(chapter, verse, [targetId], context!.alignment),
-      "Returned to word bank.",
+      () => bridge.unalignWords(chapter, verse, aligned, context!.alignment),
+      aligned.length > 1 ? `${aligned.length} words returned to the word bank.` : "Returned to word bank.",
     );
   }
 
-  function handleWordClick(id: string) {
+  // A plain click picks one word up, or puts the only picked word down: the
+  // one-word path as it was. Ctrl (or ⌘) adds or removes a word; Shift takes
+  // the run from the anchor to this word, in verse order (#285).
+  function handleWordClick(id: string, event?: MouseEvent) {
     if (busy) return;
     if (drag.consumeSuppressedClick(id)) return;
-    pickedUpId = pickedUpId === id ? null : id;
+    if (event?.ctrlKey || event?.metaKey) {
+      picked = picked.includes(id) ? picked.filter((p) => p !== id) : [...picked, id];
+      anchor = id;
+      return;
+    }
+    if (event?.shiftKey && anchor && anchor !== id) {
+      const from = pickable.indexOf(anchor);
+      const to = pickable.indexOf(id);
+      if (from >= 0 && to >= 0) {
+        const run = pickable.slice(Math.min(from, to), Math.max(from, to) + 1);
+        picked = [...picked, ...run.filter((p) => !picked.includes(p))];
+        return;
+      }
+    }
+    picked = picked.length === 1 && picked[0] === id ? [] : [id];
+    anchor = id;
   }
 
   function handleColumnClick(sourceId: string) {
-    if (!pickedUpId || busy) return;
-    const id = pickedUpId;
-    pickedUpId = null;
-    dropOntoColumn(id, sourceId);
+    if (!picked.length || busy) return;
+    const ids = picked;
+    picked = [];
+    dropOntoColumn(ids, sourceId);
   }
 
   function handleBankAreaClick() {
-    if (!pickedUpId || busy) return;
-    const id = pickedUpId;
-    pickedUpId = null;
-    returnToBank(id);
+    if (!picked.length || busy) return;
+    const ids = picked;
+    picked = [];
+    returnToBank(ids);
   }
 
   function startPointerTrack(event: PointerEvent, id: string) {
@@ -406,17 +451,28 @@
                 dir={context.targetDirection}
                 role="button"
                 tabindex="0"
-                aria-label={pickedUpId ? `Align picked-up word to ${label}` : `Target words aligned to ${label}`}
+                aria-label={picked.length > 1 ? `Align ${picked.length} picked-up words to ${label}`
+                  : picked.length ? `Align picked-up word to ${label}` : `Target words aligned to ${label}`}
                 on:click={() => handleColumnClick(src.id)}
                 on:keydown={(event) => (event.key === "Enter" || event.key === " ") && (event.preventDefault(), handleColumnClick(src.id))}
               >
                 {#each alignedTargetsFor(context, src.id) as item (item.id)}
-                  <div class="token target aligned-card" title={`Aligned to ${label}`}>
-                    <span class="word">{item.word}{#if item.occurrences > 1}<span class="occ">{occurrence(item)}</span>{/if}</span>
+                  <!-- The word itself can be picked up and moved to another
+                       column, alone or with others (#285); × still returns it. -->
+                  <div class="token target aligned-card" class:picked={picked.includes(item.id)} title={`Aligned to ${label}`}>
+                    <button
+                      type="button"
+                      class="pick"
+                      on:pointerdown={(event) => startPointerTrack(event, item.id)}
+                      on:click|stopPropagation={(event) => handleWordClick(item.id, event)}
+                      disabled={busy}
+                      aria-label={`Pick up ${item.word} from ${label}`}
+                      aria-pressed={picked.includes(item.id)}
+                    ><span class="word">{item.word}{#if item.occurrences > 1}<span class="occ">{occurrence(item)}</span>{/if}</span></button>
                     <button
                       type="button"
                       class="unalign-x"
-                      on:click|stopPropagation={() => returnToBank(item.id)}
+                      on:click|stopPropagation={() => returnToBank([item.id])}
                       disabled={busy}
                       aria-label={`Unalign ${item.word} from ${label}`}
                       title="Remove from this column"
@@ -443,8 +499,11 @@
               {#if linkedCount > 0}
                 <span class="chip linked" title={accountedNote}>↔ {linkedCount} linked across verses</span>
               {/if}
+              {#if picked.length > 1}
+                <span class="chip picked-count" role="status" title={pickedWords.join(" ")}>{picked.length} picked · click a column to place them, Esc to put them down</span>
+              {/if}
             </span>
-            <small>In verse order — drag an unaligned (blue) word into a column above, or click it then click a column</small>
+            <small>In verse order — drag an unaligned (blue) word into a column above, or click it then click a column. Ctrl-click adds a word, Shift-click a run, to place several at once</small>
           </div>
           <div
             class="tokens bank-tokens"
@@ -453,7 +512,8 @@
             dir={context.targetDirection}
             role="button"
             tabindex="0"
-            aria-label={pickedUpId ? "Return picked-up word to the word bank" : "Word bank"}
+            aria-label={picked.length > 1 ? `Return ${picked.length} picked-up words to the word bank`
+              : picked.length ? "Return picked-up word to the word bank" : "Word bank"}
             on:click={handleBankAreaClick}
             on:keydown={(event) => (event.key === "Enter" || event.key === " ") && (event.preventDefault(), handleBankAreaClick())}
           >
@@ -466,9 +526,10 @@
                 <button
                   type="button"
                   class="token target unaligned"
-                  class:picked={pickedUpId === item.id}
+                  class:picked={picked.includes(item.id)}
+                  aria-pressed={picked.includes(item.id)}
                   on:pointerdown={(event) => startPointerTrack(event, item.id)}
-                  on:click|stopPropagation={() => handleWordClick(item.id)}
+                  on:click|stopPropagation={(event) => handleWordClick(item.id, event)}
                   disabled={busy}
                 ><span class="word">{item.word}{#if item.occurrences > 1}<span class="occ">{occurrence(item)}</span>{/if}</span></button>
               {/if}
@@ -627,6 +688,11 @@
     background: #EFF7FF; color: var(--text); cursor: default; font: inherit;
   }
   .aligned-card .word { font-size: var(--fs-sm); }
+  /* #285: the word of an aligned card is a pick-up button, drawn as the plain
+     word; the card shows the pick, like a bank word does. */
+  .aligned-card .pick { border: 0; background: none; padding: 0; margin: 0; font: inherit; color: inherit; cursor: pointer; touch-action: none; user-select: none; }
+  .aligned-card.picked { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .chip.picked-count { color: var(--accent); background: var(--accent-bg); font-weight: 600; }
   .unalign-x {
     border: 0; background: none; padding: 0; width: 16px; height: 16px; line-height: 1;
     display: inline-flex; align-items: center; justify-content: center; border-radius: 50%;

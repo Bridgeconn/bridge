@@ -77,15 +77,22 @@ export function gapCounts(context: GroupsView): GapCounts {
 }
 
 /**
- * The full bottomIds to send with alignment.realign when `bottomId` is dropped
- * onto `topId`'s column. realign() replaces whatever group the top id belongs
- * to, so the words already there must be resent or they'd be bumped back to
- * the word bank. Returns null when the token is already in that column.
+ * The full bottomIds to send with alignment.realign when `dropped` -- one
+ * target id, or several picked together (#285) -- lands on `topId`'s column.
+ * realign() replaces whatever group the top id belongs to, so the words
+ * already there must be resent or they'd be bumped back to the word bank; it
+ * also detaches each dropped word from any other group, so one call moves
+ * them all. The dropped words follow the column's own, in verse order.
+ * Returns null when every dropped token is already in that column.
  */
-export function bottomIdsAfterDrop(context: GroupsView, topId: string, bottomId: string): string[] | null {
+export function bottomIdsAfterDrop(context: GroupsView, topId: string, dropped: string | string[]): string[] | null {
   const destination = groupForSource(context, topId);
-  if (destination?.bottomIds.includes(bottomId)) return null;
-  return [...(destination?.bottomIds ?? []).filter((id) => id !== bottomId), bottomId];
+  const already = new Set(destination?.bottomIds ?? []);
+  const moving = (Array.isArray(dropped) ? dropped : [dropped]).filter((id) => !already.has(id));
+  if (moving.length === 0) return null;
+  const order = new Map(context.bottomTokens.map((token, at) => [token.id, at]));
+  moving.sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
+  return [...(destination?.bottomIds ?? []), ...moving];
 }
 
 /** "(1/2)" for a repeated word; callers check occurrences > 1 before rendering. */

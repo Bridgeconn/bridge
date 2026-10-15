@@ -307,3 +307,142 @@ describe("AlignmentModal joined columns (#207) and Undo (#122)", () => {
     expect(screen.getByRole("button", { name: "Undo last change" })).toBeDisabled();
   });
 });
+
+describe("AlignmentModal several target words at once (#285)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    project.set(projectInfo());
+    getLexiconEntry.mockResolvedValue({ segments: [] });
+    runVerseChecks.mockResolvedValue([]);
+  });
+
+  /** Nothing aligned yet: three bank words, two empty source columns. */
+  function untouched(): AlignmentContext {
+    return context({
+      alignment: { alignments: [], wordBank: context().bottomTokens },
+      groups: [],
+      status: "untouched",
+    });
+  }
+
+  type HitTest = { elementFromPoint: (x: number, y: number) => Element | null };
+
+  /** jsdom has no PointerEvent; a MouseEvent under the pointer name carries
+   *  the button and coordinates alignmentDrag reads. */
+  function pointer(type: string, target: Element | Window, init: MouseEventInit = {}) {
+    target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, ...init }));
+  }
+
+  it("Ctrl-click picks several bank words; one click on a column places them in one save, in verse order", async () => {
+    const ctx = untouched();
+    realignWords.mockResolvedValue(ctx);
+    await open(ctx);
+    await fireEvent.click(screen.getByRole("button", { name: "सृष्टि" }));
+    await fireEvent.click(screen.getByRole("button", { name: "आदि" }), { ctrlKey: true });
+    expect(screen.getByRole("button", { name: "सृष्टि" }).classList.contains("picked")).toBe(true);
+    expect(screen.getByRole("button", { name: "आदि" }).classList.contains("picked")).toBe(true);
+    expect(screen.getByRole("status")).toHaveTextContent("2 picked");
+    await fireEvent.click(screen.getByLabelText("Align 2 picked-up words to בָּרָא"));
+    await waitFor(() => expect(realignWords).toHaveBeenCalledTimes(1));
+    expect(realignWords).toHaveBeenCalledWith("1", "1", ["H002"], ["T001", "T003"], ctx.alignment);
+    await waitFor(() => expect(runVerseChecks).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText(/2 words placed together/)).toBeInTheDocument();
+    expect(document.querySelectorAll(".picked")).toHaveLength(0);
+  });
+
+  it("Shift-click takes the run of words from the last picked one", async () => {
+    const ctx = untouched();
+    realignWords.mockResolvedValue(ctx);
+    await open(ctx);
+    await fireEvent.click(screen.getByRole("button", { name: "आदि" }));
+    await fireEvent.click(screen.getByRole("button", { name: "सृष्टि" }), { shiftKey: true });
+    expect(document.querySelectorAll(".bank-tokens .picked")).toHaveLength(3);
+    await fireEvent.click(screen.getByLabelText("Align 3 picked-up words to בְּרֵאשִׁית"));
+    await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "1", ["H001"], ["T001", "T002", "T003"], ctx.alignment));
+  });
+
+  it("Ctrl-click on a picked word puts that one down; a plain click keeps the one-word path", async () => {
+    const ctx = untouched();
+    await open(ctx);
+    await fireEvent.click(screen.getByRole("button", { name: "आदि" }));
+    await fireEvent.click(screen.getByRole("button", { name: "में" }), { ctrlKey: true });
+    await fireEvent.click(screen.getByRole("button", { name: "आदि" }), { ctrlKey: true });
+    expect(screen.getByRole("button", { name: "आदि" }).classList.contains("picked")).toBe(false);
+    expect(screen.getByRole("button", { name: "में" }).classList.contains("picked")).toBe(true);
+    // A plain click on another word picks that word alone.
+    await fireEvent.click(screen.getByRole("button", { name: "सृष्टि" }));
+    expect(document.querySelectorAll(".picked")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "सृष्टि" }).classList.contains("picked")).toBe(true);
+    expect(screen.getByLabelText("Align picked-up word to בָּרָא")).toBeInTheDocument();
+    // And a plain click on the only picked word puts it down.
+    await fireEvent.click(screen.getByRole("button", { name: "सृष्टि" }));
+    expect(document.querySelectorAll(".picked")).toHaveLength(0);
+    expect(realignWords).not.toHaveBeenCalled();
+  });
+
+  it("Escape puts the picked words down; the next Escape closes", async () => {
+    const onClose = vi.fn();
+    getAlignment.mockResolvedValue(untouched());
+    render(AlignmentModal, { props: { chapter: "1", verse: "1", onClose } });
+    await fireEvent.click(await screen.findByRole("button", { name: "आदि" }));
+    await fireEvent.click(screen.getByRole("button", { name: "में" }), { ctrlKey: true });
+    expect(document.querySelectorAll(".picked")).toHaveLength(2);
+    await fireEvent.keyDown(window, { key: "Escape" });
+    expect(document.querySelectorAll(".picked")).toHaveLength(0);
+    expect(onClose).not.toHaveBeenCalled();
+    await fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("an aligned word can be picked with a bank word and moved to another column in one call", async () => {
+    const ctx = context();
+    realignWords.mockResolvedValue(ctx);
+    await open(ctx);
+    await fireEvent.click(screen.getByRole("button", { name: "Pick up आदि from בְּרֵאשִׁית" }));
+    await fireEvent.click(screen.getByRole("button", { name: "में" }), { ctrlKey: true });
+    await fireEvent.click(screen.getByLabelText("Align 2 picked-up words to בָּרָא"));
+    await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "1", ["H002"], ["T001", "T002"], ctx.alignment));
+    expect(unalignWords).not.toHaveBeenCalled();
+  });
+
+  it("picked words dropped on the word bank are unaligned in one call; bank words among them are left", async () => {
+    const ctx = context();
+    unalignWords.mockResolvedValue(ctx);
+    await open(ctx);
+    await fireEvent.click(screen.getByRole("button", { name: "Pick up आदि from בְּרֵאשִׁית" }));
+    await fireEvent.click(screen.getByRole("button", { name: "में" }), { ctrlKey: true });
+    await fireEvent.click(screen.getByLabelText("Return 2 picked-up words to the word bank"));
+    await waitFor(() => expect(unalignWords).toHaveBeenCalledWith("1", "1", ["T001"], ctx.alignment));
+    expect(realignWords).not.toHaveBeenCalled();
+  });
+
+  it("a drag that starts on a picked word carries the whole selection to the column it lands on", async () => {
+    const ctx = untouched();
+    realignWords.mockResolvedValue(ctx);
+    await open(ctx);
+    await fireEvent.click(screen.getByRole("button", { name: "आदि" }));
+    await fireEvent.click(screen.getByRole("button", { name: "सृष्टि" }), { ctrlKey: true });
+    const cell = screen.getByLabelText("Align 2 picked-up words to בָּרָא");
+    // jsdom has no layout: the column is what is "under" the pointer.
+    (document as unknown as HitTest).elementFromPoint = () => cell;
+    pointer("pointerdown", screen.getByRole("button", { name: "आदि" }), { clientX: 10, clientY: 10 });
+    pointer("pointermove", window, { clientX: 80, clientY: 80 });
+    await waitFor(() => expect(screen.getByText("आदि सृष्टि", { selector: ".drag-ghost" })).toBeInTheDocument());
+    pointer("pointerup", window);
+    await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "1", ["H002"], ["T001", "T003"], ctx.alignment));
+  });
+
+  it("a drag that starts on an unpicked word supersedes the selection and carries that word alone", async () => {
+    const ctx = untouched();
+    realignWords.mockResolvedValue(ctx);
+    await open(ctx);
+    await fireEvent.click(screen.getByRole("button", { name: "आदि" }));
+    const cell = screen.getByLabelText("Align picked-up word to בָּרָא");
+    (document as unknown as HitTest).elementFromPoint = () => cell;
+    pointer("pointerdown", screen.getByRole("button", { name: "सृष्टि" }), { clientX: 10, clientY: 10 });
+    pointer("pointermove", window, { clientX: 80, clientY: 80 });
+    await waitFor(() => expect(document.querySelectorAll(".picked")).toHaveLength(0));
+    pointer("pointerup", window);
+    await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "1", ["H002"], ["T003"], ctx.alignment));
+  });
+});

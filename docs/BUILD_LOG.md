@@ -20662,3 +20662,43 @@ cost two reads, not three. All four fail against the pre-fix panel (run and watc
 0/0 and the five touched Vitest files green at commit; `npm run test` and `npm run build` run once
 for the batch with #285. **Not run:** the engine suite (frontend only) and the desktop app; the
 #291 steps on 0.18.0 belong to the #156 walk.
+
+## 2026-10-15 — Align Words: several target words picked together, placed in one save (#285)
+
+**Reproduced from the code.** `AlignmentModal.svelte` kept one `pickedUpId`; a click on a second word
+replaced the first, a drag carried one word, and an aligned card could not be picked up at all (only
+its × returned it). A meaning-based rendering often uses two or three target words for one source
+word, so Amos (Punjabi QA, 2026-10-14) placed them one by one: one save, one history row and one
+re-check each.
+
+**Change, frontend only.** The engine's `realign` already takes a list of target words and detaches
+each from whatever group it was in (`alignment_engine.realign`), so several words — bank words and
+aligned cards alike — go to a column in one call: one history row, one undo step, one re-check.
+- `picked: string[]` replaces `pickedUpId`. A plain click picks one word up or puts the only picked
+  word down, as before. Ctrl-click (⌘ on a Mac) adds or removes a word; Shift-click takes the run
+  from the last word picked on its own to this one, in verse order over the pickable words (every
+  target word except one a cross-verse link accounts for). The picked words show the same outline a
+  picked word always had, each is `aria-pressed`, and the Target words heading carries a chip
+  ("N picked · click a column to place them, Esc to put them down").
+- A click on a column places every picked word; a click on the word bank returns the aligned ones
+  among them in one `unalign` call and leaves the bank words where they are.
+- A drag that starts on a picked word carries the whole selection, with every word in the ghost; a
+  drag that starts elsewhere supersedes the selection and carries that word alone, as a real drag
+  always superseded pick-up. The drag helper is unchanged.
+- Escape puts the picked words down before it closes the popup (after a pinned issues popover, as
+  before).
+- An aligned card's word is now a pick-up button ("Pick up X from Y"), so a word can be moved to
+  another column without first returning it; × still returns it.
+- `bottomIdsAfterDrop` (alignmentGroups.ts) takes one id or several: the column's own words first,
+  then the dropped ones in verse order, skipping any already there; null when none would move. The
+  cross-verse page calls it with one id and is unchanged.
+
+**Tests.** `AlignmentModal.test.ts` (8 new): Ctrl-click picks two bank words and one click on a
+column sends one `realign` with both in verse order, one re-check, one notice; Shift-click takes the
+run of three; Ctrl-click on a picked word puts that one down and a plain click keeps the one-word
+path; Escape clears the selection and the next Escape closes; an aligned word picked with a bank
+word moves in one call; picked words dropped on the bank are unaligned in one call with bank words
+left alone; a drag from a picked word carries the selection (jsdom has no PointerEvent, so the test
+dispatches MouseEvents under the pointer names and stubs `elementFromPoint`); a drag from an
+unpicked word supersedes it. `alignmentDrag.test.ts` (1 new): the helper's multi-id ordering and
+no-op cases. Gates as recorded on the issue.
