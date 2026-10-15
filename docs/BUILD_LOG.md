@@ -20795,3 +20795,47 @@ as recorded on the issue. **Not run:** the desktop app; the issue's verification
 and docked panel against Settings, Export and Diagnostics; Checker settings and History above
 Settings; context menus and toasts; the 80% cap on the field laptop) is a walk on the next
 installed build, and jsdom does not paint.
+
+## 2026-10-15 — Greek Room noise, measured: one check type is the list (#290, Part A)
+
+**How.** Mark in the Tamil IRV (`42MRKIRVTam.SFM`) and the Punjabi IRV (`42MRKIRVPun.SFM`),
+imported into throwaway projects under a scratch `LOCALAPPDATA` (so the real workspace registry
+was never touched) and checked through the dispatcher exactly as the app does it: `checks.start`
+with `scope: book, checks: ["greekroom"]`, then `check.loadChapterFindings` per chapter. Source
+checkout at aef32bc, real Wildebeest 0.9.2, Python 3.12. Script, per-finding lists, samples and
+labels are in the dated folder `D:\Claude Lab\Claude outputs\greek-room-noise\2026-10-15\` on
+Benz's machine (`greek_room_noise.py`, `findings_{ta,pa}.jsonl`, `sample_*.json`, `labels_*.json`,
+`report.json`); the labels are Claude's reader-level judgement for Benz, one reason per item, to be
+confirmed by a Tamil and a Punjabi reviewer before any rule changes.
+
+**Counts.** Tamil Mark: 404 Greek Room findings in 71.7 s (import + job): `names.spelling_similarity`
+368, USFM structural 36 (`nested_tags_wj_f_f_wj…` 18, `nested_tags_wj_x_x_wj…` 9, `nested_tags_ft_xt…`
+7, `missing_closing_tag_xt` 1, one slug carrying a verse reference 1), Wildebeest 0. Punjabi Mark:
+1,207 in 89.1 s: `names.spelling_similarity` 1,206, `wildebeest.foreign_script` 1, USFM 0.
+
+**Labels (20 per type, or all when fewer).** `names.spelling_similarity`: Tamil 0 real, 1 maybe
+(பிலிப்பு Philip vs பிலிப்பி Philippi, distinct in Greek, but a names check should look there), 19
+not; Punjabi 0 real, 20 not — every pair is an inflection of one word or two distinct words a
+letter apart. USFM nesting family: 34 of 34 the IRV's own convention (a footnote or cross-reference
+inside `\wj`, `\xt` inside `\ft` without `\+`), formatting rather than translation;
+`missing_closing_tag_xt` at 10:51: real; the reference-slugged one: unclear. Wildebeest Punjabi
+12:18: real, a Latin "l" typed for the danda ("…ਨਹੀਂ ਹੈ l ਉਸ…").
+
+**Why.** `names_adapter.py` takes every token of three or more letters as a candidate
+(`_MIN_TOKEN_LENGTH`), romanises with uroman and pairs under cost 0.4; its design note expects
+inflectional false positives and leaves the reviewer as the filter. On an inflecting language that
+is the entire list: 2.2 findings per verse in Punjabi Mark.
+
+**Proposed on the issue, not built.** (1) Restrict `names.spelling_similarity` candidates to proper
+names: tokens aligned to a source token whose UHB/UGNT morphology marks a proper noun, or listed in
+the book's translationWords names index; an unaligned book then reports a status, not inflections.
+A rule fix in Bridge's adapter; ids keep their formula. (2) Until then, the type off by default with
+a visible count in the Checks menu, if Revant wants the interim step. (3) The USFM nesting family
+grouped per pattern per book with locations, the real structural ones kept per verse; slug the
+category, not the message, so a type is stable. (4) Wildebeest: nothing to cut on these books;
+measure a second book each since #204/#205 changed it on 2026-10-14.
+
+**Part B stopped for sign-off.** The display-only likelihood filter hides findings on a score (the
+stop-and-ask item); the DECISIONS.md entry is drafted on the issue and not committed. With remedy
+(1) or (2) in place Greek Room on these two books is 36 and 1 findings, which bears on how much the
+filter would have to hide.
