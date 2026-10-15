@@ -20981,3 +20981,35 @@ moving once. All three fail on the old code and pass now; `test_finding_ids.py` 
 re-run alone. After pulling #302/#304: the three affected service files, 87 passed. Sidecars rebuilt;
 frozen `smoke_sidecars.py` passed. **Not watched:** the finding in the desktop app (T31 on the manual
 sheet, next build).
+
+## 2026-10-15 — Startup: a small splash window, then the main window (#287)
+
+**What changed (f09082c).** Benz asked for only the loading card at startup, not the full 1280x860
+window with the card in the middle. `tauri.conf.json` now declares two windows: `main` as before but
+`visible: false`, and `splash` (480x220, no decorations, centred, `splash.html`). The splash is a
+second Vite entry (`splash.html` → `src/splash.ts` → `SplashScreen.svelte`): mark, version and the
+latest stage, read the way App.svelte reads them (`engine_startup_state` catch-up plus `engine-stage`
+events, merged by `seq`). It only watches. The hidden main window still runs `connectEngine()`
+unchanged, and calls the new `reveal_main_window` command the moment `startupDone` or
+`startupFailure` is set: Home on success, the full #233 failure card otherwise (the splash is too small
+for the log, Copy diagnostics and Retry). `reveal_main` (main.rs) shows and focuses `main` and closes
+the splash, once (an `AtomicBool`), so nothing later pulls focus back.
+
+**Backstops.** A splash destroyed by any route, Alt+F4 included, shows `main` (`on_window_event`), so the
+app can never be left running with no window. A thread started in `setup` shows `main` after 45 s if
+nothing has: the frontend declares its own failure at 30 s, so this only fires if the main page never
+got that far. Capabilities now list `splash` and `core:window:allow-start-dragging` (the splash body is
+the drag region).
+
+**Ran.** `SplashScreen.test.ts` (3: version and latest stage with catch-up and live events merged, the
+plain fallback line, the drag region). `npm run check` 0/0; `npm run test` 837 passed (81 files);
+`npm run build` emits `dist/splash.html`. `cargo check` ok; `cargo test` 13 passed and 2 failed on the
+first run (`sidecar::tests::kill_process_tree::*`, untouched code), then 2/2 alone and 15/15 in three
+full runs. `test_version_consistency.py` (reads tauri.conf.json) 6 passed.
+
+**Not watched.** Any of it on screen: an installed Bridge was running on this machine, a dev build
+does not get a WebView2 beside it, and it was not closed. Open questions for the installed-build check:
+whether the hidden WebView2 throttles the 30 s timer (Chromium clamps hidden pages' timers to about
+1 s, which is harmless here), whether `main` flashes before its first paint on `show()`, the splash's
+corners and shadow on Windows 10 vs 11, and the cold-start number (M87 and #232 should be re-read on
+this build: the first frame is now the splash, not the grey main window).
