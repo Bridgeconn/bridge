@@ -21104,3 +21104,21 @@ re-inspection 1.4 s, 66-book imports 10.2 s and 12.1 s. The re-check after editi
   Paratext.
 - Drops are the `tauri://drag-*` events, not a physical Explorer drag.
 - AI cases (TH-009–018) were not run: no provider is configured, and sending text to one is Benz's call.
+
+## 2026-10-16 (later) — 0.18.0 regression walk: QA 07 and QA 09 (#158, #160)
+
+**What.** Walked manual word alignment and Alignment Review on the installed 0.18.0 with real input. Results
+are in `QA_TEST_MATRIX.md` (2026-10-16 section) and on the cards. No code changed.
+
+**Found, filed (on Project 6 as Todo):**
+- #312: aligned USFM export refuses the whole book when one group's target words are not adjacent. This
+  happens on the real IRV Tamil PHP data (PHP 1:2, ἀπὸ Θεοῦ καὶ Χριστοῦ → two separated Tamil words), and
+  Align Words lets a reviewer build such groups.
+- #313: Alignment Review history shows the reviewer as a raw actor id, not their name.
+
+**Watched working.**
+- A stale Align Words save is refused, and the other write is kept.
+- Undo and Restore selected return the verse byte-for-byte.
+- A clean book's aligned export and re-import keep both groups and all 21 verses.
+- Review decisions and their append-only history survive a restart.
+- A verse edit marks the passage analysis and all its findings Stale.

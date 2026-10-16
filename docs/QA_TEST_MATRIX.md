@@ -378,6 +378,15 @@ project (IRV Tamil PHP) as folder, `.zip` and `.tcore`, and negative samples. Pe
 | EDT-012 | PASS against a stand-in for the Paratext companion on its named pipe, not real Paratext: an edit in progress blocks the move with a message, Cancel then follows |
 | TH-001 – TH-008 | PASS — offline selection editing (exact, refused, multiple with occurrence, nothing to select, clear with history kept) and the no-key AI message |
 | TH-009 – TH-018 | BLOCKED — need a configured AI provider |
+| ALN-001 – ALN-003, ALN-005 – ALN-014 | PASS — 1:1, 1:many, many:1, many:many groups with token identity and repeated-word occurrence kept; a stale Align Words save refused ("The alignment file changed on disk …"); Undo and Restore selected byte-identical; an edit marks the verse invalid and keeps surviving groups; all of it after a restart. #306 still applies to the row glyph with the Review panel closed |
+| ALN-004 | PARTIAL — bank → column pointer drag works; column → bank drag is not in 0.18.0 (added by #285 in 0.19.0) |
+| ALN-015 | BLOCKED — needs an AI provider |
+| ALN-016 | FAIL — #312 (a group whose target words are not adjacent refuses the whole book's aligned export, on real IRV Tamil PHP data) and #307; the round trip on a clean book with two groups keeps both groups and every verse |
+| REV-003, REV-005, REV-006, REV-008, REV-012 – REV-014 | PASS — REV-009/014 (P0): dispositions, notes and append-only history survive a restart; an edit marks the analysis and every finding Stale. REV-012: no "cancelled" message and the old "Analysis complete" banner stays |
+| REV-009 | PASS for persistence; the reviewer is shown as a raw actor id, #313 |
+| REV-004, REV-010 | PARTIAL — a running job is not shown while another scope is selected; scopes keep their own status |
+| REV-001, REV-002, REV-015 | Card out of date — one Passage analysis view with passage/chapter/book/range scopes, no Word/Semantic/QA tabs |
+| REV-007, REV-011 | NOT RUN — no cross-verse finding in the data; no empty scope tried |
 
 ## Team hub, dashboard, users and projects: the two-laptop walk (#281)
 
