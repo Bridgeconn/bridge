@@ -37,6 +37,7 @@ describe("stacking layers (#288)", () => {
     for (const [name, selector] of [
       ["SettingsModal", ".modal-overlay"], ["ExportModal", ".modal-overlay"], ["DiagnosticsPanel", ".modal-overlay"],
       ["AlignmentModal", ".overlay"], ["CrossVerseAlignmentModal", ".overlay"], ["CorrectionReviewPanel", ".confirm-backdrop"],
+      ["AssignmentsDialog", ".overlay"],
     ]) {
       expect(rule(component(name), selector), `${name} ${selector}`).toContain("z-index: var(--z-dialog)");
     }
@@ -59,6 +60,8 @@ describe("stacking layers (#288)", () => {
     ]) {
       expect(rule(component(name), selector), `${name} ${selector}`).toContain("z-index: var(--z-popover)");
     }
+    expect(rule(component("StartupScreen"), ".startup")).toContain("z-index: var(--z-startup)");
+    expect(rule(component("UserPicker"), ".picker")).toContain("z-index: var(--z-startup)");
     expect(rule(component("ScopeNotice"), ".scope-notice")).toContain("z-index: var(--z-toast)");
     expect(rule(component("VerseList"), ".context-notice")).toContain("z-index: var(--z-toast)");
     for (const [name, selector] of [
@@ -76,7 +79,7 @@ describe("stacking layers (#288)", () => {
       "CorrectionReviewPanel", "CheckerSettingsDialog", "LanguageQaHistoryPopup", "LexiconPopup", "FlagDialog",
       "ScopeConfirmDialog", "OccurrencesPopup", "VerseNotesPopup", "FindingContextMenu", "FlagPopover",
       "VerseHistoryPopover", "ScopeNotice", "VerseList", "CheckMenu", "ProjectReportScreen", "ImportScreen",
-      "LanguageQaPanel", "SidePanel",
+      "LanguageQaPanel", "SidePanel", "AssignmentsDialog", "StartupScreen", "UserPicker",
     ]) {
       const literals = [...component(name).matchAll(/z-index:\s*(\d+)/g)].map((m) => Number(m[1]));
       for (const value of literals) expect(value, `${name} z-index: ${value}`).toBeLessThan(10);

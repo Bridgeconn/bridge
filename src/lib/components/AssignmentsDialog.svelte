@@ -62,7 +62,7 @@
 </div>
 
 <style>
-  .overlay { position: absolute; inset: 0; background: rgba(15, 20, 26, 0.45); display: flex; align-items: center; justify-content: center; z-index: 30; }
+  .overlay { position: absolute; inset: 0; background: rgba(15, 20, 26, 0.45); display: flex; align-items: center; justify-content: center; z-index: var(--z-dialog); }
   .dialog { width: min(560px, calc(100% - 32px)); max-height: 80vh; overflow: auto; background: var(--surface); border-radius: 14px; padding: 20px 24px; position: relative; }
   .close-btn { position: absolute; top: 10px; right: 10px; width: 28px; height: 28px; border-radius: 6px; border: none; background: transparent; color: var(--text-2); font-size: var(--fs-lg); cursor: pointer; }
   h2 { font-size: var(--fs-lg); margin: 0 0 6px; color: var(--text); }

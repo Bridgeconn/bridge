@@ -21070,3 +21070,58 @@ moving once. All three fail on the old code and pass now; `test_finding_ids.py` 
 re-run alone. After pulling #302/#304: the three affected service files, 87 passed. Sidecars rebuilt;
 frozen `smoke_sidecars.py` passed. **Not watched:** the finding in the desktop app (T31 on the manual
 sheet, next build).
+
+## 2026-10-15 — Startup: a small splash window, then the main window (#287)
+
+**What changed (f09082c).** Benz asked for only the loading card at startup, not the full 1280x860
+window with the card in the middle. `tauri.conf.json` now declares two windows: `main` as before but
+`visible: false`, and `splash` (480x220, no decorations, centred, `splash.html`). The splash is a
+second Vite entry (`splash.html` → `src/splash.ts` → `SplashScreen.svelte`): mark, version and the
+latest stage, read the way App.svelte reads them (`engine_startup_state` catch-up plus `engine-stage`
+events, merged by `seq`). It only watches. The hidden main window still runs `connectEngine()`
+unchanged, and calls the new `reveal_main_window` command the moment `startupDone` or
+`startupFailure` is set: Home on success, the full #233 failure card otherwise (the splash is too small
+for the log, Copy diagnostics and Retry). `reveal_main` (main.rs) shows and focuses `main` and closes
+the splash, once (an `AtomicBool`), so nothing later pulls focus back.
+
+**Backstops.** A splash destroyed by any route, Alt+F4 included, shows `main` (`on_window_event`), so the
+app can never be left running with no window. A thread started in `setup` shows `main` after 45 s if
+nothing has: the frontend declares its own failure at 30 s, so this only fires if the main page never
+got that far. Capabilities now list `splash` and `core:window:allow-start-dragging` (the splash body is
+the drag region).
+
+**Ran.** `SplashScreen.test.ts` (3: version and latest stage with catch-up and live events merged, the
+plain fallback line, the drag region). `npm run check` 0/0; `npm run test` 837 passed (81 files);
+`npm run build` emits `dist/splash.html`. `cargo check` ok; `cargo test` 13 passed and 2 failed on the
+first run (`sidecar::tests::kill_process_tree::*`, untouched code), then 2/2 alone and 15/15 in three
+full runs. `test_version_consistency.py` (reads tauri.conf.json) 6 passed.
+
+**Not watched.** Any of it on screen: an installed Bridge was running on this machine, a dev build
+does not get a WebView2 beside it, and it was not closed. Open questions for the installed-build check:
+whether the hidden WebView2 throttles the 30 s timer (Chromium clamps hidden pages' timers to about
+1 s, which is harmless here), whether `main` flashes before its first paint on `show()`, the splash's
+corners and shadow on Windows 10 vs 11, and the cold-start number (M87 and #232 should be re-read on
+this build: the first frame is now the splash, not the grey main window).
+
+## 2026-10-15 — USFM segment and bridge findings land on their own verse (#303)
+
+**Decision (Revant).** Lettered segments (`5a`, `5b`) stay flagged as the checker reports them: "Duplicate
+verse number 5" (high) and "Verse number includes letter" (low, one per segment). A bridge (`3-4`) is valid
+and not flagged; the checker already raised nothing for it, and a test now pins that. Benz's recommendation
+to drop `duplicate_verse_number` for segments was not taken.
+
+**The bug was the anchor.** `QaFinding.verse` is an int; the chapter's keys are `5a`/`5b`. The duplicate was
+anchored at verse 5 (not a key) and the two letter findings had no verse at all (the parser never read
+`\v 5a` from the report line), so all three fell back to the chapter's first verse: the 1:1 Benz saw on
+0.18.0. Now `QaFinding.verse_ref` carries the exact reference ("5a", "3-4") with `verse` its first number;
+the adapter reads it from the checker's own line; `_usfm_anchor_verse` (bridge_service.py) matches the exact
+reference, else the number, else the first key with that number (the duplicate sits on `5a`), else the
+first verse. The usfm cache marker is `|ids-273-283-303`. The consistency block below it has the same
+first-verse fallback and was left alone. A decision recorded on these findings while they sat on verse 1
+does not follow them to `5a`/`5b` (pre-release).
+
+**Ran.** `tests/service/test_usfm_verse_segments.py` (8: the parser's references, six anchoring cases, and
+the real checker through `verse.runChecks` on a chapter keyed 1, 2, 3-4, 5a, 5b, 6). Engine `pytest -n auto`:
+5449 passed, 3 xfailed, 3 failed under parallel load (Logos helper round trip, Language QA polling
+starvation, moved-project identity), all three passing when re-run alone. Sidecars rebuilt; frozen
+`smoke_sidecars.py` passed. **Not watched:** the findings on 5a/5b in the desktop app (next build).

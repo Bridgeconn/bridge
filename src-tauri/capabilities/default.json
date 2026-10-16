@@ -1,10 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capabilities for the main window",
-  "windows": ["main"],
+  "description": "Capabilities for the main window and the startup splash window (#287)",
+  "windows": ["main", "splash"],
   "permissions": [
     "core:event:default",
+    "core:window:allow-start-dragging",
     "shell:allow-execute",
     "shell:allow-spawn",
     "dialog:allow-open",

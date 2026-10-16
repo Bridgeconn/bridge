@@ -659,6 +659,13 @@ export const bridge = {
 
   onEngineStage,
 
+  /** #287: show the main window (it starts hidden behind the splash) and
+   * close the splash. Called once startup has succeeded or failed; calling it
+   * again is harmless. */
+  revealMainWindow(): Promise<void> {
+    return invoke<void>("reveal_main_window");
+  },
+
   async pickProjectFolder(): Promise<string | null> {
     return invoke<string | null>("pick_project_folder");
   },

@@ -130,7 +130,7 @@
 </div>
 
 <style>
-  .startup { position: absolute; inset: 0; z-index: 200; background: var(--bg); display: grid; place-items: center; padding: 24px; }
+  .startup { position: absolute; inset: 0; z-index: var(--z-startup); background: var(--bg); display: grid; place-items: center; padding: 24px; }
   .card { width: min(560px, 100%); background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 28px 32px; box-shadow: 0 12px 40px rgba(0,0,0,.08); display: flex; flex-direction: column; gap: 18px; }
   .brand { display: flex; align-items: center; gap: 16px; }
   .mark { width: 56px; height: 56px; flex-shrink: 0; }

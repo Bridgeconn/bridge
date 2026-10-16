@@ -429,6 +429,14 @@
   let unlistenFileDrop: (() => void) | null = null;
   let appDisposed = false;
 
+  // #287: the window starts hidden behind a small splash window. Show it the
+  // moment startup has an outcome: Home on success, the full loading card's
+  // failure view (log, Copy diagnostics, Retry) otherwise. The shell also
+  // shows it on its own if this never runs (sidecar.rs has the fallback).
+  $: if (startupDone || startupFailure) {
+    bridge.revealMainWindow().catch((error) => console.error("Could not show the main window", error));
+  }
+
   function noteStartupStage(stage: EngineStartupStage): void {
     startupStages = mergeStage(startupStages, stage);
     if (startupDone) return;

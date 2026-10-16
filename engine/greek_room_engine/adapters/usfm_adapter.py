@@ -112,6 +112,17 @@ _LOC_FILE_ONLY_RE = re.compile(r"^\S+\.[Uu][Ss][Ff][Mm] \((?P<book>[A-Z1-9]{2,4}
 _LABELED_COUNT_RE = re.compile(r"^(?P<label>[A-Za-z][^()]*?)\s*\((?P<count>\d+)\)\s*$")
 _TRAILING_NUMBER_RE = re.compile(r"(\d+)\s*$")
 _VERSE_MENTION_RE = re.compile(r"\bverse:?\s*(\d+)\b", re.IGNORECASE)
+# A file-and-line instance whose detail is the verse line itself, e.g.
+# "\v 5a five a" under "Verse number includes letter" (#303): the verse is
+# the marker's own reference, segment letter or bridge included.
+_DETAIL_VERSE_MARKER_RE = re.compile(r"^\\v\s+(\d+[a-z]?(?:-\d+[a-z]?)?)(?=\s|$)")
+_LEADING_NUMBER_RE = re.compile(r"^(\d+)")
+
+
+def _verse_number(ref: str) -> int:
+    """The first number of a verse reference: "5a" -> 5, "3-4" -> 3, "" -> 0."""
+    match = _LEADING_NUMBER_RE.match(ref)
+    return int(match.group(1)) if match else 0
 
 
 def _slugify(label: str) -> str:
@@ -181,7 +192,8 @@ def _parse_report(text: str) -> list[dict[str, Any]]:
         match = _LOC_WITH_LINE_RE.match(stripped)
         if match:
             detail = match.group("detail")
-            verse_match = _TRAILING_NUMBER_RE.search(subcategory) or _TRAILING_NUMBER_RE.search(detail)
+            verse_match = (_DETAIL_VERSE_MARKER_RE.match(detail) or _TRAILING_NUMBER_RE.search(subcategory)
+                           or _TRAILING_NUMBER_RE.search(detail))
             issues.append({
                 "book": match.group("book"), "chapter": match.group("chapter"),
                 "verse": verse_match.group(1) if verse_match else "",
@@ -283,6 +295,9 @@ class UsfmAdapter(CheckAdapter):
                 continue
             chapter = issue["chapter"]
             verse = issue["verse"] or "0"
+            # "5a" or "3-4" keeps its exact reference for anchoring (#303);
+            # `verse` is its first number, as everywhere else (gotcha 12).
+            verse_ref = "" if verse.isdigit() else verse
             subcategory = issue["subcategory"]
             detail = issue["detail"]
             # The upstream report's detail line often just restates the
@@ -293,7 +308,8 @@ class UsfmAdapter(CheckAdapter):
                 project_id=project_id,
                 book=book_id,
                 chapter=int(chapter) if chapter.isdigit() else 0,
-                verse=int(verse) if verse.isdigit() else 0,
+                verse=_verse_number(verse),
+                verse_ref=verse_ref,
                 original_text="",
                 engine=self.engine_name,
                 check_type=f"usfm.{_slugify(subcategory)}",

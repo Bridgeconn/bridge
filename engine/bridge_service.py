@@ -351,6 +351,30 @@ def _issue_disambiguators(issue: QAIssue) -> tuple[str, str]:
     return before, before
 
 
+def _usfm_anchor_verse(finding: QaFinding, book_verses: list[Any]) -> Optional[str]:
+    """The chapter verse key a USFM-checker finding is shown on (#303).
+
+    Its exact reference when that is a key ("5a", "3-4"); else its number when
+    that is a key; else the first key with that number ("Duplicate verse
+    number 5" in a chapter keyed 5a, 5b lands on 5a); else the chapter's
+    first verse, since the UI can only request verses that exist (a "missing
+    verse 4" finding, or one with no verse at all)."""
+    keys = [str(value) for value in book_verses]
+    if not keys:
+        return None
+    ref = finding.verse_ref
+    if ref and ref in keys:
+        return ref
+    if finding.verse:
+        if str(finding.verse) in keys:
+            return str(finding.verse)
+        for key in keys:
+            match = re.match(r"\d+", key)
+            if match and int(match.group(0)) == finding.verse:
+                return key
+    return keys[0]
+
+
 def _legacy_finding_id(finding: QaFinding) -> Optional[str]:
     """The id this finding had before #273, where that differs: set on the
     finding when it was built (local, tC, Wildebeest) or derived from what a
@@ -5246,8 +5270,9 @@ class BridgeEngine:
             if usfm_text:
                 # "|ids-273": sections written before #273 hold ids built from
                 # the explanation, which embeds verse text; "-283": and before
-                # #283 some check types were verse text. Rebuild them once.
-                content_hash = hashlib.sha256((usfm_text + "|ids-273-283").encode("utf-8")).hexdigest()
+                # #283 some check types were verse text; "-303": and before
+                # #303 none carried verse_ref. Rebuild them once.
+                content_hash = hashlib.sha256((usfm_text + "|ids-273-283-303").encode("utf-8")).hexdigest()
                 cached_section = project.load_check_cache().get("usfm") or {}
                 if cached_section.get("contentHash") == content_hash:
                     findings = [QaFinding.from_dict(d) for d in cached_section.get("findings", [])]
@@ -5591,21 +5616,13 @@ class BridgeEngine:
             # surfaces on the chapter's first verse rather than nowhere,
             # since the UI can only request verses that actually exist.
             book_verses = project.verses(chapter) if chapter in project.chapters() else []
-            existing_verses = {str(value) for value in book_verses}
-            first_verse = book_verses[0] if book_verses else None
             with timings.step("usfm.book"):
                 usfm_findings = (self._usfm_findings_by_book.get(str(project.path), [])
                                  if cached_book_scans else self._usfm_findings_for_book(project))
             for f in usfm_findings:
                 if str(f.chapter) != str(chapter):
                     continue
-                if str(f.verse) == str(verse):
-                    findings.append(f)
-                elif (
-                    first_verse is not None
-                    and str(verse) == str(first_verse)
-                    and (f.verse == 0 or str(f.verse) not in existing_verses)
-                ):
+                if _usfm_anchor_verse(f, book_verses) == str(verse):
                     findings.append(f)
 
         if "names" in groups:
