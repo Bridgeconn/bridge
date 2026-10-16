@@ -21122,3 +21122,23 @@ are in `QA_TEST_MATRIX.md` (2026-10-16 section) and on the cards. No code change
 - A clean book's aligned export and re-import keep both groups and all 21 verses.
 - Review decisions and their append-only history survive a restart.
 - A verse edit marks the passage analysis and all its findings Stale.
+
+## 2026-10-16 (evening) — 0.18.0 regression walk: QA 10 corrections (#161)
+
+**What.** Walked the Stage 9B correction path on the installed 0.18.0 with a copy of the IRV Tamil PHP
+project and no AI key. The path is: confirm → manual proposal → edit (human review) → Review application →
+Apply → affected re-analysis → verify. Results are in `QA_TEST_MATRIX.md` and on #161. No code changed.
+
+**Found, filed (Project 6, Todo):**
+- #314: the insertion point slider covers raw verse text including markup. On PHP 1:1 the Apply
+  confirmation showed `\x QA-COR-2- \xo …`. I cancelled, so nothing was written.
+- #315: after a rejection there is no way to create another proposal for that finding.
+- #316: verification is never available on a verse with markup. The job records sha256 of the lifted
+  text and the verifier compares it with sha256 of the raw text. I recomputed both from the stored job.
+
+**Watched working.**
+- Stale proposals are refused.
+- A double Apply produced one Scripture write and one intent.
+- PENDING stays PENDING after re-analysis.
+- UNCERTAIN offers no Mark corrected.
+- Every proposal, event, intent and verification row survived a restart.

@@ -387,6 +387,13 @@ project (IRV Tamil PHP) as folder, `.zip` and `.tcore`, and negative samples. Pe
 | REV-004, REV-010 | PARTIAL — a running job is not shown while another scope is selected; scopes keep their own status |
 | REV-001, REV-002, REV-015 | Card out of date — one Passage analysis view with passage/chapter/book/range scopes, no Word/Semantic/QA tabs |
 | REV-007, REV-011 | NOT RUN — no cross-verse finding in the data; no empty scope tried |
+| COR-001, COR-002, COR-006, COR-008 – COR-010, COR-012, COR-014, COR-016 | PASS — manual insertion proposal on a confirmed finding; a stale proposal refuses Apply; Cancel writes nothing; a double Apply gives one Scripture write and one intent; re-analysis leaves verification PENDING; UNCERTAIN offers no Mark corrected; the whole ledger (4 proposals, 2 intents, 1 verification, 14 events) survives a restart |
+| COR-003 | PASS with defect — #314 (the insertion slider runs over raw text with markup; Apply would have written `\x QA-COR-2- \xo …`) |
+| COR-005 | PARTIAL — the old wording is kept as an event snapshot but not shown in the panel |
+| COR-007 | FAIL — #315 (after a rejection no new proposal can be created for the finding) |
+| COR-013 | FAIL on a verse with markup — #316 (job hashes lifted text, verifier raw text: ANALYSIS_NOT_CURRENT forever); PASS on a plain verse (UNCERTAIN with reason codes) |
+| COR-004, COR-015 | BLOCKED — no provider; no PASSED verification reachable with lexical-only retrieval |
+| COR-011 | NOT RUN — no kill timed around Apply |
 
 ## Team hub, dashboard, users and projects: the two-laptop walk (#281)
 
