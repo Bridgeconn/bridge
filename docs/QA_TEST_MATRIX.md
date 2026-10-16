@@ -394,6 +394,22 @@ project (IRV Tamil PHP) as folder, `.zip` and `.tcore`, and negative samples. Pe
 | COR-013 | FAIL on a verse with markup — #316 (job hashes lifted text, verifier raw text: ANALYSIS_NOT_CURRENT forever); PASS on a plain verse (UNCERTAIN with reason codes) |
 | COR-004, COR-015 | BLOCKED — no provider; no PASSED verification reachable with lexical-only retrieval |
 | COR-011 | NOT RUN — no kill timed around Apply |
+| RPT-003, RPT-004, RPT-006, RPT-007, RPT-010, RPT-012 | PASS — book/category/severity/text filters agree with tiles and counts; Clear filters restores 1,776; row link opens the verse; unopened collection books listed "Not yet opened — no checks run"; filtered CSV/TSV: BOM, 44 rows, quoting, Tamil intact |
+| RPT-005 | FAIL — #317 (a Greek Room check's own suggestion shown and exported as "AI proposal") |
+| RPT-011 | FAIL — #211 still on 0.18.0 (PDF bar charts not drawn, a strip of dashes down the right side) |
+| RPT-015 | FAIL — #318 (an unreachable model leaves an "Uncertain · 0%" verdict on every finding); the error itself is clean and the engine stays up |
+| RPT-001, RPT-009 | PARTIAL — reports build in 1–2 s (no progress to watch); empty report clear, failure not forced |
+| RPT-013, RPT-014, RPT-016 | BLOCKED — need a real AI provider (RPT-014 is P0) |
+| RPT-002, RPT-008 | NOT RUN |
+| SET-002, SET-003, SET-004, SET-006, SET-009, SET-013, SET-015, SET-016 | PASS — SET-004 (P0): the key exists only as `api_key_dpapi`; a unique marker was found in no file, log, export or the Diagnostics view, also after failed calls to a dead local endpoint |
+| SET-005 | FAIL — #319 (no way to remove a saved key) |
+| SET-011 | FAIL — #320 (Paratext navigation never checked against the active Paratext project) |
+| SET-001 | PARTIAL — panes open by mouse; keyboard and Security pane not exercised; Diagnostics ignores Escape |
+| SET-007, SET-008, SET-010, SET-012, SET-014 | NOT RUN — no other resource version, no network cut, no real Paratext/Logos |
+| EXP-003 – EXP-009 | PASS — export identical to source structure; existing-name and unwritable destinations go through explicit Windows prompts; export writes CRLF and drops a source BOM |
+| EXP-002 | FAIL — #312, #307 on real data; a clean two-group book round-trips |
+| EXP-001 | Card out of date — Export is offered with a "Review is not complete" warning and an explicit override for blocking gate items, never disabled |
+| EXP-010 | OBSERVATION — save dialogs open in the last folder used by any save |
 
 ## Team hub, dashboard, users and projects: the two-laptop walk (#281)
 

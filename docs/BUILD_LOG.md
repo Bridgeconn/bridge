@@ -21142,3 +21142,24 @@ Apply → affected re-analysis → verify. Results are in `QA_TEST_MATRIX.md` an
 - PENDING stays PENDING after re-analysis.
 - UNCERTAIN offers no Mark corrected.
 - Every proposal, event, intent and verification row survived a restart.
+
+## 2026-10-16 (night) — 0.18.0 regression walk: QA 11, 12, 13 (#162, #163, #164)
+
+**What.** Walked the QA report, settings and connectors, and export on the installed 0.18.0. For the AI
+paths I used a dummy key with the base URL pointed at `http://127.0.0.1:9/v1`, so no request or Scripture
+left the machine. Results are in `QA_TEST_MATRIX.md` and on the cards. No code changed.
+
+**Found, filed (Project 6, Todo):**
+- #317: the report's "AI proposal" column holds a Greek Room check's own suggestion.
+- #318: a triage run that cannot reach the model stores "Uncertain · 0%" on all 137 findings.
+- #319: there is no way to remove a saved API key.
+- #320: Paratext navigation is never compared with the active Paratext project. The GUID setting in
+  `secret_store.py` is unused, and a stand-in companion reporting another project drove navigation.
+
+Evidence added to #211: the PDF print layout is still broken on 0.18.0.
+
+**Watched working.**
+- The key exists only DPAPI-wrapped: a unique marker was found in no file, log or view.
+- Connectors report a clean unavailable state and stop when disabled.
+- Report filters, counts and CSV/TSV agree.
+- Overwrite and permission errors in export go through explicit Windows prompts.
