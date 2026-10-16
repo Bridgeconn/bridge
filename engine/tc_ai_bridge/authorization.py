@@ -200,7 +200,7 @@ _WRITE = (
     "alignment.autoAlign.revert", "alignment.realign", "alignment.unalign", "alignment.save",
     "alignment.complete", "alignment.undo", "alignment.restore", "alignment.aiApplyProposal",
     "housestyle.record", "housestyle.setState", "housestyle.import",
-    "languageQa.inline", "languageQa.setPack", "languageQa.checkerSettings.set",
+    "languageQa.inline", "languageQa.setPack", "languageQa.checkerSettings.set", "languageQa.setReference",
     "languageQa.learned.forget", "languageQa.learned.restore", "languageQa.scopeApply", "languageQa.batchUndo",
     "languageQa.flags.add", "languageQa.flags.update", "languageQa.flags.delete", "languageQa.words.add",
     "terminology.record", "export.aligned", "export.nonAligned",

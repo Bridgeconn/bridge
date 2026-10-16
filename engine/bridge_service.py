@@ -91,7 +91,7 @@ from tc_ai_bridge import language_qa_scope
 from tc_ai_bridge.language_qa import text_hash as language_qa_text_hash
 from tc_ai_bridge.language_qa import word_occurrences as language_qa_word_occurrences
 from tc_ai_bridge.language_qa import lift_inline_usfm as language_qa_lift
-from tc_ai_bridge.language_packs.reference_text import ReferenceHolder, detect as detect_reference
+from tc_ai_bridge.language_packs.reference_text import ReferenceHolder
 from tc_ai_bridge.language_packs.related_words import RelatedWords
 from tc_ai_bridge.language_packs.registry import packs_dir
 from tc_ai_bridge.language_packs.loader import OVERRIDES_PATH, load_project_overrides, overrides_path
@@ -545,6 +545,7 @@ class Methods:
     LANGUAGE_QA_BOOK_WORDS = "languageQa.bookWords"
     LANGUAGE_QA_OCCURRENCES = "languageQa.occurrences"
     LANGUAGE_QA_REFERENCE = "languageQa.reference"
+    LANGUAGE_QA_SET_REFERENCE = "languageQa.setReference"
     LANGUAGE_QA_RELATED = "languageQa.related"
     CHECKS_STATUS = "checks.status"
     CHECKS_CANCEL = "checks.cancel"
@@ -808,7 +809,11 @@ class BridgeEngine:
         self._configure_language_qa()
         # Reference Bibles (one per folder) and related-word indexes, built on
         # background threads on first use and kept for the session.
-        self._reference_holders: dict[tuple[str, str], Any] = {}
+        self._reference_holders: dict[str, Any] = {}
+        # #289: the open project's key for its reference Bible -- the
+        # collection id, so every book of a collection shares one folder, or
+        # the project id of a single book. Set when project.open registers it.
+        self._reference_key = ""
         self._related: dict[tuple[str, tuple[str, ...]], dict[str, Any]] = {}
         self._related_lock = threading.Lock()
         # Resolved lazily by current_actor_id(): working it out opens the
@@ -1347,6 +1352,7 @@ class BridgeEngine:
         except ProjectIdentityError as exc:
             raise ProjectError(str(exc)) from exc
         timer.mark("register")
+        self._reference_key = str(registered.get("collectionId") or registered.get("projectId") or "")
         if not getattr(self, '_active_session', ''):  # #79: the scan follows the desktop session only
             self._language_qa.unbind()
         # #113: the outgoing project lets go of its database files first.
@@ -6878,7 +6884,7 @@ class BridgeEngine:
         """The reference text's occurrences of a word (OV occurrences)."""
         holder = self._reference_holder()
         if holder is None:
-            raise ProjectError("No reference text is configured for this book's language (Settings > Language QA).")
+            raise ProjectError("No reference Bible is chosen for this project (Reference panel > Browse).")
         text, error = holder.state()
         if error:
             raise ProjectError(f"The reference text could not be read: {error}")
@@ -6890,30 +6896,71 @@ class BridgeEngine:
 
     # -- reference text and related words (indic-qa's OV panel) --------------
 
-    def _reference_holder(self) -> Any:
-        """The reference Bible for the open book's Language QA pack: the folder
-        set in Settings, else the pack's own dictionary/verses.tsv when it ships
-        one (ta-irv: the 1957 OV). None when there is neither."""
+    def _reference_choice(self) -> tuple[str, str, str] | None:
+        """(folder, label, origin) of the open project's reference Bible (#289):
+        the folder chosen for this project (or its collection) on this machine,
+        else the bundled one its Language QA pack ships (ta-irv: the 1957 OV),
+        else None. A book whose language has no pack may still have one."""
+        folder = self.settings.reference_bibles.get(self._reference_key) if self._reference_key else None
+        if folder:
+            return folder, Path(folder).name or folder, "project"
         pack = self._language_qa.pack_name()
-        if not pack:
-            return None
-        folder = self.settings.language_qa_reference_dirs.get(pack)
-        label = "Old Version"
-        if not folder:
+        if pack:
             bundled = packs_dir() / pack / "dictionary"
-            if not (bundled / "verses.tsv").is_file():
-                return None
-            folder, label = str(bundled), "Old Version (bundled)"
-        key = (pack, str(Path(folder).resolve()))
+            if (bundled / "verses.tsv").is_file():
+                return str(bundled), "Old Version (bundled)", "bundled"
+        return None
+
+    def _reference_holder(self) -> Any:
+        """The ReferenceHolder for `_reference_choice`, kept per folder so a
+        book switch within a collection reuses the loaded text."""
+        choice = self._reference_choice()
+        if choice is None:
+            return None
+        folder, label, origin = choice
+        key = str(Path(folder).resolve())
         holder = self._reference_holders.get(key)
-        if holder is None:
+        if holder is None or holder.label != label:
             holder = ReferenceHolder(folder, label, self.settings.path.parent / "reference-cache")
             self._reference_holders[key] = holder
+        holder.origin = origin
         return holder
+
+    def language_qa_set_reference(self, params: dict[str, Any]) -> dict[str, Any]:
+        """languageQa.setReference (#289): choose, change or clear the open
+        project's reference Bible. A folder that does not exist is refused; one
+        that exists but holds no Scripture is kept, and the panel shows why it
+        cannot be read, so the reviewer sees what was picked and can change it."""
+        self._require_project()
+        if not self._reference_key:
+            raise ProjectError("This project is not registered, so it cannot keep a reference Bible.")
+        folder = params.get("folder")
+        if folder is not None and not isinstance(folder, str):
+            raise ProjectError("folder must be a path or null")
+        folder = (folder or "").strip()
+        if folder:
+            if not Path(folder).is_dir():
+                raise ProjectError(f"{folder}: no such folder on this computer")
+            folder = str(Path(folder))
+        self.settings.set_reference_bible(self._reference_key, folder or None)
+        choice = self._reference_choice()
+        return {"folder": folder, "origin": choice[2] if choice else "none",
+                "label": choice[1] if choice else "", "path": choice[0] if choice else ""}
+
+    def _reference_status(self) -> dict[str, str] | None:
+        """For Settings: the open project's reference Bible, or None with no project."""
+        if self.project is None:
+            return None
+        choice = self._reference_choice()
+        if choice is None:
+            return {"path": "", "label": "", "origin": "none"}
+        return {"path": choice[0], "label": choice[1], "origin": choice[2]}
 
     def language_qa_reference(self, params: dict[str, Any]) -> dict[str, Any]:
         """The reference text of one chapter of the open book, for the panel
-        beside the text. Never waits: until the folder is read, `ready` is false."""
+        beside the text. Never waits: until the folder is read, `ready` is false.
+        `source.origin` says whether the folder is this project's choice or the
+        pack's bundled text (#289)."""
         self._require_project()
         chapter = params.get("chapter")
         if not isinstance(chapter, str) or not chapter:
@@ -6923,7 +6970,7 @@ class BridgeEngine:
             return {"ready": False, "configured": False, "source": None, "verses": [],
                     "pack": self._language_qa.pack_name()}
         text, error = holder.state()
-        source = {"path": str(holder.folder), "label": holder.label}
+        source = {"path": str(holder.folder), "label": holder.label, "origin": holder.origin}
         if error:
             return {"ready": False, "configured": True, "source": source, "verses": [], "error": error}
         if text is None:
@@ -7536,7 +7583,7 @@ class BridgeEngine:
             "languageQaInlinePrecision": self.settings.language_qa_inline_precision,
             "languageQaInlineConfidence": self.settings.language_qa_inline_confidence,
             "languageQaLearnedFixes": self.settings.language_qa_learned_fixes,
-            "languageQaReferenceDirs": self.settings.language_qa_reference_dirs,
+            "referenceBible": self._reference_status(),
             "languageQaRelatedWords": self.settings.language_qa_related_words,
             "bookmarks": self.settings.bookmarks,
             "recentChapters": self.settings.recent_chapters,
@@ -7577,8 +7624,6 @@ class BridgeEngine:
             self.settings.language_qa_learned_fixes = bool(kwargs["languageQaLearnedFixes"])
         if "languageQaRelatedWords" in kwargs:
             self.settings.language_qa_related_words = bool(kwargs["languageQaRelatedWords"])
-        if "languageQaReferenceDirs" in kwargs:
-            self.settings.language_qa_reference_dirs = self._valid_reference_dirs(kwargs["languageQaReferenceDirs"])
         if "bookmarks" in kwargs:
             self.settings.bookmarks = self._valid_places(kwargs["bookmarks"], "bookmarks", self.BOOKMARKS_MAX, True)
         if "recentChapters" in kwargs:
@@ -7625,24 +7670,6 @@ class BridgeEngine:
             seen.add(identity)
             out.append(clean)
         return out[:cap]
-
-    @staticmethod
-    def _valid_reference_dirs(value: Any) -> dict[str, str]:
-        """{pack: folder}; an empty folder removes the pack's entry. A folder
-        must exist and hold verses.tsv or USFM books, so a typo is refused at
-        once rather than shown as a reference that never loads."""
-        if not isinstance(value, dict):
-            raise ProjectError("languageQaReferenceDirs must be an object of pack -> folder")
-        out: dict[str, str] = {}
-        for pack, folder in value.items():
-            if not isinstance(pack, str) or not isinstance(folder, str):
-                raise ProjectError("languageQaReferenceDirs must map a pack name to a folder path")
-            if not folder.strip():
-                continue
-            if detect_reference(folder.strip()) is None:
-                raise ProjectError(f"{folder}: no verses.tsv and no USFM books in that folder")
-            out[pack] = str(Path(folder.strip()))
-        return out
 
     def _configure_language_qa(self) -> None:
         """Hand the reviewer's Language QA preferences to the manager. The inline
@@ -7830,6 +7857,7 @@ class BridgeEngine:
                      Methods.LANGUAGE_QA_FLAGS_LIST, Methods.LANGUAGE_QA_FLAGS_ADD, Methods.LANGUAGE_QA_FLAGS_UPDATE,
                      Methods.LANGUAGE_QA_FLAGS_DELETE, Methods.LANGUAGE_QA_WORDS_ADD, Methods.LANGUAGE_QA_WORDS_LIST,
                      Methods.LANGUAGE_QA_BOOK_WORDS, Methods.LANGUAGE_QA_OCCURRENCES, Methods.LANGUAGE_QA_REFERENCE,
+                     Methods.LANGUAGE_QA_SET_REFERENCE,
                      Methods.LANGUAGE_QA_RELATED, Methods.LANGUAGE_QA_CHECKER_SETTINGS_GET,
                      Methods.LANGUAGE_QA_CHECKER_SETTINGS_SET}:
                 self._require_project()
@@ -7854,6 +7882,8 @@ class BridgeEngine:
                     result = self.language_qa_occurrences(p)
                 elif m == Methods.LANGUAGE_QA_REFERENCE:
                     result = self.language_qa_reference(p)
+                elif m == Methods.LANGUAGE_QA_SET_REFERENCE:
+                    result = self.language_qa_set_reference(p)
                 elif m == Methods.LANGUAGE_QA_RELATED:
                     result = self.language_qa_related(p)
                 elif m in {Methods.LANGUAGE_QA_FLAGS_LIST, Methods.LANGUAGE_QA_FLAGS_ADD,

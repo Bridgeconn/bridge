@@ -1457,8 +1457,10 @@ export interface SettingsData {
   languageQaInlineConfidence: InlineConfidence;
   /** Learn a word the reviewer replaced and offer the change where it recurs. Default on. */
   languageQaLearnedFixes?: boolean;
-  /** The reference Bible per Language QA pack: {"hi-irv": "D:/OV Hindi"}. */
-  languageQaReferenceDirs?: Record<string, string>;
+  /** The open project's reference Bible (#289), null with no project open.
+   *  origin "project" = chosen for this project on this machine; "bundled" =
+   *  the Language QA pack's own text; "none" = neither. */
+  referenceBible?: { path: string; label: string; origin: "project" | "bundled" | "none" } | null;
   /** Offer related words from the reference text. Default on. */
   languageQaRelatedWords?: boolean;
   /** Kept verses and recently visited chapters, newest first (app-level). */

@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 
-const { getSettings, getNavigationStatus, setSettings, engineInfo, terminologyList, terminologyRecord, housestyleList, housestyleRecord, housestyleSetState, housestyleNameSuggestions, languageQaStatus, languageQaSetPack, pickFolder, checkerGet, checkerSet, wordsList, usersList, connectorStatus, installConnector } = vi.hoisted(() => ({
+const { getSettings, getNavigationStatus, setSettings, engineInfo, terminologyList, terminologyRecord, housestyleList, housestyleRecord, housestyleSetState, housestyleNameSuggestions, languageQaStatus, languageQaSetPack, pickFolder, setReference, checkerGet, checkerSet, wordsList, usersList, connectorStatus, installConnector } = vi.hoisted(() => ({
+  setReference: vi.fn(),
   connectorStatus: vi.fn(),
   installConnector: vi.fn(),
   usersList: vi.fn(),
@@ -41,6 +42,7 @@ vi.mock("../../api/bridgeClient", () => ({
     languageQaCheckerSettingsSet: checkerSet,
     languageQaWordsList: wordsList,
     pickFolder,
+    languageQaSetReference: setReference,
     usersList,
     paratextConnectorStatus: connectorStatus,
     paratextInstallConnector: installConnector,
@@ -642,19 +644,33 @@ describe("SettingsModal terminology (#171)", () => {
     expect(housestyleList).not.toHaveBeenCalled();
   });
 
-  it("sets a pack's reference Bible folder with Browse and saves it with Apply", async () => {
+  // #289: one reference Bible per project, the same field as the Reference panel.
+  it("chooses the project's reference Bible with Browse, saved at once, and Clear goes back to the built-in one", async () => {
     project.set(minimalProject());
-    languageQaStatus.mockResolvedValue({ setting: "auto", packs: [{ language: "hi", name: "Hindi", pack: "hi-irv" }] });
-    pickFolder.mockResolvedValue("D:/OV Hindi");
-    setSettings.mockResolvedValue({ languageQaReferenceDirs: { "hi-irv": "D:/OV Hindi" } });
+    getSettings.mockResolvedValue({ provider: "openai", apiBaseUrl: "", model: "gpt-5.6", hasApiKey: false, reviewerMode: "basic",
+      paratextNavigation: false, logosNavigation: false,
+      referenceBible: { path: "x", label: "Old Version (bundled)", origin: "bundled" } });
+    languageQaStatus.mockResolvedValue({ setting: "auto", packs: [{ language: "ta", name: "Tamil", pack: "ta-irv" }] });
+    pickFolder.mockResolvedValue("D:/OV Tamil");
+    setReference.mockResolvedValueOnce({ folder: "D:/OV Tamil", origin: "project", label: "OV Tamil", path: "D:/OV Tamil" })
+      .mockResolvedValueOnce({ folder: "", origin: "bundled", label: "Old Version (bundled)", path: "x" });
     render(SettingsModal, { props: { initialPane: "languageQa", onClose: vi.fn() } });
-    const field = (await screen.findByLabelText("Hindi (hi-irv)")) as HTMLInputElement;
-    expect(field.value).toBe("");
+    const field = (await screen.findByLabelText("Reference Bible")) as HTMLInputElement;
+    await waitFor(() => expect(field.placeholder).toBe("Built in: Old Version"));
+    expect(screen.getByRole("button", { name: "Clear" })).toBeDisabled();
     await fireEvent.click(screen.getByRole("button", { name: "Browse…" }));
-    await waitFor(() => expect(field.value).toBe("D:/OV Hindi"));
-    await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-    await waitFor(() => expect(setSettings).toHaveBeenCalledWith(expect.objectContaining({
-      languageQaReferenceDirs: { "hi-irv": "D:/OV Hindi" }, languageQaRelatedWords: true })));
+    await waitFor(() => expect(setReference).toHaveBeenCalledWith(minimalProject().path, "D:/OV Tamil"));
+    await waitFor(() => expect(field.value).toBe("D:/OV Tamil"));
+    expect(setSettings).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    await waitFor(() => expect(setReference).toHaveBeenLastCalledWith(minimalProject().path, null));
+    await waitFor(() => expect(field.value).toBe(""));
+  });
+
+  it("asks for a project before a reference Bible can be chosen", async () => {
+    project.set(null);
+    render(SettingsModal, { props: { initialPane: "languageQa", onClose: vi.fn() } });
+    expect(await screen.findByText("Open a project to choose its reference Bible.")).toBeInTheDocument();
   });
 });
 
@@ -663,7 +679,7 @@ describe("Users pane (#237)", () => {
     getSettings.mockResolvedValue({
       provider: "openai", apiBaseUrl: "", model: "gpt-test", hasApiKey: false, reviewerMode: "basic",
       paratextNavigation: false, logosNavigation: false, reviewerName: "Revant", reviewerNameUpdatedAt: "",
-      localUserId: "u-1", localUserRole: "project_admin", languageQaReferenceDirs: {}, bookmarks: [], recentChapters: [],
+      localUserId: "u-1", localUserRole: "project_admin", bookmarks: [], recentChapters: [],
     });
     getNavigationStatus.mockResolvedValue(navigationState());
     engineInfo.mockResolvedValue({ bridgeVersion: "0.16.0", companionSchemaVersion: 16 });

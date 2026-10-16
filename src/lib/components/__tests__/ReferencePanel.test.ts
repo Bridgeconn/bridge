@@ -1,11 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 
-const { languageQaReference, languageQaRelated } = vi.hoisted(() => ({
+const { languageQaReference, languageQaRelated, languageQaSetReference, pickFolder } = vi.hoisted(() => ({
   languageQaReference: vi.fn(),
   languageQaRelated: vi.fn(),
+  languageQaSetReference: vi.fn(),
+  pickFolder: vi.fn(),
 }));
-vi.mock("../../api/bridgeClient", () => ({ bridge: { languageQaReference, languageQaRelated } }));
+vi.mock("../../api/bridgeClient", () => ({
+  bridge: { languageQaReference, languageQaRelated, languageQaSetReference, pickFolder },
+}));
 
 import ReferencePanel from "../ReferencePanel.svelte";
 import RelatedWords from "../RelatedWords.svelte";
@@ -37,11 +41,53 @@ describe("ReferencePanel", () => {
     expect(onSelectVerse).toHaveBeenCalledWith("1");
   });
 
-  it("points to Settings when no reference is set for the language", async () => {
-    languageQaReference.mockResolvedValue({ ready: false, configured: false, source: null, verses: [], pack: "hi-irv" });
+  // #289: one reference Bible per project, chosen from the panel itself.
+  it("with nothing chosen, Browse opens the folder picker, saves the folder for the project and reads it", async () => {
+    languageQaReference
+      .mockResolvedValueOnce({ ready: false, configured: false, source: null, verses: [], pack: null })
+      .mockResolvedValue({ ...READY, source: { path: "D:/OV Hindi", label: "OV Hindi", origin: "project", kind: "usfm" } });
+    pickFolder.mockResolvedValue("D:/OV Hindi");
+    languageQaSetReference.mockResolvedValue({ folder: "D:/OV Hindi", origin: "project", label: "OV Hindi", path: "D:/OV Hindi" });
+    render(ReferencePanel);
+    expect(await screen.findByText("No reference Bible is chosen for this project.")).toBeTruthy();
+    await fireEvent.click(screen.getByRole("button", { name: "Browse for a reference Bible on this computer" }));
+    await waitFor(() => expect(languageQaSetReference).toHaveBeenCalledWith("/p", "D:/OV Hindi"));
+    expect(await screen.findByText("OV Hindi")).toBeTruthy();
+    expect(languageQaReference).toHaveBeenCalledTimes(2);
+  });
+
+  it("does nothing when the picker is cancelled", async () => {
+    languageQaReference.mockResolvedValue({ ready: false, configured: false, source: null, verses: [], pack: null });
+    pickFolder.mockResolvedValue(null);
+    render(ReferencePanel);
+    await fireEvent.click(await screen.findByRole("button", { name: "Browse for a reference Bible on this computer" }));
+    await waitFor(() => expect(pickFolder).toHaveBeenCalled());
+    expect(languageQaSetReference).not.toHaveBeenCalled();
+  });
+
+  it("shows Change once a Bible is set, and names a bundled one as built in", async () => {
+    languageQaReference.mockResolvedValue({ ...READY, source: { path: "x", label: "Old Version (bundled)", origin: "bundled" } });
+    pickFolder.mockResolvedValue("D:/Other");
+    languageQaSetReference.mockResolvedValue({ folder: "D:/Other", origin: "project", label: "Other", path: "D:/Other" });
+    render(ReferencePanel);
+    expect(await screen.findByText("Built in: Old Version")).toBeTruthy();
+    await fireEvent.click(screen.getByRole("button", { name: "Change" }));
+    await waitFor(() => expect(languageQaSetReference).toHaveBeenCalledWith("/p", "D:/Other"));
+  });
+
+  it("keeps Change beside a folder that cannot be read, and Settings stays reachable", async () => {
+    languageQaReference.mockResolvedValue({ ready: false, configured: true, verses: [],
+      source: { path: "D:/empty", label: "empty", origin: "project" }, error: "ValueError: D:/empty holds no verses.tsv and no USFM books." });
+    render(ReferencePanel);
+    expect(await screen.findByText(/could not be read: ValueError/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Change" })).toBeTruthy();
+  });
+
+  it("links to Settings › Language QA when nothing is chosen", async () => {
+    languageQaReference.mockResolvedValue({ ready: false, configured: false, source: null, verses: [], pack: null });
     const onOpenSettings = vi.fn();
     render(ReferencePanel, { props: { onOpenSettings } });
-    await fireEvent.click(await screen.findByRole("button", { name: /Choose one in Settings/ }));
+    await fireEvent.click(await screen.findByRole("button", { name: /manage it in Settings/ }));
     expect(onOpenSettings).toHaveBeenCalled();
   });
 
@@ -103,6 +149,6 @@ describe("RelatedWords", () => {
     unmount();
     languageQaRelated.mockResolvedValueOnce({ word: "x", ready: false, configured: false, equivalents: [], family: [] });
     render(RelatedWords, { props: { projectPath: "/p", word: "x", onShowOccurrences: vi.fn() } });
-    expect(await screen.findByText(/No reference Bible is set/)).toBeTruthy();
+    expect(await screen.findByText(/No reference Bible is chosen for this project \(Reference panel › Browse\)/)).toBeTruthy();
   });
 });

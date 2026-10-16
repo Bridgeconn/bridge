@@ -21036,3 +21036,43 @@ the real checker through `verse.runChecks` on a chapter keyed 1, 2, 3-4, 5a, 5b,
 5449 passed, 3 xfailed, 3 failed under parallel load (Logos helper round trip, Language QA polling
 starvation, moved-project identity), all three passing when re-run alone. Sidecars rebuilt; frozen
 `smoke_sidecars.py` passed. **Not watched:** the findings on 5a/5b in the desktop app (next build).
+
+## 2026-10-16 — One reference Bible per project, chosen from the Reference panel (#289)
+
+**Who and why.** The engine half was Revant's files this week; Benz chose on 2026-10-16 to have it
+done here rather than wait, and Revant is told on the issue.
+
+**Before.** Settings › Language QA listed one folder per Language QA pack (`language_qa_reference_dirs`,
+keyed by pack name), the panel sent the reviewer to Settings, and a book whose language had no pack
+could have no reference Bible at all (`_reference_holder` returned None without a pack).
+
+**Change.**
+- `AppSettings.reference_bibles` (`secret_store.py`): {collection id, or project id for a single book:
+  folder}. Stored like every other non-secret setting, so in `workspace.sqlite3` `settings_kv` through
+  `AppSettings`, not as a separate row — `AppSettings` replaces the whole map on every save and would
+  delete a key it did not know (the reason `current_user_id` lives there too). Device-local, never in
+  the project folder or the hub. `language_qa_reference_dirs` is dropped with no migration
+  (pre-release); setting a project's folder removes the old key.
+- `bridge_service.py`: `project.open` remembers the registration's collection id (else project id) as
+  the reference key; `_reference_choice` resolves the project's folder → the pack's bundled
+  `verses.tsv` (ta-irv: the 1957 OV) → none, with no early return for a book without a pack; holders
+  are cached per resolved folder. New `languageQa.setReference {projectPath, folder | null}` (a write,
+  classified in `authorization.py`): a folder that does not exist is refused; one that exists but holds
+  no Scripture is kept and the panel shows the holder's error, so the reviewer sees what was picked.
+  `languageQa.reference` carries `source.origin` ("project" | "bundled"); `settings.get` carries
+  `referenceBible` for the open project instead of `languageQaReferenceDirs`, which `settings.set`
+  no longer takes. The OV-occurrences error now points at the Reference panel.
+- Frontend: `ReferencePanel.svelte` — nothing chosen: "Browse for a reference Bible on this
+  computer" opens the folder picker, saves, reads; a Bible set: its folder name in the header with a
+  **Change** action; the bundled text reads "Built in: Old Version"; an unreadable folder shows the
+  error with Change beside it; a link to Settings stays. `SettingsModal.svelte` — the per-pack list
+  becomes one "Reference Bible" field for the open project with Browse… and Clear, saved at once.
+  RelatedWords and the verse-list menu titles now point at the Reference panel.
+
+**Tests.** `tests/service/test_language_qa_reference.py` (8): the bundled OV with nothing chosen; a
+chosen folder replaces it, shown in Settings, keyed by project; Clear falls back to the bundled OV; a
+missing folder refused, one without Scripture kept with its error; a book with no Language QA pack
+gets one; two books of a collection share it. `ReferencePanel.test.ts` (5 new): Browse saves and
+reads, a cancelled picker does nothing, Change and the built-in label, Change beside an unreadable
+folder, the Settings link. `SettingsModal.test.ts` (2): Browse saves at once with no Apply, Clear goes
+back to built in; no project, a hint. Gates as recorded on the issue.

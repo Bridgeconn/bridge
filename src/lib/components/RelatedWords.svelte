@@ -50,7 +50,7 @@
   {:else if result.off}
     <p class="none">Turned off in Settings › Language QA.</p>
   {:else if result.configured === false}
-    <p class="none">No reference Bible is set for this book's language (Settings › Language QA).</p>
+    <p class="none">No reference Bible is chosen for this project (Reference panel › Browse).</p>
   {:else if result.error}
     <p class="none" role="alert">{result.error}</p>
   {:else if !result.ready}

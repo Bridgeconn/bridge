@@ -3,7 +3,7 @@ import type {
   LearnedFix, LearnedFixesResponse, VerseEditLearned,
   BatchUndoResult, LanguageQaScope, ScopeAcceptResult, ScopeFindResult, ScopeIgnoreResult,
   FlagInput, FlagStatus, FlagType, LanguageQaFlag, BookWordsResult, OccurrencesResult,
-  ReferenceChapter, RelatedWordsResult, CheckerSettings, CheckerSettingsPatch, CheckerSettingsUnavailable,
+  ReferenceChapter, ReferenceChoice, RelatedWordsResult, CheckerSettings, CheckerSettingsPatch, CheckerSettingsUnavailable,
 } from "../types/languageQa";
 import type { CollectionQaSnapshot } from "../types/collectionQa";
 import type {
@@ -271,6 +271,7 @@ export type EngineMethod =
   | "languageQa.bookWords"
   | "languageQa.occurrences"
   | "languageQa.reference"
+  | "languageQa.setReference"
   | "languageQa.related"
   | "housestyle.list"
   | "housestyle.nameSuggestions"
@@ -566,6 +567,12 @@ export const bridge = {
   /** One chapter of the reference Bible; `ready` is false while it loads. */
   languageQaReference(projectPath: string, chapter: string): Promise<ReferenceChapter> {
     return call("languageQa.reference", { projectPath, chapter });
+  },
+
+  /** #289: choose (a folder) or clear (null) the open project's reference
+   *  Bible. Kept on this machine, shared by every book of the collection. */
+  languageQaSetReference(projectPath: string, folder: string | null): Promise<ReferenceChoice> {
+    return call("languageQa.setReference", { projectPath, folder });
   },
 
   /** OV/IRV equivalents and same-stem forms; `ready` is false while the index builds. */

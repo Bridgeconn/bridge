@@ -38,8 +38,12 @@
   let inlineConfidence: InlineConfidence = "low";
   let learnedFixes = true;
   let relatedWords = true;
-  // The reference Bible per Language QA pack (folder path; "" = none).
-  let referenceDirs: Record<string, string> = {};
+  // The open project's reference Bible (#289): one folder per project, the
+  // same field as the Reference panel's Browse/Change. Saved at once through
+  // languageQa.setReference, not with Apply.
+  let referenceBible: { path: string; label: string; origin: "project" | "bundled" | "none" } | null = null;
+  let referenceBusy = false;
+  let referenceMessage = "";
   let inlineSaving = false;
   let inlineMessage = "";
 
@@ -113,7 +117,7 @@
       inlineConfidence = s.languageQaInlineConfidence ?? "low";
       learnedFixes = s.languageQaLearnedFixes ?? true;
       relatedWords = s.languageQaRelatedWords ?? true;
-      referenceDirs = { ...(s.languageQaReferenceDirs ?? {}) };
+      referenceBible = s.referenceBible ?? null;
       reviewerMode.set(s.reviewerMode);
       navigationStatus.set(await bridge.navigationStatus());
     } catch (e) {
@@ -191,13 +195,11 @@
         languageQaInlinePrecision: inlinePrecision, languageQaInlineConfidence: inlineConfidence,
         languageQaLearnedFixes: learnedFixes,
         languageQaRelatedWords: relatedWords,
-        languageQaReferenceDirs: referenceDirs,
       });
       inlinePrecision = result.languageQaInlinePrecision ?? inlinePrecision;
       inlineConfidence = result.languageQaInlineConfidence ?? inlineConfidence;
       learnedFixes = result.languageQaLearnedFixes ?? learnedFixes;
       relatedWords = result.languageQaRelatedWords ?? relatedWords;
-      referenceDirs = { ...(result.languageQaReferenceDirs ?? referenceDirs) };
       inlineMessage = "Applied.";
       nudgeLanguageQa();
     } catch (e) {
@@ -207,12 +209,22 @@
     }
   }
 
-  /** Every pack a reference Bible can be set for: the registered ones. */
-  $: referencePacks = lqaPacks.length ? lqaPacks : [];
-
-  async function browseReference(pack: string): Promise<void> {
-    const folder = await bridge.pickFolder();
-    if (folder) referenceDirs = { ...referenceDirs, [pack]: folder };
+  /** Choose (Browse…) or clear the open project's reference Bible (#289). */
+  async function setReference(clear: boolean): Promise<void> {
+    if (!$project || referenceBusy) return;
+    referenceBusy = true;
+    referenceMessage = "";
+    try {
+      const folder = clear ? null : await bridge.pickFolder();
+      if (!clear && !folder) return;
+      const result = await bridge.languageQaSetReference($project.path, folder);
+      referenceBible = { path: result.path, label: result.label, origin: result.origin };
+      referenceMessage = clear ? "Cleared." : "Saved.";
+    } catch (value) {
+      referenceMessage = value instanceof Error ? value.message : String(value);
+    } finally {
+      referenceBusy = false;
+    }
   }
 
   async function refreshConnections(): Promise<void> {
@@ -755,19 +767,23 @@
           <span><b>Show related words</b><small>In the review panel: what the reference Bible used in the same place, and forms sharing the word's stem.</small></span>
         </label>
         <h3 class="sub">Reference Bible</h3>
-        <p class="desc">An Old Version beside the text, for each language: a folder of USFM books, or an indic-qa dictionary folder with verses.tsv. Tamil has the 1957 OV built in. Nothing is copied into Bridge; the folder is read once and kept.</p>
-        {#each referencePacks as p (p.pack)}
-          <div class="field">
-            <label for={`ref-${p.pack}`}>{p.name} ({p.pack})</label>
-            <div class="ref-row">
-              <input id={`ref-${p.pack}`} type="text" bind:value={referenceDirs[p.pack]}
-                placeholder={p.pack === "ta-irv" ? "Built in: the 1957 OV" : "Not set"} />
-              <button class="btn" type="button" on:click={() => browseReference(p.pack)}>Browse…</button>
-            </div>
-          </div>
+        <p class="desc">An Old Version beside the text, for this project: a folder of USFM books, or an indic-qa dictionary folder with verses.tsv. Every book of the project uses it. It is kept on this computer only, and nothing is copied into Bridge. The same field is on the Reference panel (Browse or Change).</p>
+        {#if !$project}
+          <p class="muted">Open a project to choose its reference Bible.</p>
         {:else}
-          <p class="muted">Open a project to list its language's packs.</p>
-        {/each}
+          <div class="field">
+            <label for="reference-bible">Reference Bible</label>
+            <div class="ref-row">
+              <input id="reference-bible" type="text" readonly
+                value={referenceBible?.origin === "project" ? referenceBible.path : ""}
+                placeholder={referenceBible?.origin === "bundled" ? `Built in: ${referenceBible.label.replace(/\s*\(bundled\)$/, "")}` : "Not set"} />
+              <button class="btn" type="button" on:click={() => setReference(false)} disabled={referenceBusy}>Browse…</button>
+              <button class="btn" type="button" on:click={() => setReference(true)}
+                disabled={referenceBusy || referenceBible?.origin !== "project"}>Clear</button>
+            </div>
+            {#if referenceMessage}<p class="hint" role="status">{referenceMessage}</p>{/if}
+          </div>
+        {/if}
         <div class="save-row">
           <button class="btn primary" on:click={saveInlineThreshold} disabled={inlineSaving}>{inlineSaving ? "Saving…" : "Apply"}</button>
           {#if inlineMessage}<span class="save-msg" role="status">{inlineMessage}</span>{/if}

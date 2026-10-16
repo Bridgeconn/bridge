@@ -6,11 +6,37 @@
 
   // The reference Bible (an Old Version) beside the text, on the same chapter
   // (indic-qa's reference panel). Reading only: nothing here changes the text.
+  // #289: one folder per project (every book of a collection shares it),
+  // chosen here with Browse, changed with Change; Settings › Language QA
+  // shows the same field and can clear it.
   export let onOpenSettings: () => void = () => {};
   export let onSelectVerse: (verse: string) => void = () => {};
 
   let reference: ReferenceChapter | null = null;
   let error = "";
+  let choosing = false;
+  let chooseError = "";
+  $: heading = !reference?.source ? "Reference"
+    : reference.source.origin === "bundled" ? `Built in: ${reference.source.label.replace(/\s*\(bundled\)$/, "")}`
+    : reference.source.label;
+
+  /** The folder picker on this computer, then the project's choice, then a fresh read. */
+  async function choose(): Promise<void> {
+    if (choosing || !path) return;
+    choosing = true;
+    chooseError = "";
+    try {
+      const folder = await bridge.pickFolder();
+      if (!folder) return;
+      await bridge.languageQaSetReference(path, folder);
+      reference = null;
+      await load(path, $currentChapter);
+    } catch (cause) {
+      chooseError = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      choosing = false;
+    }
+  }
   let follow = true;
   let list: HTMLOListElement | null = null;
   let ticket = 0;
@@ -52,16 +78,24 @@
 <!-- Its column (SidePanel "reference") sets the width and the resize handle. -->
 <aside class="reference-panel" aria-label="Reference Bible">
   <div class="head">
-    <span class="label">{reference?.source?.label ?? "Reference"}</span>
+    <span class="label" title={reference?.source?.path ?? ""}>{heading}</span>
+    {#if reference?.configured}
+      <button type="button" class="change" on:click={choose} disabled={choosing}
+        title="Choose another reference Bible folder for this project">Change</button>
+    {/if}
     <label class="follow"><input type="checkbox" bind:checked={follow} /> follow</label>
   </div>
+  {#if chooseError}
+    <p class="note error" role="alert">{chooseError}</p>
+  {/if}
   {#if error}
     <p class="note error" role="alert">{error}</p>
   {:else if !reference}
     <p class="note">Loading…</p>
   {:else if !reference.configured}
-    <p class="note">No reference Bible is set for this book's language.</p>
-    <button class="settings" on:click={onOpenSettings}>Choose one in Settings › Language QA</button>
+    <p class="note">No reference Bible is chosen for this project.</p>
+    <button class="settings" on:click={choose} disabled={choosing}>Browse for a reference Bible on this computer</button>
+    <button class="settings secondary" on:click={onOpenSettings}>or manage it in Settings › Language QA</button>
   {:else if reference.error}
     <p class="note error" role="alert">The reference could not be read: {reference.error}</p>
   {:else if !reference.ready}
@@ -92,6 +126,10 @@
   .error { color: var(--danger); }
   .settings { margin: 0 10px; font: inherit; font-size: var(--fs-xs); color: var(--accent); background: none;
     border: 0; padding: 0; text-decoration: underline; cursor: pointer; text-align: left; }
+  .settings.secondary { margin-top: 6px; color: var(--text-3); }
+  .change { font: inherit; font-size: var(--fs-2xs); padding: 2px 8px; border: 1px solid var(--border-strong);
+    border-radius: 6px; background: var(--surface); color: var(--text-2); cursor: pointer; white-space: nowrap; }
+  .change:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
   ol { list-style: none; margin: 0; padding: 6px; overflow-y: auto; flex: 1; }
   li button { display: flex; gap: 8px; width: 100%; text-align: left; padding: 6px 8px; border: 0; border-radius: 6px;
     background: transparent; color: var(--text); cursor: pointer; font: inherit; }

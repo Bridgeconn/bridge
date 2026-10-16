@@ -285,11 +285,21 @@ export interface OccurrencesResult {
 }
 
 /** languageQa.reference: one chapter of the reference Bible (an Old Version). */
+/** languageQa.setReference (#289): the open project's reference Bible after a change. */
+export interface ReferenceChoice {
+  folder: string;
+  origin: "project" | "bundled" | "none";
+  label: string;
+  path: string;
+}
+
 export interface ReferenceChapter {
   /** false until the folder has been read (a background load), or when none is set. */
   ready: boolean;
   configured: boolean;
-  source: { path: string; label: string; kind?: "tsv" | "usfm" } | null;
+  /** `origin` (#289): "project" when the reviewer chose this folder for the
+   *  project, "bundled" when it is the Language QA pack's own text. */
+  source: { path: string; label: string; origin?: "project" | "bundled"; kind?: "tsv" | "usfm" } | null;
   verses: { verse: string; text: string }[];
   error?: string;
   /** The Language QA pack a folder would be set for (when none is configured). */

@@ -247,7 +247,7 @@
         id: "occurrences-ov",
         label: "Show OV occurrences…",
         disabled: !$project,
-        title: "Every place this word occurs in the reference Bible (Settings › Language QA)",
+        title: "Every place this word occurs in the project's reference Bible (the Reference panel)",
       },
       { id: "edit", label: "Edit…", disabled: busy, title: "Open this verse for editing, with the flagged text selected." },
       ...(relatedWords.length ? [
@@ -320,7 +320,7 @@
       ...(single ? [
         { id: "occurrences", label: "Show IRV occurrences…", disabled: !$project, title: "Every place this word occurs in the book" },
         { id: "occurrences-ov", label: "Show OV occurrences…", disabled: !$project,
-          title: "Every place this word occurs in the reference Bible (Settings › Language QA)" },
+          title: "Every place this word occurs in the project's reference Bible (the Reference panel)" },
       ] : []),
     ];
   }

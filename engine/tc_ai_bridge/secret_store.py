@@ -353,19 +353,30 @@ class AppSettings:
         self.save_sanitized()
 
     @property
-    def language_qa_reference_dirs(self) -> dict[str, str]:
-        """Settings > Language QA: the reference Bible (an Old Version) per
-        Language QA pack, e.g. {"hi-irv": "D:/OV Hindi"}. A folder of USFM books
-        or an indic-qa dictionary folder with verses.tsv. Nothing OV-derived is
-        bundled for these languages, so the reviewer chooses it."""
-        value = self.data.get('language_qa_reference_dirs') or {}
+    def reference_bibles(self) -> dict[str, str]:
+        """The reference Bible chosen for each project on this machine (#289):
+        {collection id, or project id for a single book: folder}. One folder per
+        project, so every book of a collection shares it, and any language can
+        have one, Language QA pack or not. A path on this machine only: it is
+        kept here, never in the project folder or on the hub, because a
+        teammate's path differs. Replaces the per-pack
+        `language_qa_reference_dirs` (pre-release; no migration)."""
+        value = self.data.get('reference_bibles') or {}
         if not isinstance(value, dict):
             return {}
-        return {str(k): str(v) for k, v in value.items() if isinstance(k, str) and isinstance(v, str) and v}
+        return {str(k): str(v) for k, v in value.items() if isinstance(k, str) and isinstance(v, str) and k and v}
 
-    @language_qa_reference_dirs.setter
-    def language_qa_reference_dirs(self, value: dict[str, str]) -> None:
-        self.data['language_qa_reference_dirs'] = {str(k): str(v) for k, v in (value or {}).items() if v}
+    def set_reference_bible(self, key: str, folder: str | None) -> None:
+        """Set (or, with no folder, clear) one project's reference Bible."""
+        if not key:
+            raise ValueError("a reference Bible belongs to a registered project")
+        current = self.reference_bibles
+        if folder:
+            current[key] = str(folder)
+        else:
+            current.pop(key, None)
+        self.data['reference_bibles'] = current
+        self.data.pop('language_qa_reference_dirs', None)
         self.save_sanitized()
 
     @property

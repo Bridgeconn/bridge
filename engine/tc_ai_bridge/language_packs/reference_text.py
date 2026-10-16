@@ -139,6 +139,8 @@ class ReferenceHolder:
     def __init__(self, folder: str | Path, label: str, cache_dir: Path):
         self.folder = Path(folder)
         self.label = label
+        # #289: "project" (the reviewer chose it) or "bundled" (the pack's own).
+        self.origin = ""
         self.cache_dir = cache_dir
         self._lock = threading.Lock()
         self._text: ReferenceText | None = None
