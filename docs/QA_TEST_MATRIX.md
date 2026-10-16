@@ -410,6 +410,24 @@ project (IRV Tamil PHP) as folder, `.zip` and `.tcore`, and negative samples. Pe
 | EXP-002 | FAIL — #312, #307 on real data; a clean two-group book round-trips |
 | EXP-001 | Card out of date — Export is offered with a "Review is not complete" warning and an explicit override for blocking gate items, never disabled |
 | EXP-010 | OBSERVATION — save dialogs open in the last folder used by any save |
+| A11Y-002, A11Y-010, A11Y-013 | PASS — visible focus ring and logical Project Home order; 19 scripts each drawn by a real font, no tofu (Latin in Vijaya on 0.18.0 is #286); no visible control without an accessible name on seven screens |
+| A11Y-001 | FAIL — #322 (Enter on a book's Open in the dashboard does nothing) |
+| A11Y-003 | FAIL — #321 (Escape does not close Settings, Engine diagnostics, Export, Assignments) |
+| A11Y-008 | FAIL — #324 (at ~1000 px wide the verse list scrolls out of view) |
+| A11Y-011 | FAIL — #323 (RTL project: verse list and editor laid out LTR) |
+| A11Y-015 | OBSERVATION — raw codes (CONFIRMED_TRANSLATION_ERROR, ANALYSIS_NOT_CURRENT, code-point ranges, actor ids) on normal screens |
+| A11Y-004 – A11Y-007, A11Y-009, A11Y-012, A11Y-014 | NOT RUN — no screen reader, contrast tool, scaling change or zoom test |
+| ROB-002, ROB-014, ROB-015 | PASS — engine killed with a project open: restarted and reconnected in ~10 s (status bar kept "Engine: ready"); no sockets from app or engine; the working project differs from its backup only by the authorised edits and Bridge metadata |
+| ROB-003, ROB-006, ROB-008, ROB-009, ROB-011, ROB-013 | PASS by reference — INS-009, IMP-014/COR-010/CHK-010, REV-014/COR-008, COR-016, EDT-005, SET-004 |
+| ROB-004 | PARTIAL — unwritable/existing destinations via Windows prompts; full disk not tried |
+| ROB-005 | FAIL — #311 |
+| ROB-001, ROB-007, ROB-010, ROB-012 | NOT RUN |
+| REL-005 | PASS — the v0.18.0 `smoke_sidecars.py` against the installed workers |
+| REL-006 | Recorded — `Bridge_0.18.0_x64-setup.exe` 81,040,879 bytes, sha256 `382de3ae…` (= release asset), app 0.18.0, workers and uninstaller: all NotSigned; source 575235b |
+| REL-001, REL-008 | OPEN — P0 failures #127, #307, #310, #311, #312, #315, #316, #320; sign-off pending |
+| GR-13 | PASS — Collection QA over three books with Greek Room and Language QA, re-run skips all unchanged; progress % stays 0 |
+| CHK-006 | FAIL (versification part) — #325 (UGNT 3JN 1:15 dropped for a 14-verse target, no finding) |
+| DATA-004 | NOT COVERED — the "IRV Urdu" fixture is Devanagari, not RTL (corrected on #151) |
 
 ## Team hub, dashboard, users and projects: the two-laptop walk (#281)
 

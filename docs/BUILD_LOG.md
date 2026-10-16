@@ -21163,3 +21163,25 @@ Evidence added to #211: the PDF print layout is still broken on 0.18.0.
 - Connectors report a clean unavailable state and stop when disabled.
 - Report filters, counts and CSV/TSV agree.
 - Overwrite and permission errors in export go through explicit Windows prompts.
+
+## 2026-10-16 (late) — 0.18.0 regression walk: QA 14, 15, 16 and leftovers (#165, #166, #167, #175, #156)
+
+**What.** Walked accessibility/localization, reliability and release sign-off on the installed 0.18.0, then
+the GR-13 collection run and the CHK-006 versification case. No code changed.
+
+**Found, filed (Project 6, Todo):**
+- #321: Escape does not close Settings, Diagnostics, Export or Assignments.
+- #322: Enter on a book's Open in the dashboard does nothing. The row's keydown calls `preventDefault()`.
+- #323: an RTL project's verse list and editor are LTR.
+- #324: around 1000 px wide the verse list scrolls out of view.
+- #325: a source verse beyond the target's versification (UGNT 3JN 1:15) is dropped without a finding.
+
+**Corrected.** DATA-004 on #151: the "IRV Urdu" fixture is Devanagari, so it was not an RTL target.
+
+**Measured.**
+- An engine killed with a project open came back and reconnected in about 10 s.
+- The app and engine held no network sockets.
+- The working PHP project differs from its backup only by the three authorised verse edits and Bridge
+  metadata.
+- The v0.18.0 frozen smoke passes against the installed workers.
+- The installer matches the release asset (sha256 `382de3ae…`, NotSigned).
