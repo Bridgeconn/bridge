@@ -353,6 +353,32 @@ Philemon broken twice (duplicate `\v 1`; missing `\v 2` + unclosed `\bd`), Tamil
 | Import | FAIL — #301 (returning to Projects reopens the last dropped file's import review; a second drop shows the first file) |
 | Fonts | FAIL on 0.18.0, fixed on main — every English verse in Vijaya's italic Latin (#286, f9adccb) |
 
+## 0.18.0 installed-app regression walk, QA 02 / 03 / 04 / 06 (2026-10-16)
+
+Same build and setup as 2026-10-15 (installed 0.18.0 (575235b), scratch `LOCALAPPDATA`, real CDP input;
+folder pickers driven with real keystrokes and clicks). Fixtures are disposable copies under
+`D:\Claude Lab\Claude outputs\qa-0.18.0\2026-10-16\fixtures`: the Jonah structure fixture, IRV Tamil
+RUT/OBA/JON, Malayalam RUT/OBA, Odia RUT, a UTF-8 BOM 3JN with Hebrew and Greek, a real Paratext
+project (DevaTest, 27 NT books), two 66-book IRV folders (Kannada, Telugu), a real Bridge-made tC
+project (IRV Tamil PHP) as folder, `.zip` and `.tcore`, and negative samples. Per-case detail is on
+#153, #154, #155 and #157.
+
+| Case | Result |
+|---|---|
+| IMP-001 – IMP-004, IMP-007, IMP-009 – IMP-018 | PASS — IMP-009: a zip with `../`, `..\`, absolute and drive entries refused ("Archive contains an unsafe path …"), nothing written outside; IMP-010: BOM, Hebrew, Greek, Odia stored byte-identical; IMP-011/012 by the `tauri://drag-*` events, not a physical Explorer drag |
+| IMP-005 | PASS for `.zip`/`.tcore`; `.tstudio` BLOCKED (no sample) |
+| IMP-006 | FAIL — #308 (Paratext `LanguageIsoCode` `sa:::` copied raw, import blocked until a language is picked); books, names and an unchanged source otherwise |
+| IMP-008 | FAIL — #310 (QA report gate "No blocking issues" at 0% checked and with high USFM findings open); a duplicate verse is refused at import |
+| Project Home | FAIL — #309 (re-importing a Bridge-made project keeps its id; with both folders known `project.list` fails and Home shows "No projects are registered yet") |
+| PRJ-001 – PRJ-006, PRJ-008 – PRJ-012 | PASS — PRJ-004: a moved 3-book collection relocated from one book; PRJ-008: 135 entries, Home 4.1 s after launch, `project.list` ≤ 0.45 s |
+| PRJ-007 | FAIL — #311 (a damaged `workspace.sqlite3` crash-loops the engine at start) |
+| EDT-001, EDT-002, EDT-005 – EDT-009, EDT-011, EDT-013 – EDT-015 | PASS — EDT-008/013: an NFD é and Tamil text identical after restart; EDT-006 bridge/segment rows after verse 10 are #302 |
+| EDT-003, EDT-004 | FAIL — #200 (cross-chapter jump lands on verse 1; no message for bad input; `5:1` in a 1-chapter book opens an empty chapter) |
+| EDT-010 | FAIL — #127 (a stale editor save overwrites newer text; `verse.edit` carries no expected text) |
+| EDT-012 | PASS against a stand-in for the Paratext companion on its named pipe, not real Paratext: an edit in progress blocks the move with a message, Cancel then follows |
+| TH-001 – TH-008 | PASS — offline selection editing (exact, refused, multiple with occurrence, nothing to select, clear with history kept) and the no-key AI message |
+| TH-009 – TH-018 | BLOCKED — need a configured AI provider |
+
 ## Team hub, dashboard, users and projects: the two-laptop walk (#281)
 
 The hardware walk for requirements 4, 5 and 6. Two laptops on one LAN, both with the installed **0.17.0** (`Bridge_0.17.0_x64-setup.exe`, release v0.17.0, built from 81ff377). Laptop **A** (Benz) runs the hub and desktop A. Laptop **B** (Revant) runs desktop B and the browser dashboard. There is no third machine, so the dashboard rows use B's Chrome and Edge, not the hub's own machine. Rows are in walking order: some depend on earlier ones. Each row ends PASS, or FAIL with the issue it was filed under (failures found here are filed without asking first, per #281).

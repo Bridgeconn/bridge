@@ -21076,3 +21076,31 @@ gets one; two books of a collection share it. `ReferencePanel.test.ts` (5 new): 
 reads, a cancelled picker does nothing, Change and the built-in label, Change beside an unreadable
 folder, the Settings link. `SettingsModal.test.ts` (2): Browse saves at once with no Apply, Clear goes
 back to built in; no project, a hint. Gates as recorded on the issue.
+
+## 2026-10-16 — 0.18.0 regression walk: QA 02, 03, 04, 06 (#153, #154, #155, #157)
+
+**What.** Continued the installed-app regression walk on 0.18.0 (575235b) with real input over
+WebView2's debug port on scratch profiles. Results are in `QA_TEST_MATRIX.md` (the 2026-10-16 section)
+and on each card. No code changed.
+
+**Found, filed (all on the board as Todo):**
+- #308: Paratext `LanguageIsoCode` is copied raw (`sa:::`), so the language is never filled in.
+- #309: re-importing a Bridge-made project keeps its `.bridge/project.json` id. Once both folders are
+  known, `project.list` fails and Project Home shows no projects at all.
+- #310: the QA report gate reads "No blocking issues" both before any check and with high USFM findings
+  open. It counts only AI-review issues and ignores coverage.
+- #311: a damaged `workspace.sqlite3` crash-loops the engine at startup.
+
+Evidence added to existing issues: #127 (EDT-010: a stale editor save overwrote newer text in the
+installed app) and #200 (Go to: a missing chapter replaces the context; a verse inside a bridge does
+nothing).
+
+**Measured.** 135 registry entries: Home 4.1 s after launch, `project.list` 287–445 ms, a 66-book
+re-inspection 1.4 s, 66-book imports 10.2 s and 12.1 s. The re-check after editing an aligned verse completed in about
+1.75 s.
+
+**Method notes.**
+- EDT-012 used a stand-in for the Paratext companion on its named pipe (same protocol), not real
+  Paratext.
+- Drops are the `tauri://drag-*` events, not a physical Explorer drag.
+- AI cases (TH-009–018) were not run: no provider is configured, and sending text to one is Benz's call.
