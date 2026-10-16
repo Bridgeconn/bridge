@@ -1172,3 +1172,33 @@ the installation roles do not do either.
 **Rules out:** a per-project role that changes the user list; role checks outside `authorize()`.
 **Revisit when:** reviewers ask for disabled controls rather than refusals, or a project needs its
 own admins to invite people.
+
+## 2026-10-15 — PROPOSED, awaiting sign-off: a display-only likelihood filter may hide Greek Room findings the AI triage judged unlikely (#290)
+
+**Status:** Proposed by Benz on 2026-10-15 from Revant's Part B workflow (comment on #290). Not
+signed off. Hiding findings on a score is on the stop-and-ask list, so nothing of the filter is built
+until @RevantCI signs off on this entry, here or on #290; on sign-off this line changes to the date
+and name, and an amended version replaces the text below if he amends it.
+**Decision:** The editor gets the AI triage the Project Report already has: an explicit "Triage with
+AI" click for the current chapter or book runs the existing `triage.run` job, verdicts and
+likelihoods land on the chapter's Greek Room findings from `triage_verdicts`, and a finding already
+triaged is not sent again unless its text changed. A filter on the top panel may then hide the
+findings whose triage likelihood is below the reviewer's chosen level. The filter is display only
+and reversible: a hidden finding keeps its status, is never dismissed, decided or resolved, the bar
+states how many are hidden, one click shows them all, the filter opens at "show everything" on every
+launch, and the report's own threshold (`triageHideThreshold`) is the only other place a score
+changes what is drawn. No check type is switched off and no finding is created or removed by a
+score; the per-type remedies from Part A (an adapter rule, a per-language exception, grouping,
+default-off with a visible count) are separate changes that cite their measured share judged real.
+**Because:** Amos's feedback that reviewers stop trusting a list with too many positives. The
+report-side threshold set the precedent that a display-only filter on a stored verdict is not an
+auto-apply: Greek Room says "suspicious", the AI says "unlikely" and the human still decides, with
+the hidden count always visible. Running triage only on a click keeps the offline invariant: no
+provider is called on the import, open or check path.
+**Rules out:** hiding on any score that is not a stored triage verdict (a raw confidence, a Stage 7
+judgement); a filter that persists hidden findings as decided or that opens hidden by default;
+sending a triaged finding to the provider again while its text is unchanged.
+**Revisit when:** Part A's table shows a type whose findings are overwhelmingly not real, which is a
+case for a rule or a default-off type rather than a score (measured 2026-10-15:
+`names.spelling_similarity`, 0–1 of 20 real per book); or when reviewers ask for the filter's level
+to persist across launches.
