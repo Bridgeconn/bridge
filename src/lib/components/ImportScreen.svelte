@@ -285,11 +285,15 @@
         bibleName: preview.metadata.bibleName ?? "",
       };
       // A detected code with no name (a Paratext LanguageIsoCode, #308) is
-      // named from the same table the search uses; an unknown code stays as it is.
+      // named from the same table the search uses. Paratext's own <Language>
+      // is the name only when the code is not in that table (#355).
       const detected = !metadata.languageName && metadata.languageId
         ? languages.find((language) => language.iso6393 === metadata.languageId)
         : undefined;
       if (detected) metadata = { ...metadata, languageName: detected.name };
+      else if (!metadata.languageName && preview.paratextLanguageName) {
+        metadata = { ...metadata, languageName: preview.paratextLanguageName };
+      }
       languageQuery = metadata.languageName || metadata.languageId;
     } catch (value) {
       error = message(value);
@@ -510,6 +514,12 @@
           <div class="eyebrow">IMPORT REVIEW</div>
           <h1>Confirm project details</h1>
           <p class="source" title={preview.sourcePath}>{preview.sourcePath}</p>
+          {#if preview.paratext}
+            <p class="paratext-link" data-testid="paratext-link">
+              Paratext project <strong>{preview.paratext.name}</strong>{preview.paratext.fullName ? ` (${preview.paratext.fullName})` : ""}
+              · Guid <code>{preview.paratext.guid}</code>
+            </p>
+          {/if}
         </div>
         <button class="back" on:click={reset} disabled={loading}>Back to projects</button>
       </div>
@@ -645,6 +655,8 @@
   .link-button, .back { display: block; border: 0; background: none; color: var(--accent); cursor: pointer; font-size: var(--fs-xs); margin: 15px auto 0; }
   .header-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding-bottom: 18px; border-bottom: 1px solid var(--border); }
   .source { color: var(--text-2); font-size: var(--fs-2xs); margin: 7px 0 0; max-width: 650px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .paratext-link { color: var(--text-2); font-size: var(--fs-2xs); margin: 4px 0 0; max-width: 650px; overflow-wrap: anywhere; }
+  .paratext-link code { font-size: var(--fs-2xs); }
   .back { margin: 4px 0 0; white-space: nowrap; }
   .duplicate-notice { display: flex; flex-direction: column; gap: 3px; margin-top: 16px; border: 1px solid #e8c268; border-radius: 8px; background: #fff9e9; color: #7a5500; padding: 10px 12px; font-size: var(--fs-2xs); }
   .duplicate-notice.exact { border-color: #e6a9a9; background: #fff2f2; color: #8b2d2d; }

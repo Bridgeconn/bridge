@@ -865,6 +865,10 @@ export interface ImportPreview {
   missingFields: string[];
   warnings: string[];
   duplicates: DuplicateAssessment;
+  /** The Paratext project this source belongs to (#355); null or absent otherwise. */
+  paratext?: import("./paratext").ParatextLink | null;
+  /** Paratext's free-text `<Language>`, the name when the code is not in the ISO table. */
+  paratextLanguageName?: string;
 }
 
 export type DuplicateClassification = "new" | "exactDuplicate" | "possibleDuplicate" | "partialOverlap";

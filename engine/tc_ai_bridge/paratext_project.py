@@ -400,6 +400,9 @@ def scripture_candidates(folder: str | Path, settings: ParatextSettings) -> Scri
     files: dict[str, Path] = {}
     skipped: list[tuple[Path, str]] = []
     warnings: list[str] = []
+    if not (naming.pre_part or naming.post_part):
+        # No pattern at all would match every file in the folder.
+        return ScriptureScan(files=[], skipped=[], warnings=["Settings.xml names no book file pattern."])
     for path in sorted((p for p in folder.iterdir() if p.is_file()), key=lambda p: p.name.lower()):
         name = path.name
         lower = name.lower()

@@ -14,9 +14,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
-from xml.etree import ElementTree
 
-from .iso639 import ISO_639_1_TO_3
+from .paratext_project import (
+    ParatextSettings,
+    language_fields,
+    link_block,
+    read_settings,
+    scripture_candidates,
+)
 from .original_language_resources import (
     blank_source_alignments,
     resource_for_book,
@@ -441,12 +446,21 @@ def _scripture_files(source: Path) -> list[Path]:
     if source.is_file():
         return [source] if _looks_like_scripture(source) else []
     files = []
-    for path in source.rglob("*"):
-        if any(part in {".git", ".apps", "node_modules"} for part in path.parts):
-            continue
-        if _looks_like_scripture(path):
-            files.append(path)
+    # os.walk, pruned, so a Paratext folder's .hg is never even listed (#355).
+    for directory, subdirectories, names in os.walk(source):
+        subdirectories[:] = [name for name in subdirectories if name not in _SCAN_SKIP_DIRECTORIES]
+        for name in names:
+            # Paratext's find-and-replace backups start with a real \id line;
+            # *.BAK copies are already outside SCRIPTURE_EXTENSIONS.
+            if name.lower().startswith("regexbackup"):
+                continue
+            path = Path(directory) / name
+            if _looks_like_scripture(path):
+                files.append(path)
     return sorted(files, key=lambda value: str(value).lower())
+
+
+_SCAN_SKIP_DIRECTORIES = frozenset({".git", ".hg", ".apps", "node_modules"})
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -480,35 +494,24 @@ def _archive_manifest(source: Path) -> tuple[str, dict[str, Any]]:
     raise ProjectError(f"No project manifest found in {source.name}.")
 
 
-def _paratext_language_id(value: str) -> str:
-    """The ISO 639-3 code in a Paratext ``<LanguageIsoCode>`` (#308).
+def _paratext_scan(source: Path) -> tuple[ParatextSettings | None, list[Path] | None, list[str]]:
+    """The Paratext settings beside ``source``, and -- for a project folder --
+    the book files its naming pattern names (#355).
 
-    Paratext writes ``code:script:region:variant`` (``sa:::``, ``xxx:Latn::``).
-    The language is the part before the first colon: a two-letter ISO 639-1
-    code is mapped to its ISO 639-3 code, a three-letter code is kept, and
-    anything else is "" so the reviewer picks the language -- the raw string
-    is never offered as a code."""
-    code = value.split(":", 1)[0].strip().lower()
-    if len(code) == 2:
-        return ISO_639_1_TO_3.get(code, "")
-    return code if len(code) == 3 and code.isascii() and code.isalpha() else ""
-
-
-def _paratext_metadata(source: Path) -> dict[str, str]:
-    settings = source / "Settings.xml" if source.is_dir() else source.parent / "Settings.xml"
-    if not settings.is_file():
-        return {}
-    try:
-        root = ElementTree.parse(settings).getroot()
-    except (OSError, ElementTree.ParseError):
-        return {}
-    values: dict[str, str] = {}
-    for child in root.iter():
-        tag = child.tag.rsplit("}", 1)[-1].lower()
-        text = (child.text or "").strip()
-        if tag in {"name", "fullname", "languageisocode", "lefttoright"} and text:
-            values[tag] = text
-    return values
+    Returns ``(settings, files, warnings)``. ``files`` is None when the caller
+    should run its own scan: no ``Settings.xml``, a single file picked, or a
+    pattern that names no book file. Each skipped file is one warning line."""
+    folder = source if source.is_dir() else source.parent
+    settings = read_settings(folder)
+    if settings is None or not source.is_dir():
+        return settings, None, []
+    scan = scripture_candidates(folder, settings)
+    warnings = [f"Skipped {path.name}: {reason}." for path, reason in scan.skipped]
+    warnings.extend(scan.warnings)
+    if not scan.files:
+        warnings.append("Every Scripture file in the folder was scanned instead.")
+        return settings, None, warnings
+    return settings, [path for _, path in scan.files], warnings
 
 
 def _metadata_from_manifest(manifest: dict[str, Any]) -> dict[str, str]:
@@ -558,7 +561,8 @@ def inspect_import(source_path: str | Path) -> dict[str, Any]:
             "warnings": [],
         }
 
-    files = _scripture_files(source)
+    paratext_settings, paratext_files, paratext_warnings = _paratext_scan(source)
+    files = paratext_files if paratext_files is not None else _scripture_files(source)
     if not files:
         raise ProjectError("No USFM/SFM Scripture files were found. Supported extensions are .usfm, .sfm, and marker-based .txt files.")
     # The first book is parsed in full -- it is the one an import normalizes
@@ -573,26 +577,35 @@ def inspect_import(source_path: str | Path) -> dict[str, Any]:
     if duplicate_ids:
         raise ProjectError(f"More than one source file identifies the same book: {', '.join(duplicate_ids)}")
 
-    paratext = _paratext_metadata(source if source.is_dir() else source.parent)
+    paratext = language_fields(paratext_settings) if paratext_settings else {}
     language_ids = {book.language_id for book in books if book.language_id}
     language_names = {book.language_name for book in books if book.language_name}
     language_directions = {book.language_direction for book in books if book.language_direction}
+    language_id = next(iter(language_ids)) if len(language_ids) == 1 else paratext.get("languageId", "")
+    # A known code is named by the import screen from its ISO 639-3 table, so
+    # Paratext's free-text <Language> ("TestDeva" on a test project) is only
+    # the name when the code is unknown (Benz, 2026-10-22, #355). It is still
+    # sent as paratextLanguageName for the screen to fall back on.
     metadata = {
-        "languageId": next(iter(language_ids)) if len(language_ids) == 1 else _paratext_language_id(paratext.get("languageisocode", "")),
-        "languageName": next(iter(language_names)) if len(language_names) == 1 else "",
-        "languageDirection": next(iter(language_directions)) if len(language_directions) == 1 else ("ltr" if paratext.get("lefttoright", "").lower() == "true" else ""),
-        "projectName": paratext.get("name", "") or source.stem,
-        "bibleName": paratext.get("fullname", "") or _book_header(books[0], "toc1"),
+        "languageId": language_id,
+        "languageName": next(iter(language_names)) if len(language_names) == 1
+        else ("" if language_id else paratext.get("languageName", "")),
+        "languageDirection": next(iter(language_directions)) if len(language_directions) == 1
+        else paratext.get("languageDirection", ""),
+        "projectName": (paratext_settings.name if paratext_settings else "") or source.stem,
+        "bibleName": (paratext_settings.full_name if paratext_settings else "") or _book_header(books[0], "toc1"),
     }
-    warnings = []
+    warnings = list(paratext_warnings)
     if len(books) > 1:
         warnings.append(f"{len(books)} books will be imported as separate compatible book projects in one collection.")
     if any(book.has_alignment_markers for book in books):
         warnings.append("USFM 3 alignment milestones will be preserved; unsupported nested milestones are left unaligned for review.")
     return {
         "sourcePath": str(source),
-        "kind": "paratext" if paratext else ("usfmCollection" if len(books) > 1 else "usfm"),
+        "kind": "paratext" if paratext_settings else ("usfmCollection" if len(books) > 1 else "usfm"),
         "metadata": metadata,
+        "paratext": link_block(paratext_settings.folder, paratext_settings) if paratext_settings else None,
+        "paratextLanguageName": paratext_settings.language_name if paratext_settings else "",
         "books": [{
             "bookId": book.book_id, "bookName": book.book_name, "sourceFile": str(book.source_path),
             "verseCount": book.verse_count, "hasAlignments": book.has_alignment_markers,
@@ -1249,6 +1262,10 @@ def import_source(source_path: str | Path, destination_root: str | Path, metadat
                 "bibleName": combined["bibleName"],
                 "projects": [{key: value for key, value in entry.items() if key != "path"} for entry in planned],
             }
+            if preview.get("paratext"):
+                # The link to the Paratext project (#355), on every sibling:
+                # collection.json is its one record (read by #356).
+                collection["paratext"] = preview["paratext"]
             staged: list[tuple[Path, Path]] = []
             book_count = len(planned)
             for index, (book_info, entry) in enumerate(zip(preview_books, planned)):

@@ -204,6 +204,51 @@ describe("ImportScreen detected language code (#308)", () => {
     expect(screen.queryByText("Select a language and complete both project names.")).toBeNull();
   });
 
+  it("falls back to Paratext's own language name only for a code not in the table (#355)", async () => {
+    const base = preview();
+    inspectImport.mockResolvedValue({
+      ...base, kind: "paratext", paratextLanguageName: "Somelang",
+      metadata: { ...base.metadata, languageId: "qqq", languageName: "" },
+    });
+    await renderWithPreview();
+
+    expect(screen.getByPlaceholderText("Search every ISO 639-3 language…")).toHaveValue("Somelang");
+  });
+
+  it("prefers the ISO name over Paratext's free-text <Language> (#355)", async () => {
+    const base = preview();
+    inspectImport.mockResolvedValue({
+      ...base, kind: "paratext", paratextLanguageName: "TestDeva",
+      metadata: { ...base.metadata, languageId: "san", languageName: "" },
+    });
+    await renderWithPreview();
+
+    expect(screen.getByPlaceholderText("Search every ISO 639-3 language…")).toHaveValue("Sanskrit");
+  });
+
+  it("shows the Paratext project name and Guid (#355)", async () => {
+    const base = preview();
+    inspectImport.mockResolvedValue({
+      ...base, kind: "paratext",
+      paratext: {
+        schemaVersion: 1, guid: "03a0211850", folder: "C:/PT/TSTP", name: "TSTP", fullName: "Synthetic Test",
+        versification: "eng", naming: { prePart: "", postPart: "TSTP.SFM", bookNameForm: "41MAT" },
+        booksPresent: ["TIT"], settingsSha256: "x", linkedAt: "2026-10-22T00:00:00+00:00",
+      },
+    });
+    await renderWithPreview();
+
+    const link = screen.getByTestId("paratext-link");
+    expect(link).toHaveTextContent("Paratext project TSTP (Synthetic Test)");
+    expect(link).toHaveTextContent("Guid 03a0211850");
+  });
+
+  it("shows no Paratext line for a plain USFM source", async () => {
+    inspectImport.mockResolvedValue(preview());
+    await renderWithPreview();
+    expect(screen.queryByTestId("paratext-link")).toBeNull();
+  });
+
   it("leaves an unknown code unnamed for the reviewer", async () => {
     const base = preview();
     inspectImport.mockResolvedValue({ ...base, kind: "paratext", metadata: { ...base.metadata, languageId: "qqq", languageName: "" } });

@@ -175,10 +175,11 @@ def test_scan_skips_backups_and_peripherals_with_reasons(tmp_path):
 
 
 def test_scan_bak_matching_the_pattern_is_skipped(tmp_path):
-    folder = build_paratext_project(tmp_path, post="", form="41MAT")
-    (folder / "57TIT.BAK").write_text(simple_book("TIT"), encoding="utf-8")
+    # Only reachable when the pattern has no extension of its own.
+    folder = build_paratext_project(tmp_path, pre="TS", post="", form="41MAT")
+    (folder / "TS57TIT.BAK").write_text(simple_book("TIT"), encoding="utf-8")
     scan = pp.scripture_candidates(folder, pp.read_settings(folder))
-    assert ("57TIT.BAK" in {p.name for p, _ in scan.skipped})
+    assert "TS57TIT.BAK" in {p.name for p, _ in scan.skipped}
     assert [code for code, _ in scan.files] == ["TIT", "PHM"]
 
 
@@ -220,6 +221,13 @@ def test_scan_with_no_match_warns_for_fallback(tmp_path):
     scan = pp.scripture_candidates(folder, pp.read_settings(folder))
     assert scan.files == []
     assert scan.warnings == ["No book files match the project's naming pattern."]
+
+
+def test_scan_without_a_naming_pattern_matches_nothing(tmp_path):
+    folder = build_paratext_project(tmp_path, naming="none")
+    scan = pp.scripture_candidates(folder, pp.read_settings(folder))
+    assert (scan.files, scan.skipped) == ([], [])
+    assert scan.warnings == ["Settings.xml names no book file pattern."]
 
 
 def test_scan_second_file_for_a_book_is_skipped(tmp_path):
