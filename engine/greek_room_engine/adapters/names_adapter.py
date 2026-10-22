@@ -109,6 +109,10 @@ _uroman = None
 _uroman_unavailable_reason: str | None = None
 _uroman_module = None
 _uroman_thread: threading.Thread | None = None
+# Guards only the creation of _uroman_thread. Not _lock: _ensure_uroman holds
+# _lock for the whole ~5 s build, so a preload_async() taking it would wait
+# out the load it started and then report nothing to load.
+_preload_lock = threading.Lock()
 # The files Uroman.load_resource_files cannot do without.
 _UROMAN_DATA = ("romanization-auto-table.txt", "romanization-table.txt", "UnicodeDataProps.txt")
 _sed_module = None
@@ -225,9 +229,11 @@ def preload_async() -> threading.Thread | None:
     """Build uroman on a daemon thread, once per process; the sidecar starts it
     after it has said it is ready (main.py), so neither startup nor engine.info
     waits ~5 s for it. Returns the thread, or None when there is nothing to
-    load. Never raises; a failure is reported by load_state()."""
+    load. Never raises and never waits for the build: while it runs, a
+    second call returns the same thread. A failure is reported by
+    load_state()."""
     global _uroman_thread
-    with _lock:
+    with _preload_lock:
         if _uroman is not None or _uroman_unavailable_reason is not None:
             return None
         if _uroman_thread is not None:
