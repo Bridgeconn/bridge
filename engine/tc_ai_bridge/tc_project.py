@@ -215,6 +215,9 @@ class TranslationCoreProject:
         self.workbench = WorkbenchRepository(self.companion_dir() / 'bridge-workbench.sqlite3')
         self._cross_verse_links = None  # CrossVerseLinkStore, built on first use (#117)
         self._null_decisions = None  # NullDecisionStore, built on first use (#216)
+        # team_role answers, stamped with the workbench write_generation they
+        # were read at: (generation, {user id: role or None}).
+        self._team_role_cache: tuple[int, dict[str, str | None]] | None = None
         # Identity for every workbench write. Injectable so a test can stamp a
         # known actor without touching app-level state; resolved lazily
         # otherwise, because working it out opens the workspace database and
@@ -3770,9 +3773,31 @@ class TranslationCoreProject:
         return roles
 
     def team_role(self, user_id: str) -> str | None:
-        """The user's role on this book, or None when the installation role applies."""
-        row = self.workbench.get('team_members', self._team_member_row_id(user_id))
-        return str(row['role']) if row and row.get('role') else None
+        """The user's role on this book, or None when the installation role applies.
+
+        authorize() asks this before every request, and the dispatcher lets go
+        of its workbench connection after every request (#113), so read
+        straight through it cost a fresh SQLite open, five PRAGMAs, a SELECT
+        and a close on every ping: each one a GIL handover, which behind a
+        CPU-bound Language QA scan added up to 200 ms. The answer is kept per
+        user and stamped with the workbench's `write_generation`, which every
+        committed row write in this process bumps (a local `team.setRole`, a
+        hub pull, any batch), so the request after a change re-reads it. The
+        generation is read *before* the row, so a write racing the read can
+        only make the stamp too old, never let a stale answer look current.
+        """
+        user_key = str(user_id)
+        generation = self.workbench.write_generation
+        cache = getattr(self, '_team_role_cache', None)
+        if cache is not None and cache[0] == generation and user_key in cache[1]:
+            return cache[1][user_key]
+        row = self.workbench.get('team_members', self._team_member_row_id(user_key))
+        role = str(row['role']) if row and row.get('role') else None
+        if cache is None or cache[0] != generation:
+            cache = (generation, {})
+            self._team_role_cache = cache
+        cache[1][user_key] = role
+        return role
 
     def set_team_role(self, user_id: str, role: str | None, *, set_by: str) -> bool:
         """Give `user_id` `role` on this book, or remove their row (None).

@@ -7,6 +7,8 @@ same authorize().
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from bridge_service import BridgeEngine
@@ -98,6 +100,89 @@ def test_clearing_a_project_role_returns_the_installation_role(tmp_path, two_pro
     listed = call(engine, "team.setRole", {"userId": rina["userId"], "role": None})["result"]
     assert engine.project.team_role(rina["userId"]) is None
     assert next(u for u in listed["users"] if u["userId"] == rina["userId"])["projectRole"] is None
+
+
+# -- the per-request role read is cached, never across a change ------------------
+
+
+def _rina_signed_in_on(engine, root):
+    rina = call(engine, "users.create", {"displayName": "Rina", "role": "editor"})["result"]
+    _open(engine, root)
+    assert call(engine, "users.setCurrent", {"userId": rina["userId"]})["success"]
+    return rina
+
+
+def test_repeated_requests_read_the_project_role_once(tmp_path, two_projects, monkeypatch):
+    a, _b = two_projects
+    engine = BridgeEngine(settings=AppSettings(path=tmp_path / "settings.json"))
+    _rina_signed_in_on(engine, a)
+    workbench = engine.project.workbench
+    reads = []
+    real_get = workbench.get
+    monkeypatch.setattr(workbench, "get", lambda table, row_id: (reads.append(table), real_get(table, row_id))[1])
+    opens = []
+    real_open = workbench._pool._open
+    monkeypatch.setattr(workbench._pool, "_open", lambda read_only: (opens.append(1), real_open(read_only))[1])
+    for _ in range(5):
+        assert call(engine, "ping", {})["success"] is True
+    assert reads.count("team_members") <= 1
+    assert len(opens) <= 1  # was one fresh SQLite open per ping
+
+
+def test_a_role_change_decides_the_very_next_request(tmp_path, two_projects):
+    a, _b = two_projects
+    engine = BridgeEngine(settings=AppSettings(path=tmp_path / "settings.json"))
+    rina = _rina_signed_in_on(engine, a)
+    assert _decide(engine)["success"] is True  # the cache now holds "no project role"
+
+    engine.project.set_team_role(rina["userId"], "reporter", set_by="u-admin")
+    refused = _decide(engine)
+    assert refused["success"] is False and refused["error"]["code"] == "forbidden"
+
+    engine.project.set_team_role(rina["userId"], None, set_by="u-admin")
+    assert _decide(engine)["success"] is True
+
+
+def test_a_role_written_through_another_handle_on_the_same_book_is_seen(tmp_path, two_projects):
+    """A job or a hub session has its own TranslationCoreProject on the same
+    files; its write bumps the same per-file generation."""
+    from tc_ai_bridge.tc_project import TranslationCoreProject
+
+    a, _b = two_projects
+    engine = BridgeEngine(settings=AppSettings(path=tmp_path / "settings.json"))
+    rina = _rina_signed_in_on(engine, a)
+    assert _decide(engine)["success"] is True
+    other = TranslationCoreProject(engine.project.path, workspace=engine.workspace,
+                                   identity=engine.project.workbench_identity)
+    other.set_team_role(rina["userId"], "reporter", set_by="u-admin")
+    other.close()
+    refused = _decide(engine)
+    assert refused["success"] is False and refused["error"]["code"] == "forbidden"
+
+
+def test_a_role_arriving_in_a_hub_pull_decides_the_next_request(tmp_path, two_projects):
+    """A pulled `team_members` event lands through import_event_lines (#80)."""
+    a, b = two_projects
+    engine = BridgeEngine(settings=AppSettings(path=tmp_path / "settings.json"))
+    rina = _rina_signed_in_on(engine, a)
+    assert _decide(engine)["success"] is True
+    project = engine.project
+    # The event a hub would send: the same row written on another device's copy.
+    donor = BridgeEngine(settings=AppSettings(path=tmp_path / "donor-settings.json"))
+    _open(donor, b)
+    row_id = project._team_member_row_id(rina["userId"])
+    identity = project.workbench_identity
+    donor.project.workbench._write(
+        "team_members", row_id, project_id=identity.project_id, book_id=project.book_id,
+        payload={"userId": rina["userId"], "role": "reporter", "setBy": "u-admin", "setAt": "2026-10-22T00:00:00Z"},
+        actor_id="u-admin", device_id="d-hub", expected_revision=None,
+        extra_columns={"user_id": rina["userId"], "role": "reporter"},
+    )
+    [event] = [e for e in donor.project.workbench.change_log_entries(identity.project_id)
+               if e["table_name"] == "team_members"]
+    assert project.workbench.import_event_lines([json.dumps(event)])["applied"] == 1
+    refused = _decide(engine)
+    assert refused["success"] is False and refused["error"]["code"] == "forbidden"
 
 
 # -- through the hub: /rpc and the dashboard endpoints ------------------------------
