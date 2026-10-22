@@ -77,6 +77,10 @@ class Lexicon:
     provenance: dict[str, str] = field(default_factory=dict)
     # "word word" -> the one word it is (known-split), human-confirmed only.
     splits: dict[str, str] = field(default_factory=dict)
+    # Lines of `buckets` not parsed yet (load_lexicon): only rare-near-common
+    # reads them, so a load does not pay for them (see LEXICON_PIECE).
+    pending_buckets: list[str] | None = field(default=None, repr=False, compare=False)
+    _buckets_lock: Any = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def count(self, word: str) -> int:
         entry = self.forms.get(word)
@@ -85,6 +89,11 @@ class Lexicon:
     def candidates(self, word: str) -> set[str]:
         """Common words sharing a one-cluster deletion neighbour with `word`
         (covers one substitution, insertion or deletion)."""
+        if self.pending_buckets is not None:
+            with self._buckets_lock:
+                if self.pending_buckets is not None:
+                    _fill_member(self.buckets, self.pending_buckets)
+                    self.pending_buckets = None
         found: set[str] = set()
         for key in {word, *deletion_keys(word)}:
             for index in self.buckets.get(key, ()):
@@ -93,18 +102,103 @@ class Lexicon:
         return found
 
 
-def read_lexicon_json(path: Path) -> dict[str, Any]:
-    """The lexicon's JSON, from `.json` or gzip-compressed `.json.gz`."""
+# The file is one JSON document, but written a member per line and a large
+# member over several lines of at most LEXICON_PIECE entries (whitespace, so
+# json.load reads it as before). A load parses it a line at a time: one
+# json.loads of the whole 3 MB held the GIL ~100 ms, starving the dispatcher.
+# json.dumps escapes every newline inside a string, so a raw newline is always
+# between tokens.
+LEXICON_PIECE = 1024
+_DEFERRED = ("buckets",)
+
+
+def _dump(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def lexicon_text(data: dict[str, Any]) -> str:
+    """The lexicon document in its line layout (see LEXICON_PIECE)."""
+    lines = ["{"]
+    for n, (key, value) in enumerate(data.items()):
+        tail = "," if n < len(data) - 1 else ""
+        if isinstance(value, (dict, list)) and len(value) > LEXICON_PIECE:
+            items = list(value.items()) if isinstance(value, dict) else value
+            opener, closer = ("{", "}") if isinstance(value, dict) else ("[", "]")
+            lines.append(_dump(key) + ":" + opener)
+            for start in range(0, len(items), LEXICON_PIECE):
+                chunk = items[start:start + LEXICON_PIECE]
+                body = (",".join(_dump(k) + ":" + _dump(v) for k, v in chunk) if isinstance(value, dict)
+                        else ",".join(_dump(v) for v in chunk))
+                lines.append(body + ("," if start + LEXICON_PIECE < len(items) else ""))
+            lines.append(closer + tail)
+        else:
+            lines.append(_dump(key) + ":" + _dump(value) + tail)
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def _fill_member(target: dict | list, chunks: list[str]) -> None:
+    """Parse a large member's lines into `target`, one bounded call each."""
+    for chunk in chunks:
+        if isinstance(target, dict):
+            target.update(json.loads("{" + chunk.rstrip(",") + "}"))
+        else:
+            target.extend(json.loads("[" + chunk.rstrip(",") + "]"))
+
+
+def parse_lexicon_text(text: str, defer: tuple[str, ...] = ()) -> tuple[dict[str, Any], dict[str, list[str]]]:
+    """(data, deferred lines) of a lexicon document. A member named in
+    `defer` is left empty in `data` and its unparsed lines returned. Text not
+    in the line layout (a lexicon written before it) is one json.loads."""
+    lines = text.split("\n")
+    if len(lines) < 3 or lines[0] != "{" or lines[-1] != "}":
+        return json.loads(text), {}
+    try:
+        return _parse_lines(lines, defer)
+    except (ValueError, IndexError):  # some other multi-line JSON
+        return json.loads(text), {}
+
+
+def _parse_lines(lines: list[str], defer: tuple[str, ...]) -> tuple[dict[str, Any], dict[str, list[str]]]:
+    data: dict[str, Any] = {}
+    deferred: dict[str, list[str]] = {}
+    i = 1
+    while i < len(lines) - 1:
+        line = lines[i]
+        if line.endswith((":{", ":[")):
+            key = json.loads(line[:-2])
+            closer = "}" if line.endswith("{") else "]"
+            end = i + 1
+            while lines[end].rstrip(",") != closer:
+                end += 1
+            data[key] = {} if closer == "}" else []
+            if key in defer and closer == "}":
+                deferred[key] = lines[i + 1:end]
+            else:
+                _fill_member(data[key], lines[i + 1:end])
+            i = end + 1
+            continue
+        data.update(json.loads("{" + line.rstrip(",") + "}"))
+        i += 1
+    return data, deferred
+
+
+def _read_text(path: Path) -> str:
     raw = path.read_bytes()
     if path.suffix == ".gz":
         raw = gzip.decompress(raw)
-    return json.loads(raw.decode("utf-8"))
+    return raw.decode("utf-8")
+
+
+def read_lexicon_json(path: Path) -> dict[str, Any]:
+    """The lexicon's JSON, from `.json` or gzip-compressed `.json.gz`."""
+    return parse_lexicon_text(_read_text(path))[0]
 
 
 def write_lexicon_json(path: Path, data: dict[str, Any]) -> None:
     """Write a lexicon deterministically: identical data, identical bytes
     (gzip with no file name and mtime 0), so a rebuild is diffable by hash."""
-    raw = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    raw = lexicon_text(data).encode("utf-8")
     if path.suffix != ".gz":
         path.write_bytes(raw)
         return
@@ -116,9 +210,10 @@ def write_lexicon_json(path: Path, data: dict[str, Any]) -> None:
 def load_lexicon(path: Path) -> Lexicon | None:
     if not path.is_file():
         return None
-    data = read_lexicon_json(path)
+    data, deferred = parse_lexicon_text(_read_text(path), defer=_DEFERRED)
     return Lexicon(version=str(data.get("version") or LEXICON_VERSION), forms=data.get("forms") or {},
                    common=list(data.get("common") or []), buckets=data.get("buckets") or {},
+                   pending_buckets=deferred.get("buckets"),
                    deprecated=data.get("deprecated") or {}, corpus=data.get("corpus") or {},
                    protected=frozenset(data.get("protected") or ()),
                    provenance=dict(data.get("provenance") or {}),
