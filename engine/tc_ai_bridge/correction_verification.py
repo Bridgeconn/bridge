@@ -45,6 +45,7 @@ from .passage_semantic_models import (
 from .qa_audit import QA_ENGINE_VERSION, QA_POLICY_VERSION
 from .semantic_location import ALIGNMENT_EVIDENCE_VERSION, LOCATION_ENGINE_VERSION
 from .passage_semantic_repository import FoundationConflict, FoundationValidationError
+from .passage_semantic_runtime import project_current_passage_index
 
 
 VERIFICATION_ENGINE_VERSION = "bridge-correction-verification-v1"
@@ -446,8 +447,33 @@ class CorrectionVerificationService:
         return chapter, verse
 
     def _current_target_hash(self, reference: str) -> str:
+        """Hash of the verse as the affected analysis reads it (#316).
+
+        An analysis job records `targetHashes` over the passage text
+        (`rebuild_current_passage` -> `build_current_text_overlay` -> the
+        segment's text): the lifted, visible verse, not the stored string, so
+        notes and character markup are not part of it. Verification asks
+        whether that analysis describes the current text, so it reads the
+        verse through the same passage index. Hashing the raw stored verse
+        made every verse with a footnote, a cross reference, `\\w` or `\\zaln`
+        permanently ANALYSIS_NOT_CURRENT.
+
+        A markup-only edit therefore does not change this hash; it does not
+        change what the analysis describes either. Such an edit still stales
+        the analysis runs and any verification record through the ordinary
+        TARGET_REFERENCE dependency, which is keyed on the raw text.
+
+        An unreadable passage index fails closed: an empty hash never equals a
+        recorded one.
+        """
         chapter, verse = self._parts(reference)
-        return self.runtime.text_hash(str(self.runtime.project.target_verse_text(chapter, verse)))
+        try:
+            index = project_current_passage_index(self.runtime.project)
+        except FoundationValidationError:
+            return ""
+        segment = index.segment_for_source_reference(chapter, verse)
+        text = segment.text if segment is not None and segment.reference == reference else ""
+        return self.runtime.text_hash(text)
 
     # --- preconditions ----------------------------------------------------
 
