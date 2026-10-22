@@ -90,6 +90,9 @@ class _TriageJob:
         self.pruned = 0
         self.batches = 0
         self.failed_batches = 0
+        # The subset of failed_batches that never reached the model; their
+        # findings were left untriaged rather than recorded uncertain (#318).
+        self.unreached_batches = 0
         self.last_error = ""
         self.failed_books: list[dict[str, str]] = []
         self.summaries: list[dict[str, Any]] = []
@@ -121,6 +124,7 @@ class _TriageJob:
                 "pruned": self.pruned,
                 "batches": self.batches,
                 "failedBatches": self.failed_batches,
+                "unreachedBatches": self.unreached_batches,
                 "failedBooks": copy.deepcopy(self.failed_books),
                 "books": copy.deepcopy(self.summaries),
                 "error": self.error,
@@ -207,13 +211,15 @@ class TriageJobManager:
                 job.pruned += int(summary.get("pruned", 0) or 0)
                 job.batches += int(summary.get("batches", 0) or 0)
                 job.failed_batches += int(summary.get("failedBatches", 0) or 0)
+                job.unreached_batches += int(summary.get("unreachedBatches", 0) or 0)
                 if summary.get("lastError"):
                     job.last_error = str(summary["lastError"])
                 job.completed_books += 1
 
         with job.lock:
             # A batch that failed is not a book that failed: its findings were
-            # still recorded, as uncertain. But a run where every batch failed
+            # still recorded as uncertain, or, when the model was never reached,
+            # left untriaged. But a run where every batch failed
             # -- an unreachable endpoint, a rejected key -- must not report
             # "succeeded" with nothing for the UI to show, so it is surfaced
             # either as an error message or, when nothing at all got through,
@@ -223,10 +229,22 @@ class TriageJobManager:
             if job.failed_books:
                 problems.append(f"{len(job.failed_books)} book(s) could not be triaged.")
             if job.failed_batches:
-                plural = "es" if job.failed_batches != 1 else ""
+                unanswered = job.failed_batches - job.unreached_batches
+                parts: list[str] = []
+                if unanswered:
+                    plural = "es" if unanswered != 1 else ""
+                    parts.append(
+                        f"{unanswered} batch{plural} produced no usable result; "
+                        f"those findings were left uncertain."
+                    )
+                if job.unreached_batches:
+                    plural = "es" if job.unreached_batches != 1 else ""
+                    parts.append(
+                        f"{job.unreached_batches} batch{plural} could not reach the model; "
+                        f"those findings were left untriaged."
+                    )
                 problems.append(
-                    f"{job.failed_batches} batch{plural} produced no usable result; "
-                    f"those findings were left uncertain."
+                    " ".join(parts)
                     + (f" Last error: {job.last_error}" if job.last_error else "")
                 )
 

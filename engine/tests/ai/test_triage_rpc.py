@@ -287,14 +287,15 @@ def test_status_for_an_unknown_job_is_a_clean_error(fixture_project):
 
 
 def test_a_run_whose_every_batch_failed_reports_failure_not_success(fixture_project, monkeypatch):
-    """An unreachable endpoint or a rejected key must not look like a
-    finished run: the reviewer would think every finding had been judged."""
+    """A rejected key must not look like a finished run: the reviewer would
+    think every finding had been judged. (An unreachable endpoint is covered
+    in tests/service/test_triage_unreachable_model.py: it stores nothing.)"""
     _plant(fixture_project, [_finding()])
     engine = _open(fixture_project, StubClient(), monkeypatch)
 
     class Dead(StubClient):
         def triage_batch(self, instructions, input_text):
-            raise RuntimeError("Network error contacting OpenAI: connection refused")
+            raise RuntimeError("OpenAI API error HTTP 401: invalid key")
 
     monkeypatch.setattr(engine, "_ai_client", lambda: Dead())
     snapshot = _run(engine)
@@ -302,9 +303,9 @@ def test_a_run_whose_every_batch_failed_reports_failure_not_success(fixture_proj
     assert snapshot["state"] == "failed"
     assert snapshot["failedBatches"] == 1
     assert "no usable result" in snapshot["error"]
-    assert "connection refused" in snapshot["error"]
-    # The findings are still recorded, as uncertain, so a retry is cheap and
-    # the report shows them rather than silently dropping them.
+    assert "HTTP 401" in snapshot["error"]
+    # A model error that is not a transport failure is still recorded, as
+    # uncertain, so the report shows the finding rather than dropping it.
     records = call(engine, "triage.results")["result"]["entries"]
     assert [r["verdict"] for r in records.values()] == ["uncertain"]
 

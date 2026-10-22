@@ -20,6 +20,9 @@ Three properties this module exists to guarantee:
    local vLLM/Ollama servers routinely wrap output in markdown fences. The
    parser strips fences and accepts several shapes; anything it still can't
    read marks that batch ``uncertain`` at confidence 0 and logs the raw text.
+   A batch that never reached the model at all (connection refused, DNS,
+   timeout) stores nothing: nobody judged those findings, so they stay
+   untriaged and the run reports the failure instead (#318).
 
 3. **A human override always wins and is never clobbered.** Overrides are
    skipped when batching, preserved by ``force``, and the merge re-reads the
@@ -43,6 +46,7 @@ import unicodedata
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Optional
 
+from .ai_http import TransportFailure
 from .original_language_resources import source_tokens_for_verse
 from .tc_project import TranslationCoreProject
 from .triage_prompts import family_for, instructions_for
@@ -59,6 +63,11 @@ OVERRIDE_VERDICTS = ("true_positive", "false_positive")
 # evidence lists, and keeps the blast radius of one unparseable response to
 # at most 25 findings marked uncertain.
 MAX_BATCH = 25
+
+# A call that raised one of these never reached the model: the client's own
+# transport failure (refused, DNS, connect timeout), or a read timeout or reset
+# that urllib raises unwrapped. Matched by type, never by message text (#318).
+_UNREACHED_ERRORS: tuple[type[BaseException], ...] = (TransportFailure, TimeoutError, ConnectionError)
 
 # How many verses either side of the finding's own verse go into its context.
 CONTEXT_RADIUS = 1
@@ -529,8 +538,10 @@ def run_book_triage(
         pending.append(item)
 
     completed = 0
+    stored = 0
     batches = 0
     failed_batches = 0
+    unreached_batches = 0
     last_error = ""
     if progress:
         progress(completed, skipped, "")
@@ -543,11 +554,21 @@ def run_book_triage(
         family = batch[0].family
         instructions = instructions_for(family)
         failure = ""
+        unreached = False
         try:
             raw = call_model(instructions, build_batch_input(project, batch))
             results = parse_triage_response(raw)
             if results is None:
                 failure = "The model's response for this batch could not be parsed."
+        except _UNREACHED_ERRORS as exc:
+            log.warning(
+                "Triage batch never reached the model (%s %s, family %s): %s",
+                project.book_id, chapter, family, exc,
+            )
+            results = None
+            raw = ""
+            unreached = True
+            failure = f"The model could not be reached: {exc}"
         except Exception as exc:  # noqa: BLE001 - one batch must not end the run
             log.warning(
                 "Triage batch failed (%s %s, family %s): %s",
@@ -562,7 +583,15 @@ def run_book_triage(
             except Exception:  # noqa: BLE001 - usage accounting is never fatal
                 pass
 
-        if results is None:
+        if results is None and unreached:
+            # Nobody judged these findings. Storing an "uncertain" record would
+            # read as a model that looked and could not decide, and would be
+            # counted as scored; leave them untriaged (#318).
+            failed_batches += 1
+            unreached_batches += 1
+            last_error = failure
+            new_records = {}
+        elif results is None:
             failed_batches += 1
             last_error = failure
             log.warning(
@@ -583,15 +612,18 @@ def run_book_triage(
         # Re-read under the lock so an override recorded while this batch was
         # in flight is preserved rather than overwritten by the stale copy
         # this worker loaded before the request.
-        with lock:
-            current = project.load_triage_records()
-            for key, record in new_records.items():
-                previous = current.get(key)
-                if isinstance(previous, dict) and isinstance(previous.get("userOverride"), dict):
-                    record["userOverride"] = previous["userOverride"]
-                current[key] = record
-            project.save_triage_records(current)
+        if new_records:
+            with lock:
+                current = project.load_triage_records()
+                for key, record in new_records.items():
+                    previous = current.get(key)
+                    if isinstance(previous, dict) and isinstance(previous.get("userOverride"), dict):
+                        record["userOverride"] = previous["userOverride"]
+                    current[key] = record
+                project.save_triage_records(current)
+            stored += len(new_records)
 
+        # Progress counts findings processed, reached or not, so the bar moves.
         completed += len(batch)
         if progress:
             progress(completed, skipped, chapter)
@@ -612,11 +644,14 @@ def run_book_triage(
     return {
         "bookId": project.book_id,
         "findings": len(items),
-        "triaged": completed,
+        # Findings that got a stored record; a batch that never reached the
+        # model adds none.
+        "triaged": stored,
         "skipped": skipped,
         "pruned": pruned,
         "batches": batches,
         "failedBatches": failed_batches,
+        "unreachedBatches": unreached_batches,
         "lastError": last_error,
         "cancelled": cancelled,
     }
