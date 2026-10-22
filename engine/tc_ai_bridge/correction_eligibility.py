@@ -28,9 +28,31 @@ from .passage_semantic_models import (
 )
 from .passage_semantic_repository import FoundationValidationError
 from .qa_target_hash import finding_target_references
+from .usfm_verse import lift_verse
 
 
 ELIGIBILITY_ENGINE_VERSION = "bridge-correction-eligibility-v1"
+
+
+def require_insertion_outside_markup(
+    displayed_reference: str, verse_text: str, start_code_point: int, end_code_point: int,
+) -> None:
+    """Refuse a zero-length insertion strictly inside USFM markup or a note (#314).
+
+    The stored verse string keeps its markup, so a raw code-point offset can
+    sit inside `\\x … \\x*`, a marker name or a word's attributes. Inserting
+    there would write broken USFM through the one Scripture writer. An offset
+    at the edge of the markup is fine. This only tightens: it never relocates.
+    """
+    if start_code_point != end_code_point:
+        return
+    inside = lift_verse(verse_text).removed_range_containing(start_code_point)
+    if inside is not None:
+        raise FoundationValidationError(
+            f"Insertion point {start_code_point} in {displayed_reference} falls inside "
+            f"USFM markup or a note (code points [{inside[0]}, {inside[1]})). "
+            "Nothing was saved or applied; choose an insertion point between words."
+        )
 
 
 class CorrectionEligibilityCode(StrEnum):

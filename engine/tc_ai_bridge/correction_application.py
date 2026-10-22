@@ -6,6 +6,7 @@ import threading
 from typing import Any, Callable
 
 from .correction_application_recovery import CorrectionApplicationRecoveryCoordinator
+from .correction_eligibility import require_insertion_outside_markup
 from .passage_semantic_models import (
     ActorType,
     CorrectionApplicationActor,
@@ -141,6 +142,11 @@ class CorrectionApplicationService:
         if not validation.valid:
             raise FoundationConflict("REVISION_CONFLICT: " + "; ".join(r.detail for r in validation.reasons))
         current = self.runtime.correction_eligibility.current_text_snapshot()[reference]
+        # Fail closed on a proposal saved before #314, or crafted around the
+        # proposal checks: the one Scripture writer never splits markup.
+        require_insertion_outside_markup(
+            reference, current, int(span["startCodePoint"]), int(span["endCodePoint"]),
+        )
         return proposal, finding, reference, current
 
     def _prepare(self, **request: Any) -> dict[str, Any]:

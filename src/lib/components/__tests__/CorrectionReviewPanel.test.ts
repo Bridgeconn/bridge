@@ -568,6 +568,67 @@ describe("CorrectionReviewPanel", () => {
     expect(screen.getByLabelText("Insertion diff")).toHaveTextContent("எல்லாரும்");
   });
 
+  describe("#314: insertion points never fall inside USFM markup", () => {
+    // PHP 1:1 shape from the 0.18.0 walk: the verse opens with a cross-reference.
+    const xref = "\\x - \\xo 1:1 \\xt அப் 16:12\\x*";
+    const xrefVerse = `${xref}இயேசு கிறிஸ்துவின் ஊழியக்காரர்களாகிய பவுலும்`;
+    const xrefLength = Array.from(xref).length;
+    // What the engine's lift_verse(...).insertion_points() returns for it.
+    const offsets = [0, 34, 47, 65, 73];
+    const insertionContext = {
+      ...reviewContext,
+      candidateSpans: [],
+      currentTargets: [{ ...reviewContext.currentTargets[0], text: xrefVerse, insertionOffsets: offsets }],
+    };
+
+    async function openManualInsertion(): Promise<void> {
+      render(CorrectionReviewPanel, { props: { findingId: "qa-quantity" } });
+      await fireEvent.click(await screen.findByRole("button", { name: "Create correction proposal" }));
+      await fireEvent.click(screen.getByRole("button", { name: "Write correction manually" }));
+    }
+
+    it("offers only the engine's points, none inside the cross-reference", async () => {
+      api.context.mockResolvedValue(insertionContext);
+      await openManualInsertion();
+      const slider = screen.getByRole("slider") as HTMLInputElement;
+      expect(slider.max).toBe(String(offsets.length - 1));
+      const offered: number[] = [];
+      for (let index = 0; index < offsets.length; index += 1) {
+        await fireEvent.input(slider, { target: { value: String(index) } });
+        const shown = screen.getByText(/^Insertion point \[\d+, \d+\)$/).textContent ?? "";
+        offered.push(Number(/\[(\d+),/.exec(shown)?.[1]));
+      }
+      expect(offered).toEqual(offsets);
+      for (const point of offered) expect(point > 0 && point < xrefLength).toBe(false);
+    });
+
+    it("sends the chosen raw offset as a zero-length span", async () => {
+      api.context.mockResolvedValue(insertionContext);
+      await openManualInsertion();
+      await fireEvent.input(screen.getByRole("slider"), { target: { value: "1" } });
+      await fireEvent.input(screen.getByLabelText("Proposed wording"), { target: { value: "சேர்ப்பு" } });
+      await fireEvent.click(screen.getByRole("button", { name: "Save proposal" }));
+      await waitFor(() => expect(api.create).toHaveBeenCalledWith(expect.objectContaining({
+        intent: expect.objectContaining({
+          affectedTargetSpan: expect.objectContaining({ startCodePoint: 34, endCodePoint: 34, originalText: "" }),
+        }),
+      })));
+    });
+
+    it("offers no insertion point when the engine sent none", async () => {
+      api.context.mockResolvedValue({
+        ...insertionContext,
+        currentTargets: [{ ...reviewContext.currentTargets[0], text: xrefVerse }],
+      });
+      await openManualInsertion();
+      expect(screen.queryByRole("slider")).toBeNull();
+      expect(screen.getByText(/No insertion point is available/)).toBeInTheDocument();
+      await fireEvent.input(screen.getByLabelText("Proposed wording"), { target: { value: "சேர்ப்பு" } });
+      await fireEvent.click(screen.getByRole("button", { name: "Save proposal" }));
+      expect(api.create).not.toHaveBeenCalled();
+    });
+  });
+
   it("keeps a PHP 1:3 source correction grounded at its unambiguous PHP 1:6 target", async () => {
     const crossVerseSpan = {
       ...intent.affectedTargetSpan,

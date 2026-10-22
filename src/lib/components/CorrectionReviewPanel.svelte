@@ -21,7 +21,6 @@
   import type { CoverageDimension } from "../types/passageSemanticV1";
   import {
     codePointLength,
-    graphemeBoundariesInCodePoints,
     graphemeDiff,
     visualContextSegments,
   } from "../utils/unicodeDiff";
@@ -112,7 +111,13 @@
   );
   $: insertionTarget = context?.currentTargets.find((item) => item.displayedReference === selectedReference)
     ?? context?.currentTargets[0] ?? null;
-  $: insertionBoundaries = insertionTarget ? graphemeBoundariesInCodePoints(insertionTarget.text) : [0];
+  // #314: only engine-offered points (verse start and word ends, never inside
+  // `\x … \x*` or any other markup). The stored text keeps its USFM, so a
+  // grapheme slider over it could land inside a marker. Nothing is parsed here.
+  $: insertionBoundaries = insertionTarget?.insertionOffsets ?? [];
+  $: if (insertionBoundaryIndex > Math.max(0, insertionBoundaries.length - 1)) {
+    insertionBoundaryIndex = Math.max(0, insertionBoundaries.length - 1);
+  }
   $: sourceSemanticReferences = correctionSourceReferences(context);
   $: findingDisplayReferences = uniqueReferences(
     context?.findingDisplayedReferences?.length
@@ -526,7 +531,8 @@
     if (!context) return null;
     if (context.candidateSpans.length) return context.candidateSpans[selectedSpanIndex] ?? null;
     if (!insertionTarget) return null;
-    const point = insertionBoundaries[insertionBoundaryIndex] ?? 0;
+    const point = insertionBoundaries[insertionBoundaryIndex];
+    if (point === undefined) return null;
     return {
       displayedReference: insertionTarget.displayedReference,
       canonicalReferences: insertionTarget.canonicalReferences,
@@ -1143,11 +1149,16 @@
                 <select id="insertion-reference" bind:value={selectedReference}>
                   {#each context?.currentTargets ?? [] as target}<option value={target.displayedReference}>{target.displayedReference}</option>{/each}
                 </select>
-                <label for="insertion-point">Insertion point after {insertionBoundaryIndex} text elements</label>
-                <input id="insertion-point" type="range" min="0" max={Math.max(0, insertionBoundaries.length - 1)} bind:value={insertionBoundaryIndex} />
-                {@const point = insertionBoundaries[insertionBoundaryIndex] ?? 0}
-                {@const preview = visualContextSegments(insertionTarget.text, point, point)}
-                <p class="scripture context-text"><span>{preview.before}</span><span class="caret" aria-label="Insertion point"></span><span>{preview.after}</span></p>
+                {#if insertionBoundaries.length}
+                  <label for="insertion-point">Insertion point {insertionBoundaryIndex + 1} of {insertionBoundaries.length} (between words)</label>
+                  <input id="insertion-point" type="range" min="0" max={Math.max(0, insertionBoundaries.length - 1)} bind:value={insertionBoundaryIndex} />
+                  {@const point = insertionBoundaries[insertionBoundaryIndex] ?? 0}
+                  {@const preview = visualContextSegments(insertionTarget.text, point, point)}
+                  <p class="coordinates">Insertion point [{point}, {point})</p>
+                  <p class="scripture context-text"><span>{preview.before}</span><span class="caret" aria-label="Insertion point"></span><span>{preview.after}</span></p>
+                {:else}
+                  <p class="muted">No insertion point is available for this verse. Update Bridge or reload this finding.</p>
+                {/if}
               {/if}
               <label for="intent-dimension">Affected meaning</label>
               <select id="intent-dimension" bind:value={failedDimension}>

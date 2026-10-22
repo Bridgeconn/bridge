@@ -191,6 +191,38 @@ class LiftedVerse:
         raw_start, raw_end = self.raw_index[start], self.raw_index[end - 1] + 1
         return (raw_start, raw_end) if raw_end - raw_start == end - start else None
 
+    def removed_range_containing(self, raw_offset: int) -> tuple[int, int] | None:
+        """The removed raw range `raw_offset` falls strictly inside, or None.
+
+        An offset at either edge of a removed range sits between markup and
+        text, so inserting there leaves every marker whole; one strictly inside
+        would split a marker, its attributes or a note (#314)."""
+        for start, end in self.removed:
+            if start >= raw_offset:
+                break
+            if raw_offset < end:
+                return (start, end)
+        return None
+
+    def insertion_points(self) -> tuple[int, ...]:
+        """Raw offsets where an inserted word lands between words (#314).
+
+        The start of the verse, and the end of each whitespace-delimited word of
+        `plain` -- taken *after* any markup between that word and the next
+        whitespace (its closing markers, attributes, an attached note), so an
+        insertion never lands inside a `\\w … \\w*` word or before a note's
+        anchor word. None of these is strictly inside a removed range."""
+        points = {0}
+        plain = self.plain
+        for index in range(1, len(plain) + 1):
+            if plain[index - 1].isspace():
+                continue
+            if index == len(plain):
+                points.add(len(self.raw))
+            elif plain[index].isspace():
+                points.add(self.raw_index[index])
+        return tuple(sorted(points))
+
     def to_dict(self) -> dict[str, Any]:
         """The display payload the protocol carries (#91 Phase 2). Offsets are
         code points, as every engine finding's are."""
