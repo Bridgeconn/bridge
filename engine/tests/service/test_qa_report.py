@@ -119,7 +119,9 @@ def test_check_job_leaves_a_finding_snapshot_the_report_reads(fixture_project, m
     assert row["reference"] == "RUT 1:1"
     assert row["issue"] == "wildebeest.script.mixed"
     assert row["explanation"] == "Latin character mixed into Tamil text."
-    assert row["aiProposal"] == "ஆதியிலே"
+    # A Greek Room check's own suggestion is check output, not AI wording (#317).
+    assert row["checkSuggestion"] == "ஆதியிலே"
+    assert row["aiProposal"] == ""
     assert (row["status"], row["resolution"], row["result"], row["fixedBy"]) == ("open", "unresolved", "fail", "")
 
     # A reviewer's decision (recorded through verse.decide, the same path
@@ -337,6 +339,7 @@ def test_tn_tw_rows_come_from_the_live_index_with_selection_provenance(fixture_p
     assert (tn["status"], tn["result"], tn["fixedBy"], tn["severity"]) == ("pending", "fail", "", "medium")
     assert tn["explanation"] == "Review the metaphor."
     assert tn["aiProposal"] == "Render the metaphor explicitly."
+    assert tn["checkSuggestion"] == ""
     assert tn["aiVerdict"] == "problem"
 
     ai = rows["translationWords:1:1:tw-ai:god"]
@@ -468,7 +471,10 @@ def test_export_writes_filtered_rows_as_csv_and_tsv_with_bom(fixture_project, tm
     # Default columns when the caller sends none.
     result = write_report_rows(tmp_path / "default.csv", "csv", rows)
     assert result["rows"] == 1
-    assert (tmp_path / "default.csv").read_text(encoding="utf-8-sig").splitlines()[0].startswith("category,book,chapter,verse,")
+    default_header = (tmp_path / "default.csv").read_text(encoding="utf-8-sig").splitlines()[0]
+    assert default_header.startswith("category,book,chapter,verse,")
+    # A check's suggestion and an AI proposal are separate columns (#317).
+    assert ",explanation,checkSuggestion,aiProposal," in default_header
 
 
 def test_summarize_rows_counts_fixed_by_and_open_severity():

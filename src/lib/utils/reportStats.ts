@@ -148,7 +148,7 @@ export function filterRows(rows: ReportRow[], filters: ReportFilters): ReportRow
     if (filters.result && row.result !== filters.result) return false;
     if (filters.severity && row.severity !== filters.severity) return false;
     if (needle) {
-      const haystack = [row.reference, row.issue, row.explanation, row.aiProposal, row.note, row.checkType]
+      const haystack = [row.reference, row.issue, row.explanation, row.checkSuggestion, row.aiProposal, row.note, row.checkType]
         .join("\n").toLocaleLowerCase();
       if (!haystack.includes(needle)) return false;
     }
@@ -362,6 +362,7 @@ export const EXPORT_COLUMNS: ReportExportColumn[] = [
   { key: "reference", label: "Reference" },
   { key: "issue", label: "Issue" },
   { key: "explanation", label: "Explanation" },
+  { key: "checkSuggestion", label: "Check suggestion" },
   { key: "aiProposal", label: "AI proposal" },
   { key: "fixedBy", label: "Fixed by" },
   { key: "fixedByDetail", label: "Fixed by (detail)" },

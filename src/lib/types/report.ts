@@ -34,6 +34,12 @@ export interface ReportRow {
   reference: string;
   issue: string;
   explanation: string;
+  /**
+   * A deterministic check's own suggested fix (Greek Room's
+   * `suggested_replacement`). Never AI output (#317).
+   */
+  checkSuggestion: string;
+  /** Wording an AI provider returned: the AI review's correction or proposed selection on a tN/tW check. */
   aiProposal: string;
   /** pass | review | problem | not_applicable | "" — the AI review's verdict on a tN/tW check. */
   aiVerdict: string;

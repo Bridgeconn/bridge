@@ -541,6 +541,7 @@
                       <th class="num">Chapter</th>
                       <th class="num">Verse</th>
                       <th>Issue and explanation</th>
+                      <th>Check suggestion</th>
                       <th>AI proposal</th>
                       <th>Fixed by</th>
                       <th>Pass / fail</th>
@@ -598,6 +599,13 @@
                                 >&#128078;</button>
                               </span>
                             </span>
+                          {/if}
+                        </td>
+                        <td class="proposal">
+                          {#if row.checkSuggestion}
+                            {row.checkSuggestion}
+                          {:else}
+                            <span class="muted">—</span>
                           {/if}
                         </td>
                         <td class="proposal">
