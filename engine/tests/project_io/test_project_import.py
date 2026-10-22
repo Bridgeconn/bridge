@@ -509,6 +509,31 @@ def test_paratext_settings_are_detected_without_modifying_source(tmp_path):
     assert {path.name: path.read_bytes() for path in source.iterdir()} == before
 
 
+@pytest.mark.parametrize(("iso_code", "expected"), [
+    ("sa:::", "san"),          # Paratext's own form, two-letter ISO 639-1 (#308)
+    ("ta:::", "tam"),
+    ("xxx:Latn::", "xxx"),     # three-letter code with a script subtag
+    ("ory", "ory"),            # bare three-letter code
+    ("qq:::", ""),             # unknown two-letter code: left for the reviewer
+    (":::", ""),
+    ("abcd:::", ""),
+])
+def test_paratext_language_iso_code_resolves_to_iso_639_3(tmp_path, iso_code, expected):
+    source = tmp_path / "ParatextProject"
+    source.mkdir()
+    (source / "57TIT.SFM").write_text(SIMPLE_USFM, encoding="utf-8")
+    (source / "Settings.xml").write_text(
+        "<ScriptureText><Name>DVT</Name><FullName>DevaTest</FullName>"
+        f"<LanguageIsoCode>{iso_code}</LanguageIsoCode></ScriptureText>",
+        encoding="utf-8",
+    )
+
+    preview = inspect_import(source)
+
+    assert preview["metadata"]["languageId"] == expected
+    assert ("languageId" in preview["missingFields"]) is (expected == "")
+
+
 def test_utf8_bom_non_latin_txt_import_preserves_text(tmp_path):
     source = tmp_path / "REV.txt"
     source.write_text("\\id REV\n\\h ପ୍ରକାଶିତ\n\\c 1\n\\v 1 ପ୍ରଥମ ପଦ।\n", encoding="utf-8-sig")

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Callable
 from xml.etree import ElementTree
 
+from .iso639 import ISO_639_1_TO_3
 from .original_language_resources import (
     blank_source_alignments,
     resource_for_book,
@@ -479,6 +480,20 @@ def _archive_manifest(source: Path) -> tuple[str, dict[str, Any]]:
     raise ProjectError(f"No project manifest found in {source.name}.")
 
 
+def _paratext_language_id(value: str) -> str:
+    """The ISO 639-3 code in a Paratext ``<LanguageIsoCode>`` (#308).
+
+    Paratext writes ``code:script:region:variant`` (``sa:::``, ``xxx:Latn::``).
+    The language is the part before the first colon: a two-letter ISO 639-1
+    code is mapped to its ISO 639-3 code, a three-letter code is kept, and
+    anything else is "" so the reviewer picks the language -- the raw string
+    is never offered as a code."""
+    code = value.split(":", 1)[0].strip().lower()
+    if len(code) == 2:
+        return ISO_639_1_TO_3.get(code, "")
+    return code if len(code) == 3 and code.isascii() and code.isalpha() else ""
+
+
 def _paratext_metadata(source: Path) -> dict[str, str]:
     settings = source / "Settings.xml" if source.is_dir() else source.parent / "Settings.xml"
     if not settings.is_file():
@@ -563,7 +578,7 @@ def inspect_import(source_path: str | Path) -> dict[str, Any]:
     language_names = {book.language_name for book in books if book.language_name}
     language_directions = {book.language_direction for book in books if book.language_direction}
     metadata = {
-        "languageId": next(iter(language_ids)) if len(language_ids) == 1 else paratext.get("languageisocode", ""),
+        "languageId": next(iter(language_ids)) if len(language_ids) == 1 else _paratext_language_id(paratext.get("languageisocode", "")),
         "languageName": next(iter(language_names)) if len(language_names) == 1 else "",
         "languageDirection": next(iter(language_directions)) if len(language_directions) == 1 else ("ltr" if paratext.get("lefttoright", "").lower() == "true" else ""),
         "projectName": paratext.get("name", "") or source.stem,

@@ -284,6 +284,12 @@
         projectName: preview.metadata.projectName ?? "",
         bibleName: preview.metadata.bibleName ?? "",
       };
+      // A detected code with no name (a Paratext LanguageIsoCode, #308) is
+      // named from the same table the search uses; an unknown code stays as it is.
+      const detected = !metadata.languageName && metadata.languageId
+        ? languages.find((language) => language.iso6393 === metadata.languageId)
+        : undefined;
+      if (detected) metadata = { ...metadata, languageName: detected.name };
       languageQuery = metadata.languageName || metadata.languageId;
     } catch (value) {
       error = message(value);

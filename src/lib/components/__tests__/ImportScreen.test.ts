@@ -184,3 +184,31 @@ describe("ImportScreen background import (#231)", () => {
     expect(screen.getByRole("button", { name: "Import book" })).toBeEnabled();
   });
 });
+
+// #308: a Paratext folder gives the engine only an ISO code, no name.
+describe("ImportScreen detected language code (#308)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    forgetHandledDrops();
+    project.set(null);
+    listProjects.mockResolvedValue({ projects: [] });
+  });
+
+  it("names a known ISO 639-3 code from the language table, so import is not blocked", async () => {
+    const base = preview();
+    inspectImport.mockResolvedValue({ ...base, kind: "paratext", metadata: { ...base.metadata, languageId: "san", languageName: "" } });
+    await renderWithPreview();
+
+    expect(screen.getByPlaceholderText("Search every ISO 639-3 language…")).toHaveValue("Sanskrit");
+    expect(screen.getByPlaceholderText("ISO 639-3")).toHaveValue("san");
+    expect(screen.queryByText("Select a language and complete both project names.")).toBeNull();
+  });
+
+  it("leaves an unknown code unnamed for the reviewer", async () => {
+    const base = preview();
+    inspectImport.mockResolvedValue({ ...base, kind: "paratext", metadata: { ...base.metadata, languageId: "qqq", languageName: "" } });
+    await renderWithPreview();
+
+    expect(screen.getByText("Select a language and complete both project names.")).toBeInTheDocument();
+  });
+});
