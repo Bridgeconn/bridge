@@ -45,7 +45,7 @@ import {
   historyCountByVerse,
   activeLanguageQaFindingId,
 } from "../../stores";
-import { rawView } from "../../editorPrefs";
+import { rawView, setSidePanel, sidePanels } from "../../editorPrefs";
 import { alignmentOpen, alignmentKey } from "../../alignmentUi";
 import { cancelVerseEdit, editingChapter, editingVerse, editSaving, recheckingKey } from "../../verseEditor";
 import { aiReviewRequest, aiJobActive } from "../../aiReviewUi";
@@ -679,6 +679,34 @@ describe("VerseList alignment glyph (issue #70)", () => {
     expect(onSelect).toHaveBeenCalledWith("6");
     expect(get(alignmentOpen)).toBe(true);
     expect(get(alignmentKey)).toBe(verseKey("1", "6"));
+  });
+
+  it("opens the Review side panel the modal is mounted in when it is closed (#306)", async () => {
+    setSidePanel("review", { open: false });
+    setSidePanel("languageQa", { open: true });
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    await fireEvent.click(glyph());
+    expect(get(alignmentOpen)).toBe(true);
+    expect(get(sidePanels).review.open).toBe(true);
+    // The other panels are left as they were.
+    expect(get(sidePanels).languageQa.open).toBe(true);
+    // Opening again with Review already open never toggles it shut.
+    alignmentOpen.set(false);
+    await fireEvent.click(glyph());
+    expect(get(sidePanels).review.open).toBe(true);
+    setSidePanel("languageQa", { open: false });
+  });
+
+  it("leaves the Review panel closed when the guard refuses to open (#306)", async () => {
+    setSidePanel("review", { open: false });
+    checkingProgress.set({
+      running: true, percent: 40, label: "Checking…", jobId: "j1", state: "running", error: "", scope: "chapter",
+    });
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    await fireEvent.click(glyph());
+    expect(get(alignmentOpen)).toBe(false);
+    expect(get(sidePanels).review.open).toBe(false);
+    setSidePanel("review", { open: true });
   });
 
   it("does not also trigger the row's own select/edit handlers", async () => {
