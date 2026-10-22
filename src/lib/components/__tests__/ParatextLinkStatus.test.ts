@@ -43,10 +43,24 @@ describe("ParatextLinkStatus (#356)", () => {
     paratextRefresh.mockResolvedValue(status({ files: { ...status().files, notes: { count: 3, users: [] } } }));
     render(ParatextLinkStatus, { props: { projectKey: "a" } });
     const line = await screen.findByTestId("paratext-link-status");
-    expect(line).toHaveTextContent("Paratext TSTP · linked · 2 notes files");
+    expect(line).toHaveTextContent("Paratext TSTP · linked · 2 notes files · 2 note threads");
 
     await fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     await waitFor(() => expect(line).toHaveTextContent("3 notes files"));
+  });
+
+  it("reads the status again until the notes index is ready (#357)", async () => {
+    vi.useFakeTimers();
+    paratextLinkStatus
+      .mockResolvedValueOnce(status({ notesIndex: { state: "building", threads: 0, builtAt: "", buildSeconds: null, source: "", error: "" } }))
+      .mockResolvedValueOnce(status({ notesIndex: { state: "ready", threads: 19743, builtAt: "", buildSeconds: 3.8, source: "files", error: "" } }));
+    render(ParatextLinkStatus, { props: { projectKey: "a" } });
+    await vi.advanceTimersByTimeAsync(10);
+    expect(screen.getByTestId("paratext-link-status")).toHaveTextContent("2 notes files · reading notes…");
+    await vi.advanceTimersByTimeAsync(2100);
+    expect(screen.getByTestId("paratext-link-status")).toHaveTextContent("2 notes files · 19743 note threads");
+    expect(paratextLinkStatus).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
   });
 
   it("offers the moved folder and relinks to it", async () => {
