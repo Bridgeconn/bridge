@@ -49,6 +49,7 @@ from tc_ai_bridge.passage_semantic_repository import (
     RECORD_DEPENDENCY_TABLES,
     FoundationRepository,
 )
+from tc_ai_bridge.tc_project import ProjectError
 from tests.support.correction_9b0 import TEXT, VERSE, _confirmed_finding, _service
 
 
@@ -722,26 +723,87 @@ def test_correction_modules_contain_no_scripture_writer() -> None:
         assert forbidden not in source, f"correction_eligibility must not use {forbidden}"
 
 
-def test_apply_scripture_edit_still_lacks_the_strict_preconditions() -> None:
-    """Records the minimum strict-mode additions 9B.3 must add before applying.
+def _strict_writer_case(tmp_path: Path, **overrides):
+    """A correction-shaped strict context for PHP 1:6, valid unless overridden."""
+    from tc_ai_bridge.passage_semantic_models import StrictScriptureEditContext
+    from tests.support.correction_9b3b import _fixture, _hash
 
-    apply_scripture_edit() reads the current text and writes; it takes no
-    expected revision, no expected content hash and no expected old span, so it
-    cannot yet fail closed on a concurrent edit. This test pins that gap and
-    will fail once the parameters land -- at which point 9B.3 updates it.
-    """
-    import inspect
-
-    from tc_ai_bridge.tc_project import TranslationCoreProject
-
-    parameters = set(inspect.signature(TranslationCoreProject.apply_scripture_edit).parameters)
-    required_later = {
-        "expected_target_revision", "expected_target_content_hash", "expected_old_text",
-    }
-    assert not (required_later & parameters), (
-        "apply_scripture_edit gained strict-mode parameters; update Stage 9B.3 "
-        "readiness expectations and the correction application design."
+    root, project, runtime, _service, _finding, _proposal = _fixture(
+        tmp_path, "before original after", "original", "reviewed",
     )
+    before = project.target_verse_text("1", "6")
+    current = runtime.repository.current_target_revision("project-1", "PHP", "PHP 1:6")
+    fields = dict(
+        expected_target_revision=current["textRevision"],
+        expected_target_content_hash=_hash(before),
+        expected_original_verse_text=before,
+        expected_start_code_point=7, expected_end_code_point=15,
+        expected_original_span_text="original",
+        intended_final_verse_text="before reviewed after",
+        pending_invalidation_id="no-invalidation-needed-before-the-precondition",
+        application_id="strict-precondition-case",
+    )
+    fields.update(overrides)
+    return root, project, StrictScriptureEditContext(**fields)
+
+
+@pytest.mark.parametrize("override,message", [
+    ({"expected_original_verse_text": "before something else"}, "target verse text changed"),
+    ({"expected_target_content_hash": hashlib.sha256(b"older text").hexdigest()},
+     "target verse hash changed"),
+    ({"expected_target_revision": "an-older-revision"}, "target revision changed"),
+])
+def test_apply_scripture_edit_fails_closed_on_a_stale_correction(
+    tmp_path: Path, override: dict, message: str,
+) -> None:
+    """#127, the correction route: the canonical writer itself refuses a
+    reviewed correction whose verse text, content hash or Stage 6B target
+    revision no longer matches, before any file is touched.
+
+    This replaced a test that pinned the gap by parameter name. The three
+    preconditions it named arrive through Stage 9B.3b's StrictScriptureEditContext
+    (expected_original_verse_text, expected_target_content_hash,
+    expected_target_revision), so they are proved here by behaviour."""
+    root, project, strict = _strict_writer_case(tmp_path, **override)
+    chapter = root / "php" / "1.json"
+    before = chapter.read_bytes()
+    with pytest.raises(ProjectError, match=f"REVISION_CONFLICT: {message}"):
+        project.apply_scripture_edit(
+            "1", "6", "before reviewed after", strict_context=strict,
+            journal_prepared_callback=lambda _transaction_id: None,
+        )
+    assert chapter.read_bytes() == before
+    assert not (root / ".apps" / "translationCore" / "tools" / "wordAlignment"
+                / "invalid" / "1" / "6.json").exists()
+
+
+def test_apply_scripture_edit_refuses_a_plain_edit_made_against_older_text(tmp_path: Path) -> None:
+    """#127, the editor route: `expected_old_text` is the text the edit started
+    from. A mismatch writes nothing; a match, or no expectation at all (every
+    caller that sends none), writes as before."""
+    from tests.support.correction_9b3b import _fixture
+
+    root, project, _runtime, _service, _finding, _proposal = _fixture(
+        tmp_path, "before original after", "original", "reviewed",
+    )
+    chapter = root / "php" / "1.json"
+    project.apply_scripture_edit("1", "6", "newer text from elsewhere")
+    newer = chapter.read_bytes()
+    with pytest.raises(ProjectError, match="REVISION_CONFLICT"):
+        project.apply_scripture_edit(
+            "1", "6", "before original after (stale edit)",
+            expected_old_text="before original after",
+        )
+    assert chapter.read_bytes() == newer
+    assert project.target_verse_text("1", "6") == "newer text from elsewhere"
+
+    result = project.apply_scripture_edit(
+        "1", "6", "newer text, edited knowingly", expected_old_text="newer text from elsewhere",
+    )
+    assert result["oldText"] == "newer text from elsewhere"
+    assert project.target_verse_text("1", "6") == "newer text, edited knowingly"
+    with pytest.raises(ProjectError, match="must be a string"):
+        project.apply_scripture_edit("1", "6", "anything", expected_old_text=7)  # type: ignore[arg-type]
 
 
 # --- Dependency propagation over real records -------------------------------

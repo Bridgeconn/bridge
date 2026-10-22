@@ -2718,8 +2718,17 @@ class TranslationCoreProject:
             )
         return application
 
-    def apply_scripture_edit(self, chapter: str | int, verse: str | int, new_text: str, username: str = 'AI Bridge Reviewer', tags: list[str] | None = None, context_id: dict[str, Any] | None = None, *, strict_context: Any | None = None, journal_prepared_callback: Any | None = None, journal_metadata: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Human-only target verse edit with tC-compatible stale propagation and rollback."""
+    def apply_scripture_edit(self, chapter: str | int, verse: str | int, new_text: str, username: str = 'AI Bridge Reviewer', tags: list[str] | None = None, context_id: dict[str, Any] | None = None, *, strict_context: Any | None = None, expected_old_text: str | None = None, journal_prepared_callback: Any | None = None, journal_metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Human-only target verse edit with tC-compatible stale propagation and rollback.
+
+        `expected_old_text` (#127) is the verse text the caller's edit was made
+        against -- the editor sends the text it opened with. When given and the
+        stored verse no longer equals it exactly, the write is refused with
+        REVISION_CONFLICT and nothing is touched, so a stale save never
+        overwrites a newer verse. None keeps the historical behaviour. A
+        reviewed correction (`strict_context`) carries its own stricter
+        preconditions: the reviewed verse text, its content hash and the
+        Stage 6B target revision, all checked below."""
         if str(verse) == 'front':
             raise ProjectError('Front-matter editing is not enabled in v0.6; edit a numbered verse.')
         # Ordinary manual edits retain their historical trimming behaviour.
@@ -2731,6 +2740,13 @@ class TranslationCoreProject:
         chapter_path = self.book_dir / f'{chapter}.json'
         chapter_data = self.target_chapter(chapter)
         old_text = str(chapter_data.get(str(verse), ''))
+        if expected_old_text is not None:
+            if not isinstance(expected_old_text, str):
+                raise ProjectError('expected_old_text must be a string when given.')
+            if old_text != expected_old_text:
+                raise ProjectError(
+                    'REVISION_CONFLICT: the verse was changed after this edit was started; nothing was written.'
+                )
         if strict_context is not None:
             import hashlib
             if journal_prepared_callback is None:

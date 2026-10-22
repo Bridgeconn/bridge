@@ -251,7 +251,7 @@ describe("VerseList footnote handling", () => {
       await fireEvent.contextMenu(mark);
       await fireEvent.click(screen.getByRole("menuitem", { name: 'Use "அந்தக் காகம்"' }));
       const manual = points.slice(0, start).join("") + "அந்தக் காகம்" + points.slice(end).join("");
-      expect(editVerse).toHaveBeenCalledWith("1", "6", manual);
+      expect(editVerse).toHaveBeenCalledWith("1", "6", manual, raw);
       expect(manual).toContain("\\f + \\ft குறிப்பு\\f* அந்தக் காகம் பறந்தது.");
     } finally {
       languageQaFindingsByVerse.set({});
@@ -358,7 +358,7 @@ describe("VerseList footnote handling", () => {
       const items = await openMenu({ suggestions: five });
       expect(items.filter(([label]) => label?.startsWith("Use "))).toEqual(five.map((s) => [`Use "${s.text}"`, s.rationale]));
       await fireEvent.click(screen.getByRole("menuitem", { name: 'Use "அந்தக்காகம்"' }));
-      expect(editVerse).toHaveBeenCalledWith("1", "6", "அந்தக்காகம் பறந்தது.");
+      expect(editVerse).toHaveBeenCalledWith("1", "6", "அந்தக்காகம் பறந்தது.", "அந்த காகம் பறந்தது.");
       await waitFor(() => expect(decideVerse).toHaveBeenCalledWith("1", "6", "lqa-1", "accepted", undefined,
         expect.objectContaining({ chosenSuggestion: "அந்தக்காகம்", chosenRank: 2, suggestedReplacement: "அந்தக்காகம்" })));
     });
@@ -554,7 +554,7 @@ describe("VerseList footnote handling", () => {
     expect(screen.getByRole("menuitem", { name: "Accept finding" }))
       .toHaveAttribute("title", expect.stringContaining("proposed correction"));
     await fireEvent.click(screen.getByRole("menuitem", { name: "Accept finding" }));
-    expect(editVerse).toHaveBeenCalledWith("1", "6", "omega beta");
+    expect(editVerse).toHaveBeenCalledWith("1", "6", "omega beta", "alpha beta");
     expect(runVerseChecks).toHaveBeenCalledWith("1", "6", ["tN", "tW", "alignment", "text"]);
   });
 

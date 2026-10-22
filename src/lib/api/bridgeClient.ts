@@ -973,9 +973,14 @@ export const bridge = {
     return call("verse.decide", { chapter, verse, findingId, status, comment, issue });
   },
 
-  editVerse(chapter: string, verse: string, newText: string): Promise<{
+  /** `expectedOldText` is the verse text the edit started from (#127): when
+   *  given and the stored verse no longer equals it, the engine writes nothing
+   *  and refuses with a REVISION_CONFLICT message. */
+  editVerse(chapter: string, verse: string, newText: string, expectedOldText?: string): Promise<{
     committed: boolean;
     issueResolutionsNeedingRecheck: number;
+    /** The text the engine stored (a typed save is trimmed); absent from an older engine. */
+    newText?: string;
     /** What the reader shows for the saved text (#91); absent from an older engine. */
     display?: import("../types/finding").VerseDisplay;
     /** Marker problems in the saved text; never blocking (the save happened). */
@@ -984,7 +989,9 @@ export const bridge = {
      * learned replacement back (`action: "retracted"`). */
     learned?: VerseEditLearned;
   }> {
-    return call("verse.edit", { chapter, verse, newText });
+    return call("verse.edit", expectedOldText === undefined
+      ? { chapter, verse, newText }
+      : { chapter, verse, newText, expectedOldText });
   },
 
   /** #272: the chapter's stored findings, decisions applied, when they still

@@ -8165,7 +8165,8 @@ class BridgeEngine:
                                            p.get("comment", ""), issue)
                 return EngineResponse.ok(request.id, result=result)
             if m == Methods.VERSE_EDIT:
-                result = self.edit_verse(p["chapter"], p["verse"], p["newText"])
+                result = self.edit_verse(p["chapter"], p["verse"], p["newText"],
+                                         expected_old_text=p.get("expectedOldText"))
                 return EngineResponse.ok(request.id, result=result)
             if m == Methods.VERSE_HISTORY:
                 return EngineResponse.ok(request.id, result=self.verse_history(p))

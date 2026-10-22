@@ -11,7 +11,7 @@ import { decideLanguageQaFinding } from "./findingActions";
 import { nudgeLanguageQa } from "./languageQaInline";
 import { editorCheckList } from "./checkSelection";
 import { recheckVerse } from "./verseChecks";
-import type { QaFinding, VerseDisplay } from "./types/finding";
+import type { QaFinding, VerseData, VerseDisplay } from "./types/finding";
 import type { LanguageQaFinding, LanguageQaSuggestion } from "./types/languageQa";
 import type { CorrectionApplicationIntent } from "./types/correctionReview";
 import {
@@ -117,15 +117,27 @@ export function setVerseEditSavedHook(hook: typeof onSaved): void {
 // call clears it, so a successful save still has it for the onSaved payload.
 let pendingAcceptFindingId = "";
 
+// The verse text the open edit was started from (#127). Sent with the save so
+// the engine refuses it when the verse changed in the meantime, instead of
+// overwriting the newer text. Undefined when the verse was not loaded: then
+// nothing is sent and the engine keeps its old behaviour.
+let editBaseText: string | undefined;
+
 export function setPendingAcceptFinding(findingId: string): void {
   pendingAcceptFindingId = findingId;
+}
+
+/** The engine's refusal of a save made against text that has since changed. */
+function isRevisionConflict(message: string): boolean {
+  return message.includes("REVISION_CONFLICT");
 }
 
 export function startVerseEdit(chapter: string, verse: string): boolean {
   if (!verse || get(checkingProgress).running || get(editSaving) || get(recheckingKey)) return false;
   editingChapter.set(chapter);
   editingVerse.set(verse);
-  editText.set(get(verseTexts)[verseKey(chapter, verse)] ?? "");
+  editBaseText = get(verseTexts)[verseKey(chapter, verse)];
+  editText.set(editBaseText ?? "");
   editError.set("");
   editErrorKey.set("");
   editWarnings.set(null);
@@ -146,6 +158,7 @@ export function cancelVerseEdit(): void {
   editingChapter.set("");
   editingVerse.set("");
   pendingAcceptFindingId = "";
+  editBaseText = undefined;
 }
 
 function withoutKey<T>(values: Record<string, T>, key: string): Record<string, T> {
@@ -201,6 +214,40 @@ function showVerseText(key: string, text: string, display?: VerseDisplay): () =>
 }
 
 /**
+ * The engine refused a save because the verse changed after the edit started
+ * (#127). Nothing was written. Show the verse as it now stands, and say so.
+ * A typed edit stays open with the reviewer's text untouched; its base moves
+ * to the newer text, so only a second, deliberate save (made after reading the
+ * newer text quoted here) replaces it.
+ */
+async function staleSaveMessage(chapter: string, verse: string, key: string, optimistic: boolean): Promise<string> {
+  let current: VerseData | null = null;
+  try {
+    current = await bridge.getVerse(chapter, verse);
+  } catch {
+    current = null;
+  }
+  if (current && typeof current.text === "string") {
+    showVerseText(key, current.text, isVerseDisplay(current.display) ? current.display : undefined);
+    if (current.alignmentStatus) {
+      alignmentStatusByVerse.update((values) => ({ ...values, [key]: current!.alignmentStatus }));
+    }
+    noteAlignmentChanged(key);
+    nudgeLanguageQa();
+    if (!optimistic && get(editingChapter) === chapter && get(editingVerse) === verse) {
+      editBaseText = current.text;
+    }
+  }
+  const now = current ? ` It now reads: “${current.display?.plain ?? current.text}”.` : "";
+  return optimistic
+    ? `This verse was changed after the check, so the fix was not applied.${now}`
+    : `This verse was changed after you opened it, so your edit was not saved.${now}`
+      + (current
+        ? " Your text is still in the box: save again to replace the newer text, or cancel to keep it."
+        : " Your text is still in the box; copy it, then cancel and reopen the verse.");
+}
+
+/**
  * Save the open edit, then re-check the verse.
  *
  * `optimistic` (a Language QA Use): the new text is shown, and the editor
@@ -222,6 +269,7 @@ export async function saveVerseEdit({ optimistic = false }: { optimistic?: boole
     return false;
   }
   const acceptFindingId = pendingAcceptFindingId;
+  const baseText = editBaseText;
   editError.set("");
   editSaving.set(true);
   let undo: (() => void) | null = null;
@@ -230,8 +278,11 @@ export async function saveVerseEdit({ optimistic = false }: { optimistic?: boole
     cancelVerseEdit();
   }
   try {
-    const editResult = await bridge.editVerse(chapter, verse, text);
+    const editResult = await bridge.editVerse(chapter, verse, text, baseText);
     undo = null;
+    // What the engine stored (a typed save is trimmed there), so the next
+    // edit of this verse starts from exactly the stored text (#127).
+    const saved = typeof editResult.newText === "string" ? editResult.newText : text;
     nudgeLanguageQa();  // the edit started a new Language QA pass
     bumpHistoryCount(key);
     // The engine has the new text, so its groups for the verse changed: the
@@ -241,11 +292,12 @@ export async function saveVerseEdit({ optimistic = false }: { optimistic?: boole
     noteAlignmentChanged(key);
     editWarnings.set(editResult.warnings?.length ? { key, warnings: editResult.warnings } : null);
     if (!optimistic) {
-      showVerseText(key, text, editResult.display);
+      showVerseText(key, saved, editResult.display);
       cancelVerseEdit();
     } else {
       // The optimistic text has been showing raw; now the engine has said
-      // what it shows.
+      // what it stored and what it shows.
+      if (saved !== text) verseTexts.update((t) => ({ ...t, [key]: saved }));
       setDisplay(key, editResult.display);
     }
     recheckingKey.set(key);
@@ -271,7 +323,10 @@ export async function saveVerseEdit({ optimistic = false }: { optimistic?: boole
     undo?.();
     recheckingKey.set("");
     checkStatusByVerse.update((map) => ({ ...map, [key]: "failed" }));
-    editError.set(e instanceof Error ? e.message : String(e));
+    const message = e instanceof Error ? e.message : String(e);
+    editError.set(isRevisionConflict(message)
+      ? await staleSaveMessage(chapter, verse, key, optimistic)
+      : message);
     editErrorKey.set(key);
     return false;
   } finally {

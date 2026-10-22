@@ -1,19 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { get } from "svelte/store";
 
-const { editVerse, runVerseChecks, decideVerse } = vi.hoisted(() => ({
+const { editVerse, runVerseChecks, decideVerse, getVerse } = vi.hoisted(() => ({
   editVerse: vi.fn(),
   runVerseChecks: vi.fn(),
   decideVerse: vi.fn(),
+  getVerse: vi.fn(),
 }));
 
 vi.mock("../../api/bridgeClient", () => ({
-  bridge: { editVerse, runVerseChecks, decideVerse },
+  bridge: { editVerse, runVerseChecks, decideVerse, getVerse },
 }));
 
 import {
-  applyLanguageQaSuggestedFix, applySuggestedFindingFix, cancelVerseEdit, editText, editWarnings, saveVerseEdit,
-  startVerseEdit,
+  applyLanguageQaSuggestedFix, applySuggestedFindingFix, cancelVerseEdit, editError, editText, editWarnings,
+  editingVerse, saveVerseEdit, startVerseEdit,
 } from "../../verseEditor";
 import {
   alignmentRevisionByVerse,
@@ -57,7 +58,7 @@ describe("applySuggestedFindingFix", () => {
   it("uses the normal scripture edit and re-check path", async () => {
     const result = await applySuggestedFindingFix(finding());
     expect(result.ok).toBe(true);
-    expect(editVerse).toHaveBeenCalledWith("1", "6", "omega beta");
+    expect(editVerse).toHaveBeenCalledWith("1", "6", "omega beta", "alpha beta");
     expect(runVerseChecks).toHaveBeenCalledWith("1", "6", ["tN", "tW", "alignment", "text"]);
     expect(get(verseTexts)[verseKey("1", "6")]).toBe("omega beta");
   });
@@ -86,7 +87,7 @@ describe("applySuggestedFindingFix", () => {
     expect(startVerseEdit("1", "6")).toBe(true);
     editText.set("alpha gamma");
     expect(await saveVerseEdit()).toBe(true);
-    expect(editVerse).toHaveBeenCalledWith("1", "6", "alpha gamma");
+    expect(editVerse).toHaveBeenCalledWith("1", "6", "alpha gamma", "alpha beta");
     expect(get(languageQaFindingsByVerse)["1:6"]).toBeUndefined();
   });
 
@@ -122,7 +123,7 @@ describe("applyLanguageQaSuggestedFix", () => {
   it("uses the normal scripture edit/re-check path, then records the decision via verse.decide", async () => {
     const result = await applyLanguageQaSuggestedFix(languageQaFinding());
     expect(result.ok).toBe(true);
-    expect(editVerse).toHaveBeenCalledWith("1", "6", "omega beta");
+    expect(editVerse).toHaveBeenCalledWith("1", "6", "omega beta", "alpha beta");
     expect(runVerseChecks).toHaveBeenCalledWith("1", "6", ["tN", "tW", "alignment", "text"]);
     // The issue marks it as Language QA, so the engine keeps it out of the
     // review-progress rollup, and records what the reviewer saw.
@@ -143,7 +144,7 @@ describe("applyLanguageQaSuggestedFix", () => {
     ] });
     const result = await applyLanguageQaSuggestedFix(finding, finding.suggestions[1]);
     expect(result.ok).toBe(true);
-    expect(editVerse).toHaveBeenCalledWith("1", "6", "psi beta");
+    expect(editVerse).toHaveBeenCalledWith("1", "6", "psi beta", "alpha beta");
     expect(decideVerse).toHaveBeenCalledWith("1", "6", "term-1", "accepted", undefined,
       expect.objectContaining({ chosenSuggestion: "psi", chosenRank: 2 }));
   });
@@ -178,7 +179,7 @@ describe("applyLanguageQaSuggestedFix", () => {
       suggestedReplacement: "அப்படிக் கூறினான்",
     }));
     expect(result.ok).toBe(true);
-    expect(editVerse).toHaveBeenCalledWith("1", "6", "அப்படிக் கூறினான் பின்னர்");
+    expect(editVerse).toHaveBeenCalledWith("1", "6", "அப்படிக் கூறினான் பின்னர்", `${original} பின்னர்`);
     expect(decideVerse).toHaveBeenCalledWith("1", "6", "vallinam-1", "accepted", undefined,
       expect.objectContaining({ source: "languageQa", rule: "tamil.vallinam-missing" }));
   });
@@ -196,7 +197,7 @@ describe("applyLanguageQaSuggestedFix", () => {
     }));
     expect(result.ok).toBe(true);
     expect(editVerse).toHaveBeenCalledWith(
-      "1", "6", "அவன் சொன்னான்\\f + \\ft குறிப்பு\\f* அந்தக் காகம் பறந்தது.");
+      "1", "6", "அவன் சொன்னான்\\f + \\ft குறிப்பு\\f* அந்தக் காகம் பறந்தது.", raw);
   });
 });
 
@@ -276,5 +277,82 @@ describe("saveVerseEdit and the change history", () => {
     expect(get(historyCountByVerse)[verseKey("1", "6")]).toBe(1);
     // The engine's alignment is as it was, so no reader needs to re-read the verse.
     expect(get(alignmentRevisionByVerse)[verseKey("1", "6")]).toBeUndefined();
+  });
+});
+
+describe("a stale save (#127)", () => {
+  const key = verseKey("1", "6");
+  const display = (plain: string) => ({ plain, notes: [], removed: [], styles: [], warnings: [] });
+  const conflict = () => new Error("REVISION_CONFLICT: the verse was changed after this edit was started; nothing was written.");
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    cancelVerseEdit();
+    checkingProgress.set({ running: false, percent: 0, label: "", jobId: "", state: "idle", error: "", scope: "chapter" });
+    verseTexts.set({ [key]: "alpha beta" });
+    verseDisplay.set({ [key]: display("alpha beta") });
+    languageQaFindingsByVerse.set({});
+    historyCountByVerse.set({ [key]: 1 });
+    runVerseChecks.mockResolvedValue([]);
+    decideVerse.mockResolvedValue({});
+    getVerse.mockResolvedValue({
+      chapter: "1", verse: "6", text: "NEWER TEXT", display: display("NEWER TEXT"),
+      alignment: { alignments: [], wordBank: [] }, alignmentStatus: "invalid",
+    });
+  });
+
+  it("sends the text the edit opened with, and keeps the reviewer's typed text when refused", async () => {
+    editVerse.mockRejectedValueOnce(conflict());
+    startVerseEdit("1", "6");
+    editText.set("alpha beta (stale edit)");
+    expect(await saveVerseEdit()).toBe(false);
+    expect(editVerse).toHaveBeenCalledWith("1", "6", "alpha beta (stale edit)", "alpha beta");
+    // The editor stays open on the reviewer's own words.
+    expect(get(editingVerse)).toBe("6");
+    expect(get(editText)).toBe("alpha beta (stale edit)");
+    // The verse shows what the engine holds now, and the message quotes it.
+    expect(get(verseTexts)[key]).toBe("NEWER TEXT");
+    expect(get(verseDisplay)[key]).toEqual(display("NEWER TEXT"));
+    expect(get(editError)).toMatch(/changed after you opened it, so your edit was not saved/);
+    expect(get(editError)).toContain("“NEWER TEXT”");
+    expect(get(historyCountByVerse)[key]).toBe(1);
+    expect(runVerseChecks).not.toHaveBeenCalled();
+
+    // Saving again, having read the newer text, is a deliberate replace of it.
+    editVerse.mockResolvedValueOnce({ issueResolutionsNeedingRecheck: 0, newText: "alpha beta (stale edit)" });
+    expect(await saveVerseEdit()).toBe(true);
+    expect(editVerse).toHaveBeenLastCalledWith("1", "6", "alpha beta (stale edit)", "NEWER TEXT");
+  });
+
+  it("says so when the newer text cannot be read, and the typed text still stays", async () => {
+    editVerse.mockRejectedValueOnce(conflict());
+    getVerse.mockRejectedValueOnce(new Error("engine busy"));
+    startVerseEdit("1", "6");
+    editText.set("typed");
+    expect(await saveVerseEdit()).toBe(false);
+    expect(get(editText)).toBe("typed");
+    expect(get(editError)).toMatch(/copy it, then cancel and reopen the verse/);
+  });
+
+  it("puts a refused Language QA Use back to the newer text, not the old one", async () => {
+    editVerse.mockRejectedValueOnce(conflict());
+    const result = await applyLanguageQaSuggestedFix(languageQaFinding());
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/changed after the check, so the fix was not applied/);
+    expect(get(verseTexts)[key]).toBe("NEWER TEXT");
+    expect(decideVerse).not.toHaveBeenCalled();
+  });
+
+  it("starts the next edit from the text the engine stored, not the untrimmed typed text", async () => {
+    editVerse.mockResolvedValueOnce({ issueResolutionsNeedingRecheck: 0, newText: "omega" });
+    startVerseEdit("1", "6");
+    editText.set("  omega  ");
+    expect(await saveVerseEdit()).toBe(true);
+    expect(get(verseTexts)[key]).toBe("omega");
+    editVerse.mockResolvedValueOnce({ issueResolutionsNeedingRecheck: 0, newText: "omega psi" });
+    startVerseEdit("1", "6");
+    editText.set("omega psi");
+    expect(await saveVerseEdit()).toBe(true);
+    expect(editVerse).toHaveBeenLastCalledWith("1", "6", "omega psi", "omega");
   });
 });
