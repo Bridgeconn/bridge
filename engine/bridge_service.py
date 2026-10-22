@@ -119,6 +119,8 @@ from tc_ai_bridge.knowledge_base import KnowledgeBaseError
 from tc_ai_bridge.paratext_connector import ParatextConnectorClient, ParatextConnectorError
 from tc_ai_bridge.logos_connector import LogosConnectorClient, LogosConnectorError
 from tc_ai_bridge import paratext_install
+from tc_ai_bridge import paratext_link
+from paratext_session import ParatextSession
 from tc_ai_bridge.navigation import NavigationSyncCoordinator
 from tc_ai_bridge.models import QAIssue, TokenRef, VerseAlignment
 from tc_ai_bridge.secret_store import AppSettings
@@ -683,6 +685,11 @@ class Methods:
     # #282: install Bridge's Paratext connector on this PC (paratext_install.py).
     PARATEXT_CONNECTOR_STATUS = "paratext.connectorStatus"
     PARATEXT_INSTALL_CONNECTOR = "paratext.installConnector"
+    # #356: the open book's link to its Paratext project folder (paratext_link.py).
+    PARATEXT_LINK_STATUS = "paratext.linkStatus"
+    PARATEXT_RELINK = "paratext.relink"
+    PARATEXT_REFRESH = "paratext.refresh"
+    PARATEXT_BOOK_NAMES = "paratext.bookNames"
 
     ISSUE_RESOLUTION_LIST = "issueResolution.list"
     ISSUE_RESOLUTION_SAVE = "issueResolution.save"
@@ -779,6 +786,9 @@ class BridgeEngine:
         self._collection_jobs = CollectionJobManager()
         self._housestyle_learner = HouseStyleLearner()
         self._language_qa = LanguageQaManager()
+        # #356: the open book's Paratext session, kept across books of one
+        # Paratext project and replaced when the Guid changes.
+        self._paratext: ParatextSession | None = None
         # #277: books whose overrides file a hub pull rewrote; the dispatcher
         # rebinds Language QA on its next request (the pull is on the hub thread).
         self._language_qa_rebind_paths: set[str] = set()
@@ -1363,6 +1373,7 @@ class BridgeEngine:
         if self.project is not candidate:
             self._close_project_db_handles()
         self.project = candidate
+        self._attach_paratext(candidate.path)
         self.passage_semantic_runtime = None
         self._correction_application_service = None
         self._correction_affected_analysis_service = None
@@ -5037,6 +5048,51 @@ class BridgeEngine:
     # handoff. Continuous navigation uses the coordinator below so slow/unavailable
     # desktop applications never block ordinary Bridge requests.
 
+    # -- #356: the Paratext project link. The logic is in paratext_link.py and
+    # paratext_session.py; these only pick the session and the project path.
+
+    def _paratext_cache_root(self) -> Path:
+        return self.settings.path.parent / "paratext-cache"
+
+    def _attach_paratext(self, project_path: Path) -> None:
+        """Resolve the opened book's link; keep the session when the Guid is
+        the same (another book of one Paratext project). Never fails an open."""
+        try:
+            resolution = paratext_link.resolve(project_path)
+        except Exception as exc:  # noqa: BLE001 -- a link problem never blocks an open
+            _trace(f"paratext link not resolved: {exc}")
+            resolution = paratext_link.LinkResolution(paratext_link.NOT_PARATEXT, None)
+        session = self._paratext
+        if session is not None and resolution.guid and session.guid == resolution.guid:
+            session.update(resolution)
+        else:
+            self._paratext = ParatextSession(resolution, self._paratext_cache_root())
+
+    def _paratext_session(self) -> ParatextSession:
+        if self._paratext is None:
+            return ParatextSession(paratext_link.LinkResolution(paratext_link.NOT_PARATEXT, None),
+                                   self._paratext_cache_root())
+        return self._paratext
+
+    def paratext_link_status(self) -> dict[str, Any]:
+        return self._paratext_session().link_status()
+
+    def paratext_relink(self, folder: str) -> dict[str, Any]:
+        self._require_project()
+        paratext_link.relink(self.project.path, folder)
+        self._paratext_session().update(paratext_link.resolve(self.project.path))
+        return self.paratext_link_status()
+
+    def paratext_refresh(self) -> dict[str, Any]:
+        session = self._paratext_session()
+        if self.project is not None:
+            session.refresh(paratext_link.resolve(self.project.path))
+        return session.link_status()
+
+    def paratext_book_names(self) -> dict[str, Any]:
+        session = self._paratext_session()
+        return {"bookNames": session.book_names(), "state": session.resolution.state}
+
     def paratext_get_state(self) -> dict[str, Any]:
         state = ParatextConnectorClient().get_state()
         return asdict(state)
@@ -8705,6 +8761,14 @@ class BridgeEngine:
             if m == Methods.PARATEXT_INSTALL_CONNECTOR:
                 # Returns at once; the install runs on its own thread (#282).
                 return EngineResponse.ok(request.id, result=self._connector_installer.start())
+            if m == Methods.PARATEXT_LINK_STATUS:
+                return EngineResponse.ok(request.id, result=self.paratext_link_status())
+            if m == Methods.PARATEXT_RELINK:
+                return EngineResponse.ok(request.id, result=self.paratext_relink(p["folder"]))
+            if m == Methods.PARATEXT_REFRESH:
+                return EngineResponse.ok(request.id, result=self.paratext_refresh())
+            if m == Methods.PARATEXT_BOOK_NAMES:
+                return EngineResponse.ok(request.id, result=self.paratext_book_names())
             if m == Methods.LOGOS_GET_STATE:
                 return EngineResponse.ok(request.id, result=self.logos_get_state())
             if m == Methods.LOGOS_SET_REFERENCE:

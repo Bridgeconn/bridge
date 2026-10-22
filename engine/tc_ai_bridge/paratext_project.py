@@ -848,6 +848,22 @@ def notes_files(folder: str | Path) -> list[Path]:
     return sorted((p for p in Path(folder).glob("Notes_*.xml") if p.is_file()), key=lambda p: p.name.lower())
 
 
+def notes_users(folder: str | Path) -> list[str]:
+    """The users with a ``<CommentList>`` notes file, from each file's name;
+    only the first few KB of each file are read, to check its root."""
+    users = []
+    for path in notes_files(folder):
+        try:
+            with open(path, "rb") as handle:
+                head = handle.read(4096)
+            root = comment_list_root(head)
+        except (OSError, ElementTree.ParseError):
+            continue
+        if root == "CommentList":
+            users.append(path.stem[len("Notes_"):])
+    return users
+
+
 def notes_signatures(folder: str | Path) -> dict[str, Signature]:
     out = {}
     for path in notes_files(folder):

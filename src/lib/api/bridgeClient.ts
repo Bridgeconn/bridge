@@ -6,6 +6,7 @@ import type {
   ReferenceChapter, ReferenceChoice, RelatedWordsResult, CheckerSettings, CheckerSettingsPatch, CheckerSettingsUnavailable,
 } from "../types/languageQa";
 import type { CollectionQaSnapshot } from "../types/collectionQa";
+import type { ParatextBookNames, ParatextLinkStatus } from "../types/paratext";
 import type {
   HouseStyleEntry, HouseStyleEntryInput, HouseStyleListResponse,
 } from "../types/houseStyle";
@@ -370,6 +371,10 @@ export type EngineMethod =
   | "paratext.connectorStatus"
   | "paratext.getState"
   | "paratext.installConnector"
+  | "paratext.linkStatus"
+  | "paratext.relink"
+  | "paratext.refresh"
+  | "paratext.bookNames"
   | "ping"
   | "project.delete"
   | "project.forget"
@@ -1299,6 +1304,26 @@ export const bridge = {
    *  paratextConnectorStatus().install says how it went. One Windows admin prompt. */
   paratextInstallConnector(): Promise<Pick<ParatextConnectorStatus, "install">> {
     return call("paratext.installConnector");
+  },
+
+  /** #356: the open book's link to its Paratext project folder. */
+  paratextLinkStatus(): Promise<ParatextLinkStatus> {
+    return call("paratext.linkStatus");
+  },
+
+  /** #356: point every book of the collection at `folder`; refused unless it
+   *  holds the same Paratext project (Guid). */
+  paratextRelink(folder: string): Promise<ParatextLinkStatus> {
+    return call("paratext.relink", { folder });
+  },
+
+  /** #356: re-read the Paratext folder (drops this device's memos). */
+  paratextRefresh(): Promise<ParatextLinkStatus> {
+    return call("paratext.refresh");
+  },
+
+  paratextBookNames(): Promise<ParatextBookNames> {
+    return call("paratext.bookNames");
   },
 
   navigationStatus(context?: string): Promise<NavigationSyncState> {

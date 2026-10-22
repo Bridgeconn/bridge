@@ -174,6 +174,8 @@ _READ = (
     "reviewHistory.getEntityHistory",
     "analysisJob.status", "analysisJob.getRecent", "analysisJob.getScopeStatus",
     "paratext.getState", "paratext.connectorStatus", "issueResolution.list", "logos.getState",
+    # #356: the Paratext project link; refresh only drops this device's memos.
+    "paratext.linkStatus", "paratext.refresh", "paratext.bookNames",
     "navigation.status", "navigation.poll", "navigation.bridgeChanged", "navigation.resolve",
     "users.list", "users.setCurrent",
     "assignments.list",
@@ -212,6 +214,8 @@ _WRITE = (
     "semanticReview.decideLocation", "semanticReview.decideMeaning",
     "issueResolution.save", "issueResolution.queueParatext", "issueResolution.retryParatext",
     "paratext.setReference", "paratext.installConnector", "logos.setReference", "settings.set",
+    # #356: rewrites the link in every sibling's collection.json.
+    "paratext.relink",
 )
 
 _MANAGE_PROJECTS = (

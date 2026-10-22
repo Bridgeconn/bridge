@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { BookProgressEntry, ProjectReport, CoverageState } from "../types/finding";
+  import ParatextLinkStatus from "./ParatextLinkStatus.svelte";
 
   export let projectName: string;
   export let subtitle = "";
@@ -135,6 +136,7 @@
       {/if}
     </div>
   </div>
+  <ParatextLinkStatus projectKey={`${projectName}:${openBookName}`} />
 
   <div class="panels">
     <aside class="left-panel" aria-label="Books in this project">
