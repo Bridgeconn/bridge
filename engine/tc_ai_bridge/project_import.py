@@ -1098,9 +1098,63 @@ def materialize_lazy_project(project_root: str | Path, *,
     return True
 
 
+def _reidentify_copy(work: Path, final: Path, source: Path, identity: dict[str, Any]) -> str:
+    """Give a copied Bridge project its own identity (#309).
+
+    Called only when the copy's ``.bridge/project.json`` names a project that
+    is already registered on this device at a path that still exists (Benz,
+    2026-10-22): keeping it would make two folders one project. Returns the
+    new projectId. The source's ids are recorded in ``.bridge/import.json``
+    ``importedFrom``. A copied ``.bridge/collection.json`` is rewritten as a
+    single-book collection of the copy alone, with no collectionId -- the tC
+    path imports one book, and the copied file named sibling folders by
+    directory name, which in the destination would resolve to whatever
+    happens to live there. Its ``qaRuns``/``qaFinalStage`` described the
+    source's collection and are not carried over. Rows under
+    ``.apps/translationCoreAI/`` are left as copied; they are keyed by the
+    source's id and so are not shown for the copy."""
+    project_id = str(uuid.uuid4())
+    bridge_dir = work / ".bridge"
+    collection_path = work / _COLLECTION_PATH
+    collection = _read_json(collection_path)
+    _write_json_atomic(bridge_dir / "project.json", {
+        "schemaVersion": 1, "projectId": project_id, "collectionId": "",
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    })
+    import_record = _read_json(bridge_dir / "import.json")
+    import_record["importedFrom"] = {
+        "projectId": str(identity.get("projectId") or ""),
+        "collectionId": str(identity.get("collectionId") or collection.get("collectionId") or ""),
+        "createdAt": str(identity.get("createdAt") or ""),
+        "sourcePath": str(source),
+        "importedAt": datetime.now(timezone.utc).isoformat(),
+    }
+    _write_json_atomic(bridge_dir / "import.json", import_record)
+    if collection_path.is_file():
+        manifest = _read_json(work / "manifest.json")
+        project = manifest.get("project") if isinstance(manifest.get("project"), dict) else {}
+        book_id = str(project.get("id") or "").lower()
+        entries = collection.get("projects") if isinstance(collection.get("projects"), list) else []
+        own = next((dict(entry) for entry in entries
+                    if isinstance(entry, dict) and str(entry.get("bookId") or "").lower() == book_id), {})
+        own.pop("path", None)
+        own.update({
+            "bookId": book_id, "bookName": str(own.get("bookName") or project.get("name") or book_id.upper()),
+            "lazy": False, "projectId": project_id, "collectionId": "", "directoryName": final.name,
+        })
+        _write_json_atomic(collection_path, {
+            "schemaVersion": 2, "collectionId": "", "sourcePath": str(source),
+            "projectName": str(collection.get("projectName") or ""),
+            "bibleName": str(collection.get("bibleName") or ""),
+            "projects": [own],
+        })
+    return project_id
+
+
 def import_source(source_path: str | Path, destination_root: str | Path, metadata: dict[str, Any], *,
                   progress: ImportProgress | None = None,
-                  cancel: ImportCancel | None = None) -> dict[str, Any]:
+                  cancel: ImportCancel | None = None,
+                  identity_in_use: Callable[[str], bool] | None = None) -> dict[str, Any]:
     """Write the imported project(s) under ``destination_root``.
 
     Everything is built under one staging directory and moved into place only
@@ -1108,6 +1162,11 @@ def import_source(source_path: str | Path, destination_root: str | Path, metadat
     checkpoint, raising ImportCancelled) leaves the destination exactly as it
     was. Before #231 each book of a collection was moved as soon as it was
     written, so a crash on book 40 left 39 books behind.
+
+    ``identity_in_use(project_id)`` says whether a projectId is registered on
+    this device at a path that still exists. A copied translationCore project
+    whose ``.bridge/project.json`` names such an id gets a new one
+    (``_reidentify_copy``, #309); any other copy keeps its id and history.
     """
     source = Path(source_path).resolve()
     destination = Path(destination_root).resolve()
@@ -1144,10 +1203,19 @@ def import_source(source_path: str | Path, destination_root: str | Path, metadat
             _ensure_tc_project_compatible(work, combined)
             name = _slug(f"{combined['languageId']}_{resource['id']}_{manifest.get('project', {}).get('id', 'project')}", "project")
             final = _available_destination(destination, name)
+            copied_identity = _read_json(work / ".bridge" / "project.json")
+            copied_id = str(copied_identity.get("projectId") or "")
+            new_id = (
+                _reidentify_copy(work, final, source, copied_identity)
+                if copied_id and identity_in_use is not None and identity_in_use(copied_id) else ""
+            )
             import_checkpoint(progress, cancel, phase="commit", bookCount=1)
             os.replace(work, final)
             project = TranslationCoreProject(final)
-            imported.append({"path": str(final), "bookId": project.book_id, "bookName": project.summary.book_name})
+            entry = {"path": str(final), "bookId": project.book_id, "bookName": project.summary.book_name}
+            if new_id:
+                entry.update({"projectId": new_id, "collectionId": "", "importedFromProjectId": copied_id})
+            imported.append(entry)
         else:
             # inspect_import already parsed and validated every source. A
             # whole Bible used to be parsed again and then expanded into

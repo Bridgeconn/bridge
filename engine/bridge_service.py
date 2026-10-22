@@ -1757,7 +1757,10 @@ class BridgeEngine:
                 "or explicitly choose Import as separate copy."
             )
         root = Path(destination_root).resolve() if destination_root else self.project_root
-        result = import_source(path, root, metadata, progress=progress, cancel=cancel)
+        result = import_source(
+            path, root, metadata, progress=progress, cancel=cancel,
+            identity_in_use=self.project_registry.identity_in_use,
+        )
         timer.mark("import_source")
         # Past import_source the books are on disk; a cancel from here on is
         # too late and is ignored rather than leaving unregistered folders.

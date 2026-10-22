@@ -616,6 +616,13 @@ class ProjectRegistry:
         return changed
 
     @_locked
+    def identity_in_use(self, project_id: str) -> bool:
+        """#309: is this projectId registered here at a path that still
+        exists? An import copy carrying it would clash, so it gets a new id."""
+        entry = self._find(project_id=project_id) if project_id else None
+        return entry is not None and Path(str(entry.get("path") or "")).exists()
+
+    @_locked
     def get(self, project_id: str) -> dict[str, Any] | None:
         entry = self._find(project_id=project_id)
         return dict(entry) if entry is not None else None
