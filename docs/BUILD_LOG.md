@@ -21339,3 +21339,56 @@ issue already says.
 - Verification can stay ANALYSIS_NOT_CURRENT for good when an edit lands after the affected re-analysis.
 - Five other one-bad-verse refusals remain in the aligned exporter.
 - Prepared applications from before #314 resume without the new check.
+
+## 2026-10-22 (later) — Five more walk bugs, and the Language QA scan no longer starves the dispatcher (#308, #309, #321, #322, #324)
+
+**What.** Benz authorised this batch in files that were Revant's under the working split (project_import.py,
+project_registry.py, App.svelte, ProjectDashboard.svelte, AssignmentsDialog.svelte). From today Benz's repo
+(selvabenz/Bridge) is `origin` and RevantCI/bridge is `fork`. Issue numbers below are RevantCI's; the
+selvabenz copies are upstream + 27 (#306–#325 → #333–#352).
+
+- **#308** `_paratext_language_id()` takes the part of `<LanguageIsoCode>` before the first ":", maps a
+  two-letter code to ISO 639-3 (new `iso639.py`, all 184 codes, generated from the `iso-639-3` package the
+  import form already uses), keeps a three-letter code, and leaves anything else empty. The import form
+  fills the language name from its own table for a known code.
+- **#309** Two halves. `project.list` no longer fails for every project when one folder's identity clashes:
+  that folder becomes a conflict row (message, registered path, copy path, no actions) and the rest are
+  listed. Import of a Bridge-made project mints a new projectId **only when the source's id is registered
+  here at a path that still exists** (Benz's choice, 2026-10-22); the source ids go to
+  `.bridge/import.json` `importedFrom`, and a copied `collection.json` becomes a one-book collection of the
+  copy. A project from another machine keeps its id and history. The copy's `.apps/translationCoreAI/`
+  rows stay as copied and are filtered out by the new id.
+- **#321** The Assignments dialog closes on Escape, as Settings, Diagnostics and Export already do.
+- **#322** A book row's keydown ignores events from its inner buttons, so Enter on Open opens the book.
+- **#324** The verse list keeps a minimum width (340 px, more at larger text sizes); side panels shrink to
+  their minimums, then the one opened longest ago folds to its rail entry (visual only, saved panel state
+  unchanged). The status bar stays on one line with a full tooltip.
+- **Language QA responsiveness (CI's benchmark gate).** A watchdog thread in the engine showed `ping`
+  stalls of 250–900 ms during a scan while the `language-qa` thread sat in single C calls:
+  `json.loads` of the indic-qa IRV snapshot (ta 434 ms, ml 769 ms), `pickle.dumps/loads` of its in-memory
+  copy (ta ~200 ms, ml ~500–680 ms) and full `gc.collect()`. In the app that is a UI freeze near the end of
+  every scan. Now:
+  - The snapshot is format 2: gzip JSON lines, each line at most 2048 entries of one container. The old
+    format is still read. The cache is one pickle stream of the same pieces.
+  - `gc.collect()` is removed from the book switch; the old state is let go piece by piece.
+  - The Tamil lexicon is laid out one member per line (still one valid JSON document) and read a line at
+    a time; its deletion buckets parse on first use.
+  - All five `irv_state.json.gz` and `ta-irv/lexicon.json.gz` were re-encoded losslessly by
+    `scripts/convert_pack_pieces.py`, which refuses to write unless the new file decodes to exactly the old
+    one (types, values, dict order, provenance, the 47 human pairs); `--against b7d3940` passes.
+
+**Measured.**
+- Longest single GIL hold: file restore ta 182 → 30–44 ms, ml 513 → 32–69 ms; cache restore ml 74–87 →
+  16–29 ms; release ml 81 → 14–21 ms; lexicon load 54–59 → 14–17 ms. What remains above 50 ms is
+  automatic gen-2 GC.
+- Findings byte-identical old vs new: 433 findings over 15 passes on all five packs (PHM, RUT, PHM).
+- Memory peak across five book switches: ta 298 → 277 MB, ml 335 → 341 MB.
+- Gates on this batch: `npm run check` 0/0; `npm run test` 887/887; `npm run build` ok; engine
+  `pytest -n 6` 5511 passed, 0 failed; ta/hi/ml human-label gates pass; frozen sidecars rebuilt and
+  `smoke_sidecars.py` passed.
+
+**Not fixed yet.** The benchmark gate still flakes locally at about the old rate (final code 1 fail in 6
+Tamil runs; baseline 2 in 6). The rest of the tail is not the scan: `ping` itself spends 175–235 ms in
+`_authorize` → `local_user()`, because `WorkspaceRepository._connect` opens a new SQLite connection (four
+PRAGMAs, `synchronous=FULL`) on every call, and each GIL handover waits behind the scan thread. The
+`verse.decide (languageQa)` p95 is taken over 10 samples, so one slow decide fails it. Being worked next.
