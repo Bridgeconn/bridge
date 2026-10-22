@@ -61,6 +61,16 @@
       .includes(normalizedBookSearch);
   });
 
+  /** #322: Enter or Space on the row previews the book. A key pressed on the
+   *  row's own Open or Assign… button bubbles here too; it is left alone so
+   *  the button's own activation (open, assign) still happens. */
+  function onBookRowKeydown(event: KeyboardEvent, book: BookProgressEntry): void {
+    if (event.target !== event.currentTarget) return;
+    if (book.missing || (event.key !== "Enter" && event.key !== " ")) return;
+    event.preventDefault();
+    onPreviewBook(book.path);
+  }
+
   function percent(part: number, total: number): number {
     if (total <= 0) return 0;
     return Math.round((part / total) * 100);
@@ -161,7 +171,7 @@
                 tabindex={book.missing ? -1 : 0}
                 aria-disabled={book.missing}
                 on:click={() => !book.missing && onPreviewBook(book.path)}
-                on:keydown={(e) => !book.missing && (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onPreviewBook(book.path))}
+                on:keydown={(e) => onBookRowKeydown(e, book)}
               >
                 <div class="book-badge">{book.bookId?.toUpperCase() || "?"}</div>
                 <div class="book-copy">
