@@ -15,6 +15,11 @@ export const project = writable<ProjectInfo | null>(null);
  *  order on it. Undefined (no attribute) when there is no project or the
  *  import recorded no code. */
 export const targetLang = derived(project, (value) => (value?.targetLanguageId || "").toLowerCase() || undefined);
+/** The open project's text direction from its manifest (#323), for the `dir`
+ *  of the verse list's text and the inline editor, as Align Words already does
+ *  from the same `target_language.direction`. Anything but "rtl" is ltr. */
+export const targetDir = derived(project, (value): "ltr" | "rtl" =>
+  (value?.targetLanguageDirection || "").trim().toLowerCase() === "rtl" ? "rtl" : "ltr");
 export const currentChapter = writable<string>("1");
 
 // Keyed by chapter number -> list of verse numbers in that chapter, always in

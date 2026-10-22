@@ -731,6 +731,33 @@ describe("VerseList alignment glyph (issue #70)", () => {
   });
 });
 
+describe("VerseList text direction (#323)", () => {
+  beforeEach(() => seed(PHP_1_6));
+  afterEach(() => { cancelVerseEdit(); project.set(null); });
+
+  async function rendered(direction: string | undefined) {
+    project.set({ path: "/p", bookId: "rut", targetLanguageId: "URD", targetLanguageDirection: direction } as never);
+    const { container } = render(VerseList, { props: { onSelect: vi.fn() } });
+    const body = container.querySelector(".vbody") as HTMLElement;
+    const text = container.querySelector(".vtext") as HTMLElement;
+    const dirs = { body: body.getAttribute("dir"), text: text.getAttribute("dir"), lang: body.getAttribute("lang") };
+    await fireEvent.click(screen.getByLabelText("Edit verse 6"));
+    const editor = container.querySelector("textarea") as HTMLTextAreaElement;
+    return { ...dirs, editor: editor.getAttribute("dir"), editorLang: editor.getAttribute("lang") };
+  }
+
+  it("lays out an RTL project's verse text and editor right to left", async () => {
+    expect(await rendered("rtl")).toEqual({ body: "rtl", text: "rtl", lang: "urd", editor: "rtl", editorLang: "urd" });
+  });
+
+  it("keeps an LTR project, or one with no recorded direction, left to right", async () => {
+    expect(await rendered("ltr")).toMatchObject({ body: "ltr", text: "ltr", editor: "ltr" });
+    cleanup();
+    cancelVerseEdit();
+    expect(await rendered(undefined)).toMatchObject({ body: "ltr", editor: "ltr" });
+  });
+});
+
 describe("VerseList edit pencil (issue #73)", () => {
   beforeEach(() => seed(PHP_1_6));
 

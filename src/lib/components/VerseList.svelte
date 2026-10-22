@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
-  import { verseNums, verseTexts, verseDisplay, headingsByVerse, findingsByVerse, checkStatusByVerse, alignmentStatusByVerse, selectedVerse, selectedVerseSet, currentChapter, verseKey, nativeChecksByVerse, aiCheckReviewsByVerse, checkingProgress, languageQaFindingsByVerse, project, flagsByVerse, historyCountByVerse, activeLanguageQaFindingId, checkGroupsByVerse, targetLang } from "../stores";
+  import { verseNums, verseTexts, verseDisplay, headingsByVerse, findingsByVerse, checkStatusByVerse, alignmentStatusByVerse, selectedVerse, selectedVerseSet, currentChapter, verseKey, nativeChecksByVerse, aiCheckReviewsByVerse, checkingProgress, languageQaFindingsByVerse, project, flagsByVerse, historyCountByVerse, activeLanguageQaFindingId, checkGroupsByVerse, targetLang, targetDir } from "../stores";
   import { checksRunNote } from "../checkSelection";
   import { alignmentStatusLabel, isAlignmentComplete } from "../alignmentStatus";
   import { rangeBetween } from "../crossVerseRange";
@@ -1110,7 +1110,7 @@
           role="presentation"
         >
           <div class="vedit-row">
-            <textarea use:autosize bind:value={$editText} disabled={$editSaving} />
+            <textarea use:autosize bind:value={$editText} disabled={$editSaving} dir={$targetDir} lang={$targetLang} />
             <div class="edit-actions">
               <button
                 class="icon-btn save" on:click={() => void saveVerseEdit()}
@@ -1123,8 +1123,10 @@
           {#if $editError}<p class="edit-error">{$editError}</p>{/if}
         </div>
       {:else}
-        <div class="vtext" class:raw={$rawView}>
-          <span class="vbody">
+        <!-- #323: the project's direction on the text block too, so an RTL
+             verse's lines start at the right, not only its runs reordered. -->
+        <div class="vtext" class:raw={$rawView} dir={$targetDir}>
+          <span class="vbody" dir={$targetDir} lang={$targetLang}>
           {#each withNoteMarkers(segments, notesForLayout(display), flagMarkers($flagsByVerse[key] ?? [], display)) as piece}
             {#if piece.kind === "flag"}<button
                 type="button"
