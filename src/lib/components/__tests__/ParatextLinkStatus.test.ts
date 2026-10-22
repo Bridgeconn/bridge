@@ -23,6 +23,7 @@ function status(overrides: Partial<Status> = {}): Status {
       notes: { count: 2, users: ["User A", "User B"] }, bookNames: true, commentTags: true, userAccess: false,
       termRenderings: false, errorDenials: false, spellingStatus: false, checkingStatus: false, progress: false,
     },
+    notesIndex: { state: "ready", threads: 2, builtAt: "", buildSeconds: 0.1, source: "files", error: "" },
     ...overrides,
   };
 }

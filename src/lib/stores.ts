@@ -86,6 +86,10 @@ export const flagsByVerse = writable<Record<string, LanguageQaFlag[]>>({});
 // Recorded edits per verse (chapter.verseData's editCounts), for the ↺ mark;
 // bumped by every save the editor makes.
 export const historyCountByVerse = writable<Record<string, number>>({});
+/** #357: open/resolved Paratext note threads per verse of the open book, keyed
+ *  by verseKey() on Paratext's verse number; loaded a chapter at a time by
+ *  paratextNotes.ts. */
+export const paratextNoteCountsByVerse = writable<Record<string, { open: number; resolved: number }>>({});
 // The Language QA mark F8 / Shift+F8 moved to (the panel), ringed in the text.
 export const activeLanguageQaFindingId = writable<string | null>(null);
 export type ReviewerMode = "basic" | "advanced";
@@ -158,6 +162,7 @@ export function resetBookState(): void {
   languageQaFindingsByVerse.set({});
   flagsByVerse.set({});
   historyCountByVerse.set({});
+  paratextNoteCountsByVerse.set({});
   activeLanguageQaFindingId.set(null);
   loadedChapters.set({});
   selectedVerse.set(null);

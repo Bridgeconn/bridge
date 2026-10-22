@@ -52,7 +52,8 @@
 {#if status && status.state !== "notParatext"}
   <div class="paratext-link" class:problem={status.state !== "linked"} data-testid="paratext-link-status">
     {#if status.state === "linked"}
-      <span>Paratext <strong>{status.name}</strong> · linked · {status.files.notes.count} notes {status.files.notes.count === 1 ? "file" : "files"}</span>
+      <span>Paratext <strong>{status.name}</strong> · linked · {status.files.notes.count} notes {status.files.notes.count === 1 ? "file" : "files"}{#if status.notesIndex?.state === "ready" || status.notesIndex?.state === "stale"}
+        · {status.notesIndex.threads} note threads{:else if status.notesIndex?.state === "building"} · reading notes…{:else if status.notesIndex?.state === "error"} · notes could not be read{/if}</span>
       <button type="button" on:click={() => run(() => bridge.paratextRefresh())} disabled={busy}>Refresh</button>
     {:else if status.state === "folderMoved"}
       <span>Paratext <strong>{status.name}</strong> is no longer at {status.folder}; the same project is at {status.candidate}.</span>

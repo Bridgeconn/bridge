@@ -17,6 +17,7 @@
   import { startFlagLoader } from "./lib/flags";
   import ReferencePanel from "./lib/components/ReferencePanel.svelte";
   import SourceTextPanel from "./lib/components/SourceTextPanel.svelte";
+  import ParatextNotesPanel from "./lib/components/ParatextNotesPanel.svelte";
   import FindingContextMenu from "./lib/components/FindingContextMenu.svelte";
   import { TEXT_SCALES, bumpTextScale, rawView, sidePanels, textScale, toggleSidePanel } from "./lib/editorPrefs";
   import { verseMin } from "./lib/panelFit";
@@ -1600,6 +1601,9 @@
               {#key $project.path}
                 <LanguageQaPanel projectPath={$project.path} onNavigate={navigateToReportRow} docked />
               {/key}
+            </SidePanel>
+            <SidePanel id="paratext" label="Paratext notes">
+              {#key $project.path}<ParatextNotesPanel />{/key}
             </SidePanel>
           {/if}
           <SidePanel id="review" label="Review" keepMounted>

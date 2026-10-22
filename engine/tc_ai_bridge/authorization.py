@@ -176,6 +176,8 @@ _READ = (
     "paratext.getState", "paratext.connectorStatus", "issueResolution.list", "logos.getState",
     # #356: the Paratext project link; refresh only drops this device's memos.
     "paratext.linkStatus", "paratext.refresh", "paratext.bookNames",
+    # #357: the linked project's Project Notes, read-only.
+    "paratext.notesForChapter", "paratext.notesForVerse", "paratext.noteThread",
     "navigation.status", "navigation.poll", "navigation.bridgeChanged", "navigation.resolve",
     "users.list", "users.setCurrent",
     "assignments.list",

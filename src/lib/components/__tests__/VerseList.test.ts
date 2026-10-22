@@ -3,7 +3,8 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { get } from "svelte/store";
 import { tick } from "svelte";
 
-const { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRecord, housestyleSetState, languageQaLearnedForget, languageQaScopeFind, verseHistory, languageQaWordsAdd, languageQaOccurrences } = vi.hoisted(() => ({
+const { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRecord, housestyleSetState, languageQaLearnedForget, languageQaScopeFind, verseHistory, languageQaWordsAdd, languageQaOccurrences, paratextNotesForChapter } = vi.hoisted(() => ({
+  paratextNotesForChapter: vi.fn(),
   languageQaWordsAdd: vi.fn(),
   languageQaOccurrences: vi.fn(),
   verseHistory: vi.fn(),
@@ -18,7 +19,7 @@ const { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRec
 }));
 
 vi.mock("../../api/bridgeClient", () => ({
-  bridge: { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRecord, housestyleSetState, languageQaLearnedForget, languageQaScopeFind, verseHistory, languageQaWordsAdd, languageQaOccurrences },
+  bridge: { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRecord, housestyleSetState, languageQaLearnedForget, languageQaScopeFind, verseHistory, languageQaWordsAdd, languageQaOccurrences, paratextNotesForChapter },
 }));
 import { lqaFinding } from "./languageQaFixture";
 import { scopeDialog } from "../../scopedApply";
@@ -43,7 +44,9 @@ import {
   languageQaFindingsByVerse,
   project,
   historyCountByVerse,
+  paratextNoteCountsByVerse,
   activeLanguageQaFindingId,
+  resetBookState,
 } from "../../stores";
 import { rawView, setSidePanel, sidePanels } from "../../editorPrefs";
 import { alignmentOpen, alignmentKey } from "../../alignmentUi";
@@ -1359,5 +1362,49 @@ describe("the verse container carries the project language (#286)", () => {
     project.set({ path: "/p", bookId: "php", bookName: "Philippians", chapters: ["1"] } as never);
     render(VerseList, { props: { onSelect: vi.fn() } });
     expect((document.querySelector(".editor-scroll") as HTMLElement).hasAttribute("lang")).toBe(false);
+  });
+});
+
+
+// #357: the Paratext note badge, fed a chapter at a time by paratextNotes.ts.
+describe("VerseList Paratext note badge (#357)", () => {
+  beforeEach(() => {
+    seed(PHP_1_6);
+    paratextNoteCountsByVerse.set({});
+    paratextNotesForChapter.mockReset();
+  });
+  afterEach(() => {
+    project.set(null);
+    setSidePanel("paratext", { open: false, width: 340 });
+  });
+
+  it("loads the chapter's counts and shows the open threads on the verse", async () => {
+    paratextNotesForChapter.mockResolvedValue({
+      state: "ready", book: "PHP", chapter: "1", verses: {}, counts: { "6": { open: 2, resolved: 1 } },
+    });
+    project.set({ path: "C:/p/php", bookId: "php", bookName: "Philippians", targetLanguage: "Hindi",
+                  tcVersion: "", chapters: ["1"], checkTypes: {} });
+    const onSelect = vi.fn();
+    render(VerseList, { props: { onSelect } });
+
+    const badge = await screen.findByRole("button", { name: "Paratext notes on verse 6: 2 open" });
+    expect(badge).toHaveTextContent("PT 2");
+    expect(paratextNotesForChapter).toHaveBeenCalledWith("1");
+    expect(get(paratextNoteCountsByVerse)).toEqual({ [verseKey("1", "6")]: { open: 2, resolved: 1 } });
+
+    await fireEvent.click(badge);
+    expect(onSelect).toHaveBeenCalledWith("6");
+    expect(get(sidePanels).paratext.open).toBe(true);
+  });
+
+  it("shows no badge without open threads, and the counts go with the book", async () => {
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    paratextNoteCountsByVerse.set({ [verseKey("1", "6")]: { open: 0, resolved: 3 } });
+    await tick();
+    expect(screen.queryByTestId("paratext-note-badge")).toBeNull();
+    paratextNoteCountsByVerse.set({ [verseKey("1", "6")]: { open: 1, resolved: 0 } });
+    expect(await screen.findByTestId("paratext-note-badge")).toHaveTextContent("PT 1");
+    resetBookState();
+    expect(get(paratextNoteCountsByVerse)).toEqual({});
   });
 });

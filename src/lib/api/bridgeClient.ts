@@ -6,7 +6,10 @@ import type {
   ReferenceChapter, ReferenceChoice, RelatedWordsResult, CheckerSettings, CheckerSettingsPatch, CheckerSettingsUnavailable,
 } from "../types/languageQa";
 import type { CollectionQaSnapshot } from "../types/collectionQa";
-import type { ParatextBookNames, ParatextLinkStatus } from "../types/paratext";
+import type {
+  ParatextBookNames, ParatextLinkStatus, ParatextNoteKind, ParatextNoteThread, ParatextNotesForChapter,
+  ParatextNotesForVerse, ParatextNotesIndexState,
+} from "../types/paratext";
 import type {
   HouseStyleEntry, HouseStyleEntryInput, HouseStyleListResponse,
 } from "../types/houseStyle";
@@ -375,6 +378,9 @@ export type EngineMethod =
   | "paratext.relink"
   | "paratext.refresh"
   | "paratext.bookNames"
+  | "paratext.notesForChapter"
+  | "paratext.notesForVerse"
+  | "paratext.noteThread"
   | "ping"
   | "project.delete"
   | "project.forget"
@@ -1324,6 +1330,23 @@ export const bridge = {
 
   paratextBookNames(): Promise<ParatextBookNames> {
     return call("paratext.bookNames");
+  },
+
+  /** #357: the open book's Paratext notes in one chapter, with per-verse counts.
+   *  `state` is "building" until the index is ready. */
+  paratextNotesForChapter(
+    chapter: string, options: { includeResolved?: boolean; kinds?: ParatextNoteKind[] } = {},
+  ): Promise<ParatextNotesForChapter> {
+    return call("paratext.notesForChapter", { chapter, ...options });
+  },
+
+  /** #357: every Paratext note thread on one verse (a bridge covers each verse in it). */
+  paratextNotesForVerse(chapter: string, verse: string): Promise<ParatextNotesForVerse> {
+    return call("paratext.notesForVerse", { chapter, verse });
+  },
+
+  paratextNoteThread(threadId: string): Promise<{ state: ParatextNotesIndexState; thread: ParatextNoteThread | null }> {
+    return call("paratext.noteThread", { threadId });
   },
 
   navigationStatus(context?: string): Promise<NavigationSyncState> {

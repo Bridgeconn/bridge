@@ -690,6 +690,10 @@ class Methods:
     PARATEXT_RELINK = "paratext.relink"
     PARATEXT_REFRESH = "paratext.refresh"
     PARATEXT_BOOK_NAMES = "paratext.bookNames"
+    # #357: the linked project's Paratext Project Notes, read-only.
+    PARATEXT_NOTES_FOR_CHAPTER = "paratext.notesForChapter"
+    PARATEXT_NOTES_FOR_VERSE = "paratext.notesForVerse"
+    PARATEXT_NOTE_THREAD = "paratext.noteThread"
 
     ISSUE_RESOLUTION_LIST = "issueResolution.list"
     ISSUE_RESOLUTION_SAVE = "issueResolution.save"
@@ -5067,6 +5071,8 @@ class BridgeEngine:
             session.update(resolution)
         else:
             self._paratext = ParatextSession(resolution, self._paratext_cache_root())
+        # #357: the notes index builds on its own daemon thread, never here.
+        self._paratext.ensure_notes_index()
 
     def _paratext_session(self) -> ParatextSession:
         if self._paratext is None:
@@ -5092,6 +5098,21 @@ class BridgeEngine:
     def paratext_book_names(self) -> dict[str, Any]:
         session = self._paratext_session()
         return {"bookNames": session.book_names(), "state": session.resolution.state}
+
+    def _paratext_book(self) -> str:
+        self._require_project()
+        return str(self.project.book_id or "").upper()
+
+    def paratext_notes_for_chapter(self, chapter: str, include_resolved: bool = False,
+                                   kinds: list[str] | None = None) -> dict[str, Any]:
+        return self._paratext_session().notes_for_chapter(
+            self._paratext_book(), str(chapter), include_resolved=include_resolved, kinds=kinds)
+
+    def paratext_notes_for_verse(self, chapter: str, verse: str) -> dict[str, Any]:
+        return self._paratext_session().notes_for_verse(self._paratext_book(), str(chapter), str(verse))
+
+    def paratext_note_thread(self, thread_id: str) -> dict[str, Any]:
+        return self._paratext_session().note_thread(str(thread_id))
 
     def paratext_get_state(self) -> dict[str, Any]:
         state = ParatextConnectorClient().get_state()
@@ -8769,6 +8790,14 @@ class BridgeEngine:
                 return EngineResponse.ok(request.id, result=self.paratext_refresh())
             if m == Methods.PARATEXT_BOOK_NAMES:
                 return EngineResponse.ok(request.id, result=self.paratext_book_names())
+            if m == Methods.PARATEXT_NOTES_FOR_CHAPTER:
+                return EngineResponse.ok(request.id, result=self.paratext_notes_for_chapter(
+                    p["chapter"], bool(p.get("includeResolved", False)), p.get("kinds"),
+                ))
+            if m == Methods.PARATEXT_NOTES_FOR_VERSE:
+                return EngineResponse.ok(request.id, result=self.paratext_notes_for_verse(p["chapter"], p["verse"]))
+            if m == Methods.PARATEXT_NOTE_THREAD:
+                return EngineResponse.ok(request.id, result=self.paratext_note_thread(p["threadId"]))
             if m == Methods.LOGOS_GET_STATE:
                 return EngineResponse.ok(request.id, result=self.logos_get_state())
             if m == Methods.LOGOS_SET_REFERENCE:

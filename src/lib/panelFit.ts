@@ -24,7 +24,7 @@ const VERSE_MIN_PER_SCALE = 200;
 
 /** Never-touched panels fold in this order: the reference Bible first, the
  * review panel (open by default, where findings are acted on) last. */
-const DEFAULT_FOLD_ORDER: readonly SidePanelId[] = ["reference", "source", "languageQa", "review"];
+const DEFAULT_FOLD_ORDER: readonly SidePanelId[] = ["reference", "source", "paratext", "languageQa", "review"];
 
 export function verseMinWidth(scale: number): number {
   return Math.round(VERSE_MIN_WIDTH + VERSE_MIN_PER_SCALE * Math.max(0, scale - 1));

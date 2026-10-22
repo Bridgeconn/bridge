@@ -6,7 +6,8 @@
   import { foldedPanels } from "../panelFit";
   import type { SidePanelId } from "../editorPrefs";
   import { languageQaChannel } from "../languageQaInline";
-  import { selectedFindings } from "../stores";
+  import { currentChapter, paratextNoteCountsByVerse, selectedFindings, selectedVerse } from "../stores";
+  import { noteCountFor } from "../paratextNotes";
 
   export let onOpenSettings: () => void = () => {};
 
@@ -20,10 +21,13 @@
 
   $: reviewBadge = $selectedFindings.filter((f) => f.status === "open").length;
   $: lqaBadge = $languageQaChannel.error ? "!" : ($languageQaChannel.status?.totalFindings ?? 0);
+  // #357: open Paratext note threads on the selected verse.
+  $: ptBadge = $selectedVerse ? noteCountFor($paratextNoteCountsByVerse, $currentChapter, $selectedVerse).open : 0;
 
   const PANELS: { id: SidePanelId; label: string; title: string }[] = [
     { id: "review", label: "Review", title: "Review the selected verse" },
     { id: "languageQa", label: "Language QA", title: "Language QA for the book" },
+    { id: "paratext", label: "Paratext", title: "Paratext Project Notes on the selected verse" },
     { id: "reference", label: "Reference", title: "A reference Bible beside the text" },
     { id: "source", label: "Source", title: "The Hebrew, Aramaic or Greek source beside the text" },
   ];
@@ -31,7 +35,7 @@
 
 <nav class="rail" aria-label="Side panels">
   {#each PANELS as panel (panel.id)}
-    {@const badge = panel.id === "review" ? reviewBadge : panel.id === "languageQa" ? lqaBadge : 0}
+    {@const badge = panel.id === "review" ? reviewBadge : panel.id === "languageQa" ? lqaBadge : panel.id === "paratext" ? ptBadge : 0}
     {@const folded = $sidePanels[panel.id].open && $foldedPanels.has(panel.id)}
     <button type="button" class="rail-btn" aria-pressed={$sidePanels[panel.id].open && !folded}
       class:folded aria-controls={`side-panel-${panel.id}`}

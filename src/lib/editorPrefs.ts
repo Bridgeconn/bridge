@@ -36,20 +36,22 @@ const isBoolean = (value: unknown): value is boolean => typeof value === "boolea
  * Close button, or by dragging its left edge to the right past its minimum
  * (Benz, 2026-10-09). Several may be open side by side.
  */
-export type SidePanelId = "source" | "reference" | "languageQa" | "review";
+export type SidePanelId = "source" | "reference" | "languageQa" | "paratext" | "review";
 export interface SidePanelState { open: boolean; width: number }
 export type SidePanels = Record<SidePanelId, SidePanelState>;
 
 /** Left to right, as they stand between the text and the rail. The source text
  * (#67) sits next to the verses it is the original of. */
-export const SIDE_PANEL_ORDER: readonly SidePanelId[] = ["source", "reference", "languageQa", "review"];
+/** Paratext notes (#357) sit beside Review, where findings are decided. */
+export const SIDE_PANEL_ORDER: readonly SidePanelId[] = ["source", "reference", "languageQa", "paratext", "review"];
 /** Panels a saved layout from before they existed lacks; they start closed
  * rather than throwing the reviewer's other widths away. */
-const ADDED_LATER: readonly SidePanelId[] = ["source"];
+const ADDED_LATER: readonly SidePanelId[] = ["source", "paratext"];
 export const SIDE_PANEL_LIMITS: Record<SidePanelId, { min: number; max: number; initial: number }> = {
   source: { min: 220, max: 640, initial: 320 },
   reference: { min: 200, max: 640, initial: 300 },
   languageQa: { min: 320, max: 760, initial: 440 },
+  paratext: { min: 260, max: 640, initial: 340 },
   review: { min: 300, max: 720, initial: 400 },
 };
 
@@ -79,6 +81,7 @@ function defaultSidePanels(): SidePanels {
     reference: { open: legacy("bridge.editor.referencePanel.v1", isBoolean) ?? false,
                  width: width === undefined ? SIDE_PANEL_LIMITS.reference.initial : clampPanelWidth("reference", width) },
     languageQa: { open: false, width: SIDE_PANEL_LIMITS.languageQa.initial },
+    paratext: { open: false, width: SIDE_PANEL_LIMITS.paratext.initial },
     review: { open: !(legacy("bridge.editor.reviewPanelCollapsed.v1", isBoolean) ?? false),
               width: SIDE_PANEL_LIMITS.review.initial },
   };

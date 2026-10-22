@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
-  import { verseNums, verseTexts, verseDisplay, headingsByVerse, findingsByVerse, checkStatusByVerse, alignmentStatusByVerse, selectedVerse, selectedVerseSet, currentChapter, verseKey, nativeChecksByVerse, aiCheckReviewsByVerse, checkingProgress, languageQaFindingsByVerse, project, flagsByVerse, historyCountByVerse, activeLanguageQaFindingId, checkGroupsByVerse, targetLang, targetDir } from "../stores";
+  import { verseNums, verseTexts, verseDisplay, headingsByVerse, findingsByVerse, checkStatusByVerse, alignmentStatusByVerse, selectedVerse, selectedVerseSet, currentChapter, verseKey, nativeChecksByVerse, aiCheckReviewsByVerse, checkingProgress, languageQaFindingsByVerse, project, flagsByVerse, historyCountByVerse, paratextNoteCountsByVerse, activeLanguageQaFindingId, checkGroupsByVerse, targetLang, targetDir } from "../stores";
   import { checksRunNote } from "../checkSelection";
   import { alignmentStatusLabel, isAlignmentComplete } from "../alignmentStatus";
   import { rangeBetween } from "../crossVerseRange";
@@ -13,7 +13,8 @@
   import FlagDialog from "./FlagDialog.svelte";
   import FlagPopover from "./FlagPopover.svelte";
   import VerseHistoryPopover from "./VerseHistoryPopover.svelte";
-  import { rawView } from "../editorPrefs";
+  import { rawView, revealSidePanel } from "../editorPrefs";
+  import { loadParatextNoteCounts, noteCountFor } from "../paratextNotes";
   import type { FlagInput, LanguageQaFlag } from "../types/languageQa";
   import type { VerseDisplay } from "../types/finding";
   import VerseNotesPopup from "./VerseNotesPopup.svelte";
@@ -40,6 +41,8 @@
   import { requestAIReview, aiJobActive, type AIReviewScope } from "../aiReviewUi";
 
   export let onSelect: (verse: string) => void;
+  // #357: Paratext note counts for the badge, a chapter at a time.
+  $: if ($project?.path && $currentChapter) void loadParatextNoteCounts($currentChapter);
   /** Opens a verse anywhere in the book (an occurrence in another chapter). */
   export let onNavigate: (book: string, chapter: string, verse: string) => void = () => {};
   // The word whose occurrences are listed (verse menu), or null.
@@ -1164,7 +1167,15 @@
               }}
               title={`Edited ${$historyCountByVerse[key]}×: show the change history`}
               aria-label={`Change history of verse ${v}: ${$historyCountByVerse[key]} edit${$historyCountByVerse[key] === 1 ? "" : "s"}`}
-            >↺{$historyCountByVerse[key]}</button>{/if}
+            >↺{$historyCountByVerse[key]}</button>{/if}{#if noteCountFor($paratextNoteCountsByVerse, $currentChapter, v).open}{@const pt = noteCountFor($paratextNoteCountsByVerse, $currentChapter, v).open}<button
+              type="button"
+              class="pt-notes-btn"
+              data-testid="paratext-note-badge"
+              on:dblclick|stopPropagation
+              on:click|stopPropagation={() => { onSelect(v); revealSidePanel("paratext"); }}
+              title={`${pt} open Paratext note${pt === 1 ? "" : "s"}: show them`}
+              aria-label={`Paratext notes on verse ${v}: ${pt} open`}
+            >PT {pt}</button>{/if}
           {#if $editWarnings?.key === key}
             <p class="edit-warning" role="status">Saved, but check the markers: {$editWarnings.warnings.join("; ")}</p>
           {/if}
@@ -1361,6 +1372,10 @@
   .flag-btn.resolved { color: var(--text-3); }
   .history-btn { margin-left: 6px; padding: 0 3px; border: 0; background: none; cursor: pointer; font: inherit;
     font-family: var(--font-ui); font-size: var(--fs-2xs); color: var(--text-3); vertical-align: super; }
+  .pt-notes-btn { margin-left: 6px; padding: 0 4px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2);
+    color: var(--text-2); cursor: pointer; font: inherit; font-family: var(--font-ui); font-size: var(--fs-3xs); font-weight: 700;
+    line-height: 1.5; vertical-align: super; }
+  .pt-notes-btn:hover, .pt-notes-btn:focus-visible { color: var(--accent); border-color: var(--accent); outline: none; }
   .history-btn:hover, .history-btn:focus-visible { color: var(--accent); background: var(--surface-2); border-radius: 3px; outline: none; }
   .vtext.raw { white-space: pre-wrap; font-size: calc(var(--fs-md) * var(--verse-scale, 1)); }
   .edit-warning { margin: 4px 0 0; font-family: var(--font-ui); font-size: var(--fs-2xs); color: var(--warning); }

@@ -47,6 +47,8 @@ export interface ParatextLinkStatus {
     checkingStatus: boolean;
     progress: boolean;
   };
+  /** #357: the Project Notes index. */
+  notesIndex: ParatextNotesIndexStatus;
 }
 
 export interface ParatextBookName {
@@ -58,4 +60,82 @@ export interface ParatextBookName {
 export interface ParatextBookNames {
   bookNames: Record<string, ParatextBookName>;
   state: ParatextLinkState;
+}
+
+// #357: Paratext Project Notes, read-only (engine: paratext_session.ParatextSession).
+export type ParatextNotesIndexState = "unavailable" | "building" | "ready" | "stale" | "error";
+export type ParatextNoteKind = "note" | "conflict" | "biblicalTerm";
+
+export interface ParatextNotesIndexStatus {
+  state: ParatextNotesIndexState;
+  threads: number;
+  builtAt: string;
+  buildSeconds: number | null;
+  source: "" | "cache" | "files";
+  error: string;
+  staleFiles?: string[];
+}
+
+export interface ParatextNoteTag {
+  id: string;
+  name: string;
+}
+
+export interface ParatextNoteSummary {
+  id: string;
+  kind: ParatextNoteKind;
+  status: string;
+  resolved: boolean;
+  verseRef: string;
+  verse: string;
+  users: string[];
+  firstDate: string;
+  lastDate: string;
+  lastUser: string;
+  excerpt: string;
+  selectedText: string;
+  assignedUser: string;
+  tags: ParatextNoteTag[];
+  hidden: boolean;
+  commentCount: number;
+}
+
+export interface ParatextNoteComment {
+  user: string;
+  date: string;
+  contents: string;
+  status: string;
+  type: string;
+  assignedUser: string | null;
+  replyToUser: string;
+  language: string;
+  tagsAdded: ParatextNoteTag[];
+  tagsRemoved: ParatextNoteTag[];
+}
+
+export interface ParatextNoteThread extends ParatextNoteSummary {
+  contextBefore: string;
+  contextAfter: string;
+  comments: ParatextNoteComment[];
+}
+
+export interface ParatextNoteCount {
+  open: number;
+  resolved: number;
+}
+
+export interface ParatextNotesForChapter {
+  state: ParatextNotesIndexState;
+  book: string;
+  chapter: string;
+  verses: Record<string, ParatextNoteSummary[]>;
+  counts: Record<string, ParatextNoteCount>;
+}
+
+export interface ParatextNotesForVerse {
+  state: ParatextNotesIndexState;
+  book: string;
+  chapter: string;
+  verse: string;
+  threads: ParatextNoteThread[];
 }

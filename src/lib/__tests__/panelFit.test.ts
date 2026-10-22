@@ -14,6 +14,7 @@ function layout(open: Partial<Record<keyof SidePanels, boolean>>): SidePanels {
     source: { open: !!open.source, width: 320 },
     reference: { open: !!open.reference, width: 300 },
     languageQa: { open: !!open.languageQa, width: 440 },
+    paratext: { open: !!open.paratext, width: 340 },
     review: { open: !!open.review, width: 400 },
   };
 }
@@ -63,7 +64,7 @@ describe("foldedSidePanels (#324)", () => {
 
 describe("folding in the editor (#324)", () => {
   afterEach(() => {
-    for (const id of ["source", "reference", "languageQa", "review"] as const) {
+    for (const id of ["source", "reference", "languageQa", "paratext", "review"] as const) {
       setSidePanel(id, { open: id === "review", width: SIDE_PANEL_LIMITS[id].initial });
     }
     sidePanelRecency.set([]);
