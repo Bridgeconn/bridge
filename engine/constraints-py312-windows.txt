@@ -6,6 +6,11 @@
 #
 # Install from engine/ with:
 #   .venv\Scripts\python.exe -m pip install -c constraints-py312-windows.txt -e ".[dev,wildebeest]"
+#
+# The same file serves the macOS and Linux release legs since 2026-10-12 (#250):
+# PyInstaller's platform-only transitive deps carry sys_platform markers below,
+# so pip skips the Windows pins on POSIX and the macOS pin elsewhere. The name
+# stays "windows" because that is the only platform the pins were verified on.
 
 altgraph==0.17.5
 appdirs==1.4.4
@@ -13,14 +18,15 @@ colorama==0.4.6
 execnet==2.1.2
 iniconfig==2.3.0
 packaging==26.3
-pefile==2024.8.26
+macholib==1.16.4; sys_platform == "darwin"
+pefile==2024.8.26; sys_platform == "win32"
 pluggy==1.6.0
 Pygments==2.21.0
 pyinstaller==6.22.2
 pyinstaller-hooks-contrib==2026.6
 pytest==9.1.1
 pytest-xdist==3.8.0
-pywin32-ctypes==0.2.3
+pywin32-ctypes==0.2.3; sys_platform == "win32"
 regex==2026.7.19
 rply==0.7.8
 setuptools==84.0.0

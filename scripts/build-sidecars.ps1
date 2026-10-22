@@ -6,9 +6,12 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $engineDir = Join-Path $repoRoot "engine"
-$binaryDir = Join-Path $repoRoot "src-tauri\binaries"
-$resourcesDir = Join-Path $repoRoot "src-tauri\resources"
-$packsDir = Join-Path $repoRoot "src-tauri\language_packs"
+# Forward slashes throughout: Windows PowerShell accepts them, and pwsh on
+# macOS/Linux does NOT treat a backslash as a separator -- "src-tauri\binaries"
+# there is one directory with a backslash in its name (#250).
+$binaryDir = Join-Path $repoRoot "src-tauri/binaries"
+$resourcesDir = Join-Path $repoRoot "src-tauri/resources"
+$packsDir = Join-Path $repoRoot "src-tauri/language_packs"
 
 if (-not $PythonCommand) {
     $venvPython = if ($IsWindows -or $env:OS -eq "Windows_NT") {
@@ -43,10 +46,18 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "bridge-usfm-checker PyInstaller build failed" }
 
     New-Item -ItemType Directory -Force -Path $binaryDir | Out-Null
-    Copy-Item -LiteralPath (Join-Path $engineDir "dist\bridge-engine$extension") `
-        -Destination (Join-Path $binaryDir "bridge-engine-$TargetTriple$extension") -Force
-    Copy-Item -LiteralPath (Join-Path $engineDir "dist\bridge-usfm-checker$extension") `
-        -Destination (Join-Path $binaryDir "bridge-usfm-checker-$TargetTriple$extension") -Force
+    $engineBinary = Join-Path $binaryDir "bridge-engine-$TargetTriple$extension"
+    $checkerBinary = Join-Path $binaryDir "bridge-usfm-checker-$TargetTriple$extension"
+    Copy-Item -LiteralPath (Join-Path $engineDir "dist/bridge-engine$extension") `
+        -Destination $engineBinary -Force
+    Copy-Item -LiteralPath (Join-Path $engineDir "dist/bridge-usfm-checker$extension") `
+        -Destination $checkerBinary -Force
+    if (-not $extension) {
+        # Tauri spawns the sidecar as-is; a copy that lost its mode bit would
+        # fail at launch with a permission error, not at bundle time.
+        & chmod +x $engineBinary $checkerBinary
+        if ($LASTEXITCODE -ne 0) { throw "chmod +x on the sidecars failed" }
+    }
 
     # The bundled tN/tW/tA/UHB/UGNT snapshot (~45MB) is no longer part of
     # bridge-engine.spec's onefile archive (see that file's own comment) --

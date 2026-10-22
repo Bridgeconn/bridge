@@ -21,8 +21,11 @@ USFM structural checker, versification) with 30+ pre-existing
 alignment, import, Paratext/Logos, transaction safety) — none of that
 existing logic was rewritten, only wrapped behind one protocol.
 
-Windows (`x86_64-pc-windows-msvc`) is the only verified target so far;
-macOS/Linux are planned but unverified.
+Windows (`x86_64-pc-windows-msvc`) is the only verified target so far.
+`release.yml` also builds macOS (Apple Silicon, ad-hoc signed) and Linux
+bundles since 2026-10-12 (#250 on selvabenz/Bridge), smoke-tested in CI but
+never run on a real macOS/Linux desktop; #251–#253 there list the known
+runtime gaps (secret store, data folder, shutdown signal).
 
 ## Commands
 
