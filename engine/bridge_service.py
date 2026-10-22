@@ -1511,7 +1511,7 @@ class BridgeEngine:
         """project.list: one row per project or collection, with the cached
         progress summed over the collection's books (#238) and who opened it
         last, from the workspace alone -- no project database is opened."""
-        rows = self.project_registry.list_projects(collapse_collections=True)
+        rows = self.project_registry.list_projects(collapse_collections=True, include_conflicts=True)
         all_entries = self.project_registry.list_projects(refresh_managed=False)
         by_collection: dict[str, list[dict[str, Any]]] = {}
         for entry in all_entries:

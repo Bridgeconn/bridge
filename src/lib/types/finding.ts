@@ -951,6 +951,10 @@ export interface RegisteredProject {
   progress?: (Omit<BookProgressSummary, "findingCount" | "approvedFindingCount" | "updatedAt"> & {
     booksWithProgress: number;
   }) | null;
+  /** #309: a managed folder whose `.bridge/project.json` identity is already
+   * registered at another accessible path. Such a row has an empty
+   * `projectId` and offers no actions. */
+  conflict?: { message: string; projectId: string; collectionId: string; registeredPath: string };
 }
 
 export interface ImportedProject {

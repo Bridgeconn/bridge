@@ -428,7 +428,21 @@
           </label>
         {/if}
         <section class="projects" aria-label="Known projects">
-          {#each visibleProjects as item (item.projectId)}
+          {#each visibleProjects as item (item.conflict ? `conflict:${item.path}` : item.projectId)}
+            {#if item.conflict}
+              <!-- #309: a managed folder whose identity the registry refused. It
+                   has no projectId of its own, so it offers no actions. -->
+              <article class="project-row conflict">
+                <div class="book-badge">{item.bookId?.toUpperCase() || "?"}</div>
+                <div class="project-copy">
+                  <strong>{displayName(item)}</strong>
+                  <span>{(item.bookCount ?? 1) > 1 ? `${item.bookCount} books` : item.bookName}{item.bibleName ? ` · ${item.bibleName}` : ""}</span>
+                  <span class="conflict-message" role="alert">{item.conflict.message}</span>
+                  {#if item.conflict.registeredPath}<small title={item.conflict.registeredPath}>Registered copy: {item.conflict.registeredPath}</small>{/if}
+                  <small title={item.path}>This copy: {item.path}</small>
+                </div>
+              </article>
+            {:else}
             <article class:missing={item.missing} class:archived={Boolean(item.archivedAt)} class="project-row">
               <div class="book-badge">{item.bookId?.toUpperCase() || "?"}</div>
               <div class="project-copy">
@@ -464,6 +478,7 @@
                 {/if}
               {/if}
             </article>
+            {/if}
           {/each}
         </section>
       {:else}
@@ -606,6 +621,8 @@
   .project-row { min-height: 66px; display: flex; align-items: center; gap: 11px; padding: 9px 11px; border-bottom: 1px solid var(--border); }
   .project-row:last-child { border-bottom: 0; }
   .project-row.missing { background: #fff9ed; }
+  .project-row.conflict { background: #fff9ed; }
+  .conflict-message { color: var(--danger); }
   .book-badge { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 8px; background: var(--accent-bg); color: var(--accent); font-size: var(--fs-2xs); font-weight: 800; flex-shrink: 0; }
   .project-copy { display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 2px; }
   .project-copy strong { font-size: var(--fs-sm); color: var(--text); }

@@ -107,3 +107,32 @@ describe("ImportScreen projects list (#238)", () => {
     expect(screen.getByRole("button", { name: "Confirm" })).toBeInTheDocument();
   });
 });
+
+// #309: a managed copy whose identity is already registered elsewhere.
+describe("ImportScreen identity conflict row (#309)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("lists the conflict beside the other projects, with its message and no actions", async () => {
+    const message = "The same Bridge project identity exists at two accessible paths; choose which copy is authoritative.";
+    listProjects.mockResolvedValue({
+      projects: [
+        project(),
+        project({
+          projectId: "", collectionId: "", path: "C:/projects/eng_bible_gen-copy", bookCount: 2,
+          projectName: "NT copy", progress: null, lastOpenedAt: "",
+          conflict: { message, projectId: "p-1", collectionId: "c-1", registeredPath: "C:/projects/eng_bible_gen" },
+        }),
+      ],
+    });
+    render(ImportScreen, { props: { onOpened: vi.fn() } });
+    await screen.findByText("NT review");
+
+    expect(screen.getByText("NT copy")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(message);
+    expect(screen.getByText("This copy: C:/projects/eng_bible_gen-copy")).toBeInTheDocument();
+    // Only the registered row offers actions.
+    expect(screen.getAllByRole("button", { name: "Open" })).toHaveLength(1);
+    expect(screen.queryByText("Delete permanently?")).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Project name" })).toBeNull();
+  });
+});
