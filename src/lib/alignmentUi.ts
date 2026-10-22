@@ -10,7 +10,7 @@
 import { writable, get } from "svelte/store";
 import { checkingProgress, verseKey } from "./stores";
 import { editSaving, recheckingKey } from "./verseEditor";
-import { setSidePanel, sidePanels } from "./editorPrefs";
+import { revealSidePanel } from "./editorPrefs";
 
 export const alignmentOpen = writable(false);
 export const alignmentKey = writable("");
@@ -42,7 +42,7 @@ function alignmentBusy(): boolean {
 export function openAlignment(chapter: string, verse: string): boolean {
   if (!verse || alignmentBusy()) return false;
   alignmentKey.set(verseKey(chapter, verse));
-  if (!get(sidePanels).review.open) setSidePanel("review", { open: true });
+  revealSidePanel("review");
   alignmentOpen.set(true);
   return true;
 }

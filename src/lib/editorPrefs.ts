@@ -1,4 +1,4 @@
-import { writable, type Writable } from "svelte/store";
+import { get, writable, type Writable } from "svelte/store";
 
 /**
  * Per-browser editor preferences (indic-qa keeps the same ones in the
@@ -106,14 +106,36 @@ sidePanels.update((all) => {
   return filled;
 });
 
+/**
+ * The panels in the order they were last asked to open, most recent last
+ * (#324). Not saved: it only decides which panel folds first when the window
+ * is too narrow for all of them (panelFit.ts), so the one just opened is the
+ * one shown. Asking an already open panel to open moves it to the end too,
+ * which is how a folded panel is brought back.
+ */
+export const sidePanelRecency = writable<SidePanelId[]>([]);
+
+function markOpened(id: SidePanelId): void {
+  sidePanelRecency.update((order) => [...order.filter((other) => other !== id), id]);
+}
+
 export function setSidePanel(id: SidePanelId, patch: Partial<SidePanelState>): void {
+  if (patch.open) markOpened(id);
   sidePanels.update((all) => ({
     ...all,
     [id]: { ...all[id], ...patch, ...(patch.width === undefined ? {} : { width: clampPanelWidth(id, patch.width) }) },
   }));
 }
 
+/** Open a panel and make sure it is the one shown, even if it was already
+ * open but folded for width; an open panel's saved state is left as it is. */
+export function revealSidePanel(id: SidePanelId): void {
+  if (get(sidePanels)[id].open) markOpened(id);
+  else setSidePanel(id, { open: true });
+}
+
 export function toggleSidePanel(id: SidePanelId): void {
+  if (!get(sidePanels)[id].open) markOpened(id);
   sidePanels.update((all) => ({ ...all, [id]: { ...all[id], open: !all[id].open } }));
 }
 

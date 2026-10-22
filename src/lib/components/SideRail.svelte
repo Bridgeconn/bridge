@@ -2,12 +2,21 @@
   // The strip at the far right of the editor (Benz, 2026-10-09): one button
   // per side panel, each toggling its column, and Settings, which opens the
   // Settings dialog. Labels are text, not an icon font (CLAUDE.md gotcha 9).
-  import { sidePanels, toggleSidePanel } from "../editorPrefs";
+  import { revealSidePanel, sidePanels, toggleSidePanel } from "../editorPrefs";
+  import { foldedPanels } from "../panelFit";
   import type { SidePanelId } from "../editorPrefs";
   import { languageQaChannel } from "../languageQaInline";
   import { selectedFindings } from "../stores";
 
   export let onOpenSettings: () => void = () => {};
+
+  // An open panel folded for width (#324) is shown as not pressed, and a click
+  // brings it back (folding another) rather than closing it.
+  const isFolded = (id: SidePanelId): boolean => $sidePanels[id].open && $foldedPanels.has(id);
+  function press(id: SidePanelId): void {
+    if (isFolded(id)) revealSidePanel(id);
+    else toggleSidePanel(id);
+  }
 
   $: reviewBadge = $selectedFindings.filter((f) => f.status === "open").length;
   $: lqaBadge = $languageQaChannel.error ? "!" : ($languageQaChannel.status?.totalFindings ?? 0);
@@ -23,9 +32,11 @@
 <nav class="rail" aria-label="Side panels">
   {#each PANELS as panel (panel.id)}
     {@const badge = panel.id === "review" ? reviewBadge : panel.id === "languageQa" ? lqaBadge : 0}
-    <button type="button" class="rail-btn" aria-pressed={$sidePanels[panel.id].open}
-      aria-controls={`side-panel-${panel.id}`} title={panel.title}
-      on:click={() => toggleSidePanel(panel.id)}>
+    {@const folded = $sidePanels[panel.id].open && $foldedPanels.has(panel.id)}
+    <button type="button" class="rail-btn" aria-pressed={$sidePanels[panel.id].open && !folded}
+      class:folded aria-controls={`side-panel-${panel.id}`}
+      title={folded ? `${panel.title} (folded: the window is too narrow; click to show it)` : panel.title}
+      on:click={() => press(panel.id)}>
       <span class="rail-label">{panel.label}</span>
       {#if badge}<span class="rail-badge" class:alert={badge === "!"}>{badge}</span>{/if}
     </button>
@@ -45,6 +56,7 @@
     cursor: pointer; font: inherit; font-size: var(--fs-3xs); font-weight: 700; }
   .rail-btn:hover { color: var(--text); background: var(--surface); }
   .rail-btn[aria-pressed="true"] { color: var(--accent); border-left-color: var(--accent); background: var(--surface); }
+  .rail-btn.folded { border-left: 3px dashed var(--accent); }
   .rail-label { writing-mode: vertical-rl; white-space: nowrap; }
   .rail-badge { min-width: 16px; padding: 0 3px; border-radius: 999px; background: var(--accent-bg); color: var(--accent);
     font-size: var(--fs-3xs); line-height: 16px; text-align: center; }
