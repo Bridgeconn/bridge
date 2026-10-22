@@ -21274,3 +21274,68 @@ the GR-13 collection run and the CHK-006 versification case. No code changed.
   metadata.
 - The v0.18.0 frozen smoke passes against the installed workers.
 - The installer matches the release asset (sha256 `382de3ae…`, NotSigned).
+
+## 2026-10-22 — Twelve bugs from the 0.18.0 walk fixed (#127, #306, #307, #313–#319, #321, #323)
+
+**What.** One commit per issue, from the bugs filed in the 2026-10-16 regression walk. Bugs in Revant's
+files (#308, #309, #311, #322, #324, and the Assignments dialog part of #321) and the ones whose issue
+asks a question first (#310, #312, #320, #325) are not touched.
+
+- **#306** `openAlignment` opens the Review side panel (never toggles it shut), because AlignmentModal is
+  mounted inside that keepMounted panel and was invisible while it was closed. App.svelte not touched.
+- **#313** Alignment Review history resolves a HUMAN actor id to the user's name from `users.list`
+  (`userNames` store). An unknown id stays the id; `legacy:human` is unchanged.
+- **#319** Settings > AI provider has "Remove key" (with a confirm). It sends `settings.set { apiKey: "" }`,
+  which `secret_store.set_api_key` already treats as clearing, so the engine needed no change.
+- **#321** Escape closes Settings, Engine diagnostics and Export exactly as their close button does, and
+  focus goes back to the opener. AssignmentsDialog is Revant's file and is left alone.
+- **#323** New `targetDir` store from `targetLanguageDirection`. The verse text and the inline editor carry
+  `dir` (and `lang`). The row's number cell is not changed; to be checked in the app.
+- **#307** Aligned export writes a verse with no source tokens (every lettered segment, 5a/5b) as plain
+  `\w` words with no `\zaln-s`, instead of refusing the book. The result lists them as `unalignedVerses`
+  and the export dialog names them. No publication-gate rule was added for them.
+- **#317** A Greek Room row's own `suggested_replacement` moves to a new `checkSuggestion` field and
+  "Check suggestion" column (screen and CSV/TSV). `aiProposal` holds only AI provider wording.
+- **#318** A triage batch that never reached the model (`ai_http.TransportFailure` /
+  `ai_client.AITransportError`, `TimeoutError`, `ConnectionError`; by type, not message text) stores
+  nothing. The run reports `unreachedBatches`, and `triaged` counts only stored records. A model that
+  answered without a usable verdict still stores uncertain. HTTP 401/429/500 are unchanged.
+- **#127** The correction route already refused stale writes (`StrictScriptureEditContext`); the pin test
+  only checked parameter names and is now two positive tests. The real gap was `verse.edit`:
+  `apply_scripture_edit` takes `expected_old_text`, the editor sends the text it opened with, and a
+  mismatch is a `REVISION_CONFLICT` refusal. The typed text stays in the box and the newer text is quoted.
+  A second Save then replaces the newer text on purpose. The scoped Language QA apply/undo do not pass it.
+- **#314** The correction insertion slider offers only `LiftedVerse.insertion_points()` (verse start, verse
+  end, each word end after its closing markup), sent by the engine as `insertionOffsets`. The proposal
+  save/edit/regenerate path and Apply refuse an insertion strictly inside a removed range
+  (`removed_range_containing`). The trimmed-wording gap noted on the issue is not decided.
+- **#315** A new proposal after a rejection names the rejected one (`supersedesProposalId`) and goes
+  through the existing supersede path that "Generate another suggestion" uses. The old proposal keeps its
+  wording and review status and gains a SUPERSEDED event. A plain create after a rejection is still refused.
+- **#316** `_current_target_hash` reads the verse through `project_current_passage_index`, the same
+  lifted text the analysis job hashed. Every marked-up verse was permanently ANALYSIS_NOT_CURRENT before.
+  No verification rule changed. Hashes in correction eligibility and application stay raw, as their
+  stored counterparts are.
+
+**Why.** These are the P0/P1 failures behind REL-001 on #167 that needed no decision beyond what each
+issue already says.
+
+**Measured.**
+- Frontend: `npm run check` 0 errors, 0 warnings. `npm run test` 865 of 866 passed; the one failure was a
+  100 ms click-budget test that passed on rerun (124 of 124 in the three timing files). `npm run build` ok.
+- Engine, `pytest -n 6`: 5476 passed, 13 failed, 3 xfailed. Twelve failures came from the worktree
+  missing the gitignored `bridge_semantic_source_v0.3.sqlite`; with it, all 21 Stage 3 tests pass. The
+  thirteenth, `test_moved_project_retains_identity_but_live_copy_is_rejected`, also fails serially on
+  unchanged main, so it is not caused by this batch.
+- Frozen sidecars rebuilt with `build-sidecars.ps1`; `scripts/smoke_sidecars.py` passed (engine ready in 3.4 s; export/undo,
+  alignment, registry, Hindi pack and ta-irv indic-qa layer all succeeded).
+- Checked against translationCore's own `word-aligner` 1.1.1 for #312: `merge` writes one
+  `\zaln-s … \zaln-e` pair per run of adjacent target words, and `unmerge` reads the runs back as one
+  group. No code changed for #312.
+
+**Not done.** No installed-app walk of these fixes yet.
+
+**Found, not fixed.**
+- Verification can stay ANALYSIS_NOT_CURRENT for good when an edit lands after the affected re-analysis.
+- Five other one-bad-verse refusals remain in the aligned exporter.
+- Prepared applications from before #314 resume without the new check.
