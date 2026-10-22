@@ -39,14 +39,16 @@ a profile pack's book is built exactly as before.
 """
 from __future__ import annotations
 
-import gc
 import gzip
 import hashlib
+import io
 import json
 import pickle
+import sys
 import threading
 from collections import Counter
 from dataclasses import dataclass, field
+from itertools import islice
 from pathlib import Path
 from typing import Any, Callable
 
@@ -58,7 +60,7 @@ from .loader import PackError, RulePack, Rule
 ENGINE = "indic-qa"
 RULE_VERSIONS = "rule_versions.json"
 IRV_STATE = "irv_state.json.gz"
-IRV_STATE_FORMAT = 1
+IRV_STATE_FORMAT = 2  # 1: one JSON document (still read). 2: JSON lines in pieces (read_state).
 # Token statuses that are findings. Every other status (ok, irv_ok,
 # inflected_ok, compound, sandhi_ok, ignored, learned) is a word the checker
 # accepted.
@@ -298,38 +300,181 @@ def _key(value: Any) -> Any:
 
 
 def snapshot(checker: Any) -> dict[str, Any]:
-    """What `index_book` wrote, for every book indexed so far. A profile with
-    sandhi (Tamil) also keeps each book's ஒற்று pair and form counts, which
-    index_book holds outside `data` (the IRV veto and the dangling check read
-    their IRV-wide sums)."""
-    out = {"format": IRV_STATE_FORMAT, "bookCount": encode_state(checker.book_count),
-           "data": encode_state(checker.data)}
+    """What `index_book` wrote, for every book indexed so far, encoded
+    (encode_state). A profile with sandhi (Tamil) also keeps each book's ஒற்று
+    pair and form counts, which index_book holds outside `data` (the IRV veto
+    and the dangling check read their IRV-wide sums)."""
+    out = {"bookCount": encode_state(checker.book_count), "data": encode_state(checker.data)}
     if checker.lang.sandhi:
         out["bookPairs"] = encode_state(checker.book_pairs)
         out["bookFormUse"] = encode_state(checker.book_form_use)
     return out
 
 
+# The snapshot is restored on the Language QA thread while the dispatcher
+# answers the UI, and one json.loads (or pickle.loads) of a whole 10-27 MB state
+# holds the GIL for hundreds of milliseconds: ping waited that long. So the
+# file (format 2) is JSON lines: a header {"format", "provenance"}, then one
+# line per *piece*, at most STATE_PIECE entries of one container, as
+# [id, entries]. Container 0 is the root ({bookCount, data, ...}); a value that
+# is itself a dict, Counter or set is written {"@": [kind, id]} where it sits,
+# created empty there, and filled by the later pieces of that id. A dict's
+# entries are a JSON object when every key is a string and every value a
+# plain string or int (dict.update takes it as it is), else [key, value] pairs
+# in encode_state's encoding; a set's are its encoded elements. Entries keep
+# format 1's order, so a restore builds what format 1 built, in the same
+# insertion order. Format 1 (one document) is still read.
+STATE_PIECE = 2048
+_FORMAT_2_HEAD = b'{"format":2,'
+_KINDS = {"C": Counter, "D": dict, "S": set}
+_PLAIN = (str, int)
+
+
+class _Ref:
+    """In a piece: an empty container of `kind`, created in its parent's place
+    and filled by the pieces of id `ident`."""
+    __slots__ = ("kind", "ident")
+
+    def __init__(self, kind: str, ident: int):
+        self.kind, self.ident = kind, ident
+
+    def __reduce__(self):
+        return _Ref, (self.kind, self.ident)
+
+
+def _encoded_pieces(fields: dict[str, Any]) -> Any:
+    """The [id, entries] lines of encoded fields (snapshot()'s, or a format-1
+    file's), breadth first."""
+    queue: list[tuple[str, list]] = [("D", [[k, fields[k]] for k in sorted(fields)])]
+    for ident, (kind, entries) in enumerate(queue):
+        for start in range(0, len(entries), STATE_PIECE):
+            chunk = entries[start:start + STATE_PIECE]
+            if kind == "S":
+                yield [ident, chunk]
+                continue
+            pairs, plain = [], True
+            for key, value in chunk:
+                child = next(iter(value)) if isinstance(value, dict) and len(value) == 1 else None
+                if child in _KINDS:
+                    queue.append((child, value[child]))
+                    value = {"@": [child, len(queue) - 1]}
+                    plain = False
+                else:
+                    plain = plain and type(key) is str and type(value) in _PLAIN
+                pairs.append([key, value])
+            yield [ident, dict(pairs) if plain else pairs]
+
+
+def _native_pieces(fields: dict[str, Any]) -> Any:
+    """The (id, plain, entries) pieces of a live state, in its own iteration
+    order: what the in-memory cache keeps (_restore_cached). A dict's entries
+    are a dict, a set's a list: no per-entry objects to allocate and free."""
+    queue: list[Any] = [fields]
+    for ident, container in enumerate(queue):
+        if isinstance(container, (set, frozenset)):
+            items = iter(container)
+            while chunk := list(islice(items, STATE_PIECE)):
+                yield ident, True, chunk
+            continue
+        items = iter(container.items())
+        while chunk := dict(islice(items, STATE_PIECE)):
+            plain = True
+            for key, value in chunk.items():
+                kind = ("C" if isinstance(value, Counter) else "D" if isinstance(value, dict)
+                        else "S" if isinstance(value, (set, frozenset)) else None)
+                if kind is not None:
+                    queue.append(value)
+                    chunk[key] = _Ref(kind, len(queue) - 1)
+                    plain = False
+                elif plain and not (type(key) in _PLAIN and type(value) in _PLAIN):
+                    plain = False
+            yield ident, plain, chunk
+
+
+def _fill(containers: dict[int, Any], ident: int, plain: bool, entries: Any) -> None:
+    """Apply one piece; each call is bounded by STATE_PIECE entries."""
+    target = containers[ident]
+    if isinstance(target, set):
+        target.update(entries)
+    elif plain:
+        dict.update(target, entries)  # Counter.update would add; the target is fresh
+    else:
+        for key, value in entries.items():
+            if type(value) is _Ref:
+                ref, value = value, _KINDS[value.kind]()
+                containers[ref.ident] = value
+            target[key] = value
+
+
+def _decode_line(containers: dict[int, Any], line: list) -> tuple[int, bool, Any]:
+    """A format-2 line as a native piece of the container it fills."""
+    ident, entries = line
+    if isinstance(entries, dict):
+        return ident, True, entries
+    if isinstance(containers[ident], set):
+        return ident, True, [_key(v) for v in entries]
+    out = {}
+    for key, value in entries:
+        if isinstance(value, dict) and "@" in value:
+            out[_key(key)] = _Ref(*value["@"])
+        else:
+            out[_key(key)] = decode_state(value)
+    return ident, False, out
+
+
+def encode_state_file(fields: dict[str, Any], provenance: dict[str, Any]) -> bytes:
+    """Format-2 text (uncompressed) of encoded fields: snapshot()'s, or a
+    format-1 file's (scripts/convert_pack_pieces.py). Pieces keep their own
+    order (no sort_keys: format 1's order is by encoded pair, not by key)."""
+    lines = [json.dumps({"format": IRV_STATE_FORMAT, "provenance": provenance}, ensure_ascii=False,
+                        separators=(",", ":"), sort_keys=True)]
+    lines.extend(json.dumps(line, ensure_ascii=False, separators=(",", ":")) for line in _encoded_pieces(fields))
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
 def write_state(path: Path, checker: Any, provenance: dict[str, Any]) -> None:
-    blob = json.dumps({**snapshot(checker), "provenance": provenance}, ensure_ascii=False,
-                      separators=(",", ":"), sort_keys=True).encode("utf-8")
-    path.write_bytes(gzip.compress(blob, 9, mtime=0))
+    """The snapshot file, format 2; deterministic (gzip mtime 0)."""
+    path.write_bytes(gzip.compress(encode_state_file(snapshot(checker), provenance), 9, mtime=0))
+
+
+def read_state(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    """(fields, provenance) of a snapshot file, decoded. The fields are
+    bookCount, data and, for Tamil, bookPairs and bookFormUse. Format 2 is
+    read a line at a time; format 1 in one call."""
+    with gzip.open(path, "rb") as stream:
+        head = stream.read(len(_FORMAT_2_HEAD))
+        if head != _FORMAT_2_HEAD:
+            raw = json.loads(head + stream.read())
+            if raw.get("format") != 1:
+                raise PackError(f"{path}: snapshot format {raw.get('format')} is not {IRV_STATE_FORMAT}")
+            fields = {k: decode_state(raw[k]) for k in ("bookCount", "data", "bookPairs", "bookFormUse") if k in raw}
+            return fields, raw.get("provenance") or {}
+        header = json.loads(head + stream.readline())
+        containers: dict[int, Any] = {0: {}}
+        for line in stream:
+            if line.strip():
+                _fill(containers, *_decode_line(containers, json.loads(line)))
+    return containers[0], header.get("provenance") or {}
 
 
 def restore_state(checker: Any, path: Path) -> dict[str, Any]:
     """Load a snapshot into a fresh checker; returns its provenance."""
-    raw = json.loads(gzip.decompress(path.read_bytes()))
-    if raw.get("format") != IRV_STATE_FORMAT:
-        raise PackError(f"{path}: snapshot format {raw.get('format')} is not {IRV_STATE_FORMAT}")
-    checker.book_count = decode_state(raw["bookCount"])
+    fields, provenance = read_state(path)
+    _assign(checker, fields)
+    return provenance
+
+
+def _assign(checker: Any, fields: dict[str, Any]) -> None:
+    """A snapshot's fields onto a checker, with the IRV-wide sums derived."""
+    checker.book_count = fields["bookCount"]
     checker.irv_count = Counter()
     for counts in checker.book_count.values():
         checker.irv_count.update(counts)
-    checker.data = decode_state(raw["data"])
-    if "bookPairs" in raw:
+    checker.data = fields["data"]
+    if "bookPairs" in fields:
         # The IRV-wide sums are derived, exactly as _index_pairs builds them.
-        checker.book_pairs = decode_state(raw["bookPairs"])
-        checker.book_form_use = decode_state(raw["bookFormUse"])
+        checker.book_pairs = fields["bookPairs"]
+        checker.book_form_use = fields["bookFormUse"]
         checker.irv_pairs, checker.irv_form_use = {}, {}
         for pairs in checker.book_pairs.values():
             for (bare, cls, has), n in pairs.items():
@@ -337,7 +482,6 @@ def restore_state(checker: Any, path: Path) -> dict[str, Any]:
         for forms in checker.book_form_use.values():
             for (word, index), n in forms.items():
                 checker.irv_form_use.setdefault(word, [0, 0])[index] += n
-    return raw.get("provenance") or {}
 
 
 # -- one resident checker ------------------------------------------------------------
@@ -440,7 +584,11 @@ def with_resident(pack_name: str, read: Callable[[Any, Any], Any]) -> Any:
 # state is kept, pickled in memory, for the last snapshot read, and a layer's
 # Lexicon (read only: the dictionaries are never written, NOTICE.md contract 2)
 # is shared. A rebuilt checker is then identical to one built from the files.
-_STATE_CACHE: dict[tuple, tuple[bytes, dict[str, Any]]] = {}
+# The pickle is one stream of pieces (_native_pieces), each dumped and loaded
+# by its own call, so that no one call holds the GIL for long; one Pickler and
+# one Unpickler share their memo across the pieces, so the copy shares objects
+# exactly as one pickle of the whole state would.
+_STATE_CACHE: dict[tuple, tuple[tuple[bytes, int], dict[str, Any]]] = {}
 _LEXICON_CACHE: dict[tuple, Any] = {}
 _STATE_FIELDS = ("book_count", "irv_count", "data", "book_pairs", "irv_pairs", "book_form_use", "irv_form_use")
 
@@ -456,13 +604,24 @@ def _restore_cached(checker: Any, path: Path) -> dict[str, Any]:
     cached = _STATE_CACHE.get(key)
     if cached is None:
         provenance = restore_state(checker, path)
-        blob = pickle.dumps({f: getattr(checker, f) for f in _STATE_FIELDS}, protocol=pickle.HIGHEST_PROTOCOL)
+        buffer = io.BytesIO()
+        pickler = pickle.Pickler(buffer, protocol=pickle.HIGHEST_PROTOCOL)
+        count = 0
+        for piece in _native_pieces({f: getattr(checker, f) for f in _STATE_FIELDS}):
+            pickler.dump(piece)
+            count += 1
+        del pickler
         _STATE_CACHE.clear()
-        _STATE_CACHE[key] = cached = (blob, provenance)
+        _STATE_CACHE[key] = cached = ((buffer.getvalue(), count), provenance)
         return provenance
-    for name, value in pickle.loads(cached[0]).items():
+    (blob, count), provenance = cached
+    unpickler = pickle.Unpickler(io.BytesIO(blob))
+    containers: dict[int, Any] = {0: {}}
+    for _ in range(count):
+        _fill(containers, *unpickler.load())
+    for name, value in containers[0].items():
         setattr(checker, name, value)
-    return cached[1]
+    return provenance
 
 
 def _lexicon(mods: Any, folder: Path, lang: Any, shared: bool) -> Any:
@@ -493,13 +652,37 @@ def _load(pack: RulePack) -> LoadedChecker:
                          lang, indic_qa_vendor.profile(code), provenance)
 
 
+def _drop(loaded: LoadedChecker | None) -> None:
+    """Free a checker that is no longer resident, before the next one loads.
+    It holds no reference cycle (test_a_released_checker_is_freed_without_the_
+    cycle_collector), so dropping it frees it. The gc.collect() that was here
+    collected nothing after real passes of all five packs, and a full
+    collection scans the whole engine heap in one call (45-90 ms measured
+    during a scan). Its index state is let go a book at a time: freeing it in
+    one cascade is one long call too. A container is emptied only when this
+    is its last reference, so nothing anyone else holds is ever changed."""
+    if loaded is None:
+        return
+    state = vars(loaded.checker)
+    del loaded
+    for name in _STATE_FIELDS:
+        value = state.pop(name, None)
+        # A dict of containers (book -> Counter) is popped one entry at a time,
+        # when `value` and getrefcount's argument are its only references.
+        if (isinstance(value, dict) and value and sys.getrefcount(value) == 2
+                and isinstance(next(iter(value.values())), (dict, set))):
+            while value:
+                value.popitem()
+        del value
+
+
 def release(keep: str | None = None) -> None:
     """Drop the resident checker unless it belongs to pack `keep`."""
     global _RESIDENT
     with _LOCK:
         if _RESIDENT is not None and _RESIDENT.key[0] != keep:
-            _RESIDENT = None
-            gc.collect()
+            old, _RESIDENT = _RESIDENT, None
+            _drop(old)
 
 
 def checker_key(pack: RulePack) -> str:
@@ -528,8 +711,8 @@ def _resident(pack: RulePack, book: str) -> LoadedChecker:
     global _RESIDENT
     key = (pack.name, pack.version, json.dumps(_settings(pack), sort_keys=True))
     if _RESIDENT is None or _RESIDENT.key != key or _RESIDENT.live_book not in (None, book):
-        _RESIDENT = None
-        gc.collect()
+        old, _RESIDENT = _RESIDENT, None
+        _drop(old)
         _RESIDENT = _load(pack)
     return _RESIDENT
 

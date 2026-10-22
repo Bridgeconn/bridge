@@ -175,11 +175,10 @@ def test_every_layer_rule_has_its_bridge_entry(rule_id):
 
 
 def test_the_snapshot_is_for_the_vendored_tamil_dictionary():
-    import gzip
-    raw = json.loads(gzip.decompress((packs_dir() / "ta-irv" / "irv_state.json.gz").read_bytes()))
+    fields, provenance = indic_qa_adapter.read_state(packs_dir() / "ta-irv" / "irv_state.json.gz")
     manifest = json.loads((packs_dir() / "ta-irv" / "dictionary" / "MANIFEST.json").read_text(encoding="utf-8"))
-    assert raw["provenance"]["dictionary"] == manifest["files"], "rebuild: build_indic_qa_packs.py --irv-state ta"
-    assert raw["provenance"]["books"] == 66 and "bookPairs" in raw and "bookFormUse" in raw
+    assert provenance["dictionary"] == manifest["files"], "rebuild: build_indic_qa_packs.py --irv-state ta"
+    assert provenance["books"] == 66 and "bookPairs" in fields and "bookFormUse" in fields
 
 
 def test_a_books_layer_findings_do_not_depend_on_the_books_checked_before_it():

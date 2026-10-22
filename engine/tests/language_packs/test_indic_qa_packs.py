@@ -136,10 +136,33 @@ def test_the_snapshot_seeds_irv_wide_counts():
 def test_each_snapshot_is_for_the_vendored_dictionary(name):
     import gzip
     pack = default_pack(name)
-    raw = json.loads(gzip.decompress((packs_dir() / name / "irv_state.json.gz").read_bytes()))
+    path = packs_dir() / name / "irv_state.json.gz"
+    fields, provenance = indic_qa_adapter.read_state(path)
     manifest = json.loads((packs_dir() / name / "dictionary" / "MANIFEST.json").read_text(encoding="utf-8"))
-    assert raw["provenance"]["dictionary"] == manifest["files"], "rebuild: build_indic_qa_packs.py --irv-state"
-    assert raw["provenance"]["books"] == 66 and pack.meta["profile"] == name[:2]
+    assert provenance["dictionary"] == manifest["files"], "rebuild: build_indic_qa_packs.py --irv-state"
+    assert provenance["books"] == 66 == len(fields["bookCount"]) and pack.meta["profile"] == name[:2]
+    # Shipped in pieces (format 2), so a restore never holds the GIL for one long call.
+    assert gzip.decompress(path.read_bytes()).startswith(b'{"format":2,')
+
+
+def test_a_released_checker_is_freed_without_the_cycle_collector():
+    """release() and a book switch drop the old checker without gc.collect()
+    (a full collection holds the GIL 90-180 ms in the engine): that is only
+    right while a checker, after a real pass, holds no reference cycle."""
+    import gc
+    import weakref
+    pack = default_pack("hi-irv")
+    check(pack, "RUT", {"1": {"1": "उसकी आयु सताईस वर्ष की थी।"}})
+    gone = weakref.ref(indic_qa_adapter._RESIDENT.checker)
+    gc.disable()
+    try:
+        check(pack, "GEN", {"1": {"1": "आदि में परमेश्वर ने"}})  # another book: _resident replaces it
+        assert gone() is None
+        gone = weakref.ref(indic_qa_adapter._RESIDENT.checker)
+        indic_qa_adapter.release()
+        assert gone() is None and indic_qa_adapter._RESIDENT is None
+    finally:
+        gc.enable()
 
 
 def test_a_books_findings_do_not_depend_on_the_books_checked_before_it():

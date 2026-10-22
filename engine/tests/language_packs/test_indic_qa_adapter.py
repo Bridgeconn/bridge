@@ -27,6 +27,96 @@ def test_the_snapshot_encoding_is_deterministic():
     assert adapter.encode_state(one) == adapter.encode_state(two)
 
 
+def _ordered(value):
+    """A value with every dict's insertion order and every type made visible."""
+    if isinstance(value, dict):
+        return (type(value).__name__, [(_ordered(k), _ordered(v)) for k, v in value.items()])
+    if isinstance(value, (set, frozenset)):
+        return (type(value).__name__, sorted(map(repr, value)))
+    if isinstance(value, (list, tuple)):
+        return (type(value).__name__, [_ordered(v) for v in value])
+    return (type(value).__name__, value)
+
+
+def _big_state():
+    """Every shape a real snapshot has: book -> Counter, tuple keys, nested
+    dicts, tuples holding Counters (pa), a set, and containers larger than a
+    piece; entries out of sorted order, so order is tested too."""
+    n = adapter.STATE_PIECE * 2 + 7
+    return {
+        "bookCount": {f"b{i}": Counter({f"w{j}": j + 1 for j in range(n if i == 1 else 3, 0, -1)}) for i in (2, 1)},
+        "data": {"irv_canon": Counter({f"k{j}": j for j in range(n, 0, -1)}),
+                 "join_split": Counter({("उस", f"ने{j}"): j for j in range(5)}),
+                 "book_state": {"gen": {"abbr": Counter(), "q": (Counter({"x": 1}), Counter())}},
+                 "quotes_book": {"gen": (1, 2)}, "names": {"a", ("b", 1)}, "empty": {}},
+        "bookPairs": {"gen": Counter({("க", "k", 1): 2, ("ச", "c", 0): 1})},
+        "bookFormUse": {"gen": Counter({("வா", 0): 3})},
+    }
+
+
+def _format_1(path, fields, provenance):
+    import gzip
+    import json
+    raw = {"format": 1, **{k: adapter.encode_state(v) for k, v in fields.items()}, "provenance": provenance}
+    path.write_bytes(gzip.compress(json.dumps(raw, ensure_ascii=False, separators=(",", ":"),
+                                              sort_keys=True).encode("utf-8"), 9, mtime=0))
+
+
+def test_the_format_2_snapshot_restores_what_format_1_did_in_the_same_order(tmp_path):
+    import gzip
+    fields, provenance = _big_state(), {"books": 2, "dictionary": {"wordlist.txt": "x"}}
+    old, new = tmp_path / "old.json.gz", tmp_path / "new.json.gz"
+    _format_1(old, fields, provenance)
+    encoded = {k: adapter.encode_state(v) for k, v in fields.items()}
+    new.write_bytes(gzip.compress(adapter.encode_state_file(encoded, provenance), 9, mtime=0))
+    from_old, prov_old = adapter.read_state(old)  # format 1 is still read
+    from_new, prov_new = adapter.read_state(new)
+    assert prov_old == prov_new == provenance
+    assert set(from_old) == set(from_new) == set(fields)
+    for key in fields:
+        assert _ordered(from_new[key]) == _ordered(from_old[key])
+    lines = gzip.decompress(new.read_bytes()).decode("utf-8").splitlines()
+    assert lines[0].startswith('{"format":2,')
+    import json
+    assert max(len(json.loads(line)[1]) for line in lines[1:]) <= adapter.STATE_PIECE
+
+
+def test_write_state_writes_format_2_deterministically(tmp_path):
+    fields = _big_state()
+    checker = SimpleNamespace(book_count=fields["bookCount"], data=fields["data"],
+                              book_pairs=fields["bookPairs"], book_form_use=fields["bookFormUse"],
+                              lang=SimpleNamespace(sandhi=True))
+    one, two = tmp_path / "1.gz", tmp_path / "2.gz"
+    adapter.write_state(one, checker, {"books": 2})
+    adapter.write_state(two, checker, {"books": 2})
+    assert one.read_bytes() == two.read_bytes()
+    restored = SimpleNamespace()
+    assert adapter.restore_state(restored, one) == {"books": 2}
+    assert _ordered(restored.book_count) == _ordered(adapter.decode_state(adapter.encode_state(fields["bookCount"])))
+    assert restored.irv_count["w1"] == 4 and restored.irv_pairs[("க", "k")] == [2, 0]
+
+
+def test_a_cached_restore_is_an_independent_copy_of_the_file_restore(tmp_path):
+    """_restore_cached's piecewise pickle gives what the file gave, in the
+    same order, sharing nothing with the copy before it."""
+    path = tmp_path / adapter.IRV_STATE
+    fields = _big_state()
+    checker = SimpleNamespace(book_count=fields["bookCount"], data=fields["data"],
+                              book_pairs=fields["bookPairs"], book_form_use=fields["bookFormUse"],
+                              lang=SimpleNamespace(sandhi=True))
+    adapter.write_state(path, checker, {"books": 2})
+    adapter._STATE_CACHE.clear()
+    first, second = SimpleNamespace(), SimpleNamespace()
+    assert adapter._restore_cached(first, path) == {"books": 2}
+    expected = {f: _ordered(getattr(first, f)) for f in adapter._STATE_FIELDS}
+    first.book_count["b1"]["w1"] += 100  # a pass mutates its checker
+    first.irv_pairs[("க", "k")][1] += 100
+    assert adapter._restore_cached(second, path) == {"books": 2}
+    assert {f: _ordered(getattr(second, f)) for f in adapter._STATE_FIELDS} == expected
+    assert second.book_count["b1"] is not first.book_count["b1"]
+    adapter._STATE_CACHE.clear()
+
+
 def test_a_run_ends_where_lifted_markup_was():
     text = "पहला शब्द\\f + \\ft टिप्पणी\\f* दूसरा"
     lifted, _ = lift_inline_usfm(text)
