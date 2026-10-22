@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 
 const { getSettings, getNavigationStatus, setSettings, engineInfo, terminologyList, terminologyRecord, housestyleList, housestyleRecord, housestyleSetState, housestyleNameSuggestions, languageQaStatus, languageQaSetPack, pickFolder, setReference, checkerGet, checkerSet, wordsList, usersList, connectorStatus, installConnector } = vi.hoisted(() => ({
@@ -278,6 +278,57 @@ describe("SettingsModal reviewer name (V11-002/V11-005)", () => {
     await waitFor(() => expect(setSettings).toHaveBeenCalledWith(
       expect.objectContaining({ reviewerName: "Alice" }),
     ));
+  });
+});
+
+describe("SettingsModal API key removal (#319)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    engineInfo.mockResolvedValue({
+      bridgeVersion: "0.9.6", companionSchemaVersion: 14, projectOpen: false, greekRoom: {},
+    });
+    getNavigationStatus.mockResolvedValue(navigationState());
+    setSettings.mockResolvedValue({ hasApiKey: false, reviewerMode: "basic" });
+  });
+
+  afterEach(() => { vi.mocked(window.confirm).mockRestore?.(); });
+
+  function stored(hasApiKey: boolean) {
+    getSettings.mockResolvedValue({
+      provider: "openai", apiBaseUrl: "", model: "gpt-5.6", hasApiKey,
+      reviewerMode: "basic", paratextNavigation: false, logosNavigation: false,
+    });
+  }
+
+  it("offers Remove key only when a key is saved", async () => {
+    stored(false);
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+    await screen.findByLabelText("API key");
+    expect(screen.queryByRole("button", { name: "Remove key" })).toBeNull();
+  });
+
+  it("asks first, then sends only an empty apiKey and shows the no-key state", async () => {
+    stored(true);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const onClose = vi.fn();
+    render(SettingsModal, { props: { initialPane: "ai", onClose } });
+    await fireEvent.click(await screen.findByRole("button", { name: "Remove key" }));
+
+    expect(confirm).toHaveBeenCalledOnce();
+    await waitFor(() => expect(setSettings).toHaveBeenCalledWith({ apiKey: "" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Remove key" })).toBeNull());
+    expect(screen.getByLabelText("API key")).toHaveAttribute("placeholder", "Enter your API key");
+    expect(screen.getByText("API key removed.")).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("sends nothing when the confirm is declined", async () => {
+    stored(true);
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+    await fireEvent.click(await screen.findByRole("button", { name: "Remove key" }));
+    expect(setSettings).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Remove key" })).toBeInTheDocument();
   });
 });
 

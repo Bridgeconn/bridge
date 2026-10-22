@@ -171,6 +171,27 @@
     }
   }
 
+  /** #319: remove the saved API key. An empty `apiKey` is how settings.set
+   *  already clears it (secret_store.set_api_key drops the DPAPI entry); only
+   *  the key is sent, so unsaved edits to the other fields are not saved by it. */
+  async function removeApiKey() {
+    if (!window.confirm("Remove the saved API key from this computer? AI features stop working until a key is entered again.")) return;
+    saving = true;
+    saveMessage = "";
+    try {
+      const result = await bridge.setSettings({ apiKey: "" });
+      hasApiKey = result.hasApiKey;
+      apiKey = "";
+      saveMessage = hasApiKey
+        ? "The saved key was removed, but a key is still set in this computer's OPENAI_API_KEY environment variable."
+        : "API key removed.";
+    } catch (e) {
+      saveMessage = e instanceof Error ? e.message : String(e);
+    } finally {
+      saving = false;
+    }
+  }
+
   /** Message describing a navigation target the reviewer enabled that has not connected yet. */
   function unresolvedConnection(status: NavigationSyncState): string {
     if (status.ownerConflict) return "Saved. Another Bridge window owns desktop navigation.";
@@ -555,7 +576,12 @@
 
         <div class="field">
           <label for="apiKey">API key</label>
-          <input id="apiKey" type="password" bind:value={apiKey} placeholder={hasApiKey ? "•••••••••••••••• (already set — enter to replace)" : "Enter your API key"} />
+          <div class="key-row">
+            <input id="apiKey" type="password" bind:value={apiKey} placeholder={hasApiKey ? "•••••••••••••••• (already set — enter to replace)" : "Enter your API key"} />
+            {#if hasApiKey}
+              <button type="button" class="btn" on:click={removeApiKey} disabled={saving}>Remove key</button>
+            {/if}
+          </div>
           <div class="hint">Stored locally via your OS's secure storage — never sent anywhere except the endpoint above.</div>
         </div>
 
@@ -922,6 +948,9 @@
   .mode-option span { display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-xs); color: var(--text); }
   .mode-option small { color: var(--text-2); line-height: 1.35; }
   .save-row { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+  .key-row { display: flex; align-items: center; gap: 8px; }
+  .key-row input { flex: 1; min-width: 0; }
+  .key-row .btn { flex: none; }
   .btn { font-size: var(--fs-sm); font-weight: 600; padding: 8px 14px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); cursor: pointer; }
   .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .btn:disabled { opacity: 0.6; cursor: not-allowed; }
