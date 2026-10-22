@@ -821,6 +821,8 @@ class BridgeEngine:
         # Resolved lazily by current_actor_id(): working it out opens the
         # workspace database, and plenty of requests never write anything (#78).
         self._local_user: dict[str, str] | None = None
+        # (open project's path string, canonical_path_key of it): _is_open_project_path.
+        self._open_project_path_key: tuple[str, str] | None = None
 
         # Connector I/O is deliberately performed by NavigationSyncCoordinator's
         # daemon probe rather than this service's single-threaded stdio request loop.
@@ -7833,6 +7835,22 @@ class BridgeEngine:
                 _trace(f"rpc {request.method} took {elapsed * 1000:.0f}ms")
             self._release_thread_db_handles()
 
+    def _is_open_project_path(self, requested: str) -> bool:
+        """Whether a Language QA request's `projectPath` names the open project,
+        compared canonically. Path.resolve() is several filesystem calls, each
+        a GIL handover that waits behind a running scan, and every Language QA
+        request made two. The same string as the project's own path needs
+        none; the project's side is resolved once per project path (`project.open`
+        has already resolved it), so a request in another spelling pays one."""
+        own = str(self.project.path)
+        if requested == own:
+            return True
+        cached = getattr(self, "_open_project_path_key", None)
+        if cached is None or cached[0] != own:
+            cached = (own, canonical_path_key(own))
+            self._open_project_path_key = cached
+        return canonical_path_key(requested) == cached[1]
+
     def _release_thread_db_handles(self) -> None:
         """#113: the dispatcher's connections are reused within a request and
         released after it, so between requests nothing holds the database
@@ -7885,7 +7903,7 @@ class BridgeEngine:
                 # difference in case. That is what failed the Language QA
                 # latency gate in CI while every UI path worked, because the UI
                 # only ever echoes a path the engine itself produced.
-                if canonical_path_key(str(p.get("projectPath") or "")) != canonical_path_key(self.project.path):
+                if not self._is_open_project_path(str(p.get("projectPath") or "")):
                     raise ProjectError("Language QA request belongs to a different project.")
                 if m in {Methods.LANGUAGE_QA_LEARNED_LIST, Methods.LANGUAGE_QA_LEARNED_FORGET,
                          Methods.LANGUAGE_QA_LEARNED_RESTORE}:
