@@ -101,7 +101,9 @@ from tc_ai_bridge.alignment_engine import (
     AlignmentError, apply_proposal, make_inventory, realign, unalign_bottom,
     validate_preparation_proposal,
 )
-from tc_ai_bridge.aligned_usfm import AlignedUsfmError, render_aligned_verse
+from tc_ai_bridge.aligned_usfm import (
+    NO_SOURCE_TOKENS_DETAIL, AlignedUsfmError, render_aligned_verse, unaligned_reason,
+)
 from tc_ai_bridge.alignment_reliability import (
     alignment_fingerprint, compile_link_proposal, structural_issues, target_token_fingerprint,
 )
@@ -7475,21 +7477,31 @@ class BridgeEngine:
                     "ledgerPath": self._write_export_ledger(output_path)}
         summary = self.project.summary
         book = summary.book_id
+        # Verses written with no alignment because they have no source tokens
+        # (a lettered segment, #307): reported, not refused.
+        unaligned: list[dict[str, str]] = []
 
         def render(chapter: str, verse: str) -> str:
+            text = self.project.target_verse_text(chapter, verse)
+            alignment = self.project.load_verse_alignment(chapter, verse)
             try:
-                return render_aligned_verse(
-                    self.project.target_verse_text(chapter, verse),
-                    self.project.load_verse_alignment(chapter, verse),
-                )
+                rendered = render_aligned_verse(text, alignment)
             except AlignedUsfmError as exc:
                 raise ProjectError(
                     f"Cannot export aligned USFM at {book.upper()} {chapter}:{verse}: {exc}"
                 ) from exc
+            reason = unaligned_reason(text, alignment)
+            if reason is not None:
+                unaligned.append({
+                    "reference": f"{chapter}:{verse}", "chapter": chapter, "verse": verse,
+                    "reason": reason, "detail": NO_SOURCE_TOKENS_DETAIL,
+                })
+            return rendered
 
         content = self._source_preserving_usfm(render)
         fidelity = "source-preserving"
         if content is None:
+            unaligned.clear()
             fidelity = "simplified"
             lines = [f"\\id {book.upper()}", "\\usfm 3.0"]
             for chapter in self.project.chapters():
@@ -7521,6 +7533,7 @@ class BridgeEngine:
             "written": True, "path": output_path, "bookId": book,
             "chapters": len(self.project.chapters()), "format": "usfm3-aligned",
             "fidelity": fidelity, "alignmentStatus": status["counts"],
+            "unalignedVerses": unaligned,
             "gate": gate, "overridden": bool(gate and gate["blocking"]), "ledgerPath": ledger,
         }
 

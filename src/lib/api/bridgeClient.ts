@@ -26,6 +26,9 @@ export interface ExportResult {
   /** True when it was written over blocking items, with the override recorded. */
   overridden?: boolean;
   gate?: { blocking: boolean; items: ExportGateItem[]; counts: Record<string, number> };
+  /** Aligned USFM only: verses written with no alignment because they have no
+   *  original-language source tokens, e.g. a lettered segment 5a (#307). */
+  unalignedVerses?: { reference: string; chapter: string; verse: string; reason: string; detail: string }[];
 }
 import type {
   AIReviewChapterResponse,

@@ -1,6 +1,8 @@
 import pytest
 
-from tc_ai_bridge.aligned_usfm import AlignedUsfmError, render_aligned_verse
+from tc_ai_bridge.aligned_usfm import (
+    NO_SOURCE_TOKENS, AlignedUsfmError, render_aligned_verse, unaligned_reason,
+)
 from tc_ai_bridge.models import AlignmentGroup, TokenRef, VerseAlignment
 
 
@@ -53,8 +55,28 @@ def test_discontinuous_target_group_is_rejected_instead_of_changing_meaning():
         render_aligned_verse("one two three", alignment)
 
 
-def test_aligned_export_requires_original_language_tokens():
-    alignment = VerseAlignment([], [_bottom("target")])
+def test_a_verse_with_no_source_tokens_is_written_unaligned_not_refused():
+    # A lettered segment (5a) has no source tokens (#307): its words are
+    # written exactly as unaligned words of an aligned verse, with no milestone.
+    alignment = VerseAlignment([], [_bottom("target"), _bottom("words")])
 
-    with pytest.raises(AlignedUsfmError, match="No original-language source tokens"):
+    rendered = render_aligned_verse("target words.", alignment)
+
+    assert rendered == (
+        '\\w target|x-occurrence="1" x-occurrences="1"\\w* '
+        '\\w words|x-occurrence="1" x-occurrences="1"\\w*.'
+    )
+    assert unaligned_reason("target words.", alignment) == NO_SOURCE_TOKENS
+
+
+def test_unaligned_reason_is_only_for_verses_with_words_and_no_source():
+    with_source = VerseAlignment([AlignmentGroup([_top("א")], [])], [_bottom("target")])
+    assert unaligned_reason("target", with_source) is None
+    assert unaligned_reason("", VerseAlignment([], [])) is None
+
+
+def test_target_words_in_a_group_with_no_source_words_are_still_refused():
+    alignment = VerseAlignment([AlignmentGroup([], [_bottom("target")])], [])
+
+    with pytest.raises(AlignedUsfmError, match="has target words but no source words"):
         render_aligned_verse("target", alignment)
