@@ -21415,3 +21415,44 @@ setRole, a second handle on the same book and a pulled team_members event (4 new
 (same limit as `local_user()` today). `verse.decide` tails are disk syncs in `commit()` and the
 per-request close (WAL checkpoint); `SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE` would help but widens the
 power-cut window. The gate's 10-sample p95 is effectively the maximum.
+
+## 2026-10-23 — Paratext batch 1, part one: read-only reader and whole-project import (#354, #355)
+
+**What (#354, d38474b).** New `engine/tc_ai_bridge/paratext_project.py`, a read-only reader for a
+Paratext 9 project folder: `Settings.xml` (both naming forms, `BooksPresent` over Paratext's 123-book
+canon, `LanguageIsoCode` split, quotes/characters/words, Guid, sha256), the book-file scan from the naming
+pattern (RegExBackup*, .BAK, peripherals and files without `\c` skipped with a reason; BooksPresent
+mismatches are warnings), refs, BookNames/CommentTags/ProjectUserAccess, and the Project Notes index:
+`iterparse` + `elem.clear()` over every `Notes_*.xml`, threads merged across users by `Thread` id,
+status/assignee/tags folded in date order, JSON round trip, unchanged files reused. Every file is read as
+bytes between two equal stats with up to three retries; `ParatextFolderReader` keeps the previous parse as
+stale while Paratext is mid-save. No function opens a file for writing (pinned by a test that patches
+`open`/`os.open`). Synthetic builder `tests/support/paratext_fixture.py`; dev script
+`scripts/paratext_smoke.py` (output on #354, not committed).
+
+**What (#355, c437ce0).** `inspect_import` takes a Paratext folder's books from its naming pattern
+instead of scanning every `.sfm`; skips are warnings on the review screen; a pattern naming nothing falls
+back to the old scan, which now skips RegExBackup* and never walks into `.hg`. Language: a known ISO code
+leaves the name to the import screen's ISO 639-3 table, and Paratext's free-text `<Language>` is used only
+for an unknown code (Benz, 2026-10-22: DVT's `<Language>` is "TestDeva"). The link block is written as
+`paratext` into every sibling's `.bridge/collection.json`; the review screen shows the Paratext name and
+Guid. The #308 two-letter mapping (8eeb87a) is kept, so `sa:::` gives `san`, not the issue's `sa`.
+
+**Why.** IRVTam failed import ("More than one source file identifies the same book: mat": RegExBackup
+files start with `\id MAT`) and BHDNT failed (`A7INTBHDNT.SFM` has no `\c`). Both reproduced before the fix.
+
+**Measured.** Real projects (read only; sha256 of each folder, `.hg` excluded and never listed, equal before
+and after every run): IRVTam 66 books + 4 RegExBackup skipped; BHDNT 66 + INT/GLO skipped; DVT 27, `sa`;
+IRVHin 66. `build_notes_index` on IRVTam 2.03 s (19,743 threads, 24,664 comments; the 42.6 MB file 1.52 s);
+JOS 3:4 thread `8a14411f` found. Desktop (`npm run tauri dev` on freshly built sidecars, scratch
+LOCALAPPDATA): IRVTam and BHDNT imported as 66 book projects each with the skips on the review screen,
+DVT pre-filled Sanskrit/`san` and imported 27; all 159 `collection.json` carry the link.
+Gates: engine `pytest -n auto` 5584 passed, 0 failed; `npm run check` 0/0, `npm run test` 891/891,
+`npm run build` ok; `smoke_sidecars.py` on the rebuilt frozen pair passed.
+
+**Flake found and fixed (cf5940b).** The first engine run failed
+`test_preload_runs_once_on_a_background_thread` once. Root cause in `names_adapter.preload_async`: it took
+`_lock`, which `_ensure_uroman` holds for the whole ~5 s Uroman build, so a second call made while the
+preload thread was already building waited out the build and returned None (the failing run's stderr:
+"uroman preload took 5004ms", the test's own 5 s gate timeout). Reproduced deterministically (2.00 s, then
+None); thread creation now has its own lock, and a new test pins that order.
