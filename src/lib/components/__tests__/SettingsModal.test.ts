@@ -748,3 +748,49 @@ describe("Users pane (#237)", () => {
     expect(screen.getByRole("button", { name: "Add" })).toBeInTheDocument();
   });
 });
+
+describe("SettingsModal Escape (#321)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getSettings.mockResolvedValue({
+      provider: "openai", apiBaseUrl: "", model: "gpt-test", hasApiKey: false, reviewerMode: "basic",
+      paratextNavigation: false, logosNavigation: false, reviewerName: "Revant", reviewerNameUpdatedAt: "",
+      localUserId: "u-1", localUserRole: "project_admin", bookmarks: [], recentChapters: [],
+    });
+    getNavigationStatus.mockResolvedValue(navigationState());
+    engineInfo.mockResolvedValue({ bridgeVersion: "0.16.0", companionSchemaVersion: 16 });
+    usersList.mockResolvedValue({
+      users: [{ userId: "u-1", displayName: "Revant", role: "project_admin", active: true, createdAt: "", updatedAt: "", current: true }],
+      currentUserId: "u-1",
+    });
+  });
+
+  it("closes on Escape the way × does, unsaved fields not saved, and returns focus to the invoker", async () => {
+    const opener = document.createElement("button");
+    opener.textContent = "Settings";
+    document.body.appendChild(opener);
+    opener.focus();
+    const onClose = vi.fn();
+    const { unmount } = render(SettingsModal, { props: { onClose, initialPane: "ai" } });
+    const model = await screen.findByLabelText("Model");
+    await fireEvent.input(model, { target: { value: "unsaved-model" } });
+    await fireEvent.keyDown(model, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(setSettings).not.toHaveBeenCalled();
+    unmount();
+    expect(document.activeElement).toBe(opener);
+    opener.remove();
+  });
+
+  it("leaves Settings open when Escape only cancels a user rename", async () => {
+    const onClose = vi.fn();
+    render(SettingsModal, { props: { onClose, initialPane: "ai" } });
+    await fireEvent.click(await screen.findByRole("button", { name: "Users" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Rename" }));
+    const field = screen.getByLabelText("New name for Revant");
+    await fireEvent.keyDown(field, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+    await fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+});

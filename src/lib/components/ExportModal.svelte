@@ -1,10 +1,24 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { bridge } from "../api/bridgeClient";
   import { project } from "../stores";
   import type { ExportGateItem } from "../api/bridgeClient";
 
   export let onClose: () => void;
   export let reviewComplete = false;
+
+  // #321: Escape does what the Close button does (it stays enabled while an
+  // export is writing, so Escape does too), and focus goes back to the
+  // button that opened the dialog (the CheckerSettingsDialog pattern).
+  let openedFrom: Element | null = null;
+  onMount(() => {
+    openedFrom = document.activeElement;
+    return () => { if (openedFrom instanceof HTMLElement && openedFrom.isConnected) openedFrom.focus(); };
+  });
+
+  function onWindowKeydown(event: KeyboardEvent): void {
+    if (event.key === "Escape" && !event.defaultPrevented) onClose();
+  }
 
   let exporting = false;
   let resultMessage = "";
@@ -66,6 +80,8 @@
     }
   }
 </script>
+
+<svelte:window on:keydown={onWindowKeydown} />
 
 <div class="modal-overlay">
   <div class="modal">

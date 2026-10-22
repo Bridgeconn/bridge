@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { engineLog } from "../stores";
   import type { EngineLogEntry } from "../api/bridgeClient";
   import {
@@ -6,6 +7,18 @@
   } from "../perf";
 
   export let onClose: () => void;
+
+  // #321: Escape does what the × does, and focus goes back to the button that
+  // opened the panel (the CheckerSettingsDialog pattern).
+  let openedFrom: Element | null = null;
+  onMount(() => {
+    openedFrom = document.activeElement;
+    return () => { if (openedFrom instanceof HTMLElement && openedFrom.isConnected) openedFrom.focus(); };
+  });
+
+  function onWindowKeydown(event: KeyboardEvent): void {
+    if (event.key === "Escape" && !event.defaultPrevented) onClose();
+  }
 
   let filter: "all" | "warn" | "error" = "all";
 
@@ -49,6 +62,8 @@
     return new Date(tsMs).toLocaleTimeString(undefined, { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
   }
 </script>
+
+<svelte:window on:keydown={onWindowKeydown} />
 
 <div class="modal-overlay">
   <div class="diagnostics-modal">

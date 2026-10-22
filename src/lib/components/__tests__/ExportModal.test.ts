@@ -34,3 +34,21 @@ describe("ExportModal publication gate (layered-rules 4.5)", () => {
     expect(pickSavePath).toHaveBeenCalledTimes(1);  // the override reuses the chosen path
   });
 });
+
+describe("ExportModal Escape (#321)", () => {
+  it("closes on Escape, as Close does, and returns focus to the invoker", async () => {
+    const opener = document.createElement("button");
+    opener.textContent = "Export";
+    document.body.appendChild(opener);
+    opener.focus();
+    const onClose = vi.fn();
+    const { unmount } = render(ExportModal, { props: { onClose } });
+    await fireEvent.keyDown(window, { key: "Enter" });
+    expect(onClose).not.toHaveBeenCalled();
+    await fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledOnce();
+    unmount();
+    expect(document.activeElement).toBe(opener);
+    opener.remove();
+  });
+});

@@ -99,6 +99,23 @@
 
   onMount(load);
 
+  // #321: Escape does what the × does (close, unsaved fields simply dropped),
+  // and focus goes back to whatever opened Settings, as CheckerSettingsDialog
+  // does. Two nested editors handle their own Escape first: the Checker
+  // settings dialog, and UsersPane's inline rename field, whose Escape only
+  // cancels the rename.
+  let openedFrom: Element | null = null;
+  onMount(() => {
+    openedFrom = document.activeElement;
+    return () => { if (openedFrom instanceof HTMLElement && openedFrom.isConnected) openedFrom.focus(); };
+  });
+
+  function onWindowKeydown(event: KeyboardEvent): void {
+    if (event.key !== "Escape" || event.defaultPrevented || checkerDialogOpen) return;
+    if (event.target instanceof Element && event.target.closest("input.rename")) return;
+    onClose();
+  }
+
   async function load() {
     loading = true;
     try {
@@ -523,6 +540,8 @@
     }
   }
 </script>
+
+<svelte:window on:keydown={onWindowKeydown} />
 
 <div class="modal-overlay">
   <div class="settings-modal">
