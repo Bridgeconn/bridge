@@ -52,3 +52,24 @@ describe("AssignmentsDialog (#240)", () => {
     expect(onClose).toHaveBeenCalled();
   });
 });
+
+describe("AssignmentsDialog Escape (#321)", () => {
+  it("closes on Escape, as × does, and returns focus to the invoker", async () => {
+    const opener = document.createElement("button");
+    opener.textContent = "Assign…";
+    document.body.appendChild(opener);
+    opener.focus();
+    const onClose = vi.fn();
+    const { unmount } = render(AssignmentsDialog, { props: {
+      bookName: "Genesis", chapters: ["1", "2"], users, assignments,
+      onSet: vi.fn(), onClear: vi.fn(), onClose,
+    } });
+    await fireEvent.keyDown(window, { key: "Enter" });
+    expect(onClose).not.toHaveBeenCalled();
+    await fireEvent.keyDown(screen.getByLabelText("Assignee for Chapter 1"), { key: "Escape" });
+    expect(onClose).toHaveBeenCalledOnce();
+    unmount();
+    expect(document.activeElement).toBe(opener);
+    opener.remove();
+  });
+});

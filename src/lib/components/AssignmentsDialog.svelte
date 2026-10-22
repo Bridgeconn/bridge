@@ -3,6 +3,7 @@
    *  project_admin's dialog, opened from a book row on the dashboard. Pure
    *  UI: the parent owns the engine calls. The book row ("whole book") and
    *  one row per chapter; an empty choice clears the assignment. */
+  import { onMount } from "svelte";
   import type { Assignment, WorkspaceUser } from "../types/finding";
 
   export let bookName: string;
@@ -26,7 +27,23 @@
   function label(chapter: string): string {
     return chapter ? `Chapter ${chapter}` : "Whole book";
   }
+
+  // #321: Escape does what the × does (it stays enabled while an assignment
+  // is saving, so Escape does too), and focus goes back to the button that
+  // opened the dialog (the CheckerSettingsDialog pattern). The dialog has no
+  // nested editor or menu with an Escape of its own.
+  let openedFrom: Element | null = null;
+  onMount(() => {
+    openedFrom = document.activeElement;
+    return () => { if (openedFrom instanceof HTMLElement && openedFrom.isConnected) openedFrom.focus(); };
+  });
+
+  function onWindowKeydown(event: KeyboardEvent): void {
+    if (event.key === "Escape" && !event.defaultPrevented) onClose();
+  }
 </script>
+
+<svelte:window on:keydown={onWindowKeydown} />
 
 <div class="overlay" role="dialog" aria-labelledby="assign-title">
   <div class="dialog">
