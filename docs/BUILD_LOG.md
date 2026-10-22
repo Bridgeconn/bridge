@@ -21456,3 +21456,47 @@ Gates: engine `pytest -n auto` 5584 passed, 0 failed; `npm run check` 0/0, `npm 
 preload thread was already building waited out the build and returned None (the failing run's stderr:
 "uroman preload took 5004ms", the test's own 5 s gate timeout). Reproduced deterministically (2.00 s, then
 None); thread creation now has its own lock, and a new test pins that order.
+
+## 2026-10-23 — Paratext batch 1, part two: project link and read-only notes (#356, #357)
+
+**What (#356, b4f57d9).** `engine/tc_ai_bridge/paratext_link.py` resolves the `paratext` block an import
+writes to every sibling's `collection.json`: `linked` (Settings.xml Guid matches), `folderMoved` (same
+Guid found under Paratext's `Settings_Directory`, offered as `candidate`), `guidMismatch`,
+`folderMissing`, `notParatext`. Resolution never fails an open. `relink()` refuses a folder with another
+Guid and rewrites `paratext.folder` in every sibling, keeping every other key. `engine/paratext_session.py`
+holds the resolution and a memoizing reader; `project.open` attaches it and keeps it while the Guid is
+the same. RPCs `paratext.linkStatus`, `.refresh`, `.bookNames` (read) and `.relink` (write), classified in
+`authorization.py`. A status line with Refresh/Relink sits under the dashboard header
+(`ParatextLinkStatus.svelte`). It needs an open book, so it is on the collection dashboard, not on the
+project list the app calls "Project Home".
+
+**What (#357, 5966ec4, 323e4b0).** The notes index is built on a daemon thread that `project.open`
+starts; each notes request stats the `Notes_*.xml` files (fingerprint over name, size, mtime_ns) and a
+change starts a rebuild that reuses unchanged files. RPCs answer `building` until the first build and
+`stale` while a rebuild runs. Cache: `paratext-cache/<guid>/notes-<fingerprint>.jsonl.gz`, gzip JSON lines
+(header + one compact row per comment) read a line at a time. A single `json.loads` of the 30 MB index
+took 4 s and would hold the GIL for about a second. No workbench table or migration; nothing written into
+the Paratext folder. RPCs `paratext.notesForChapter` / `.notesForVerse` / `.noteThread`; `linkStatus`
+gains `notesIndex`. UI: a "Paratext" side panel (`ParatextNotesPanel.svelte`) and a `PT n` verse badge from
+`paratextNoteCountsByVerse` (verseKey-keyed, cleared by `resetBookState()`), loaded per chapter in
+VerseList (not App.svelte).
+
+**Measured.** IRVTam (19,743 threads): cold build 3.85 s in the app (4.2 s in-process alongside
+`project.open`'s own work); from the 5.7 MB cache 1.3 s. 130 pings during a cold build: p95 0.1 ms,
+max 146 ms. 33 during a cache load: max 13 ms. Probed GIL holds: build ≤ 38 ms, cache read ≤ 64 ms
+(GC accounts for part of it).
+Desktop walk (`npm run tauri dev`, rebuilt sidecars, scratch LOCALAPPDATA): JOS 3:4 shows Benz's thread
+("3,000 அடிகள்" → "ஒரு கிலோமீட்டர்") and the two AI-QA threads; JOS 3 badges match the counts. Refresh after an
+edited note: proven on a scratch copy of IRVTam (same Guid, relinked), where the panel showed "Updating
+from Paratext…" and then the edited text. Not yet watched with a note edited in Paratext itself. Renaming
+`IRVTam` inside `My Paratext 9 Projects`: the project opened, the line said the folder moved and offered
+the new path, and Relink rewrote all 66 siblings; renamed back and relinked the same way. A rename inside
+the projects folder reports `folderMoved`, not `folderMissing`: that state needs a folder that is gone
+(covered by the RPC tests). sha256 of the four projects equal before and after.
+Gates: frontend check 0/0, test 909/909, build ok; frozen sidecars rebuilt, `smoke_sidecars.py` passed,
+frozen engine answers `paratext.linkStatus`. Engine suite: two full runs, 2 failed / 5595 passed, then
+1 failed / 5596 passed. Each failure passed in the other run, and none runs Paratext code (Benz accepted the
+gate on that evidence): `test_projects_list_management::…summed_progress…` takes 61–77 s in every run
+against an 80 s budget; `test_language_qa::test_continuous_foreground_polling_does_not_starve_worker` has a
+fixed 3 s deadline; `test_names_check::test_engine_info_builds_no_uroman…` failed once after 10.9 s with
+the error not captured.
