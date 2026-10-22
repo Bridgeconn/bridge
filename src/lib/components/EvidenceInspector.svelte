@@ -10,8 +10,10 @@
     meaningStatusLabel,
     propertyLabel,
     realizationLabel,
-    actorDisplayId,
+    actorDisplayName,
   } from "../utils/reviewLabels";
+  import { onMount } from "svelte";
+  import { loadUserNames, userNames } from "../userNames";
 
   /**
    * Evidence in layers, not one generated explanation.
@@ -23,6 +25,10 @@
    * need different review actions.
    */
   export let detail: QaFindingDetail;
+
+  // Names for the HISTORY rows (#313); refreshed on each mount so a rename
+  // shows up, and harmless if the list cannot be read.
+  onMount(() => { void loadUserNames(); });
 
   /** Advanced source internals stay folded away until asked for. */
   let showSourceInternals = false;
@@ -315,7 +321,11 @@
       <ol class="history">
         {#each detail.history as record}
           <li>
-            <span class="actor">{record.actorType === "HUMAN" ? actorDisplayId(record.actorId) : record.actorType}</span>
+            {#if record.actorType === "HUMAN"}
+              <span class="actor" title={record.actorId || undefined}>{actorDisplayName(record.actorId, $userNames)}</span>
+            {:else}
+              <span class="actor">{record.actorType}</span>
+            {/if}
             <span class="transition">
               {text(record.previousQaDisposition, "—")} → {text(record.newQaDisposition, "—")}
             </span>
