@@ -21392,3 +21392,26 @@ Tamil runs; baseline 2 in 6). The rest of the tail is not the scan: `ping` itsel
 `_authorize` → `local_user()`, because `WorkspaceRepository._connect` opens a new SQLite connection (four
 PRAGMAs, `synchronous=FULL`) on every call, and each GIL handover waits behind the scan thread. The
 `verse.decide (languageQa)` p95 is taken over 10 samples, so one slow decide fails it. Being worked next.
+
+## 2026-10-22 (evening) — Per-request role check no longer opens SQLite; Language QA gate 10/10
+
+**What.** The rest of the benchmark gate's tail was not the workspace database (that brief was wrong;
+`local_user()` is cached and only `project.open` opens workspace.sqlite3). It was `_authorize` ->
+`project_role` -> `TranslationCoreProject.team_role()` -> `workbench.get('team_members')`: the dispatcher
+releases its workbench connection after every request (#113), so every request paid a fresh open, five
+PRAGMAs, a SELECT and a close, each a GIL handover behind the scan thread. `team_role()` now keeps each
+user's answer stamped with the workbench's per-file `write_generation` (bumped by `_write`, `_delete`,
+`batch` and the hub pull's `import_event_lines`), read before the row. Language QA requests also stop
+resolving both paths on every call when the request carries the project's own path string.
+Authorization semantics are unchanged; `ping` is still authorised.
+
+**Measured (2 cores, during a scan).** ping: 1.00 -> 0.01 opens per request, max 78-223 -> 6-9 ms.
+Gate (`--gate --cores 2 --p95-budget-ms 300`): baseline 8 of 9 passed (one 330 ms ping); final 10 of 10
+Tamil (max ping 19-174 ms) and 2 of 2 Hindi. Engine suite `-n 4` 5515 passed, 0 failed; frozen
+sidecars rebuilt and `smoke_sidecars.py` passed. A role change decides the next request for a local
+setRole, a second handle on the same book and a pulled team_members event (4 new tests).
+
+**Open, for Benz/Revant.** A second Bridge process writing the same book does not invalidate this cache
+(same limit as `local_user()` today). `verse.decide` tails are disk syncs in `commit()` and the
+per-request close (WAL checkpoint); `SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE` would help but widens the
+power-cut window. The gate's 10-sample p95 is effectively the maximum.
