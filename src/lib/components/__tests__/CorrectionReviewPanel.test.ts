@@ -433,6 +433,64 @@ describe("CorrectionReviewPanel", () => {
     expect(screen.getByText("REJECTED")).toBeInTheDocument();
   });
 
+  describe("#315: a new proposal after a rejection", () => {
+    const rejected = { ...proposal, reviewStatus: "HUMAN_REJECTED", lifecycleStatus: "INACTIVE", revision: 2 };
+    const rejectedEligibility = () => ({
+      ...eligible(), eligible: false,
+      reasons: [{ code: "CONFLICTING_CORRECTION", detail: "Another correction proposal already owns this finding.", entityType: "CORRECTION_PROPOSAL", entityId: "proposal-1" }],
+    });
+
+    it("shows the create actions below a rejected proposal, without a provider too", async () => {
+      api.settings.mockResolvedValue({ ...settings, hasApiKey: false });
+      api.eligibility.mockResolvedValue(rejectedEligibility());
+      api.list.mockResolvedValue({ findingId: "qa-quantity", proposals: [rejected] });
+      render(CorrectionReviewPanel, { props: { findingId: "qa-quantity" } });
+      expect(await screen.findByRole("button", { name: "Edit proposal" })).toBeDisabled();
+      expect(screen.getByText("Rejected")).toBeInTheDocument();
+      await fireEvent.click(screen.getByRole("button", { name: "Create correction proposal" }));
+      expect(screen.getByRole("button", { name: "Write correction manually" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Suggest wording" })).toBeNull();
+    });
+
+    it("offers the provider suggestion action when a provider is configured", async () => {
+      api.eligibility.mockResolvedValue(rejectedEligibility());
+      api.list.mockResolvedValue({ findingId: "qa-quantity", proposals: [rejected] });
+      render(CorrectionReviewPanel, { props: { findingId: "qa-quantity" } });
+      await fireEvent.click(await screen.findByRole("button", { name: "Create correction proposal" }));
+      expect(screen.getByRole("button", { name: "Suggest wording" })).toBeInTheDocument();
+    });
+
+    it("creates the new proposal as the rejected one's successor and keeps both listed", async () => {
+      api.settings.mockResolvedValue({ ...settings, hasApiKey: false });
+      api.eligibility.mockResolvedValue(rejectedEligibility());
+      const successor = { ...proposal, id: "proposal-2", proposedText: "அனைவரும்", creationMode: "HUMAN_AUTHORED", reviewStatus: "HUMAN_APPROVED", providerMetadata: null, supersedesProposalId: "proposal-1" };
+      api.create.mockResolvedValue(successor);
+      api.list.mockResolvedValueOnce({ findingId: "qa-quantity", proposals: [rejected] })
+        .mockResolvedValue({ findingId: "qa-quantity", proposals: [
+          { ...rejected, lifecycleStatus: "SUPERSEDED", revision: 3 }, successor,
+        ] });
+      render(CorrectionReviewPanel, { props: { findingId: "qa-quantity" } });
+      await fireEvent.click(await screen.findByRole("button", { name: "Create correction proposal" }));
+      await fireEvent.click(screen.getByRole("button", { name: "Write correction manually" }));
+      await fireEvent.input(screen.getByLabelText("Proposed wording"), { target: { value: "அனைவரும்" } });
+      await fireEvent.click(screen.getByRole("button", { name: "Save proposal" }));
+      await waitFor(() => expect(api.create).toHaveBeenCalledWith(expect.objectContaining({
+        humanProposedText: "அனைவரும்", supersedesProposalId: "proposal-1",
+      })));
+      expect(await screen.findByText(/2 proposals retained/i)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Proposal 1 · SUPERSEDED" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Proposal 2 · ACTIVE" })).toHaveAttribute("aria-pressed", "true");
+      expect(screen.queryByRole("button", { name: "Create correction proposal" })).toBeNull();
+    });
+
+    it("does not offer a create action beside a current proposal", async () => {
+      api.list.mockResolvedValue({ findingId: "qa-quantity", proposals: [proposal] });
+      render(CorrectionReviewPanel, { props: { findingId: "qa-quantity" } });
+      expect(await screen.findByRole("button", { name: "Edit proposal" })).toBeEnabled();
+      expect(screen.queryByRole("button", { name: "Create correction proposal" })).toBeNull();
+    });
+  });
+
   it("regenerates by superseding and retains the prior proposal", async () => {
     api.list.mockResolvedValue({ findingId: "qa-quantity", proposals: [proposal] });
     api.regenerate.mockResolvedValue({ ...proposal, id: "proposal-2", supersedesProposalId: "proposal-1" });

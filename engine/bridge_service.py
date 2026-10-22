@@ -8551,6 +8551,7 @@ class BridgeEngine:
                     explanation=str(p.get("explanation") or ""),
                     request_suggestion=bool(p.get("requestSuggestion") or False),
                     actor_id=self.current_actor_id(),
+                    supersedes_proposal_id=str(p.get("supersedesProposalId") or ""),
                 ))
             if m == Methods.CORRECTION_EDIT_PROPOSAL:
                 return EngineResponse.ok(request.id, result=self.correction_edit_proposal(

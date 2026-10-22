@@ -109,6 +109,17 @@
   $: mayApply = Boolean(
     proposalCurrent && proposalReviewed && selectedProposal?.verificationStatus === "NOT_RUN",
   );
+  // #315: a rejected proposal still owns the finding in the engine, so a new
+  // one is created as its successor (it stays listed, marked superseded).
+  $: rejectedOwner = proposals.find((item) =>
+    item.reviewStatus === "HUMAN_REJECTED" && item.lifecycleStatus === "INACTIVE") ?? null;
+  $: mayCreateReplacement = Boolean(
+    selectedProposal
+      && (selectedProposal.reviewStatus === "HUMAN_REJECTED" || selectedProposal.lifecycleStatus === "SUPERSEDED")
+      && !proposals.some((item) => item.lifecycleStatus === "ACTIVE")
+      && proposalBlockingReasons.length === 0,
+  );
+  $: showCreate = selectedProposal ? mayCreateReplacement : Boolean(eligibility?.eligible);
   $: insertionTarget = context?.currentTargets.find((item) => item.displayedReference === selectedReference)
     ?? context?.currentTargets[0] ?? null;
   // #314: only engine-offered points (verse start and word ends, never inside
@@ -564,6 +575,7 @@
     }
     busy = true;
     error = "";
+    const supersedes = selectedProposal ? rejectedOwner?.id ?? "" : "";
     try {
       const created = await bridge.correctionCreateProposal({
         findingId,
@@ -571,10 +583,16 @@
         humanProposedText: requestSuggestion ? "" : proposedText.trim(),
         explanation: explanation.trim(),
         requestSuggestion,
+        ...(supersedes ? { supersedesProposalId: supersedes } : {}),
       });
-      proposals = [...proposals, created];
-      selectedProposalId = created.id;
-      await loadHistory(created.id);
+      if (supersedes) {
+        // The rejected proposal changed lifecycle; reload so both are listed.
+        await reloadProposals(created.id);
+      } else {
+        proposals = [...proposals, created];
+        selectedProposalId = created.id;
+        await loadHistory(created.id);
+      }
       creationOpen = false;
       creationMode = "";
       notice = requestSuggestion ? "Suggestion created for human review." : "Proposal saved for human review.";
@@ -1125,7 +1143,11 @@
         <h5>Correction proposal unavailable</h5>
         <ul>{#each eligibility.reasons.filter((item) => item.code !== "ELIGIBLE") as reason}<li>{reason.detail}</li>{/each}</ul>
       </div>
-    {:else if eligibility?.eligible}
+    {/if}
+    {#if showCreate}
+      {#if selectedProposal && !creationOpen}
+        <p class="boundary create-after-reject">This proposal is no longer current and is kept in history. You can start a new proposal for this finding.</p>
+      {/if}
       {#if !creationOpen}
         <button type="button" class="create" on:click={() => { creationOpen = true; initializeDraft(); }}>Create correction proposal</button>
       {:else}

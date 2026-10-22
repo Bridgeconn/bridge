@@ -1467,6 +1467,8 @@ export const bridge = {
     humanProposedText?: string;
     explanation?: string;
     requestSuggestion?: boolean;
+    /** #315: the rejected proposal this new one replaces; it stays in history. */
+    supersedesProposalId?: string;
   }): Promise<CorrectionProposal> {
     return call("correction.createProposal", options);
   },

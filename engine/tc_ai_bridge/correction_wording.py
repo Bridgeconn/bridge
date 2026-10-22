@@ -600,18 +600,50 @@ class CorrectionWordingService:
         self, *, finding_id: str, intent: CorrectionIntent,
         human_proposed_text: str = "", explanation: str = "",
         request_suggestion: bool = False, actor_id: str,
+        supersedes_proposal_id: str = "",
     ) -> dict[str, Any]:
-        self._require_eligible(self.eligibility.evaluate(finding_id))
+        # #315: a rejected proposal still owns its finding, so a new one names
+        # it and goes through the same supersede path regenerate uses. The
+        # rejected wording and review status are kept; only its lifecycle
+        # becomes SUPERSEDED, with an appended event.
+        ignored: tuple[str, ...] = ()
+        superseded_revision = 0
+        if supersedes_proposal_id:
+            old = self.repository.correction_proposal(supersedes_proposal_id)
+            if str(old.get("qaFindingId") or "") != finding_id:
+                raise FoundationValidationError(
+                    "The proposal to supersede belongs to another finding"
+                )
+            if (
+                str(old.get("reviewStatus") or "") != ReviewStatus.HUMAN_REJECTED.value
+                or str(old.get("lifecycleStatus") or "") != LifecycleStatus.INACTIVE.value
+            ):
+                raise FoundationValidationError(
+                    "Only a rejected proposal can be superseded by a new proposal"
+                )
+            ignored = (supersedes_proposal_id,)
+            superseded_revision = int(old.get("revision") or 0)
+        self._require_eligible(self.eligibility.evaluate(
+            finding_id, ignore_proposal_ids=ignored,
+        ))
         context = self._validate_intent(finding_id, intent)
         proposal = self._build_proposal(
             finding_id=finding_id, intent=intent, context=context,
             human_proposed_text=human_proposed_text, explanation=explanation,
             request_suggestion=request_suggestion, actor_id=actor_id,
+            supersedes_proposal_id=supersedes_proposal_id or None,
         )
         # A provider call may take seconds. Re-check both eligibility and the
         # byte-exact span after it returns, immediately before persistence.
-        self._require_eligible(self.eligibility.evaluate(finding_id))
+        self._require_eligible(self.eligibility.evaluate(
+            finding_id, ignore_proposal_ids=ignored,
+        ))
         self._validate_intent(finding_id, intent)
+        if supersedes_proposal_id:
+            return self.repository.supersede_and_save_correction_proposal(
+                supersedes_proposal_id, expected_revision=superseded_revision,
+                replacement=proposal, actor_id=actor_id,
+            )
         self.repository.save_correction_proposal_v2(proposal)
         return self.repository.correction_proposal(proposal.id)
 
