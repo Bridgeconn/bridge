@@ -21537,3 +21537,37 @@ and never to the JSON-lines pipe. It lives only while Bridge is open: `--parent-
 engine does, Rust's `taskkill /T` already kills the tree on app exit, and `atexit` stops it on a clean exit.
 `hub.status` reports the server state without any network call; `hub.probe` does one short `GET /health`.
 No src-tauri change.
+
+**What landed.** 7de3026 the decision (DECISIONS 2026-10-23 and the pointers in TEAM_ARCHITECTURE, the hub
+review, QA_TEST_MATRIX and CLAUDE.md). d4b7586 packaging: the spec carries the server, the `[server]`
+packages are pinned in the constraints, `--parent-pid` with `process_watch.watch_parent`, and a `--serve`
+step in `smoke_sidecars.py`. c16d102 `hub.start`, `hub.stop`, `hub.probe` and `hub.status.server`.
+ccae425 the two buttons in TeamPane. QA_TEST_MATRIX M87-M91 are the installed-app walk.
+
+**Ran and watched.**
+- Engine `pytest -n auto`: 5608 passed, 3 xfailed (24 min 57 s). `test_hub_sync.py` and
+  `test_bridge_server.py::test_serve_*` used to skip in the local venv and now run, because the server
+  packages are installed. `test_hub_server_control.py` includes one real hub started from source
+  (`python main.py --serve`): it reaches `/health`, gives an admin code and stops.
+- Frontend: `npm run check` 0/0, `npm run test` 87 files / 917 tests, `npm run build` ok.
+- `build-sidecars.ps1` then `smoke_sidecars.py`: passed. The frozen exe's `--serve` answered `/health` in
+  4.59 s. Engine ready in 2.31 s. `bridge-engine.exe` is 19,860,771 bytes.
+- The frozen engine driven over stdio (a scratch script, not committed):
+  - `hub.start` reached `running` in under 4 s and the admin code joined as project_admin.
+  - `hub.log` holds the banner, so nothing reached the protocol pipe.
+  - Three new `bridge-engine.exe` processes while it ran (engine bootloader, engine, hub): the child
+    reused the parent's extraction and did not unpack a second copy.
+  - Closing the engine's stdin, as the shell does on exit, left no `bridge-engine` process, and the port
+    stopped answering.
+
+**Not run.** `npm run tauri dev` and the installed-app walk M87-M91, the Windows Firewall prompt, and a
+second machine. No src-tauri change, so no cargo gate.
+
+**Found, not fixed.**
+- The hub's own engine keeps `settings.json` in `Bridge\hub`. It still opens the desktop's
+  `%LOCALAPPDATA%\Bridge\data\workspace.sqlite3`, because `tc_project.py:303` uses `_default_app_root()`.
+  A hub run from source on the same machine has always done this; a hub started from the desktop now
+  makes it the normal case.
+- A hub started from the desktop serves no dashboard, because `dist-dashboard/` is not bundled. Everyone
+  joins with the admin code, and there is no way to make an editor or reporter code without the dashboard.
+- Starlette 1.9 warns that `httpx` with its TestClient is deprecated (the existing `test_serve_*`).
