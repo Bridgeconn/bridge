@@ -143,6 +143,11 @@ single-threaded, which today's job managers (#231, #242, #210) already assume.
 
 ## 7. Packaging and the hub machine
 
+> 2026-10-23 (Benz, #46): the first bullet's packaging is superseded. The desktop sidecar
+> now carries the server, and Settings > Team can start a hub that lives while Bridge is
+> open (`docs/DECISIONS.md` 2026-10-23). The Task Scheduler route below is still how a
+> permanent hub runs.
+
 - **A pip-installed `[server]` extra, not a second PyInstaller exe.** The hub is
   installed once by whoever administers the LAN machine; a frozen exe would double
   the release gate (two smokes, two binaries) for one install. `bridge-engine

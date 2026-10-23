@@ -122,7 +122,11 @@ npm run tauri dev
 `engine/bridge-engine.spec` and `engine/bridge-usfm-checker.spec` and copies
 both target-triple-suffixed binaries into `src-tauri/binaries/` — both are
 required; `bridge-engine.exe` deliberately never re-invokes itself to run
-the USFM checker script. Verify the frozen pair directly (not just source)
+the USFM checker script (a per-check hot path, and the frozen exe is not an
+interpreter you can hand a script). It does re-invoke itself once with
+`--serve` for Settings > Team > Start a hub (DECISIONS 2026-10-23): an argv
+mode `main.py` already dispatches, started once per session, its stdout
+sent to `hub.log`, never to the protocol pipe. Verify the frozen pair directly (not just source)
 with `python scripts/smoke_sidecars.py engine/dist/bridge-engine.exe`.
 
 `src-tauri/` has both: `cargo check`/`cargo build` for compile success, and a
@@ -280,6 +284,9 @@ A raw Scripture import becomes a translationCore-compatible book project:
 %LOCALAPPDATA%\Bridge\data\reference-cache\    plain text of each reference Bible folder chosen in
                                                 Settings > Language QA, `<fingerprint>.json.gz`;
                                                 derived, rebuilt when the folder changes, never shipped
+%LOCALAPPDATA%\Bridge\hub\                      only when Settings > Team > Start a hub was used: the
+                                                hub's hub.sqlite3, its own engine's settings.json and
+                                                workspace, admin-join-code.txt and hub.log
 ```
 
 **The file stores have moved (#76 and #77, 2026-09-15).** `decisions/`,
@@ -436,6 +443,9 @@ imports, checks, or opens a project. If a feature seems to need a network call, 
 so and stop; that is an architecture decision, not an implementation detail.
 The team hub (#46, decided 2026-10-12) is the one agreed exception, and it is a
 sync peer the desktop never waits on, not a dependency on any path above.
+Since 2026-10-23 the desktop can also *host* one (Settings > Team > Start a
+hub, a child of the engine alive only while Bridge is open); that changes
+packaging, not this rule.
 
 ## The analysis pipeline, and why stage numbers matter
 

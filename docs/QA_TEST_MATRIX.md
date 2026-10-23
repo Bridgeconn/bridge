@@ -470,7 +470,7 @@ The ledger with every message quoted is in that folder.
 The hardware walk for requirements 4, 5 and 6. Two laptops on one LAN, both with the installed **0.17.0** (`Bridge_0.17.0_x64-setup.exe`, release v0.17.0, built from 81ff377). Laptop **A** (Benz) runs the hub and desktop A. Laptop **B** (Revant) runs desktop B and the browser dashboard. There is no third machine, so the dashboard rows use B's Chrome and Edge, not the hub's own machine. Rows are in walking order: some depend on earlier ones. Each row ends PASS, or FAIL with the issue it was filed under (failures found here are filed without asking first, per #281).
 
 **Facts checked in the code before the walk (2026-10-14), which shape the steps:**
-- The installed `bridge-engine.exe` cannot serve the hub: `bridge-engine.spec` excludes `bridge_server`, FastAPI and uvicorn by design (the `[server]` pip extra). The hub runs from a source checkout.
+- The installed `bridge-engine.exe` cannot serve the hub: `bridge-engine.spec` excludes `bridge_server`, FastAPI and uvicorn by design (the `[server]` pip extra). The hub runs from a source checkout. *(Since 2026-10-23 the sidecar carries the server and Settings › Team › Start a hub runs it; see DECISIONS 2026-10-23.)*
 - Hub defaults: `127.0.0.1:8765`. A LAN needs `--host 0.0.0.0`.
 - A desktop syncs only the open book: automatically every 60 s, or on **Sync now**.
 - **Settings › Team** does not refresh itself. Reopen it to see a new "Last synced" or a new conflict.

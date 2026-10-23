@@ -21523,3 +21523,17 @@ message speaks of "an AI alignment proposal".
 **Harness notes.** Since 0.19.0 the splash is the process's first window: size the largest visible window.
 Never post WM_CLOSE to every window of the process; tao's `Tao Thread Event Target` window is one of them and
 closing it leaves the shell and engine running with no window.
+
+## 2026-10-23 — Settings > Team: Start a hub / Join a hub (#46)
+
+**What and why.** Benz asked for two buttons on Settings > Team, Start a hub and Join a hub, with Start
+disabled while a hub is already running. A real Start reverses the packaging half of two decisions
+(2026-09-11 "never in the desktop sidecar", 2026-10-15 #227 "excluded from `bridge-engine.spec`"). Benz
+decided the reversal on 2026-10-23; it is recorded in DECISIONS.md first, before any code.
+
+**Design.** The engine starts the hub as its own child (`subprocess.Popen` of `sys.executable --serve`
+frozen, `python main.py --serve` from source). The child's stdout goes to `%LOCALAPPDATA%\Bridge\hub\hub.log`
+and never to the JSON-lines pipe. It lives only while Bridge is open: `--parent-pid` makes it exit when the
+engine does, Rust's `taskkill /T` already kills the tree on app exit, and `atexit` stops it on a clean exit.
+`hub.status` reports the server state without any network call; `hub.probe` does one short `GET /health`.
+No src-tauri change.
