@@ -21538,6 +21538,25 @@ engine does, Rust's `taskkill /T` already kills the tree on app exit, and `atexi
 `hub.status` reports the server state without any network call; `hub.probe` does one short `GET /health`.
 No src-tauri change.
 
+**Choices Benz made in the session.**
+- The hub lives only while Bridge is open and comes back on the next launch. A detached hub was turned
+  down: a onefile child shares the parent's extraction folder, which is deleted on exit. A permanent hub
+  stays on the pip `[server]` route.
+- The engine spawns the hub, not Rust. This needs no capability or Rust change and keeps the hub state
+  next to the sync thread.
+- Tracked on #46 itself, with no new issue.
+- Benz authorised edits in Revant's hub files and in src-tauri; none in src-tauri turned out to be needed.
+
+**Fixed before committing.** The tests caught these:
+- `atexit` called `hub_stop()`, which also cleared autostart, so closing Bridge would have switched the
+  relaunch off. Exit now only kills the child.
+- The start watcher marked the hub `running` before it saved autostart, so a status read in between saw
+  `running` with autostart off. Autostart is now saved first.
+- `hub.status` could mark a dying child `failed` before the watcher did, with a generic message instead
+  of the end of `hub.log`. Only the watcher now judges a child that is still starting.
+- The loopback port check timed out at 0.2 s and `hub.status` took about 200 ms, because a connect to a
+  closed port on Windows waits out the whole timeout. The timeout is now 0.1 s.
+
 **What landed.** 7de3026 the decision (DECISIONS 2026-10-23 and the pointers in TEAM_ARCHITECTURE, the hub
 review, QA_TEST_MATRIX and CLAUDE.md). d4b7586 packaging: the spec carries the server, the `[server]`
 packages are pinned in the constraints, `--parent-pid` with `process_watch.watch_parent`, and a `--serve`
@@ -21555,8 +21574,9 @@ ccae425 the two buttons in TeamPane. QA_TEST_MATRIX M87-M91 are the installed-ap
 - The frozen engine driven over stdio (a scratch script, not committed):
   - `hub.start` reached `running` in under 4 s and the admin code joined as project_admin.
   - `hub.log` holds the banner, so nothing reached the protocol pipe.
-  - Three new `bridge-engine.exe` processes while it ran (engine bootloader, engine, hub): the child
-    reused the parent's extraction and did not unpack a second copy.
+  - Three new `bridge-engine.exe` processes while it ran. A child that unpacked its own copy would make
+    four, so the child probably reused the parent's extraction. That is inferred from the count, not
+    checked against `sys._MEIPASS`.
   - Closing the engine's stdin, as the shell does on exit, left no `bridge-engine` process, and the port
     stopped answering.
 
@@ -21571,3 +21591,14 @@ second machine. No src-tauri change, so no cargo gate.
 - A hub started from the desktop serves no dashboard, because `dist-dashboard/` is not bundled. Everyone
   joins with the admin code, and there is no way to make an editor or reporter code without the dashboard.
 - Starlette 1.9 warns that `httpx` with its TestClient is deprecated (the existing `test_serve_*`).
+- `scripts/install-hub-task.ps1`, which DECISIONS 2026-10-15 names as the way to run a permanent hub
+  under Task Scheduler, does not exist.
+
+**Environment notes.**
+- The local engine venv had none of the `[server]` packages. They are installed now, from the new pins.
+- `build-sidecars.ps1` must not be run with `*>&1` under PowerShell 5.1: PyInstaller's INFO lines on
+  stderr become errors and stop the script.
+
+**Shipped.** Pushed to selvabenz/Bridge `main` on 2026-10-23 (4d5273c..17fc497). The close-out is a
+comment on #46 (issuecomment-6358310384); #46 stays closed and in Done. CI run 39907268785 on 17fc497 passed:
+engine, frontend and ci-ok succeeded; golden-notice and rust were skipped (no golden or src-tauri change).
