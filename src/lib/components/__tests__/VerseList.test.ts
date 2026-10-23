@@ -46,7 +46,7 @@ import {
   historyCountByVerse,
   paratextNoteCountsByVerse,
   activeLanguageQaFindingId,
-  resetBookState,
+  resetBookState, reviewTabRequest
 } from "../../stores";
 import { rawView, setSidePanel, sidePanels } from "../../editorPrefs";
 import { alignmentOpen, alignmentKey } from "../../alignmentUi";
@@ -1277,6 +1277,74 @@ describe("VerseList right-click, ring and notices (#236)", () => {
     expect(notice()).not.toBeNull();
     await fireEvent.click(within(notice() as HTMLElement).getByRole("button", { name: "Dismiss" }));
     expect(notice()).toBeNull();
+  });
+});
+
+describe("VerseList open-issue pill (#383)", () => {
+  // seed() leaves the Language QA store alone; these tests fill it.
+  beforeEach(() => languageQaFindingsByVerse.set({}));
+  afterEach(() => { languageQaFindingsByVerse.set({}); reviewTabRequest.set(null); });
+  const pill = () => screen.queryByTestId("open-issue-pill");
+  const gr = (id: string, severity: QaFinding["severity"] = "low") =>
+    finding({ id, engine: "wildebeest", check_type: "wildebeest.script.mixed", category: "unicode", severity });
+
+  it("shows the count with a breakdown in its title, coloured by the worst open severity", async () => {
+    seed("alpha beta", [gr("g1", "low"), finding({ id: "a1", engine: "local", category: "alignment", severity: "medium" })]);
+    languageQaFindingsByVerse.set({ [verseKey("1", "6")]: [lqaFinding({ id: "l1", severity: "high" })] });
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    const badge = pill() as HTMLElement;
+    expect(badge).toHaveTextContent("3");
+    expect(badge.getAttribute("title")).toBe("3 open findings · 1 Greek Room, 1 alignment, 1 Language QA");
+    expect(badge).toHaveClass("sev-high");
+    expect(verseRow().querySelector(".vnum")?.textContent).not.toContain("✓");
+  });
+
+  it("counts down as findings are decided and disappears at zero, when ✓ takes over", async () => {
+    const two = [gr("g1"), gr("g2", "medium")];
+    seed("alpha beta", two);
+    checkStatusByVerse.set({ [verseKey("1", "6")]: "succeeded" });
+    alignmentStatusByVerse.set({ [verseKey("1", "6")]: "complete" });
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    expect(pill()).toHaveTextContent("2");
+    expect(pill()).toHaveClass("sev-medium");
+
+    findingsByVerse.set({ [verseKey("1", "6")]: [two[0], { ...two[1], status: "ignored" }] });
+    await tick();
+    expect(pill()).toHaveTextContent("1");
+    expect(pill()).toHaveClass("sev-low");
+
+    findingsByVerse.set({ [verseKey("1", "6")]: two.map((f) => ({ ...f, status: "ignored" as const })) });
+    await tick();
+    expect(pill()).toBeNull();
+    expect(verseRow().querySelector(".vnum")?.textContent).toContain("✓");
+  });
+
+  it("keeps the ⚠ of a failed check beside the pill", async () => {
+    seed("alpha beta", [gr("g1")]);
+    checkStatusByVerse.set({ [verseKey("1", "6")]: "failed" });
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    expect(verseRow().querySelector(".vnum")?.textContent).toContain("⚠");
+    expect(pill()).toHaveTextContent("1");
+  });
+
+  it("a click selects the verse and reveals the Review panel on the first open finding's tab", async () => {
+    setSidePanel("review", { open: false });
+    seed("alpha beta", [finding({ id: "t1", engine: "local", category: "translation_note" }), gr("g1")]);
+    const onSelect = vi.fn();
+    render(VerseList, { props: { onSelect } });
+    await fireEvent.click(pill() as HTMLElement);
+    expect(onSelect).toHaveBeenCalledWith("6");
+    expect(get(sidePanels).review.open).toBe(true);
+    expect(get(reviewTabRequest)).toBe("tntw");
+
+    cleanup();
+    reviewTabRequest.set(null);
+    seed("alpha beta", []);
+    languageQaFindingsByVerse.set({ [verseKey("1", "6")]: [lqaFinding({ id: "l1" })] });
+    render(VerseList, { props: { onSelect } });
+    await fireEvent.click(pill() as HTMLElement);
+    expect(get(reviewTabRequest)).toBe("lqa");
+    reviewTabRequest.set(null);
   });
 });
 

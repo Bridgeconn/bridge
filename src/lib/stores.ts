@@ -1,4 +1,5 @@
 import { perfBegin, perfEnd, perfInFlight } from "./perf";
+import type { ReviewTab } from "./verseIssues";
 import { writable, derived, get, type Writable } from "svelte/store";
 import type { AiCheckReview, AlignmentWorkStatus, Assignment, NativeCheckReview, NavigationSyncState, ProjectInfo, QaFinding, VerseDisplay, VerseHeading } from "./types/finding";
 import type { LanguageQaFinding, LanguageQaFlag } from "./types/languageQa";
@@ -92,6 +93,10 @@ export const historyCountByVerse = writable<Record<string, number>>({});
 export const paratextNoteCountsByVerse = writable<Record<string, { open: number; resolved: number }>>({});
 // The Language QA mark F8 / Shift+F8 moved to (the panel), ringed in the text.
 export const activeLanguageQaFindingId = writable<string | null>(null);
+
+/** #383: a tab the Review panel should show next, asked for from outside it
+ * (the verse row's open-issue pill). The panel reads it once and clears it. */
+export const reviewTabRequest = writable<ReviewTab | null>(null);
 export type ReviewerMode = "basic" | "advanced";
 export const reviewerMode = writable<ReviewerMode>("basic");
 

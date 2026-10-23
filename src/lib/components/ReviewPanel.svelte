@@ -20,7 +20,7 @@
   import {
     selectedVerse, selectedFindings, currentChapter,
     checkingProgress, verseKey, checkGroupsByVerse,
-    aiCheckReviewsByVerse, nativeChecksByVerse, project, reviewerMode,
+    aiCheckReviewsByVerse, nativeChecksByVerse, project, reviewerMode, reviewTabRequest
   } from "../stores";
   import {
     editingChapter, editingVerse, editText, editSaving, editError, editErrorKey,
@@ -31,6 +31,7 @@
   import { greekRoomChapterSummary, greekRoomVerseRunning, runVerseGreekRoom } from "../verseChecks";
   import { aiReviewRequest, aiJobActive } from "../aiReviewUi";
   import { setSidePanel } from "../editorPrefs";
+  import type { ReviewTab } from "../verseIssues";
   import type { AiExplainResult, AIReviewJobSnapshot, FindingStatus, QaFinding } from "../types/finding";
 
   $: openFindingCount = $selectedFindings.filter((f) => f.status === "open").length;
@@ -539,8 +540,14 @@
     high: "badge-wrong", medium: "badge-review", low: "badge-review", info: "badge-review",
   };
 
-  type ReviewTab = "greekroom" | "tntw" | "lqa" | "ai";
   let activeTab: ReviewTab = "greekroom";
+  // #383: the verse row's open-issue pill asks for the tab of the first open
+  // finding; taken once, then cleared, so a later click on the row's tab
+  // bar is not overridden.
+  $: if ($reviewTabRequest) {
+    activeTab = $reviewTabRequest;
+    reviewTabRequest.set(null);
+  }
 
   // #202: a Greek Room result lands where the reader is looking. When a run
   // finishes for the selected verse -- the button here, or a chapter or book
