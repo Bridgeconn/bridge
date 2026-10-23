@@ -603,15 +603,22 @@
     }
   }
 
-  async function assign(chapter: string, userId: string): Promise<void> {
+  /** One chapter ("" = whole book) set or cleared through the existing
+   *  team_assignments calls (#240). #378: the Assign dialog applies a batch
+   *  as one call per changed chapter, so the dashboard is refreshed once by
+   *  onApplied rather than after each; resolves false when the save failed,
+   *  so the dialog stops there. */
+  async function assign(chapter: string, userId: string, refresh = true): Promise<boolean> {
     assigningBusy = true;
     assigningError = "";
     try {
       const listed = userId ? await bridge.assignmentsSet(chapter, userId) : await bridge.assignmentsClear(chapter);
       bookAssignments.set(listed.assignments);
-      void loadDashboard();
+      if (refresh) void loadDashboard();
+      return true;
     } catch (error) {
       assigningError = error instanceof Error ? error.message : String(error);
+      return false;
     } finally {
       assigningBusy = false;
     }
@@ -1395,8 +1402,9 @@
       assignments={$bookAssignments}
       busy={assigningBusy}
       error={assigningError}
-      onSet={(chapter, userId) => void assign(chapter, userId)}
-      onClear={(chapter) => void assign(chapter, "")}
+      onSet={(chapter, userId) => assign(chapter, userId, false)}
+      onClear={(chapter) => assign(chapter, "", false)}
+      onApplied={() => void loadDashboard()}
       onClose={() => { assigningPath = ""; }}
     />
   {/if}
