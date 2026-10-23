@@ -1225,3 +1225,23 @@ behind Task Scheduler remains the route for a permanent hub); any hub call on an
 check or open path (offline-first, 2026-09-11, unchanged). Supersedes only the packaging
 sentences of the 2026-09-11 hub entry and the 2026-10-15 #227 entry.
 **Revisit when:** a desktop-started hub has to outlive the app, or must serve the dashboard.
+
+## 2026-10-24 — A damaged workspace.sqlite3 is quarantined, restored from a startup backup, then rebuilt from data\projects; a hub-joined install re-pulls users and roles (Revant, #338)
+**Decision:** the engine always starts. On `sqlite3.DatabaseError` at open, `WorkspaceRepository`
+renames `workspace.sqlite3` and its `-wal` / `-shm` to a timestamped quarantine name (never
+deleted), then: (1) restores the last-good backup if one opens cleanly; (2) failing that, and only
+if time allows before 2 November, salvages table by table from the quarantined copy; (3) always
+rediscovers `data\projects`, the truth for the registry, merging into whatever survived; (4) reports
+what happened on the startup / `project.open` result and on Project Home, never as a fatal error.
+The backup is `VACUUM INTO` on every healthy **startup**, not shutdown. A hub-joined install then
+**re-pulls users and roles from the hub** instead of trusting the restored or salvaged local rows.
+Decided by Revant, 2026-10-24.
+**Because:** `.recover` is a `sqlite3` shell feature the frozen engine does not ship and Python's
+module has no equivalent, and `PRAGMA integrity_check` cannot run on a file that does not open, so
+SQLite's own repair cannot be tier 1. A startup backup makes salvage almost unnecessary and costs
+one statement; a crash on exit is one way the file gets damaged, so shutdown is the wrong moment.
+The hub is the source for membership; the local copy is a cache of it.
+**Rules out:** deleting the damaged file; a rebuild that drops users, roles, settings and external
+project paths when a backup exists; a startup that fails because the workspace store does.
+**Revisit when:** the hub protocol carries membership in `hub.pull` (then the re-pull is free), or
+when a workspace store schema bump makes a backup from an older version unreadable.
