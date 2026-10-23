@@ -1,3 +1,7 @@
+// @ts-expect-error The app tsconfig has no node types; vitest runs under node.
+import { readFileSync } from "node:fs";
+// @ts-expect-error As above.
+import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { get } from "svelte/store";
@@ -243,8 +247,33 @@ describe("Language QA", () => {
     await fireEvent.click(screen.getByRole("tab", { name: /Re-check/ }));
     expect(screen.getByRole("tab", { name: /Re-check/ }).getAttribute("aria-selected")).toBe("true");
     // Only the Issues tab has lists to switch.
-    await fireEvent.click(screen.getByRole("tab", { name: "Book words" }));
+    await fireEvent.click(screen.getByRole("tab", { name: /^Words in / }));
     expect(screen.queryByRole("tablist", { name: "Language QA lists" })).toBeNull();
+  });
+
+  it("names the Book words tab for the open book, falls back to the code, and cuts a long name with an ellipsis (#385)", async () => {
+    project.set({ path: "C:/project", bookId: "gen", bookName: "ஆதியாகமம்", chapters: ["1"] } as never);
+    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
+    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
+    const tab = await screen.findByRole("tab", { name: "Words in ஆதியாகமம்" });
+    expect(tab.getAttribute("title")).toBe("Words in ஆதியாகமம்");
+    expect(tab.classList.contains("book-tab")).toBe(true);
+    await fireEvent.click(tab);
+    expect(screen.getByText(/^Words in ஆதியாகமம் that are not in the dictionary/)).toBeTruthy();
+
+    // Switching books renames the tab without reopening the panel.
+    project.set({ path: "C:/project", bookId: "mat", bookName: "மத்தேயு", chapters: ["1"] } as never);
+    expect(await screen.findByRole("tab", { name: "Words in மத்தேயு" })).toBeTruthy();
+
+    // No name: the code, upper-cased, as the dashboard does.
+    project.set({ path: "C:/project", bookId: "mat", chapters: ["1"] } as never);
+    expect(await screen.findByRole("tab", { name: "Words in MAT" })).toBeTruthy();
+
+    // jsdom lays nothing out: the ellipsis is pinned as the rule on the tab.
+    const css = readFileSync(resolve(process.cwd(), "src/lib/components/LanguageQaPanel.svelte"), "utf-8");
+    expect(css).toMatch(/\.panel-tabs \.book-tab \{[^}]*text-overflow: ellipsis/);
+    expect(css).toMatch(/\.panel-tabs \.book-tab \{[^}]*min-width: 0/);
+    project.set(null);
   });
 
   it("lays the filters out as labelled rows, and Clear drops every ticked kind", async () => {
@@ -426,7 +455,7 @@ describe("Language QA", () => {
     wordsAddCall.mockReset().mockResolvedValue({ entries: [], count: 1 });
     render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
     await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
-    await fireEvent.click(screen.getByRole("tab", { name: "Book words" }));
+    await fireEvent.click(screen.getByRole("tab", { name: /^Words in / }));
     expect(await screen.findByText("राज्यपाल")).toBeTruthy();
     await fireEvent.click(screen.getByRole("button", { name: "Tick" }));
     expect((screen.getByRole("checkbox", { name: "Tick राज्यपाल" }) as HTMLInputElement).checked).toBe(true);

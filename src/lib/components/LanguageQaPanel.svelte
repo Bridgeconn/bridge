@@ -96,6 +96,11 @@
   let learnedBusy = false;
   let learnedError = "";
   // Book words: the book's words outside the dictionary (last pass).
+  // #385: the tab is named for the open book ("Words in Genesis") so it says
+  // which book it lists as the reviewer moves between books. The engine fills
+  // bookName from the USFM \h or \toc2 header, else the English table; the
+  // fallback here is the dashboard's: the code, upper-cased.
+  $: bookLabel = $project?.bookName || ($project?.bookId ?? status?.book ?? "").toUpperCase() || "this book";
   let bookWords: BookWordRow[] = [];
   let bookWordsReason = "";
   let bookWordsLoaded = false;
@@ -589,7 +594,8 @@
       {#if status}
         <div class="panel-tabs" role="tablist" aria-label="Language QA panel" bind:clientHeight={tabsHeight}>
           <button role="tab" aria-selected={panelTab === "findings"} on:click={() => showPanelTab("findings")}>Issues</button>
-          <button role="tab" aria-selected={panelTab === "bookWords"} on:click={() => showPanelTab("bookWords")}>Book words</button>
+          <button role="tab" class="book-tab" aria-selected={panelTab === "bookWords"} title={`Words in ${bookLabel}`}
+            on:click={() => showPanelTab("bookWords")}>Words in {bookLabel}</button>
           <button role="tab" aria-selected={panelTab === "flags"} on:click={() => showPanelTab("flags")}>Flags</button>
           <button role="tab" aria-selected={panelTab === "edits"} on:click={() => showPanelTab("edits")}>Edits</button>
           <button role="tab" aria-selected={panelTab === "dictionary"} on:click={() => showPanelTab("dictionary")}>Dictionary</button>
@@ -692,7 +698,7 @@
         {/if}
         {:else if panelTab === "bookWords"}
           <section aria-label="Book words" class="book-words">
-            <p class="muted">Words in this book that are not in the dictionary, most used first. Add the ones that are right
+            <p class="muted">Words in {bookLabel} that are not in the dictionary, most used first. Add the ones that are right
               to the dictionary; they stop being reported as spelling problems. Nothing here changes the text.</p>
             {#if !bookWordsLoaded}
               <p class="muted">Loading…</p>
@@ -805,7 +811,7 @@
           <section aria-label="Project words" class="dictionary">
             <h3>Project words</h3>
             {#if !projectWords.length}
-              <p class="muted">None yet. Add words from Book words or a word's menu.</p>
+              <p class="muted">None yet. Add words from “Words in {bookLabel}” or a word's menu.</p>
             {:else}
               <ul class="words">
                 {#each projectWords as entry (entry.key)}
@@ -914,8 +920,12 @@
   /* The tab bar sits under the header and stays with it. */
   .panel-tabs { position: sticky; top: var(--head-h, 0px); z-index: 2; display: flex; gap: 2px; padding: 0 10px;
     background: var(--surface); border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; }
-  .panel-tabs button { flex: 1 1 auto; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none;
+  .panel-tabs button { flex: 1 0 auto; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none;
     padding: 8px 6px 6px; font-weight: 700; color: var(--text-2); white-space: nowrap; }
+  /* #385: the book tab carries a name of any length and is the one that gives
+     way at the panel's minimum width -- one line, cut with an ellipsis, the
+     full name in its title. The other tabs keep their width. */
+  .panel-tabs .book-tab { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .panel-tabs button:hover { color: var(--text); }
   .panel-tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
   .filters { margin: 4px 0 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); }
