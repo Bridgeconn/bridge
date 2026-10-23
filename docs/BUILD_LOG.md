@@ -21602,3 +21602,58 @@ second machine. No src-tauri change, so no cargo gate.
 **Shipped.** Pushed to selvabenz/Bridge `main` on 2026-10-23 (4d5273c..17fc497). The close-out is a
 comment on #46 (issuecomment-6358310384); #46 stays closed and in Done. CI run 39907268785 on 17fc497 passed:
 engine, frontend and ci-ok succeeded; golden-notice and rust were skipped (no golden or src-tauri change).
+
+## 2026-10-23 — Milestone 2 "UI fixes / cosmetics", ten issues in two batches (#377, #384, #385, #374, #380, #383, #375, #379, #376, #378)
+
+**Summary.** Benz's 2026-10-23 list of UI fixes (parent #373), worked in two batches on `main`, one
+commit per issue, each closed out in a comment on the issue. All frontend; no engine, schema or
+src-tauri change, so the engine pytest suite and the cargo gates were not run. The installed-app look
+at 1366x768 at each text size was not checked anywhere in this batch; that walk is Revant's or Benz's.
+
+**Batch 1** (d272b86..d8a6eed): f16f402 #377 one `--control-h` (28px) token for the top bar's controls
+and the report header; 181985c #384 "Add to dictionary" and a Dictionary tab subtitle that says the pack
+dictionary is read-only; a286faa #385 the Book words tab reads "Words in {book name}" with the
+dashboard's fallback and an ellipsis at the panel minimum; 726963a #374 the dashboard's project details
+block folds to one row (`projectDetailsCollapsed`, open by default); 80467f5 #380 Collection QA folded by
+default with a slimmer folded row ("Run all again" kept until Benz says otherwise); d8a6eed #383 an
+open-issue count pill beside the verse number, coloured by the worst open severity, click reveals the
+Review panel on the first finding's tab through a new `reviewTabRequest` store (`.vnum` widened 26→52px,
+so every row's text starts 26px further right: the one visible layout change).
+
+**Batch 2** (d8a6eed..c1c864d): 7091c7f #375 Rename / Archive / Delete as 28x28 glyph buttons with the
+action and project as tooltip and accessible name, Open kept as text (design-pass decision; 🗑︎ and 📂︎
+need a Windows check); c656619 #379 step 1, `PanelHeader.svelte` as the one header bar on all five side
+panels, Paratext included — mounted by each panel rather than drawn by SidePanel, because a Svelte 4 slot
+cannot be filled from a grandchild and the actions are bound to each panel's state; the item 6 list stays
+open on the issue for Benz; a32a498 #376 the Language QA panel's one filter row (list switch, scope, a
+Kinds dropdown), the state word in the title, everything else behind the (i) as a popover that never
+grows the header, every raw px size an `--fs-*` token; c1c864d #378 the Assign dialog as person once →
+tick chapters (range, Shift-click, whole book) → one Apply that sends one existing `team_assignments` call
+per changed chapter (no batch RPC; `assign()` in App.svelte resolves true/false and the dashboard reloads
+once per batch).
+
+**Ran and watched.**
+- Batch 1 at d8a6eed: `npm run check` 0 errors / 0 warnings; `npm run test` 90 files / 937 tests;
+  `npm run build` ok.
+- Batch 2 at c1c864d: `npm run check` 0 errors / 0 warnings; `npm run test` 90 files / 948 tests;
+  `npm run build` ok.
+- New or rewritten Vitest files: `controlHeight.test.ts`, `ProjectDashboardFold.test.ts`,
+  `verseIssues.test.ts`, `AssignmentsDialog.test.ts`; additions in `LanguageQaPanel`, `VerseList`,
+  `CollectionQaPanel`, `ImportScreenList`, `SidePanel` and `ReviewPanelLanguageQa` tests.
+
+**Not run.** Engine pytest (no engine change), cargo (no src-tauri change), `npm run tauri dev`, the
+installed-app walk at 1366x768 at text sizes 0.85–1.7, the Tamil / Punjabi book-name check for #385
+(from code: `\h`, else `\toc2`, else the English table), the row-count measurement for #376 at 440px
+and 320px, and the Windows rendering of the #375 glyphs.
+
+**Found, not fixed** (proposed in the issue comments, no issues filed).
+- `ReviewPanelGreekRoom.test.ts` logs "Could not restore issue resolutions TypeError" six times per run:
+  its bridge mock lacks the issue-resolutions method (`TranslationHelpsReview.svelte:110`). Noise.
+- Language QA: F8 is inert while the (i) popover is open, because the F8 handler stands down for any
+  `[role="dialog"]` in the page (#376 comment).
+- Review shows two header lines (the shared bar, then count + actions) where the other panels show one;
+  one for the #379 item 6 discussion.
+
+**Shipped.** Pushed to Bridgeconn/bridge `main` (d272b86..c1c864d) on 2026-10-23. Issues #377, #384,
+#385, #374, #380, #383, #375, #376 and #378 closed with their comments; #379 closed out for step 1 and
+reopened for item 6. #402, #213, #389 and #373 in the milestone were out of scope and untouched.
