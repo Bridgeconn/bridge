@@ -659,7 +659,9 @@
   .track { height: 6px; background: #EEF0F3; border-radius: 4px; overflow: hidden; }
   .fill { height: 100%; background: var(--accent); transition: width 0.3s; }
   .export { position: relative; }
-  .export summary { list-style: none; display: inline-block; }
+  /* #377: the Export <summary> lays out as the buttons beside it do, at the
+     shared control height, so Generate report and Export ▾ measure the same. */
+  .export summary { list-style: none; height: var(--control-h); box-sizing: border-box; display: inline-flex; align-items: center; line-height: 1; }
   .export summary::-webkit-details-marker { display: none; }
   .export .menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: var(--z-dropdown); width: 240px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.12); padding: 6px; display: flex; flex-direction: column; gap: 2px; }
   .export .menu button { text-align: left; border: 0; background: transparent; padding: 8px 10px; border-radius: 6px; font-size: var(--fs-sm); color: var(--text); cursor: pointer; }
@@ -792,7 +794,7 @@
   .result.fail { background: var(--danger-bg); color: var(--danger); }
   .paging { display: flex; gap: 8px; margin-top: 10px; }
   .footnote { color: var(--text-3); font-size: var(--fs-2xs); margin: 14px 0 0; }
-  .small-button { border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); color: var(--text); padding: 6px 10px; cursor: pointer; font-size: var(--fs-2xs); font-weight: 600; flex-shrink: 0; }
+  .small-button { height: var(--control-h); box-sizing: border-box; display: inline-flex; align-items: center; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); color: var(--text); padding: 0 10px; cursor: pointer; font: inherit; font-size: var(--fs-2xs); font-weight: 600; line-height: 1; flex-shrink: 0; }
   .small-button:hover:not(:disabled) { background: var(--surface-2); }
   .small-button:disabled { opacity: .55; cursor: not-allowed; }
   .small-button.primary { border-color: var(--accent); background: var(--accent); color: #fff; }

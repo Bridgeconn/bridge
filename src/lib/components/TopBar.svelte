@@ -196,8 +196,8 @@
      chapter already is rather than somewhere else in the bar. */
   .chapter-nav { display: flex; align-items: center; gap: 3px; flex-shrink: 0; }
   .chapter-step {
-    height: 28px; width: 24px; flex-shrink: 0;
-    display: flex; align-items: center; justify-content: center;
+    height: var(--control-h); width: 24px; flex-shrink: 0; box-sizing: border-box;
+    display: inline-flex; align-items: center; justify-content: center;
     font: inherit; font-size: var(--fs-md); line-height: 1;
     border: 1px solid var(--border); border-radius: 6px;
     background: var(--surface); color: var(--text); cursor: pointer;
@@ -206,17 +206,21 @@
     border-color: var(--border-strong); background: var(--surface-2);
   }
   .chapter-step:disabled { opacity: .4; cursor: not-allowed; }
-  .select { height: 28px; border: 1px solid var(--border); border-radius: 6px; font-size: var(--fs-sm); padding: 0 6px; background: var(--surface); color: var(--text); flex-shrink: 0; }
+  .select { height: var(--control-h); box-sizing: border-box; border: 1px solid var(--border); border-radius: 6px; font: inherit; font-size: var(--fs-sm); line-height: 1; padding: 0 6px; background: var(--surface); color: var(--text); flex-shrink: 0; }
   .chapter-select { min-width: 72px; width: auto; }
-  .goto { display: flex; align-items: center; gap: 6px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 0 8px; height: 28px; width: 150px; flex-shrink: 0; }
-  .goto input { border: none; background: transparent; font-size: var(--fs-sm); color: var(--text); outline: none; width: 100%; }
+  .goto { display: inline-flex; align-items: center; gap: 6px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 0 8px; height: var(--control-h); box-sizing: border-box; font: inherit; line-height: 1; width: 150px; flex-shrink: 0; }
+  .goto input { border: none; background: transparent; font: inherit; font-size: var(--fs-sm); line-height: 1; color: var(--text); outline: none; width: 100%; }
   .grow { flex: 1; }
-  .sync-status { display: flex; align-items: center; gap: 4px; height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--text-2); font-size: var(--fs-xs); font-weight: 600; cursor: pointer; flex-shrink: 0; }
+  .sync-status { display: inline-flex; align-items: center; gap: 4px; height: var(--control-h); box-sizing: border-box; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--text-2); font: inherit; font-size: var(--fs-xs); font-weight: 600; line-height: 1; cursor: pointer; flex-shrink: 0; }
   .sync-status:hover { background: var(--surface-2); }
   .sync-status span { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--border-strong); color: var(--surface); font-size: var(--fs-3xs); }
   .sync-status span.connected { background: var(--success); }
   .sync-status span.error { background: var(--danger); }
-  .btn { font-size: var(--fs-sm); font-weight: 600; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); cursor: pointer; flex-shrink: 0; }
+  /* #377: one control height. The height is the token, not the padding, so
+     the three buttons measure the same as Sync, the selects and ‹ › beside
+     them; `font: inherit` stops the browser's default button font setting a
+     different line box. */
+  .btn { height: var(--control-h); box-sizing: border-box; display: inline-flex; align-items: center; font: inherit; font-size: var(--fs-sm); font-weight: 600; line-height: 1; padding: 0 12px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); cursor: pointer; flex-shrink: 0; }
   .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .btn.primary:disabled { background: #B9C6E0; border-color: #B9C6E0; color: #fff; cursor: not-allowed; }
   .btn.ghost { background: transparent; border-color: var(--border); }
