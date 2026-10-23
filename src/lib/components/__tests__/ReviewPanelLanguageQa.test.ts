@@ -162,11 +162,12 @@ describe("ReviewPanel folding (#236)", () => {
     expect(tabs.map((tab) => tab.textContent?.trim().replace(/\s*\d+$/, ""))).toEqual(
       ["Greek Room", "Core check", "Language QA", "AI review"]);
     expect(screen.getByRole("tab", { name: /Core check/ }).getAttribute("title")).toBe("Translation Notes, Words alignment");
-    // The fold button shares the title row; the actions share the count row.
+    // #379: the reference and Close are the shared bar; the one header row
+    // below it holds the count and the actions.
+    expect(document.querySelector("[data-panel-bar='review']")).not.toBeNull();
     const rows = document.querySelectorAll(".panel-header .header-row");
-    expect(rows).toHaveLength(2);
-    expect(rows[0].querySelector(".collapse-btn")).not.toBeNull();
-    expect(rows[1].querySelector(".verse-actions")).not.toBeNull();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].querySelector(".verse-actions")).not.toBeNull();
   });
 
   it("closes its column from its header, and the choice is remembered", async () => {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PanelHeader from "./PanelHeader.svelte";
   // #357: the Paratext team's Project Notes on the selected verse, read-only.
   // Threads come from every Notes_<User>.xml of the linked Paratext folder,
   // merged by thread; comments are shown in date order. Bridge never writes
@@ -73,13 +74,15 @@
 </script>
 
 <div class="pt-notes" data-testid="paratext-notes-panel">
-  <div class="pt-head">
-    <span class="pt-title">{$selectedVerse ? `Paratext notes · ${$currentChapter}:${$selectedVerse}` : "Paratext notes"}</span>
+  <!-- #379: the shared header bar (this panel had none); the body below it is
+       the panel's own scroll box. -->
+  <PanelHeader id="paratext" label="the Paratext notes panel"
+    title={$selectedVerse ? `Paratext notes · ${$currentChapter}:${$selectedVerse}` : "Paratext notes"}>
     {#if state && state !== "unavailable"}
-      <button type="button" on:click={refresh} disabled={refreshing} title="Read the Paratext notes files again">Refresh</button>
+      <button type="button" class="refresh" on:click={refresh} disabled={refreshing} title="Read the Paratext notes files again">Refresh</button>
     {/if}
-  </div>
-
+  </PanelHeader>
+  <div class="pt-body">
   {#if error}
     <p class="pt-msg pt-error" role="alert">{error}</p>
   {:else if !$selectedVerse}
@@ -122,14 +125,14 @@
       </article>
     {/each}
   {/if}
+  </div>
 </div>
 
 <style>
-  .pt-notes { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px; font-size: var(--fs-xs); color: var(--text); }
-  .pt-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .pt-title { font-weight: 700; color: var(--text-2); font-size: var(--fs-2xs); }
-  .pt-head button { border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); color: var(--text);
-    padding: 2px 8px; font-size: var(--fs-2xs); cursor: pointer; }
+  .pt-notes { flex: 1; min-height: 0; display: flex; flex-direction: column; font-size: var(--fs-xs); color: var(--text); }
+  .pt-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 8px 10px; }
+  .refresh { border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); color: var(--text);
+    padding: 2px 8px; font: inherit; font-size: var(--fs-2xs); cursor: pointer; }
   .pt-msg { margin: 0; color: var(--text-2); font-size: var(--fs-2xs); line-height: 1.45; }
   .pt-error { color: var(--danger); }
   .pt-thread { border: 1px solid var(--border); border-radius: 7px; padding: 7px 9px; background: var(--surface); }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PanelHeader from "./PanelHeader.svelte";
   import { onDestroy, tick } from "svelte";
   import { bridge } from "../api/bridgeClient";
   import { languageQaChannel, nudgeLanguageQa } from "../languageQaInline";
@@ -518,19 +519,20 @@
       <!-- The header stays put while the panel scrolls: title, the (i), Pause and
            Close, then one status line and, when a pass left text out, the warning. -->
       <div class="panel-head" bind:clientHeight={headHeight}>
-        <div class="head-row">
-          <h2>Language QA · Offline</h2>
+        <!-- #379: the shared header bar; the (i) and Pause are this panel's
+             actions, and Close does what the rail does (or folds the floating
+             box). -->
+        <PanelHeader id="languageQa" title="Language QA · Offline" label="Language QA" onClose={toggle}>
           <button type="button" class="info-btn" bind:this={infoButton} aria-label="About these checks"
             aria-expanded={aboutOpen} aria-controls="language-qa-about"
             title="What Language QA checks, and what it does not" on:click={() => (aboutOpen = !aboutOpen)}>i</button>
-          <span class="grow" />
           {#if status}
             <button type="button" on:click={togglePause} disabled={busy || status.state === "failed"}>
               {status.state === "paused" ? "Resume checks" : "Pause checks"}
             </button>
           {/if}
-          <button on:click={toggle} aria-label="Close Language QA">Close</button>
-        </div>
+        </PanelHeader>
+        <div class="head-meta">
         {#if status}
           <p class="status-line">
             {status.language?.name || status.language?.language || "Detecting language"}
@@ -553,6 +555,7 @@
             {/if}
           </div>
         {/if}
+        </div>
       {#if aboutOpen}
         <!-- Behind the (i) at Benz's request (DECISIONS 2026-10-09, superseding
              2026-09-24): what the checks cover, and what they never do. -->
@@ -886,10 +889,11 @@
      the parts, not the section, so both sticky rows span the full width. */
   section { width: min(560px, calc(100vw - 32px)); max-height: min(580px, calc(100vh - 150px)); overflow: auto; padding: 0; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 24px #0003; margin-bottom: 8px; }
   .paging { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  h2 { font-size: 15px; margin: 0; white-space: nowrap; }
-  .panel-head { position: sticky; top: 0; z-index: 3; background: var(--surface); padding: 10px 14px 8px; border-bottom: 1px solid var(--border); }
-  .head-row { display: flex; align-items: center; gap: 6px; }
-  .head-row .grow { flex: 1; }
+  .panel-head { position: sticky; top: 0; z-index: 3; background: var(--surface); }
+  /* The status line, alerts and the coverage warning under the bar; nothing
+     is drawn (no second line) when there is none of them. */
+  .head-meta { padding: 4px 14px 8px; border-bottom: 1px solid var(--border); }
+  .head-meta:not(:has(*)) { display: none; }
   .info-btn { width: 20px; height: 20px; padding: 0; border-radius: 50%; font: italic 700 12px/1 Georgia, "Times New Roman", serif; color: var(--accent); border-color: var(--accent); }
   .info-btn[aria-expanded="true"] { background: var(--accent); color: white; }
   .status-line { margin: 4px 0 0; color: var(--text-2); }
@@ -898,7 +902,7 @@
   .coverage-warn details { color: var(--text-2); }
   .coverage-warn details ul { max-height: 120px; overflow: auto; margin: 4px 0; }
   .coverage-warn summary { cursor: pointer; }
-  .about { margin: 8px -14px -8px; padding: 10px 14px; background: var(--surface-2); border-top: 1px solid var(--border);
+  .about { margin: 0; padding: 10px 14px; background: var(--surface-2); border-bottom: 1px solid var(--border);
     max-height: min(320px, 45vh); overflow: auto; }
   .about p { margin: 4px 0; }
   .panel-body { padding: 8px 14px 14px; }

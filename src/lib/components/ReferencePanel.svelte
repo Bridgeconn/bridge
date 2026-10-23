@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PanelHeader from "./PanelHeader.svelte";
   import { onDestroy, tick } from "svelte";
   import { bridge } from "../api/bridgeClient";
   import { currentChapter, project, selectedVerse, targetLang } from "../stores";
@@ -77,14 +78,14 @@
 
 <!-- Its column (SidePanel "reference") sets the width and the resize handle. -->
 <aside class="reference-panel" aria-label="Reference Bible">
-  <div class="head">
-    <span class="label" title={reference?.source?.path ?? ""}>{heading}</span>
+  <!-- #379: the shared header bar; Change and the follow box are this panel's actions. -->
+  <PanelHeader id="reference" title={heading} hint={reference?.source?.path ?? ""} label="the Reference panel">
     {#if reference?.configured}
       <button type="button" class="change" on:click={choose} disabled={choosing}
         title="Choose another reference Bible folder for this project">Change</button>
     {/if}
     <label class="follow"><input type="checkbox" bind:checked={follow} /> follow</label>
-  </div>
+  </PanelHeader>
   {#if chooseError}
     <p class="note error" role="alert">{chooseError}</p>
   {/if}
@@ -118,9 +119,6 @@
 
 <style>
   .reference-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--surface-2); }
-  .head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border);
-    font-size: var(--fs-2xs); color: var(--text-2); }
-  .label { flex: 1; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .follow { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
   .note { margin: 10px; font-size: var(--fs-xs); color: var(--text-3); }
   .error { color: var(--danger); }

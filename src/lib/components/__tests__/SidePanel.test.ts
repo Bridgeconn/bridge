@@ -3,8 +3,13 @@ import { fireEvent, render, screen } from "@testing-library/svelte";
 import { get } from "svelte/store";
 import { tick } from "svelte";
 
+// @ts-expect-error The app tsconfig has no node types; vitest runs under node.
+import { readFileSync } from "node:fs";
+// @ts-expect-error As above.
+import { resolve } from "node:path";
 import SidePanel from "../SidePanel.svelte";
 import SideRail from "../SideRail.svelte";
+import PanelHeader from "../PanelHeader.svelte";
 import { SIDE_PANEL_LIMITS, setSidePanel, sidePanels } from "../../editorPrefs";
 import { languageQaChannel } from "../../languageQaInline";
 
@@ -108,5 +113,47 @@ describe("SideRail", () => {
     languageQaChannel.set({ projectPath: "/p", error: "engine gone", status: null });
     await tick();
     expect(screen.getByRole("button", { name: /Language QA/ }).textContent).toContain("!");
+  });
+});
+
+// #379 (Benz's item 7): one header bar with a line under it on every panel.
+describe("PanelHeader (#379)", () => {
+  beforeEach(reset);
+  afterEach(reset);
+
+  it("shows the title, carries the hint as its tooltip, and Close closes the column as the rail does", async () => {
+    setSidePanel("reference", { open: true });
+    render(PanelHeader, { props: { id: "reference", title: "Reference · OV", hint: "C:/bibles/ov", label: "the Reference panel" } });
+    const title = screen.getByRole("heading", { level: 2, name: "Reference · OV" });
+    expect(title.getAttribute("title")).toBe("C:/bibles/ov");
+    expect(document.querySelector("[data-panel-bar='reference']")).not.toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Close the Reference panel" }));
+    expect(get(sidePanels).reference.open).toBe(false);
+  });
+
+  it("names Close after the title when no label is given, and defers to onClose when one is given", async () => {
+    const onClose = vi.fn();
+    setSidePanel("languageQa", { open: true });
+    render(PanelHeader, { props: { id: "languageQa", title: "Language QA", onClose } });
+    await fireEvent.click(screen.getByRole("button", { name: "Close Language QA" }));
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(get(sidePanels).languageQa.open).toBe(true);
+  });
+
+  it("is the first thing every one of the five panels draws, with the actions in its slot", () => {
+    const source = (name: string) => readFileSync(resolve(process.cwd(), "src/lib/components", `${name}.svelte`), "utf-8");
+    for (const [name, id] of [["SourceTextPanel", "source"], ["ReferencePanel", "reference"], ["LanguageQaPanel", "languageQa"],
+      ["ParatextNotesPanel", "paratext"], ["ReviewPanel", "review"]] as const) {
+      const text = source(name);
+      expect(text, name).toMatch(new RegExp(`<PanelHeader id="${id}"`));
+      // No panel keeps a header of its own beside the shared one.
+      expect(text, name).not.toMatch(/class="(head|pt-head|head-row)"/);
+    }
+    // One bar: one padding, one title size, one background, one line under it.
+    const bar = source("PanelHeader");
+    expect(bar).toContain("padding: 8px 12px");
+    expect(bar).toContain("border-bottom: 1px solid var(--border)");
+    expect(bar).toContain("background: var(--surface-2)");
+    expect(bar).toMatch(/\.panel-title \{[^}]*font-size: var\(--fs-xs\)/);
   });
 });

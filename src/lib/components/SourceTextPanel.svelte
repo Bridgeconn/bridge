@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PanelHeader from "./PanelHeader.svelte";
   import { onDestroy, tick } from "svelte";
   import { alignmentRevisionByVerse, currentChapter, project, selectedVerse, verseNums } from "../stores";
   import { cachedSourceChapter, loadSourceChapter, refreshSourceVerse, staleSourceVerses } from "../sourceText";
@@ -80,10 +81,10 @@
 
 <!-- Its column (SidePanel "source") sets the width and the resize handle. -->
 <aside class="source-panel" aria-label="Source text">
-  <div class="head">
-    <span class="label">Source · {source ? language : "original language"}</span>
+  <!-- #379: the shared header bar; the follow box is this panel's action. -->
+  <PanelHeader id="source" title={`Source · ${source ? language : "original language"}`} label="the Source panel">
     <label class="follow"><input type="checkbox" bind:checked={follow} /> follow</label>
-  </div>
+  </PanelHeader>
   {#if error}
     <p class="note error" role="alert">{error}</p>
   {:else if !source}
@@ -119,9 +120,6 @@
 
 <style>
   .source-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--surface-2); }
-  .head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border);
-    font-size: var(--fs-2xs); color: var(--text-2); }
-  .label { flex: 1; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .follow { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
   .note { margin: 10px; font-size: var(--fs-xs); color: var(--text-3); }
   .error { color: var(--danger); }
