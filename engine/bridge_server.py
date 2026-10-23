@@ -1,9 +1,11 @@
 """The team hub: `bridge-engine --serve` (#79 transport, #80 first slice).
 
 An optional `[server]` extra (FastAPI, uvicorn), imported only by `main.py`
-when `--serve` is given, excluded from `bridge-engine.spec`, and never
-imported by `bridge_service.py` (a test pins that), so the desktop sidecar
-carries no server and no network path (DECISIONS 2026-09-11, 2026-10-15).
+when `--serve` is given and never imported by `bridge_service.py` (a test
+pins that), so the stdio path has no server and no network path (DECISIONS
+2026-09-11). Since 2026-10-23 (#46) the frozen sidecar carries it, and
+Settings > Team > Start a hub runs it as a child of the desktop engine with
+`--parent-pid`, so it never outlives the app.
 
 **Identity.** A name and a device, never a password (DECISIONS 2026-09-11).
 An administrator hands out a join code; a device posts it with a display
@@ -30,6 +32,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import secrets
 import sqlite3
 import threading
@@ -640,9 +643,14 @@ def build_store(data_dir: str | Path) -> HubStore:
     return store
 
 
-def serve(data_dir: str = "", host: str = "127.0.0.1", port: int = 8765) -> None:
+def serve(data_dir: str = "", host: str = "127.0.0.1", port: int = 8765, parent_pid: int | None = None) -> None:
     import uvicorn
 
+    if parent_pid:
+        # Started by the desktop engine (#46): never outlive it.
+        from tc_ai_bridge.process_watch import watch_parent
+
+        watch_parent(parent_pid, lambda: os._exit(0))
     root = Path(data_dir or Path.cwd() / "bridge-hub").resolve()
     app = create_app(build_engine(root), build_store(root), dashboard_dir=default_dashboard_dir())
     print(f"Bridge hub on http://{host}:{port} -- data in {root}", flush=True)

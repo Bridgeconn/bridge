@@ -34,8 +34,10 @@ def _apply_cli_overrides() -> None:
 
 
 def _serve_args(argv: list[str]) -> dict[str, object] | None:
-    """`--serve [--data-dir <dir>] [--host <h>] [--port <n>]` (#79): the team
-    hub. None when --serve is absent, which is every desktop launch."""
+    """`--serve [--data-dir <dir>] [--host <h>] [--port <n>] [--parent-pid <pid>]`
+    (#79): the team hub. None when --serve is absent, which is every desktop
+    launch. `--parent-pid` is given when the desktop engine started the hub
+    (#46): the hub exits when that process does."""
     if "--serve" not in argv:
         return None
 
@@ -50,6 +52,7 @@ def _serve_args(argv: list[str]) -> dict[str, object] | None:
         "data_dir": value("--data-dir", ""),
         "host": value("--host", "127.0.0.1"),
         "port": int(value("--port", "8765")),
+        "parent_pid": int(value("--parent-pid", "0")) or None,
     }
 
 
@@ -75,8 +78,8 @@ def _start() -> None:
     _apply_cli_overrides()
     serve = _serve_args(sys.argv[1:])
     if serve is not None:
-        # The hub: an optional [server] extra, imported only here, so the
-        # stdio sidecar never carries it (DECISIONS 2026-09-11, 2026-10-15).
+        # The hub, imported only here so the stdio path never loads it. The
+        # frozen exe carries it since 2026-10-23 (DECISIONS, #46).
         from bridge_server import serve as run_server
 
         run_server(**serve)  # type: ignore[arg-type]

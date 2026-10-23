@@ -80,12 +80,22 @@ a = Analysis(
     # usfmtc is imported on first parse inside tc_ai_bridge/usfm_parser.py so
     # sidecar start does not pay its ~100 ms import; listed so the freeze does
     # not depend on analysis finding a function-level import.
-    hiddenimports=['regex', 'usfmtc'],
+    # The hub's HTTP server (#79) rides in the sidecar since 2026-10-23 (#46,
+    # DECISIONS): Settings > Team > Start a hub re-invokes this exe with
+    # --serve. main.py imports bridge_server only on that argv, so analysis
+    # cannot see it; uvicorn picks its loop/protocol/lifespan modules by
+    # string, so those are named too. The frozen smoke's --serve step is the
+    # proof this list is complete.
+    hiddenimports=[
+        'regex', 'usfmtc', 'bridge_server',
+        'uvicorn.logging', 'uvicorn.loops.auto', 'uvicorn.protocols.http.auto',
+        'uvicorn.protocols.http.h11_impl', 'uvicorn.protocols.websockets.auto',
+        'uvicorn.lifespan.on', 'uvicorn.lifespan.off', 'fastapi.staticfiles',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    # The hub's HTTP server (#79) is a pip extra, never in the desktop sidecar.
-    excludes=['bridge_server', 'fastapi', 'starlette', 'uvicorn'],
+    excludes=[],
     noarchive=False,
     optimize=0,
 )
