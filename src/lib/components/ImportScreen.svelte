@@ -462,23 +462,36 @@
                 <small>{lastOpened(item)}</small>
                 <small title={item.path}>{item.missing ? "Project folder is missing" : item.path}</small>
               </div>
+              <!-- #375: one glyph per action, the action and the project in the
+                   tooltip and the accessible name, so the row is short and reads
+                   the same in every language. Open stays a text button: it is the
+                   row's one primary action and should stay the obvious one. Each
+                   glyph carries U+FE0E (text presentation) where Windows would
+                   otherwise draw the colour emoji (VerseList's ✎︎ note). -->
               {#if item.missing}
-                <button class="small-button" on:click={() => locate(item)} disabled={loading}>Locate</button>
-                <button class="small-button danger" on:click={() => forget(item)} disabled={loading}>Forget</button>
+                <button class="small-button icon-action" on:click={() => locate(item)} disabled={loading}
+                  title={`Locate ${displayName(item)}`} aria-label={`Locate ${displayName(item)}`}>📂︎</button>
+                <button class="small-button icon-action danger" on:click={() => forget(item)} disabled={loading}
+                  title={`Forget ${displayName(item)}`} aria-label={`Forget ${displayName(item)}`}>✕</button>
               {:else if confirmingId === item.projectId}
                 <span class="confirm-copy">Delete permanently?</span>
                 <button class="small-button danger" on:click={() => deleteProject(item)} disabled={loading}>Confirm</button>
                 <button class="small-button" on:click={() => (confirmingId = "")} disabled={loading}>Cancel</button>
               {:else}
-                <button class="small-button primary" on:click={() => openPath(item.path, item.projectId)} disabled={loading}>Open</button>
-                <button class="small-button" on:click={() => startRename(item)} disabled={loading}>Rename</button>
+                <button class="small-button primary" on:click={() => openPath(item.path, item.projectId)} disabled={loading}
+                  title={`Open ${displayName(item)}`} aria-label={`Open ${displayName(item)}`}>Open</button>
+                <button class="small-button icon-action" on:click={() => startRename(item)} disabled={loading}
+                  title={`Rename ${displayName(item)}`} aria-label={`Rename ${displayName(item)}`}>✎︎</button>
                 {#if item.archivedAt}
-                  <button class="small-button" on:click={() => setArchived(item, false)} disabled={loading}>Unarchive</button>
+                  <button class="small-button icon-action" on:click={() => setArchived(item, false)} disabled={loading}
+                    title={`Unarchive ${displayName(item)}`} aria-label={`Unarchive ${displayName(item)}`}>▤</button>
                 {:else}
-                  <button class="small-button" on:click={() => setArchived(item, true)} disabled={loading}>Archive</button>
+                  <button class="small-button icon-action" on:click={() => setArchived(item, true)} disabled={loading}
+                    title={`Archive ${displayName(item)}`} aria-label={`Archive ${displayName(item)}`}>▣</button>
                 {/if}
                 {#if item.managed}
-                  <button class="small-button danger" on:click={() => (confirmingId = item.projectId)} disabled={loading}>Delete</button>
+                  <button class="small-button icon-action danger" on:click={() => (confirmingId = item.projectId)} disabled={loading}
+                    title={`Delete ${displayName(item)}`} aria-label={`Delete ${displayName(item)}`}>🗑︎</button>
                 {/if}
               {/if}
             </article>
@@ -641,9 +654,14 @@
   .project-row.archived { opacity: .7; }
   .progress-line { font-size: var(--fs-2xs); color: var(--text-2); }
   .rename-input { font: inherit; font-weight: 700; padding: 2px 6px; border: 1px solid var(--accent); border-radius: 4px; background: var(--surface); color: var(--text); width: 100%; box-sizing: border-box; }
-  .small-button { border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); color: var(--text); padding: 6px 10px; cursor: pointer; font-size: var(--fs-2xs); }
+  .small-button { height: var(--control-h); box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); color: var(--text); padding: 0 10px; cursor: pointer; font-size: var(--fs-2xs); flex-shrink: 0; }
   .small-button.primary { border-color: var(--accent); color: var(--accent); }
   .small-button.danger { color: var(--danger); }
+  /* #375: a 28x28 glyph button; the glyph is drawn upright and monochrome
+     from the UI font, never from an icon font (CLAUDE.md gotcha 9). */
+  .small-button.icon-action { width: var(--control-h); padding: 0; font-family: var(--font-ui); font-size: var(--fs-sm); line-height: 1; }
+  .small-button.icon-action:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .small-button.icon-action.danger:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
   .confirm-copy { color: var(--danger); font-size: var(--fs-2xs); font-weight: 650; flex-shrink: 0; }
   .empty { background: var(--surface-2); color: var(--text-2); border-radius: 8px; padding: 14px; font-size: var(--fs-xs); margin: 0 0 18px; }
   .choice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
