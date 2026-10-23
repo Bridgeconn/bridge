@@ -1015,6 +1015,37 @@ export interface HubStatus {
   sync: { pullCursor: number; lastPushAt: string | null; lastPullAt: string | null; lastError: string | null } | null;
   openConflicts: number;
   syncing: boolean;
+  /** #46: a hub hosted on this machine by Settings > Team > Start a hub. */
+  server: HubServer;
+}
+
+/** #46: the hub this engine runs as its child, alive only while Bridge is
+ *  open. Read from local checks only, never the network. */
+export interface HubServer {
+  state: "stopped" | "starting" | "running" | "failed";
+  pid: number | null;
+  host: string;
+  port: number;
+  /** For this machine: http://127.0.0.1:<port>. */
+  url: string;
+  /** For everyone else on the network: http://<hostname>:<port>. */
+  lanUrl: string;
+  dataDir: string;
+  /** The first administrator's code, while the hub runs and the file is there. */
+  adminJoinCode: string | null;
+  /** Something already answers on the port here, so Start would fail. */
+  portInUse: boolean;
+  startedAt: string | null;
+  error: string | null;
+  autostart: boolean;
+}
+
+/** #46: whether a hub answers GET /health at an address. */
+export interface HubProbe {
+  url: string;
+  reachable: boolean;
+  status: string | null;
+  error: string | null;
 }
 
 /** #80: another device's change to a row this device also changed. Kept,

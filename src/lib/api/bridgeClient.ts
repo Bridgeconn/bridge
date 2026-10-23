@@ -73,6 +73,7 @@ import type {
   Assignment,
   AssignmentsList,
   HubConflict,
+  HubProbe,
   HubStatus,
   UserRole,
   TeamRoles,
@@ -309,8 +310,11 @@ export type EngineMethod =
   | "hub.join"
   | "hub.leave"
   | "hub.link"
+  | "hub.probe"
   | "hub.resolveConflict"
+  | "hub.start"
   | "hub.status"
+  | "hub.stop"
   | "hub.syncNow"
   | "assignments.list"
   | "assignments.set"
@@ -771,6 +775,21 @@ export const bridge = {
 
   hubResolveConflict(conflictId: number, resolution: "kept-mine" | "redecided"): Promise<{ hubProjectId: string; conflicts: HubConflict[] }> {
     return call("hub.resolveConflict", { conflictId, resolution });
+  },
+
+  // -- a hub hosted on this machine (#46). start returns at once with the
+  // server "starting"; hub.status moves it to running or failed. probe is
+  // one short GET /health.
+  hubStart(options: { host?: string; port?: number; dataDir?: string } = {}): Promise<HubStatus> {
+    return call("hub.start", options);
+  },
+
+  hubStop(): Promise<HubStatus> {
+    return call("hub.stop");
+  },
+
+  hubProbe(url: string): Promise<HubProbe> {
+    return call("hub.probe", { url });
   },
 
   // -- assignments (#240): for the open book. set and clear are a
