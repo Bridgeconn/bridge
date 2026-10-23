@@ -104,7 +104,7 @@
   let ticked = new Set<string>();
   let tickAtLeast = 5;
   let wordScope: "book" | "project" = "book";
-  // Dictionary: the project word list.
+  // Dictionary: the project's own words (the pack's dictionary is never written).
   let projectWords: HouseStyleEntry[] = [];
   let flags: LanguageQaFlag[] = [];
   let flagsLoaded = false;
@@ -415,7 +415,7 @@
       return;
     }
     bookWords = bookWords.map((w) => (ticked.has(w.word) ? { ...w, status: "added" } : w));
-    bookWordsNotice = `${words.length} word${words.length === 1 ? "" : "s"} added to the project word list.`;
+    bookWordsNotice = `${words.length} word${words.length === 1 ? "" : "s"} added to the dictionary.`;
     ticked = new Set();
   }
 
@@ -693,7 +693,7 @@
         {:else if panelTab === "bookWords"}
           <section aria-label="Book words" class="book-words">
             <p class="muted">Words in this book that are not in the dictionary, most used first. Add the ones that are right
-              to the project word list; they stop being reported as spelling problems. Nothing here changes the text.</p>
+              to the dictionary; they stop being reported as spelling problems. Nothing here changes the text.</p>
             {#if !bookWordsLoaded}
               <p class="muted">Loading…</p>
             {:else if bookWordsReason}
@@ -720,7 +720,7 @@
                             title="Open its first verse">{row.word}</button>
                         </td>
                         <td>{row.countBook}</td><td>{row.countIrv}</td><td>{row.countOv}</td>
-                        <td>{row.status === "added" ? "in word list" : row.status === "irv_ok" ? "IRV word" : row.status}</td>
+                        <td>{row.status === "added" ? "in dictionary" : row.status === "irv_ok" ? "IRV word" : row.status}</td>
                       </tr>
                     {/each}
                   </tbody>
@@ -732,7 +732,7 @@
                   <option value="book">this book</option>
                   <option value="project">every book of the project</option>
                 </select>
-                <button on:click={addTicked} disabled={!ticked.size || bookWordsBusy}>Add to the project word list</button>
+                <button on:click={addTicked} disabled={!ticked.size || bookWordsBusy}>Add to dictionary ({wordScope === "project" ? "every book" : "this book"})</button>
               </div>
               {#if bookWordsNotice}<p class="muted" role="status">{bookWordsNotice}</p>{/if}
             {/if}
@@ -799,6 +799,9 @@
             {/if}
           </section>
         {:else if panelTab === "dictionary"}
+          <!-- #384: the tab says what it holds. The pack's own dictionary is read-only
+               by contract (NOTICE.md, contract 2); the rows here are the project's additions. -->
+          <p class="muted dictionary-intro">Words this project accepts, and fixes it learned. The language pack's own dictionary is read-only.</p>
           <section aria-label="Project words" class="dictionary">
             <h3>Project words</h3>
             {#if !projectWords.length}

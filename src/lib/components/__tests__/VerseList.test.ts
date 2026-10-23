@@ -1171,7 +1171,7 @@ describe("VerseList word actions, as the indic-qa editor offers them", () => {
     expect(menu.textContent).toContain("“यीशु”");
     expect(screen.getByRole("menuitem", { name: "Copy word" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Flag “यीशु” for review…" })).toBeEnabled();
-    await fireEvent.click(screen.getByRole("menuitem", { name: "Add “यीशु” to the project word list" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Add “यीशु” to dictionary (this book)" }));
     await waitFor(() => expect(languageQaWordsAdd).toHaveBeenCalledWith("/p", ["यीशु"], "book"));
   });
 
@@ -1190,7 +1190,7 @@ describe("VerseList word actions, as the indic-qa editor offers them", () => {
     render(VerseList, { props: { onSelect: vi.fn() } });
     await fireEvent.contextMenu(document.querySelector('[data-finding-ids~="u1"]') as HTMLElement);
     const started = performance.now();
-    await fireEvent.click(screen.getByRole("menuitem", { name: "Add “यीशु” to the project word list" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Add “यीशु” to dictionary (this book)" }));
     expect(document.querySelector('[data-finding-ids~="u1"]')).toBeNull();
     expect(performance.now() - started).toBeLessThan(250);
     await waitFor(() => expect(languageQaWordsAdd).toHaveBeenCalledWith("/p", ["यीशु"], "book"));
@@ -1199,7 +1199,7 @@ describe("VerseList word actions, as the indic-qa editor offers them", () => {
     languageQaFindingsByVerse.set({ "1:6": [{ ...typo, id: "m1", category: "unicode", ruleId: "ta-irv/indicqa.shape.malformed" }] });
     render(VerseList, { props: { onSelect: vi.fn() } });
     await fireEvent.contextMenu(document.querySelector('[data-finding-ids~="m1"]') as HTMLElement);
-    expect(screen.queryByRole("menuitem", { name: /to the project word list/ })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: /to dictionary/ })).toBeNull();
   });
 });
 

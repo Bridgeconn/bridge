@@ -419,7 +419,7 @@ describe("Language QA", () => {
     expect(onNavigate).toHaveBeenCalledWith("php", "2", "4");
   });
 
-  it("Book words ticks the words the IRV uses often and adds them to the project word list", async () => {
+  it("Book words ticks the words the IRV uses often and adds them to the dictionary", async () => {
     const row = (word: string, countIrv: number) => ({ word, status: "irv_ok" as const, countBook: 2, countIrv, countOv: 0,
       firstRef: { chapter: "1", verse: "1" } });
     bookWordsCall.mockReset().mockResolvedValue({ ready: true, total: 2, words: [row("राज्यपाल", 25), row("सोची", 2)] });
@@ -431,10 +431,10 @@ describe("Language QA", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Tick" }));
     expect((screen.getByRole("checkbox", { name: "Tick राज्यपाल" }) as HTMLInputElement).checked).toBe(true);
     expect((screen.getByRole("checkbox", { name: "Tick सोची" }) as HTMLInputElement).checked).toBe(false);
-    await fireEvent.click(screen.getByRole("button", { name: "Add to the project word list" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Add to dictionary (this book)" }));
     await waitFor(() => expect(wordsAddCall).toHaveBeenCalledWith("C:/project", ["राज्यपाल"], "book"));
-    expect(await screen.findByText(/1 word added to the project word list/)).toBeTruthy();
-    expect(screen.getByText("in word list")).toBeTruthy();
+    expect(await screen.findByText(/1 word added to the dictionary\./)).toBeTruthy();
+    expect(screen.getByText("in dictionary")).toBeTruthy();
   });
 });
 

@@ -259,7 +259,7 @@
         <Fieldset id="cs-words" legend="Project words" open={isOpen("words", open)}
           onToggle={(o) => remember("words", o)}>
           <p class="row">{projectWordCount === null ? "–" : projectWordCount} word{projectWordCount === 1 ? "" : "s"}
-            added to this project's word list.</p>
+            added to this project's dictionary.</p>
           <p class="hint">Add a word from its right-click menu; review or remove them in Language QA › Dictionary.</p>
         </Fieldset>
       {/if}

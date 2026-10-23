@@ -157,7 +157,7 @@
    * The inline Language QA context menu, in the indic-qa editor's order: the
    * word and what was found; each suggestion (learned fixes first) with its
    * kind and frequency shown and Chapter / Book buttons on its row (the item
-   * itself is "here"); Forget a learned fix; Add to the project word list
+   * itself is "here"); Forget a learned fix; Add to dictionary (this book)
    * (only where it would silence the finding); Ignore, with Book / Project on
    * its row and a rule-wide submenu; False positive; Flag, Copy, Search,
    * occurrences, Edit; and related words, which arrive after the menu opens.
@@ -202,7 +202,7 @@
       }] : []),
       ...(addable ? [{
         id: "add-word",
-        label: `Add “${word}” to the project word list`,
+        label: `Add “${word}” to dictionary (this book)`,
         separatorBefore: true,
         disabled: busy,
         title: "This word is spelt right in this project: stop reporting it as a spelling problem anywhere in the book.",
@@ -316,7 +316,7 @@
     return [
       { id: "word-header", header: true, target: true, label: `“${word.word}”`,
         tag: hasSelection ? "selected text" : "no finding here" },
-      ...(single ? [{ id: "add-word", label: `Add “${word.word}” to the project word list`, disabled: !$project,
+      ...(single ? [{ id: "add-word", label: `Add “${word.word}” to dictionary (this book)`, disabled: !$project,
         title: "This word is spelt right in this project: never report it as a spelling problem in the book." }] : []),
       { id: "copy", label: hasSelection ? "Copy selection" : "Copy word" },
       { id: "search", label: "Search in this book", disabled: !$project, title: "Every place this text occurs in the book" },

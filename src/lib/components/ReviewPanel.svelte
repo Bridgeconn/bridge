@@ -872,7 +872,7 @@
                     on:click={() => (lqaFlagDraft = f)}>⚑ Flag…</button>
                   {#if canAddProjectWord(f)}
                     <button class="ignore" title="This word is spelt right in this project: stop reporting it anywhere in the book"
-                      on:click={() => addLqaWord(f)}>Add to word list</button>
+                      on:click={() => addLqaWord(f)}>Add to dictionary (this book)</button>
                   {/if}
                   <button class="ignore" title="Copy the flagged text" on:click={() => copyWord(f.originalText.trim())}>Copy</button>
                   <button class="ignore" title="Every place this text occurs in the book"
