@@ -142,9 +142,10 @@ export function toggleSidePanel(id: SidePanelId): void {
   sidePanels.update((all) => ({ ...all, [id]: { ...all[id], open: !all[id].open } }));
 }
 
-/** The dashboard's Collection QA panel folded to its header row. A run in
- * progress always shows its table, whatever this says. */
-export const collectionQaCollapsed = persisted("bridge.dashboard.collectionQaCollapsed.v1", false, isBoolean);
+/** The dashboard's Collection QA panel folded to its header row. Folded by
+ * default (#380); a saved choice wins, and a run in progress always shows
+ * its table, whatever this says. */
+export const collectionQaCollapsed = persisted("bridge.dashboard.collectionQaCollapsed.v1", true, isBoolean);
 
 /** The dashboard's project details block (eyebrow, book heading, Paratext
  * strip) folded to one row: the name and the subtitle (#374). Open by
