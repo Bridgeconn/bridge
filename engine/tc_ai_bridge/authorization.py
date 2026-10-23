@@ -182,6 +182,8 @@ _READ = (
     "users.list", "users.setCurrent",
     "assignments.list",
     "hub.status", "hub.conflicts",
+    # #46: asks whether a hub answers at an address; changes nothing.
+    "hub.probe",
 )
 
 _RUN_CHECKS = (
@@ -227,6 +229,8 @@ _MANAGE_PROJECTS = (
     "assignments.set", "assignments.clear",
     # #80: joining a hub and linking a book change what this device shares.
     "hub.join", "hub.leave", "hub.link",
+    # #46: hosting the team's hub on this machine.
+    "hub.start", "hub.stop",
 )
 
 # #237: anyone may see who exists and sign in as themselves at startup; only

@@ -477,6 +477,12 @@ class Methods:
     HUB_SYNC_NOW = "hub.syncNow"
     HUB_CONFLICTS = "hub.conflicts"
     HUB_RESOLVE_CONFLICT = "hub.resolveConflict"
+    # #46: host a hub on this machine, as a child of this engine that lives
+    # only while Bridge is open (DECISIONS 2026-10-23); probe asks whether a
+    # hub answers at an address.
+    HUB_START = "hub.start"
+    HUB_STOP = "hub.stop"
+    HUB_PROBE = "hub.probe"
     ASSIGNMENTS_LIST = "assignments.list"
     ASSIGNMENTS_SET = "assignments.set"
     ASSIGNMENTS_CLEAR = "assignments.clear"
@@ -998,6 +1004,7 @@ class BridgeEngine:
             "url": self.settings.hub_url, "identity": self.settings.hub_identity,
             "linkedHubProjectId": link or "", "sync": state, "openConflicts": conflicts,
             "syncing": bool(thread is not None and thread.is_alive() and getattr(self, "_hub_busy", False)),
+            "server": self._hub_server_view(),
         }
 
     def hub_join(self, url: str, join_code: str, display_name: str) -> dict[str, Any]:
@@ -1173,6 +1180,202 @@ class BridgeEngine:
         self.project.workbench.resolve_sync_conflict(int(conflict_id), resolution)
         return self.hub_conflicts()
 
+    # -- a hub hosted on this machine (#46, DECISIONS 2026-10-23) ------------
+
+    HUB_DEFAULT_PORT = 8765
+    HUB_START_TIMEOUT_SECONDS = 30.0
+
+    def _hub_server_state(self) -> dict[str, Any]:
+        state = getattr(self, "_hub_server", None)
+        if state is None:
+            self._hub_server_lock = threading.Lock()
+            self._hub_server_proc = None
+            state = self._hub_server = {
+                "state": "stopped", "pid": None, "host": "", "port": self.HUB_DEFAULT_PORT,
+                "dataDir": "", "startedAt": None, "error": None,
+            }
+        return state
+
+    @staticmethod
+    def _port_in_use(port: int) -> bool:
+        import socket
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            # A listener on loopback accepts in about a millisecond; a closed
+            # port on Windows waits out the whole timeout, and hub.status
+            # pays it.
+            sock.settimeout(0.1)
+            return sock.connect_ex(("127.0.0.1", int(port))) == 0
+
+    def _hub_server_view(self) -> dict[str, Any]:
+        """What Settings > Team shows about a hub on this machine. Local checks
+        only: the child's exit code and a loopback connect, never the network."""
+        import socket
+
+        from tc_ai_bridge.secret_store import hub_data_dir
+
+        state = self._hub_server_state()
+        with self._hub_server_lock:
+            proc = self._hub_server_proc
+            # A child that dies while starting is the start watcher's to
+            # report, with its log; here only a running hub that vanished.
+            if proc is not None and state["state"] == "running" and proc.poll() is not None:
+                state.update(state="stopped", error=f"The hub stopped (exit code {proc.returncode}).")
+                self._hub_server_proc = None
+            view = dict(state)
+        port = int(view["port"])
+        data_dir = Path(view["dataDir"] or hub_data_dir())
+        code = None
+        try:
+            code = (data_dir / "admin-join-code.txt").read_text(encoding="utf-8").splitlines()[0].strip() or None
+        except (OSError, IndexError):
+            pass
+        view.update(
+            url=f"http://127.0.0.1:{port}",
+            lanUrl=f"http://{socket.gethostname()}:{port}",
+            dataDir=str(data_dir),
+            adminJoinCode=code if view["state"] == "running" else None,
+            portInUse=view["state"] != "running" and self._port_in_use(port),
+            autostart=self.settings.hub_server_autostart,
+        )
+        return view
+
+    @staticmethod
+    def hub_serve_command(host: str, port: int, data_dir: str, parent_pid: int) -> list[str]:
+        """The frozen exe re-invokes itself with --serve; from source it is
+        `python main.py --serve`."""
+        args = ["--serve", "--data-dir", str(data_dir), "--host", str(host), "--port", str(int(port)),
+                "--parent-pid", str(int(parent_pid))]
+        if getattr(sys, "frozen", False):
+            return [sys.executable, *args]
+        return [sys.executable, str(Path(__file__).resolve().parent / "main.py"), *args]
+
+    def hub_start(self, host: str = "0.0.0.0", port: int = HUB_DEFAULT_PORT, data_dir: str = "") -> dict[str, Any]:
+        """Start a hub as this engine's child. Returns at once with state
+        `starting`; a watcher thread moves it to `running` once /health
+        answers, or `failed` with the end of hub.log."""
+        import subprocess
+
+        from tc_ai_bridge.secret_store import hub_data_dir
+
+        state = self._hub_server_state()
+        with self._hub_server_lock:
+            if state["state"] in {"starting", "running"}:
+                raise ProjectError(f"A hub is already running here on port {state['port']}.")
+            if self._port_in_use(port):
+                raise ProjectError(f"Something on this machine already answers on port {int(port)}, "
+                                   "probably a hub. Join it instead.")
+            root = Path(data_dir) if data_dir else hub_data_dir()
+            root.mkdir(parents=True, exist_ok=True)
+            log_path = root / "hub.log"
+            # The child must never write to this engine's stdout: that is the
+            # JSON-lines pipe to the shell, and serve() prints a banner.
+            log = log_path.open("a", encoding="utf-8")
+            try:
+                proc = subprocess.Popen(
+                    self.hub_serve_command(host, port, str(root), os.getpid()),
+                    stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                    cwd=None if getattr(sys, "frozen", False) else str(Path(__file__).resolve().parent),
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+            except OSError as exc:
+                log.close()
+                raise ProjectError(f"The hub could not be started: {exc}") from exc
+            log.close()
+            self._hub_server_proc = proc
+            state.update(state="starting", pid=proc.pid, host=str(host), port=int(port), dataDir=str(root),
+                         startedAt=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), error=None)
+        if not getattr(self, "_hub_server_atexit", False):
+            # Closing Bridge ends the hub but keeps autostart: hub_stop() is
+            # the person's choice, this is not.
+            atexit.register(self._kill_hub_on_exit)
+            self._hub_server_atexit = True
+        threading.Thread(target=self._watch_hub_start, args=(proc, log_path), name="bridge-hub-start",
+                         daemon=True).start()
+        return self.hub_status()
+
+    def _watch_hub_start(self, proc: Any, log_path: Path) -> None:
+        from tc_ai_bridge.hub_sync import probe_hub
+
+        state = self._hub_server_state()
+        deadline = time.monotonic() + self.HUB_START_TIMEOUT_SECONDS
+        url = f"http://127.0.0.1:{state['port']}"
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:
+                self._hub_start_ended(proc, "failed", self._hub_log_tail(log_path)
+                                      or f"The hub exited at once (exit code {proc.returncode}).")
+                return
+            if probe_hub(url, timeout=1.0, transport=getattr(self, "_hub_transport", None))["reachable"]:
+                # Saved before the state flips, so whoever sees `running`
+                # also sees autostart.
+                self.settings.set_hub_server_autostart(True)
+                self._hub_start_ended(proc, "running", None)
+                return
+            time.sleep(0.25)
+        self._hub_start_ended(proc, "failed", "The hub did not answer within "
+                              f"{int(self.HUB_START_TIMEOUT_SECONDS)} s. {self._hub_log_tail(log_path)}".strip())
+        self._kill_hub_tree(proc)
+
+    def _hub_start_ended(self, proc: Any, outcome: str, error: str | None) -> None:
+        state = self._hub_server_state()
+        with self._hub_server_lock:
+            if self._hub_server_proc is not proc or state["state"] != "starting":
+                return  # stopped meanwhile
+            state.update(state=outcome, error=error)
+            if outcome == "failed":
+                self._hub_server_proc = None
+
+    @staticmethod
+    def _hub_log_tail(log_path: Path, lines: int = 20) -> str:
+        try:
+            return "\n".join(log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:])
+        except OSError:
+            return ""
+
+    @staticmethod
+    def _kill_hub_tree(proc: Any) -> None:
+        import subprocess
+
+        if proc.poll() is not None:
+            return
+        if os.name == "nt":
+            # A tree kill, as the shell does for this engine (CLAUDE.md gotcha
+            # 13): the onefile bootloader's Python child holds the port.
+            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, check=False,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        else:
+            proc.terminate()
+        try:
+            proc.wait(5)
+        except Exception:  # noqa: BLE001 -- best effort; --parent-pid is the backstop
+            proc.kill()
+
+    def _kill_hub_on_exit(self) -> None:
+        proc = getattr(self, "_hub_server_proc", None)
+        if proc is not None:
+            self._kill_hub_tree(proc)
+
+    def hub_stop(self) -> dict[str, Any]:
+        """Stop the hub this engine started; a hub started any other way is
+        not this device's to stop. Idempotent."""
+        state = self._hub_server_state()
+        with self._hub_server_lock:
+            proc = self._hub_server_proc
+            self._hub_server_proc = None
+            state.update(state="stopped", pid=None, error=None)
+        if proc is not None:
+            self._kill_hub_tree(proc)
+        self.settings.set_hub_server_autostart(False)
+        return self.hub_status()
+
+    def hub_probe(self, url: str) -> dict[str, Any]:
+        from tc_ai_bridge.hub_sync import HubError, probe_hub
+
+        try:
+            return probe_hub(str(url or "").strip(), transport=getattr(self, "_hub_transport", None))
+        except HubError as exc:
+            raise ProjectError(str(exc)) from exc
+
     HUB_SYNC_INTERVAL_SECONDS = 60.0
 
     def _start_hub_thread(self) -> None:
@@ -1284,6 +1487,12 @@ class BridgeEngine:
             self._start_hub_thread()
         except Exception:  # noqa: BLE001 -- never let the hub delay startup
             pass
+        # #46: a hub this device started and did not stop comes back with it.
+        if self.settings.hub_server_autostart:
+            try:
+                self.hub_start()
+            except Exception as exc:  # noqa: BLE001 -- the reason shows in Settings > Team
+                _trace(f"hub autostart failed: {exc}")
         """Slow loads, started off the dispatcher once the sidecar is ready
         (main.py only: tests that build a BridgeEngine never pay them). Today:
         uroman for the names check, which engine.info used to build, ~5 s
@@ -8114,6 +8323,15 @@ class BridgeEngine:
                 return EngineResponse.ok(request.id, result=self.hub_sync_now())
             if m == Methods.HUB_CONFLICTS:
                 return EngineResponse.ok(request.id, result=self.hub_conflicts())
+            if m == Methods.HUB_START:
+                return EngineResponse.ok(request.id, result=self.hub_start(
+                    str(p.get("host") or "0.0.0.0"), int(p.get("port") or self.HUB_DEFAULT_PORT),
+                    str(p.get("dataDir") or ""),
+                ))
+            if m == Methods.HUB_STOP:
+                return EngineResponse.ok(request.id, result=self.hub_stop())
+            if m == Methods.HUB_PROBE:
+                return EngineResponse.ok(request.id, result=self.hub_probe(str(p.get("url") or "")))
             if m == Methods.HUB_RESOLVE_CONFLICT:
                 return EngineResponse.ok(request.id, result=self.hub_resolve_conflict(
                     int(p.get("conflictId") or 0), str(p.get("resolution") or ""),

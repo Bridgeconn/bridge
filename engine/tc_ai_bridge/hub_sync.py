@@ -49,6 +49,9 @@ NOT_SYNCED_TABLES: tuple[str, ...] = tuple(t for t in MUTABLE_TABLES if t not in
 
 PUSH_BATCH = 500
 HTTP_TIMEOUT_SECONDS = 10.0
+# Settings > Team asks "is a hub answering there?" (#46): a short wait, since
+# the pane is open and waiting, and a hub on the LAN answers in milliseconds.
+HUB_PROBE_TIMEOUT_SECONDS = 1.5
 
 
 class HubError(RuntimeError):
@@ -121,6 +124,23 @@ class HubClient:
 
     def pull(self, hub_project_id: str, after: int) -> dict[str, Any]:
         return self._request("GET", f"/sync/pull?hubProjectId={hub_project_id}&after={int(after)}")
+
+    def health(self) -> dict[str, Any]:
+        """`GET /health`, the one route that needs no token."""
+        return self._request("GET", "/health")
+
+
+def probe_hub(url: str, *, timeout: float = HUB_PROBE_TIMEOUT_SECONDS,
+              transport: Transport | None = None) -> dict[str, Any]:
+    """Whether a Bridge hub answers at `url` (#46). Never raises for an
+    unreachable or refusing hub; a malformed address raises HubError."""
+    client = HubClient(url, transport=transport, timeout=timeout)
+    try:
+        answer = client.health()
+    except HubError as exc:
+        return {"url": client.base_url, "reachable": False, "status": None, "error": str(exc)}
+    status = str(answer.get("status") or "")
+    return {"url": client.base_url, "reachable": status == "ok", "status": status or None, "error": None}
 
 
 def sync_project(workbench: WorkbenchRepository, client: HubClient, hub_project_id: str) -> dict[str, Any]:
