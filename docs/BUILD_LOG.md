@@ -21500,3 +21500,26 @@ gate on that evidence): `test_projects_list_management::…summed_progress…` t
 against an 80 s budget; `test_language_qa::test_continuous_foreground_polling_does_not_starve_worker` has a
 fixed 3 s deadline; `test_names_check::test_engine_info_builds_no_uroman…` failed once after 10.9 s with
 the error not captured.
+
+## 2026-10-23 — 0.20.0 release and focused installed-app walk
+
+**What.** v0.20.0 tagged from 966b50b and published on selvabenz/Bridge (release runs 39881910354 and
+39884651058 green: Windows, macOS Apple Silicon, Linux AppImage/deb). Then a focused walk of the installed
+Windows build, scoped by Benz: the release smoke, every 0.18.0 failure that 0.20.0 fixes, Paratext
+#354–#357 and the reference Bible #289. Results are in QA_TEST_MATRIX.md (2026-10-23 section); the ledger,
+shots and harness are in `D:\Claude Lab\Claude outputs\qa-0.20.0\2026-10-23`.
+
+**Measured.** All SMK cases and all 17 re-walked fixes pass in the installed app. IRVTam (66 books) imports
+to the dashboard in 10.3 s; the three Paratext copies were byte-identical after import, notes indexing, a
+reference read and the relink tests.
+
+**Found.** #326 (selvabenz #372, P1): `window.confirm` is replaced by the dialog plugin's async version and
+refused by the ACL (only open/save are allowed), so `if (!window.confirm(…))` never stops anything: the
+chapter/book AI review and Remove key run without asking. Minor, not filed: correction-proposal history
+shows the actor id; a rejected proposal still offers Edit/Reject; the open Reference panel keeps the old
+Bible after Clear until reopened; the header stays clickable over the Export dialog; the no-key triage
+message speaks of "an AI alignment proposal".
+
+**Harness notes.** Since 0.19.0 the splash is the process's first window: size the largest visible window.
+Never post WM_CLOSE to every window of the process; tao's `Tao Thread Event Target` window is one of them and
+closing it leaves the shell and engine running with no window.

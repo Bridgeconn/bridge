@@ -429,6 +429,42 @@ project (IRV Tamil PHP) as folder, `.zip` and `.tcore`, and negative samples. Pe
 | CHK-006 | FAIL (versification part) — #325 (UGNT 3JN 1:15 dropped for a 14-verse target, no finding) |
 | DATA-004 | NOT COVERED — the "IRV Urdu" fixture is Devanagari, not RTL (corrected on #151) |
 
+## 0.20.0 installed-app walk: release smoke, the 0.18.0 fixes, Paratext (2026-10-23)
+
+A focused walk, not a full regression (Benz's scope, 2026-10-23): the release smoke, every 0.18.0 failure
+that 0.20.0 fixes, Paratext #354–#357 and the reference Bible #289. Installed 0.20.0 (966b50b), scratch
+`LOCALAPPDATA`, 1366×768, real CDP input; native Save As and Select Folder driven with real keystrokes.
+Fixtures are disposable copies under `D:\Claude Lab\Claude outputs\qa-0.20.0\2026-10-23\fixtures` (the
+0.18.0 set, an Arabic-script Urdu Ruth, and copies of the Paratext projects IRVTam, DVT and BHDNT without
+`.hg`). Issue numbers are RevantCI's; the selvabenz copies of #306–#324 are +27, #289 is selvabenz #317.
+The ledger with every message quoted is in that folder.
+
+| Case | Result |
+|---|---|
+| SMK-001 – SMK-008 | PASS — SMK-006: aligned export of Jonah writes the book, 1:5a/1:5b unaligned and named in the dialog; both exports re-import. SMK-008: title-bar close leaves no process (1.9 s), three times |
+| EDT-010 (#127) | PASS — a stale editor save is refused, the newer text quoted, the typed text kept |
+| ALN-001 / SMK-005 (#306) | PASS — Align Words from a verse row with the Review panel closed opens on screen |
+| EXP-002 lettered segments (#307) | PASS — PHP's discontinuous group (#312) not re-walked, no fix in 0.20.0 |
+| IMP-006 (#308) | PASS — DVT `sa:::` → Sanskrit / `san` pre-filled |
+| Project Home (#309) | PASS — a Bridge-made project opened in place plus its `.zip` imported: `project.list` lists all 8, the copy gets a new id and `importedFrom` |
+| REV-009 (#313) | PASS — Alignment Review history names the reviewer. Correction-proposal history still shows the actor id |
+| COR-003 (#314) | PASS — insertion points are word boundaries and the verse end after `\f*`, none inside the note |
+| COR-007 (#315) | PASS — after a rejection a new proposal is created; the old one is kept as SUPERSEDED |
+| COR-013 (#316) | PASS on a verse with a footnote — verification reaches UNCERTAIN with reason codes |
+| RPT-005 (#317) | PASS — screen and CSV: the check's suggestion in "Check suggestion", "AI proposal" empty |
+| RPT-015 (#318) | PASS — dead endpoint: "2 batches could not reach the model", 0 `triage_verdicts` rows |
+| SET-005 (#319) | PASS for removal — the confirmation is never shown, #326 |
+| A11Y-003 (#321) | PASS — Escape closes Export, Assignments, Settings, Engine diagnostics; focus returns to the opener |
+| A11Y-001 (#322) | PASS — Enter on a book's Open opens it |
+| A11Y-011 (#323) | PASS — RTL verse text and editor carry `dir="rtl"`. Picking Urdu still leaves the import form LTR (optional in the issue) |
+| A11Y-008 (#324) | PASS — 1000×680 with two side panels: verse list ~340 px, no horizontal scroll |
+| #354, #355 | PASS — IRVTam: 66 books, four RegExBackup files skipped with reasons, Tamil pre-filled, dashboard in 10.3 s; the three Paratext copies byte-identical after every test |
+| #356 | PASS — linked; moved (same-Guid candidate under My Paratext 9 Projects offered); missing → Relink… refuses another project's folder and relinks all 27 books to the right one |
+| #357 | PASS — JOS 3:4 PT 3 badge and its three threads; an edited note appears after reopening the book |
+| #289 | PASS — Change → BHDNT shown for Joshua and for Ruth of the same collection; Settings Clear → built-in Old Version. The open Reference panel keeps the old Bible until reopened |
+| New | #326 (P1; selvabenz #372) — `window.confirm` is the dialog plugin's async version and is refused by the ACL, so the chapter/book AI review ("may … incur API charges") and Remove key run without asking |
+| Not walked | #200, #211, #310, #311, #312, #320, #325 (no fix in 0.20.0); AI cases with a real key |
+
 ## Team hub, dashboard, users and projects: the two-laptop walk (#281)
 
 The hardware walk for requirements 4, 5 and 6. Two laptops on one LAN, both with the installed **0.17.0** (`Bridge_0.17.0_x64-setup.exe`, release v0.17.0, built from 81ff377). Laptop **A** (Benz) runs the hub and desktop A. Laptop **B** (Revant) runs desktop B and the browser dashboard. There is no third machine, so the dashboard rows use B's Chrome and Edge, not the hub's own machine. Rows are in walking order: some depend on earlier ones. Each row ends PASS, or FAIL with the issue it was filed under (failures found here are filed without asking first, per #281).
