@@ -21657,6 +21657,7 @@ and 320px, and the Windows rendering of the #375 glyphs.
 **Shipped.** Pushed to Bridgeconn/bridge `main` (d272b86..c1c864d) on 2026-10-23. Issues #377, #384,
 #385, #374, #380, #383, #375, #376 and #378 closed with their comments; #379 closed out for step 1 and
 reopened for item 6. #402, #213, #389 and #373 in the milestone were out of scope and untouched.
+
 ## 2026-10-23 — Scoped Language QA fix accepts an empty replacement; edge-space undo (#403)
 
 **What and why.** Robin (Hindi reviewer, 0.19.0) pressed the spacing fix with scope Book on a space at
@@ -21765,3 +21766,106 @@ CDP session.
 
 **Shipped.** #402, #213 and #372 closed with their comments; board items moved through In progress to
 Done by the close. Still open in milestone 2: #379 item 6 (Benz), #389 (Joel), #373 (the walk).
+
+## 2026-10-26 — Side panels regulated: item 6 of #379 decided and shipped, walked on main at 1366x768 (#379, #373)
+
+**Summary.** Benz decided the item 6 list on 2026-10-26 and the decisions are code: one body padding
+and type scale for the five editor side panels, Language QA's tab bar on Review too, the rail in
+`SIDE_PANEL_ORDER`, `--surface` for every body with `--surface-2` on the bar alone, one minimum width
+for every panel but Language QA, and Review's second header row folded into the bar's actions slot so
+Review shows one line like the others. Five commits on `main` (c821912, 1fbdb73, 2c48f4b, 625112b,
+4ee60cc), frontend only; the walk #373 asks for was done on a build of `main` (`npm run tauri dev`,
+the sidecars of 2026-10-23 16:07) at 1366x768 with the five panels open at every text-size step.
+The #403 part A commit (734c134) went first, on its own.
+
+**Decisions (Benz, 2026-10-26; the two numbers below are mine, recorded here).**
+- Body: content 12px from the edge and 10px under the bar, base `--fs-xs`, no raw px. The three
+  panels with one scroll box pad it `10px 12px` (`.pt-scroll`, `.panel-body`, `.tab-content`); the two
+  verse lists reach the same gutter as the list's 4px plus each row's 6px 8px, so the row highlight
+  keeps a 4px inset. Chrome inside a body — the tab bars, Language QA's filter row, the bar's own
+  actions — sits one or two steps under the body: `--fs-2xs` for the filter row and the bar, `--fs-3xs`
+  for both tab bars (the size each tab bar had before).
+- Surface: every body `--surface`; the bar alone `--surface-2`. Source and Reference lose their
+  `--surface-2` body, and their row hover becomes `--surface-2`.
+- Rail: `SideRail.svelte` derives its buttons from `SIDE_PANEL_ORDER`, top to bottom as the columns
+  run left to right (source, reference, languageQa, paratext, review).
+- Minimum width: `PANEL_MIN = 260` for Source, Reference, Paratext and Review; Language QA keeps 320.
+  260 (Paratext's old value) is the one of the four old minimums that keeps every fold point of #324:
+  with 300 (Review's), three open panels at 1366x768 under 150% scaling (911px) would fold two instead
+  of one, and `panelFit.test.ts` pins that case.
+- Review's bar: the open count ("6 open") and the two per-verse actions as 24px glyph buttons (⇄, ✎)
+  with the action as accessible name and tooltip, the shape #375 set for the project rows. The
+  `.panel-header` row and its styles are gone.
+- One bar height, found in the walk rather than decided beforehand: the first measurement gave 41 to
+  47px across the panels, each set by whatever button it put in the slot (Language QA's Pause,
+  Reference's Change, Review's glyphs). `PanelHeader` now gives every slotted control 24px like Close
+  (the (i) keeps its 20px circle) and the bar a 41px minimum (8 + 24 + 8 + the 1px line), so it is
+  41px with or without a button in the slot.
+- Review's tabs: with three columns open at 1366 the Review column is 331px and the four tabs needed
+  359px at `--fs-2xs`; the row scrolled with its scrollbar hidden and "AI review" simply vanished.
+  Each label is now a `.tab-label` that shrinks with an ellipsis and carries its full name in a
+  `title`; `overflow-x: auto` is gone, so every tab is always on screen.
+
+**Tests.** `SidePanel.test.ts`: `SIDE_PANEL_LIMITS` (one minimum, Language QA 320, initial ≥ min),
+the rail order, and a source-reading test that pins every rule above (root `font-size`, no
+`--surface-2` on a root, no raw px, the paddings, both tab bars, the 41px bar, the ellipsis).
+`ReviewPanelLanguageQa.test.ts` asserts the count and both actions inside the bar's `.panel-actions`
+and that nothing sits between the bar and the tabs. The drag-close test's arithmetic follows the new
+Reference minimum.
+
+**Ran and watched work.**
+- Gate at 2c48f4b: `npm run check` 0 errors 0 warnings; `npm run test` 90 files, 953 passed;
+  `npm run build` ok. After 625112b and 4ee60cc the touched test files again (SidePanel, ReviewPanel*,
+  LanguageQaPanel: 57 and 11 passed). The engine suite was **skipped**: frontend-only change.
+- The walk, on `main` at 4ee60cc, IRVTam Joshua (the 2026-10-23 scratch profile cloned to
+  `D:\Claude Lab\Claude outputs\qa-0.20.0\2026-10-26-379\la`; the registry still points at the
+  2026-10-23 project folders, which the walk only opened), viewport 1350x729, driven over WebView2's
+  CDP port with real clicks; shots and `walk-a11.out` (the raw measurements) in that folder.
+  Five panels open at once, 3:4 selected, at each text-size step:
+
+  | shot | scale | verse col | panels shown (px) | folded | bar heights | Paratext scroll sh/ch | Review tabs sw/cw |
+  |---|---|---|---|---|---|---|---|
+  | 30 | 1 | 340 | LQA 364 · Paratext 281 · Review 331 | Source, Reference | 41 41 41 | 1589/568 | 330/330 |
+  | 31 | 0.85 | 340 | LQA 364 · Paratext 281 · Review 331 | Source, Reference | 41 41 41 | 1589/568 | 330/330 |
+  | 32 | 1.15 | 370 | LQA 353 · Paratext 273 · Review 321 | Source, Reference | 41 41 41 | 1631/568 | 320/320 |
+  | 33 | 1.3 | 400 | LQA 342 · Paratext 264 · Review 311 | Source, Reference | 41 41 41 | 1694/568 | 310/310 |
+  | 34 | 1.5 | 440 | LQA 323 · Paratext 260 · Review 293 | Source, Reference | 41 41 41 | 1736/568 | 292/292 |
+  | 35 | 1.7 | 480 | LQA 438 · Review 398 | Source, Reference, Paratext | 41 41 | – | 397/397 |
+  | 36 | 1.7 | 480 | Source 260 · Paratext 265 · Review 311 (1:1, 9 threads) | Reference | 41 41 41 | 5843/568 | 310/310 |
+  | 37 | 1 | 340 | Source 295 · Paratext 313 · Review 368 (1:1) | Reference | 41 41 41 | 4974/568 | 367/367 |
+  | 38 | 1 | 340 | Source 306 · Reference 287 · Review 383 | – | 41 41 41 | – | 382/382 |
+
+  At no step did the document or the panes row overflow (scrollWidth 1350 throughout); the Paratext
+  body scrolls inside its column (scrollHeight far above its 568px client height, the column itself
+  609px like the others); every bar is 41px and `--surface-2` over a white body at 14px; both tab
+  bars fit (scrollWidth equals clientWidth) at every width down to 293px; Language QA's filter row
+  stays two lines (74px) from 323 to 438px. Five panels at 1366 means three on screen: the verse list
+  keeps 340 (480 at 1.7), the rail 35, and #324 folds the rest, Review last when it was the last one
+  opened; the rail shows the folded ones dashed. A cut title (Language QA at 323px, Source at 260,
+  Reference's "Built in: Old Version" beside Change and follow) ends in an ellipsis with the full text
+  in its tooltip.
+- The first measurement (before 625112b) is what found the 41–47px bars and the vanished tab, and the
+  second (before 4ee60cc) the 40px Source bar; both are in `walk-a10.out` (that run was at 1280x860,
+  the resize having caught the splash).
+
+**Believed from code, not verified.** Dark surfaces and Windows 125/150% display scaling were not
+walked (the folding at 911px is covered by `panelFit.test.ts`, not by a run). The floating Language
+QA box on the dashboard takes the same base size change and was not looked at.
+
+**Found, not fixed.**
+- Reference panel: a long Tamil word in Joshua 1 (`.text`, 250px) is wider than the 271px list, which
+  then shows a horizontal scrollbar; Source's `.text` has `overflow-wrap: anywhere` and Reference's
+  does not. One line in `ReferencePanel.svelte`; proposed on #379, not folded into these commits.
+- Verse list: at its 340px minimum on Joshua 1 the `.editor-scroll` is 422px wide (a long word in
+  `.vtext`) and shows a horizontal scrollbar; Joshua 3 does not. `VerseList.svelte`, not touched here;
+  reported on #373.
+- `ParatextNotesPanel.svelte` had used `pt-body` for both the scroll box and every comment's text
+  since #379 step 1, so the box's flex, overflow and padding applied to each comment; the box is
+  `pt-scroll` now (1fbdb73), named in the commit rather than left silent, since the padding decision
+  could not be applied without it.
+- `scripts/dev_desktop.mjs` builds and previews, no hot update: a frontend change needs the whole
+  `npm run tauri dev` restarted, and vite's build fails from a Git Bash cwd whose drive letter is
+  lower-case (`c:/…`, "No matching HTML proxy module"); `cd "C:/…"` first.
+
+**Not done.** Milestone 2 still holds #389 (Joel's, after the 2 Nov demo) besides #379 and #373, so
+it was left open for Benz to say where #389 goes before it is closed.
