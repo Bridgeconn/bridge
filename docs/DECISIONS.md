@@ -1284,8 +1284,9 @@ a fresh question).
 ## 2026-10-26 — #358 decision 3's one click: "Mark resolved in Bridge" (Benz, #358)
 **Decision:** when a Paratext thread linked to an issue resolution is resolved in Paratext, the card
 offers "Mark resolved in Bridge". The click sets the resolution's status to `resolved` and records a
-`resolved_from_paratext` event naming the reviewer, the thread and the Paratext `done` comment
-(user and date) it followed. The engine refuses unless the thread is linked to that resolution and
+`resolved_from_paratext` event naming the reviewer, the thread and the Paratext resolve comment
+(user and date) it followed. (Paratext 9.5 writes a resolve as Status `deleted`, not `done`; Bridge reads both
+as resolved, #358 g.) The engine refuses unless the thread is linked to that resolution and
 the notes index shows it resolved. Nothing is sent to Paratext, and no new status is introduced.
 **Because:** the six answers said "offered as one click" without saying what the click does; the
 existing `resolved` status is what the reviewer means, and the event keeps the reason auditable.

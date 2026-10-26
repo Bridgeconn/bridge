@@ -203,7 +203,7 @@ NOTES = {
         {"thread": "n1", "verse_ref": "TIT 1:2", "date": "2026-01-01T10:00:00+05:30", "selected_text": "word",
          "status": "todo", "contents": ["First **para**", "Second"], "tags_added": ["1"]},
         {"thread": "n2", "verse_ref": "TIT 1:3", "date": "2026-01-02T10:00:00+05:30", "status": "deleted",
-         "contents": "gone"},
+         "contents": "resolved in Paratext (9.5 writes a resolve as deleted)"},
         {"thread": "n3", "verse_ref": "TIT 1:3", "date": "2026-01-03T10:00:00+05:30", "status": "todo",
          "type": "conflict", "contents": "conflict"},
         {"thread": "BT_x", "verse_ref": "TIT 1:3", "date": "2026-01-03T11:00:00+05:30", "status": "todo",
@@ -239,7 +239,7 @@ def test_notes_for_chapter_counts_and_merges_users(tmp_path, no_paratext_install
     chapter = call(engine, "paratext.notesForChapter", {"chapter": "1"})["result"]
 
     assert chapter["state"] == "ready"
-    assert chapter["counts"] == {"2": {"open": 1, "resolved": 1}, "3": {"open": 1, "resolved": 0}}
+    assert chapter["counts"] == {"2": {"open": 1, "resolved": 1}, "3": {"open": 1, "resolved": 1}}
     assert [t["id"] for t in chapter["verses"]["2"]] == ["n1"]   # resolved n4 hidden by default
     n1 = chapter["verses"]["2"][0]
     assert n1["users"] == ["User A", "User B"] and n1["commentCount"] == 2
@@ -250,7 +250,7 @@ def test_notes_for_chapter_counts_and_merges_users(tmp_path, no_paratext_install
     everything = call(engine, "paratext.notesForChapter", {
         "chapter": "1", "includeResolved": True, "kinds": ["note", "conflict", "biblicalTerm"]})["result"]
     assert [t["id"] for t in everything["verses"]["2"]] == ["n1", "n4"]
-    assert {t["id"] for t in everything["verses"]["3"]} == {"n3", "BT_x"}
+    assert {t["id"] for t in everything["verses"]["3"]} == {"n2", "n3", "BT_x"}
 
 
 def test_notes_for_verse_and_thread(tmp_path, no_paratext_install):
@@ -267,7 +267,7 @@ def test_notes_for_verse_and_thread(tmp_path, no_paratext_install):
     assert n1["comments"][0]["tagsAdded"] == [{"id": "1", "name": "To Do"}]
 
     bridged = call(engine, "paratext.notesForVerse", {"chapter": "1", "verse": "2-3"})["result"]
-    assert [t["id"] for t in bridged["threads"]] == ["n1", "n4", "n3", "BT_x"]
+    assert [t["id"] for t in bridged["threads"]] == ["n1", "n4", "n2", "n3", "BT_x"]
 
     thread = call(engine, "paratext.noteThread", {"threadId": "n4"})["result"]
     assert thread["thread"]["resolved"] is True

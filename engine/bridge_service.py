@@ -5569,7 +5569,7 @@ class BridgeEngine:
         thread = self._paratext_session().note_thread(thread_id).get("thread")
         if not thread or not thread.get("resolved"):
             raise ProjectError("Paratext does not show that thread as resolved; refresh the Paratext notes and try again.")
-        done = next((c for c in reversed(thread.get("comments") or []) if c.get("status") == "done"), {})
+        done = next((c for c in reversed(thread.get("comments") or []) if c.get("status") in ("done", "deleted")), {})
         with self._checker_lock:
             record = self.project.resolve_issue_resolution_from_paratext(
                 chapter, verse, resolution_id, thread_id=thread_id,

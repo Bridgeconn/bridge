@@ -22104,3 +22104,40 @@ assertion updated.
 the projects-list timing flake listed on #353; 1 passed on its own rerun, 21 s). Frontend: `npm run check`
 0/0 (after adding the method to `EngineMethod`), `npm run test` 96 files 998 passed, `npm run build` ok.
 `scripts/smoke_sidecars.py` not run for this change yet.
+
+
+## 2026-10-26 — Paratext writes a resolve as Status `deleted`: the notes reader read every resolved thread as gone (#358 g)
+
+**Found by the live run.** #358 part 3 ran on NTB (Benz chose it over a new BRTST, 2026-10-26; NTB is a
+Send/Receive project, so the test thread reaches the team on the next Send/Receive unless removed in
+Paratext). Connector 0.8.0 on Paratext 9.5.110.1, IRVTam the active window: `get_state` listed NTB with
+`id` equal to `Settings.xml` `<Guid>`; a made-up id was refused; `create_note` by id made thread
+`565d540e` at PSA 1:1 on "பாவிகளுடைய" in `Notes_Yesu Selva Benz.xml`, `Date` equal to the answer's
+`created`; `list_notes` matched the file; `add_comment` appended the reply. `resolve_note`
+(`IProjectNote.Resolve`) appended a comment with **Status `deleted`**, and Paratext then reported the
+thread `is_resolved: true` (it was gone from `unresolved_only`). No real project here has a `done`:
+IRVTam 3,072 `deleted` comments, BHDNT 10,381, NTB 1 (the test).
+
+**The bug (#357's reader).** `NoteThread.resolved` was `status == "done"` and a separate `deleted`
+(`status == "deleted"`) dropped the thread from the counts and from `threads_for`. So every thread
+resolved in Paratext vanished from Bridge's notes panel, VerseList badge and thread cards, and #358's
+"Resolved in Paratext" and today's "Mark resolved in Bridge" could never appear on a real project.
+
+**Fix.** `resolved` is `status in ("done", "deleted")`; the `deleted` property, its filter and
+`threads_for(include_deleted=)` are gone (a resolved thread is listed, shown resolved, and hidden only
+where resolved ones already are). The one click names the last `done`/`deleted` comment; both panels
+label either as "resolved". The notes cache holds comments, not folded threads, so no rebuild is
+needed. Real projects after the fix: IRVTam 3,044 of 19,743 threads resolved, BHDNT 10,362 of 10,479,
+NTB 1 of 5 (`565d540e`). Tests: the reader, notes-RPC and outbox tests now use `deleted`, as Paratext
+writes it.
+
+**Also found, not fixed (proposed as an issue on #358).** The outbox calls `create_note` with no
+`before_context`/`after_context` (`paratext_outbox.py:279`). When the selected text occurs twice in
+the verse (in NTB PSA 1:1 the first word repeats in the footnote) the plugin refuses, so such a note
+stays queued with "occurs more than once" for ever.
+
+**Not run yet:** the second half of part 3 (Paratext closed, queue from Bridge, restart, one send with
+no duplicate; M17/M20). QA matrix A26 and M18 updated.
+
+**Gates.** `pytest -n auto -k "paratext or notes"`: 157 passed. Vitest Paratext components 17 passed;
+`npm run check` 0/0.

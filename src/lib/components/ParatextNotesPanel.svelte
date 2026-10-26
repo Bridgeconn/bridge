@@ -117,7 +117,7 @@
         <ol class="pt-comments">
           {#each thread.comments as comment, i (i)}
             <li>
-              <div class="pt-meta"><strong>{comment.user}</strong> · {when(comment.date)}{comment.status === "done" ? " · resolved" : ""}</div>
+              <div class="pt-meta"><strong>{comment.user}</strong> · {when(comment.date)}{comment.status === "done" || comment.status === "deleted" ? " · resolved" : ""}</div>
               {#if comment.contents}<div class="pt-body">{comment.contents}</div>{/if}
             </li>
           {/each}

@@ -717,12 +717,12 @@ class NoteThread:
     users: tuple[str, ...]
 
     @property
-    def deleted(self) -> bool:
-        return self.status == "deleted"
-
-    @property
     def resolved(self) -> bool:
-        return self.status == "done"
+        # Paratext 9.5 writes a resolve as Status "deleted" (verified live on
+        # 2026-10-26: IProjectNote.Resolve wrote it and IsResolved then read
+        # true; no real project here has a "done"). "done" is kept as resolved
+        # too. A resolved thread is a thread, not a deletion: it is listed.
+        return self.status in ("done", "deleted")
 
     def summary_json(self) -> dict[str, Any]:
         first, last = self.comments[0], self.comments[-1]
@@ -730,7 +730,7 @@ class NoteThread:
             "id": self.id, "kind": self.kind, "verseRef": self.verse_ref,
             "book": self.ref.book if self.ref else "", "chapter": self.ref.chapter if self.ref else None,
             "verse": self.ref.verse if self.ref else "", "selectedText": self.selected_text,
-            "status": self.status, "deleted": self.deleted, "resolved": self.resolved,
+            "status": self.status, "resolved": self.resolved,
             "assignedUser": self.assigned_user, "tags": list(self.tags), "hidden": self.hidden,
             "users": list(self.users), "commentCount": len(self.comments),
             "firstDate": first.date, "lastDate": last.date, "lastUser": last.user,
@@ -793,19 +793,15 @@ class NotesIndex:
                 continue
             book, chapter, verse = thread.ref.book, str(thread.ref.chapter), thread.ref.verse
             self.by_ref.setdefault(book, {}).setdefault(chapter, {}).setdefault(verse, []).append(thread.id)
-            if thread.deleted:
-                continue
             cell = self.counts.setdefault(book, {}).setdefault(chapter, {}).setdefault(verse, {"open": 0, "total": 0})
             cell["total"] += 1
             if not thread.resolved:
                 cell["open"] += 1
 
-    def threads_for(self, book: str, chapter: int | str, verse: str | None = None, *,
-                    include_deleted: bool = False) -> list[NoteThread]:
+    def threads_for(self, book: str, chapter: int | str, verse: str | None = None) -> list[NoteThread]:
         chapters = self.by_ref.get(book.upper(), {}).get(str(chapter), {})
         verses = [str(verse)] if verse is not None else sorted(chapters, key=lambda v: int(v) if v.isdigit() else 0)
-        found = [self.threads[tid] for v in verses for tid in chapters.get(v, [])]
-        return found if include_deleted else [t for t in found if not t.deleted]
+        return [self.threads[tid] for v in verses for tid in chapters.get(v, [])]
 
     @property
     def fingerprint(self) -> str:

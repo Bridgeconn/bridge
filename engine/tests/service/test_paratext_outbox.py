@@ -215,7 +215,7 @@ def test_a_card_shows_its_threads_with_paratext_replies_and_a_done_and_changes_n
          "contents": ["Bridge review", f"[Bridge ref {handoff['messageId']}]"]},
     ])
     write_notes_file(folder, "Translator", [
-        {"thread": "T5", "verse_ref": "TIT 1:1", "date": "2026-10-27T09:00:00.0000000+05:30", "status": "done",
+        {"thread": "T5", "verse_ref": "TIT 1:1", "date": "2026-10-27T09:00:00.0000000+05:30", "status": "deleted",
          "contents": ["Fixed in Paratext."]},
     ])
     reread_notes(engine)
@@ -242,7 +242,7 @@ def _linked_thread(engine, folder, resolution_id, *, done: bool):
     ])
     write_notes_file(folder, "Translator", [
         {"thread": "T5", "verse_ref": "TIT 1:1", "date": "2026-10-27T09:00:00.0000000+05:30",
-         "status": "done" if done else "todo", "contents": ["Fixed in Paratext."]},
+         "status": "deleted" if done else "todo", "contents": ["Fixed in Paratext."]},
     ])
     reread_notes(engine)
     call(engine, "paratext.flushOutbox")

@@ -74,7 +74,7 @@ describe("ParatextThreadPanel (#358)", () => {
   it("shows a Paratext done as Resolved in Paratext, offers no Resolve, and changes nothing else", async () => {
     paratextThreadsFor.mockResolvedValue(data({
       links: [{ kind: "issue_resolution", localId: "r1", threadId: "T1", messageId: "", direction: "bridge_to_paratext",
-        thread: thread({ resolved: true, status: "done" }) }],
+        thread: thread({ resolved: true, status: "deleted" }) }],
     }));
     render(ParatextThreadPanel, props);
     const badge = await screen.findByText("Resolved in Paratext");
@@ -88,7 +88,7 @@ describe("ParatextThreadPanel (#358)", () => {
   it("offers decision 3's one click on a Paratext done, and not once Bridge is resolved", async () => {
     paratextThreadsFor.mockResolvedValue(data({
       links: [{ kind: "issue_resolution", localId: "r1", threadId: "T1", messageId: "", direction: "bridge_to_paratext",
-        thread: thread({ resolved: true, status: "done" }) }],
+        thread: thread({ resolved: true, status: "deleted" }) }],
     }));
     const onResolveHere = vi.fn().mockRejectedValue(new Error("Paratext does not show that thread as resolved"));
     const view = render(ParatextThreadPanel, { ...props, onResolveHere });
