@@ -1280,3 +1280,14 @@ path (`PutUSFM`/`PutUSX`); deleting or reopening a Paratext note; applying a Par
 **Revisit when:** Paratext's plugin API gains note ids or tags (the footer becomes redundant), or a
 team needs notes written while Paratext is closed (that would need Paratext's own data layer and is
 a fresh question).
+
+## 2026-10-26 — #358 decision 3's one click: "Mark resolved in Bridge" (Benz, #358)
+**Decision:** when a Paratext thread linked to an issue resolution is resolved in Paratext, the card
+offers "Mark resolved in Bridge". The click sets the resolution's status to `resolved` and records a
+`resolved_from_paratext` event naming the reviewer, the thread and the Paratext `done` comment
+(user and date) it followed. The engine refuses unless the thread is linked to that resolution and
+the notes index shows it resolved. Nothing is sent to Paratext, and no new status is introduced.
+**Because:** the six answers said "offered as one click" without saying what the click does; the
+existing `resolved` status is what the reviewer means, and the event keeps the reason auditable.
+**Rules out:** applying it without a click; offering it on a thread that is still open in Paratext.
+**Revisit when:** findings (not only issue resolutions) carry Paratext links.

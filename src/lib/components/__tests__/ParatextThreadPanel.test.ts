@@ -78,9 +78,27 @@ describe("ParatextThreadPanel (#358)", () => {
     }));
     render(ParatextThreadPanel, props);
     const badge = await screen.findByText("Resolved in Paratext");
-    expect(badge.getAttribute("title")).toMatch(/status in Bridge is unchanged/);
+    expect(badge.getAttribute("title")).toMatch(/status changes only if you mark it resolved/);
     expect(screen.queryByRole("button", { name: "Resolve in Paratext" })).toBeNull();
+    // No owner callback: no one-click offer either.
+    expect(screen.queryByRole("button", { name: "Mark resolved in Bridge" })).toBeNull();
     expect(paratextResolveThread).not.toHaveBeenCalled();
+  });
+
+  it("offers decision 3's one click on a Paratext done, and not once Bridge is resolved", async () => {
+    paratextThreadsFor.mockResolvedValue(data({
+      links: [{ kind: "issue_resolution", localId: "r1", threadId: "T1", messageId: "", direction: "bridge_to_paratext",
+        thread: thread({ resolved: true, status: "done" }) }],
+    }));
+    const onResolveHere = vi.fn().mockRejectedValue(new Error("Paratext does not show that thread as resolved"));
+    const view = render(ParatextThreadPanel, { ...props, onResolveHere });
+    await fireEvent.click(await screen.findByRole("button", { name: "Mark resolved in Bridge" }));
+    expect(onResolveHere).toHaveBeenCalledWith("T1");
+    expect(await screen.findByText(/does not show that thread as resolved/)).toBeTruthy();
+    expect(paratextResolveThread).not.toHaveBeenCalled();
+
+    await view.component.$set({ bridgeResolved: true });
+    expect(screen.queryByRole("button", { name: "Mark resolved in Bridge" })).toBeNull();
   });
 
   it("says a sent note is waiting for the notes file, and lists queued writes with their reason", async () => {

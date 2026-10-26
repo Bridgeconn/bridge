@@ -230,3 +230,63 @@ def test_a_card_shows_its_threads_with_paratext_replies_and_a_done_and_changes_n
     record = call(engine, "issueResolution.list", {"chapter": "1", "verse": "1"})["result"]["items"][0]
     assert record["status"] == status_before
     assert len(connector.calls) == 1
+
+
+def _linked_thread(engine, folder, resolution_id, *, done: bool):
+    """A sent note whose thread T5 Paratext's file shows, resolved there or not."""
+    handoff = _queue(engine, resolution_id)["handoff"]
+    from tests.support.paratext_fixture import write_notes_file
+    write_notes_file(folder, "Yesu Selva Benz", [
+        {"thread": "T5", "verse_ref": "TIT 1:1", "date": "2026-10-26T10:00:00.1234567+05:30", "status": "todo",
+         "contents": ["Bridge review", f"[Bridge ref {handoff['messageId']}]"]},
+    ])
+    write_notes_file(folder, "Translator", [
+        {"thread": "T5", "verse_ref": "TIT 1:1", "date": "2026-10-27T09:00:00.0000000+05:30",
+         "status": "done" if done else "todo", "contents": ["Fixed in Paratext."]},
+    ])
+    reread_notes(engine)
+    call(engine, "paratext.flushOutbox")
+
+
+def test_one_click_after_a_paratext_done_resolves_the_issue_and_records_who_and_which_done(tmp_path, monkeypatch):
+    """Decision 3: the `done` is only shown until the reviewer clicks; the click
+    sets the resolution to resolved and names the Paratext comment it followed."""
+    connector = stand_in()
+    monkeypatch.setattr(bridge_service_module, "ParatextConnectorClient", connector)
+    engine, folder = open_linked_review_project(tmp_path, monkeypatch)
+    resolution_id = saved_resolution(engine)
+    _linked_thread(engine, folder, resolution_id, done=True)
+    params = {"chapter": "1", "verse": "1", "resolutionId": resolution_id, "threadId": "T5"}
+
+    result = call(engine, "issueResolution.resolveFromParatext", params)
+
+    assert result["success"] is True, result
+    record = result["result"]["record"]
+    assert record["status"] == "resolved"
+    event = record["history"][-1]
+    assert event["event"] == "resolved_from_paratext" and event["previousStatus"] == "open"
+    assert (event["threadId"], event["paratextDoneBy"]) == ("T5", "Translator")
+    assert event["paratextDoneAt"] == "2026-10-27T09:00:00.0000000+05:30"
+    listed = call(engine, "issueResolution.list", {"chapter": "1", "verse": "1"})["result"]
+    assert listed["resolved"] == 1
+    # Bridge-side only: nothing more went to Paratext.
+    assert len(connector.calls) == 1
+    again = call(engine, "issueResolution.resolveFromParatext", params)
+    assert again["success"] is False and "already resolved" in str(again)
+
+
+def test_one_click_is_refused_while_paratext_has_not_resolved_the_thread_or_it_is_not_linked(tmp_path, monkeypatch):
+    connector = stand_in()
+    monkeypatch.setattr(bridge_service_module, "ParatextConnectorClient", connector)
+    engine, folder = open_linked_review_project(tmp_path, monkeypatch)
+    resolution_id = saved_resolution(engine)
+    _linked_thread(engine, folder, resolution_id, done=False)
+    base = {"chapter": "1", "verse": "1", "resolutionId": resolution_id}
+
+    open_thread = call(engine, "issueResolution.resolveFromParatext", {**base, "threadId": "T5"})
+    unlinked = call(engine, "issueResolution.resolveFromParatext", {**base, "threadId": "T9"})
+
+    assert open_thread["success"] is False and "does not show that thread as resolved" in str(open_thread)
+    assert unlinked["success"] is False and "not linked to this issue" in str(unlinked)
+    record = call(engine, "issueResolution.list", {"chapter": "1", "verse": "1"})["result"]["items"][0]
+    assert record["status"] == "open"

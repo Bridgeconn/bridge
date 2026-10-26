@@ -219,6 +219,7 @@ _WRITE = (
     "correction.verifyApplication", "correction.acknowledgeCorrected",
     "semanticReview.decideLocation", "semanticReview.decideMeaning",
     "issueResolution.save", "issueResolution.queueParatext", "issueResolution.retryParatext",
+    "issueResolution.resolveFromParatext",
     "paratext.setReference", "paratext.installConnector", "logos.setReference", "settings.set",
     # #356: rewrites the link in every sibling's collection.json.
     "paratext.relink",

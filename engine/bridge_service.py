@@ -707,6 +707,8 @@ class Methods:
     ISSUE_RESOLUTION_SAVE = "issueResolution.save"
     ISSUE_RESOLUTION_QUEUE_PARATEXT = "issueResolution.queueParatext"
     ISSUE_RESOLUTION_RETRY_PARATEXT = "issueResolution.retryParatext"
+    # #358 decision 3: the reviewer's one click after a Paratext `done`.
+    ISSUE_RESOLUTION_RESOLVE_FROM_PARATEXT = "issueResolution.resolveFromParatext"
     # #358: Paratext write-back through connector 0.8.0.
     PARATEXT_OUTBOX = "paratext.outbox"
     PARATEXT_THREADS_FOR = "paratext.threadsFor"
@@ -5553,6 +5555,29 @@ class BridgeEngine:
             self._flush_outbox(only=[message_id])
         return self._issue_handoff_result(chapter, verse, resolution_id, message_id)
 
+    def resolve_issue_resolution_from_paratext(
+        self, chapter: str, verse: str, resolution_id: str, thread_id: str,
+    ) -> dict[str, Any]:
+        """Decision 3's one click: the thread must be linked to this resolution
+        and resolved in Paratext as Bridge last read it. Never called by the
+        engine itself; the card offers it and the reviewer clicks."""
+        self._require_project()
+        thread_id = str(thread_id or "")
+        linked = {link["threadId"] for link in self._outbox().links_for("issue_resolution", resolution_id)}
+        if thread_id not in linked:
+            raise ProjectError("That Paratext thread is not linked to this issue.")
+        thread = self._paratext_session().note_thread(thread_id).get("thread")
+        if not thread or not thread.get("resolved"):
+            raise ProjectError("Paratext does not show that thread as resolved; refresh the Paratext notes and try again.")
+        done = next((c for c in reversed(thread.get("comments") or []) if c.get("status") == "done"), {})
+        with self._checker_lock:
+            record = self.project.resolve_issue_resolution_from_paratext(
+                chapter, verse, resolution_id, thread_id=thread_id,
+                done_by=str(done.get("user") or ""), done_at=str(done.get("date") or ""),
+                username=self.settings.reviewer_name or "Bridge Reviewer",
+            )
+        return {"record": record}
+
     # -- #358: reply, resolve, link, and the outbox itself -----------------------
 
     def paratext_outbox(self) -> dict[str, Any]:
@@ -9140,6 +9165,10 @@ class BridgeEngine:
             if m == Methods.ISSUE_RESOLUTION_RETRY_PARATEXT:
                 return EngineResponse.ok(request.id, result=self.retry_issue_resolution_paratext(
                     p["chapter"], p["verse"], p["resolutionId"],
+                ))
+            if m == Methods.ISSUE_RESOLUTION_RESOLVE_FROM_PARATEXT:
+                return EngineResponse.ok(request.id, result=self.resolve_issue_resolution_from_paratext(
+                    p["chapter"], p["verse"], p["resolutionId"], str(p.get("threadId") or ""),
                 ))
             if m == Methods.PARATEXT_OUTBOX:
                 return EngineResponse.ok(request.id, result=self.paratext_outbox())

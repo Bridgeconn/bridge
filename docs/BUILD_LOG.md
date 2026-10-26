@@ -22077,3 +22077,30 @@ touched here; it passed on its own rerun: a timing flake under load, as listed o
 installed into Paratext 9.5.110.1 by `paratext_install.install()` with Paratext closed (one UAC prompt);
 `installed_version` now reads 0.8.0. The frozen-pair smoke and the live BRTST round trip are recorded
 below when run.
+
+
+## 2026-10-26 — #358 decision 3's one click: "Mark resolved in Bridge" (#358 f)
+
+**What.** The item (e) left unbuilt. Benz decided today (DECISIONS, same date) that the click marks
+the issue resolution `resolved`. New write RPC `issueResolution.resolveFromParatext {chapter, verse,
+resolutionId, threadId}` (any write role, `authorization.py`): refused unless the thread is linked to
+that resolution in `paratext_links` and the notes index shows it resolved; refused again once the
+resolution is already resolved. `TranslationCoreProject.resolve_issue_resolution_from_paratext` writes
+the status and a `resolved_from_paratext` history event (reviewer, `previousStatus`, thread id, the
+Paratext `done` comment's user and date) and the same event to `change_log` through the existing
+lifecycle audit. Nothing is sent to Paratext. `ParatextThreadPanel` gains `onResolveHere` /
+`bridgeResolved`: a thread resolved in Paratext shows "Mark resolved in Bridge" while the Bridge
+record is not resolved; the card's lifecycle label reads "Resolved, following Paratext" while that
+event is the latest status change. Also: CLAUDE.md's workbench paragraph said "currently v10"
+(found by Revant's verification on #358); now v11.
+
+**Tests.** `test_one_click_after_a_paratext_done_resolves_the_issue_and_records_who_and_which_done`,
+`test_one_click_is_refused_while_paratext_has_not_resolved_the_thread_or_it_is_not_linked`
+(`tests/service/test_paratext_outbox.py`); `ParatextThreadPanel.test.ts` one new case, one title
+assertion updated.
+
+**Gates, 2026-10-26.** Engine `pytest -n auto`: 5634 passed, 3 xfailed, 1 failed
+(`test_the_list_carries_summed_progress_and_the_latest_open_with_its_user`, "check job did not finish",
+the projects-list timing flake listed on #353; 1 passed on its own rerun, 21 s). Frontend: `npm run check`
+0/0 (after adding the method to `EngineMethod`), `npm run test` 96 files 998 passed, `npm run build` ok.
+`scripts/smoke_sidecars.py` not run for this change yet.

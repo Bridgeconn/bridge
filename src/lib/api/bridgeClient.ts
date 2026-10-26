@@ -370,6 +370,7 @@ export type EngineMethod =
   | "issueResolution.list"
   | "issueResolution.queueParatext"
   | "issueResolution.retryParatext"
+  | "issueResolution.resolveFromParatext"
   | "issueResolution.save"
   | "lexicon.getEntry"
   | "navigation.bridgeChanged"
@@ -1106,6 +1107,14 @@ export const bridge = {
     chapter: string, verse: string, resolutionId: string,
   ): Promise<IssueResolutionHandoffResult> {
     return call("issueResolution.retryParatext", { chapter, verse, resolutionId });
+  },
+
+  /** #358 decision 3: the reviewer's one click after a linked thread was
+   *  resolved in Paratext. The engine refuses unless Paratext shows it done. */
+  resolveIssueResolutionFromParatext(
+    chapter: string, verse: string, resolutionId: string, threadId: string,
+  ): Promise<{ record: IssueResolutionRecord }> {
+    return call("issueResolution.resolveFromParatext", { chapter, verse, resolutionId, threadId });
   },
 
   getAlignment(chapter: string, verse: string): Promise<AlignmentContext> {

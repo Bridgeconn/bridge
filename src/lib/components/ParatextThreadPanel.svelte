@@ -5,7 +5,8 @@
   // the engine's outbox to the book's linked Paratext project (connector
   // 0.8.0); a write that cannot go now stays queued with its reason.
   // Paratext's own state -- a reply, a `done` -- is shown and never applied to
-  // the Bridge record (decision 3 on #358).
+  // the Bridge record (decision 3 on #358); when the owner passes
+  // `onResolveHere`, a thread resolved in Paratext offers it as one click.
   import { onDestroy } from "svelte";
   import { bridge } from "../api/bridgeClient";
   import type { ParatextNoteSummary, ParatextThreadsFor, ParatextWriteKind } from "../types/paratext";
@@ -16,6 +17,10 @@
   export let verse: string;
   /** Bump to read the threads again (after a send or a retry elsewhere). */
   export let refreshKey = 0;
+  /** The Bridge record is already resolved: no one-click offer. */
+  export let bridgeResolved = false;
+  /** Decision 3's one click; the owner writes its own record. */
+  export let onResolveHere: ((threadId: string) => Promise<void>) | null = null;
 
   let data: ParatextThreadsFor | null = null;
   let error = "";
@@ -89,6 +94,19 @@
     }
   }
 
+  async function resolveHere(threadId: string): Promise<void> {
+    if (busy || !onResolveHere) return;
+    busy = `here:${threadId}`;
+    notice = "";
+    try {
+      await onResolveHere(threadId);
+    } catch (cause) {
+      notice = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      busy = "";
+    }
+  }
+
   async function showCandidates(): Promise<void> {
     notice = "";
     try {
@@ -126,7 +144,7 @@
         <header>
           <span class="pt-title">Paratext thread{thread?.verseRef ? ` · ${thread.verseRef}` : ""}</span>
           {#if thread?.resolved}
-            <span class="pt-state done" title="Shown only: this resolution's status in Bridge is unchanged.">Resolved in Paratext</span>
+            <span class="pt-state done" title={bridgeResolved ? "" : "Shown only: Bridge's status changes only if you mark it resolved."}>Resolved in Paratext</span>
           {:else if thread}
             <span class="pt-state">Open in Paratext</span>
           {/if}
@@ -158,6 +176,9 @@
               {#if !thread.resolved}
                 <button class="small-btn" on:click={() => resolveThread(link.threadId)} disabled={Boolean(busy)}>
                   {busy === `resolve:${link.threadId}` ? "Resolving…" : "Resolve in Paratext"}</button>
+              {:else if onResolveHere && !bridgeResolved}
+                <button class="small-btn" on:click={() => resolveHere(link.threadId)} disabled={Boolean(busy)}>
+                  {busy === `here:${link.threadId}` ? "Marking…" : "Mark resolved in Bridge"}</button>
               {/if}
             </div>
           {/if}

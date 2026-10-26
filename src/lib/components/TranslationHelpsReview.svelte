@@ -213,6 +213,15 @@
     }
   }
 
+  /** #358 decision 3: Paratext resolved the thread; the reviewer's click
+   *  resolves the issue in Bridge too. Errors surface in the thread panel. */
+  async function resolveFromParatext(record: IssueResolutionRecord, threadId: string): Promise<void> {
+    const result = await bridge.resolveIssueResolutionFromParatext(chapter, verse, record.resolutionId, threadId);
+    replaceResolution(result.record);
+    mutationNotice = "Issue marked resolved, following Paratext.";
+    onStateChanged();
+  }
+
   async function retryResolution(record: IssueResolutionRecord): Promise<void> {
     if (resolutionBusy) return;
     resolutionBusy = true;
@@ -262,6 +271,11 @@
   }
 
   function resolutionLifecycleLabel(record: IssueResolutionRecord): string {
+    // The latest status change wins: a recheck after the click relabels it.
+    const lastStatusEvent = [...record.history].reverse().find((event) => "status" in event);
+    if (record.status === "resolved" && lastStatusEvent?.event === "resolved_from_paratext") {
+      return "Resolved, following Paratext";
+    }
     switch (record.recheck.status) {
       case "stale": return "Correction needs recheck";
       case "running": return "Rechecking correction";
@@ -751,7 +765,9 @@
             <!-- #358: the linked Paratext thread(s), Paratext's replies, and Reply /
                  Resolve in Paratext / Link existing thread. -->
             <ParatextThreadPanel kind="issue_resolution" localId={resolution.resolutionId}
-              {chapter} {verse} refreshKey={threadsRefresh} />
+              {chapter} {verse} refreshKey={threadsRefresh}
+              bridgeResolved={resolution.status === "resolved"}
+              onResolveHere={(threadId) => resolveFromParatext(resolution, threadId)} />
           {/if}
         </div>
         {#if resolution && resolution.recheck.status !== "not_run"}

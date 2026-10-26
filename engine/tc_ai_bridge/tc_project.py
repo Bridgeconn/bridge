@@ -1178,6 +1178,33 @@ class TranslationCoreProject:
         self._record_issue_resolution_lifecycle_audit(record, lifecycle)
         return record
 
+    def resolve_issue_resolution_from_paratext(
+        self, chapter: str | int, verse: str | int, resolution_id: str, *,
+        thread_id: str, done_by: str, done_at: str, username: str = 'Bridge Reviewer',
+    ) -> dict[str, Any]:
+        """The reviewer's one click after a linked Paratext thread was resolved
+        there (decision 3 on #358): the resolution becomes `resolved`, and the
+        event names who clicked and which Paratext `done` it followed. The caller
+        checks the thread; nothing calls this without a human click."""
+        record = self.load_issue_resolution(chapter, verse, resolution_id)
+        previous_status = str(record.get('status') or 'open')
+        if previous_status == 'resolved':
+            raise ProjectError('This issue is already resolved in Bridge.')
+        now, _ = self._timestamp()
+        record['status'] = 'resolved'
+        record['updatedAt'] = now
+        lifecycle = {
+            'event': 'resolved_from_paratext', 'at': now, 'by': str(username or 'Bridge Reviewer'),
+            'previousStatus': previous_status, 'status': 'resolved',
+            'threadId': str(thread_id), 'paratextDoneBy': str(done_by), 'paratextDoneAt': str(done_at),
+        }
+        history = list(record.get('history') or [])
+        history.append(copy.deepcopy(lifecycle))
+        record['history'] = history[-100:]
+        self._save_issue_resolution_row(record, op='resolved_from_paratext')
+        self._record_issue_resolution_lifecycle_audit(record, lifecycle)
+        return record
+
     def _record_issue_resolution_lifecycle_audit(
         self, record: dict[str, Any], event: dict[str, Any],
     ) -> None:
