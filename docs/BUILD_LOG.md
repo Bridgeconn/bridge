@@ -21956,3 +21956,35 @@ and lists only.
 
 **Next.** (b) connector 0.8.0; (c) the outbox and its flusher on the navigation poll thread, which is
 the first code to write these tables.
+
+## 2026-10-26 — Paratext connector 0.8.0: projects list, notes by project id, list / reply / resolve (#358 b)
+
+**What.** Step (b) of #358. `PluginVersion` 0.7.4 → 0.8.0, so `paratext_install.py` offers Update.
+- `get_state` adds `projects` (every project on the PC from `IPluginHost.GetAllProjects()`: `id`,
+  `short_name`, `long_name`, `language`, `type`, `editable` = not a resource) and four capabilities.
+- `create_note` resolves the project by the required `project_id` among all projects; the active
+  window is used only for a live-selection anchor when it shows that project. It answers with `author`,
+  `created` (ISO "o", seven fractional digits) and `anchor`, taken from the `IProjectNote` that
+  `AddNote` returns. The plugin no longer prefixes `[AI Suggestion]`: the body is written as given, and
+  the Bridge footer is the engine's to add (decision 1).
+- New `list_notes {project_id, book, chapter, unresolved_only}` (`IProject.GetNotes`, each note's
+  anchor, resolved flag, assignee and comments with author/created/text), `add_comment` and
+  `resolve_note {project_id, book, chapter, key, text, assignee}`. A thread is found by `key`: verse,
+  anchor offset and selected text, plus first comment author and created; exactly one match or a
+  refusal. Write lock `WriteLockScope.ProjectNotes` for every write; still no `PutUSFM`, no delete.
+- `paratext_connector.py`: `ConnectorState.projects` and `project_named()`, `create_note(...,
+  external_author="")`, and `list_notes` / `add_comment` / `resolve_note`.
+
+API checked by reflecting `CorePluginInterfaces.dll` 2.0.100 on this PC (`IProjectNote.AddNewComment`,
+`Resolve`, `IComment.Created` is a `DateTimeOffset`, `IComment.Contents` is `CommentParagraph`s of
+`FormattedString` spans). `build.ps1` compiles the three files with csc against the installed Paratext 9.
+
+**Ran.** `build.ps1` built `translationCoreAIBridge.dll` (34 KB). New
+`tests/connectors/test_paratext_connector_client.py` (4: the project list and lookup, `create_note`
+addressed by id with the body as given, the three thread calls' payloads, the bundled source is 0.8.0
+with the six actions, the notes write lock, `GetAllProjects` and no Scripture write or delete call);
+with the installer and handoff tests, 26 passed.
+
+**Not verified.** Nothing ran inside Paratext: the plugin is not installed yet (Paratext must be closed
+for the reinstall). The live round trip on BRTST, and `IReadOnlyProject.ID` equalling the Settings.xml
+Guid, are for the end of #358.
