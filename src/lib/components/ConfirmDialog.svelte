@@ -13,23 +13,28 @@
 
   $: request = $confirmRequest;
 
+  // Escape is heard in the capture phase, before the dialog under this one
+  // (Settings closes on Escape too, and its window listener was registered
+  // first): the question is answered no, the event is marked handled, and
+  // nothing else closes. Seen in the 0.21.0 walk: Escape here also shut
+  // Settings.
+  function onKeydown(event: KeyboardEvent): void {
+    if (event.key !== "Escape" || event.defaultPrevented) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    answerConfirmation(false);
+  }
+
   onMount(() => {
     previouslyFocused = document.activeElement;
     void tick().then(() => cancelButton?.focus());
+    window.addEventListener("keydown", onKeydown, true);
     return () => {
+      window.removeEventListener("keydown", onKeydown, true);
       if (previouslyFocused instanceof HTMLElement) previouslyFocused.focus();
     };
   });
-
-  function onKeydown(event: KeyboardEvent): void {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      answerConfirmation(false);
-    }
-  }
 </script>
-
-<svelte:window on:keydown={onKeydown} />
 
 {#if request}
   <div class="overlay" role="presentation">

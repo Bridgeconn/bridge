@@ -69,4 +69,25 @@ describe("ConfirmDialog", () => {
     await fireEvent.keyDown(window, { key: "Escape" });
     expect(await byKey).toBe(false);
   });
+
+  it("Escape is the dialog's alone: a window listener registered earlier (Settings) sees it handled", async () => {
+    // SettingsModal closes on an Escape it sees with defaultPrevented false;
+    // its listener was registered before the dialog mounted. The 0.21.0 walk
+    // found Escape on this dialog closing Settings underneath it.
+    const seen: boolean[] = [];
+    const earlier = (event: KeyboardEvent) => { if (event.key === "Escape") seen.push(event.defaultPrevented); };
+    window.addEventListener("keydown", earlier);
+    try {
+      const asked = askConfirmation({ title: "Remove?", body: "", confirmLabel: "Remove" });
+      render(ConfirmDialog);
+      await screen.findByRole("alertdialog", { name: "Remove?" });
+      const cancel = screen.getByRole("button", { name: "Cancel" });
+      await fireEvent.keyDown(cancel, { key: "Escape", bubbles: true });
+      expect(await asked).toBe(false);
+      // Either not delivered at all (stopped in the capture phase) or delivered handled.
+      expect(seen.every(Boolean)).toBe(true);
+    } finally {
+      window.removeEventListener("keydown", earlier);
+    }
+  });
 });
