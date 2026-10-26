@@ -1,5 +1,38 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import UiIcon from "./UiIcon.svelte";
+  import { tooltip } from "../tooltip";
+  import { isTauri } from "@tauri-apps/api/core";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
+
+  let desktop = false;
+  let maximized = false;
+  onMount(() => {
+    desktop = isTauri();
+    if (!desktop) return;
+    const appWindow = getCurrentWindow();
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    const updateMaximized = async () => {
+      const value = await appWindow.isMaximized();
+      if (!disposed) maximized = value;
+    };
+    void updateMaximized().catch(console.error);
+    void appWindow.onResized(() => { void updateMaximized().catch(console.error); })
+      .then((stop) => { if (disposed) stop(); else unlisten = stop; })
+      .catch(console.error);
+    return () => { disposed = true; unlisten?.(); };
+  });
+
+  async function windowAction(action: "minimize" | "toggleMaximize" | "close") {
+    try {
+      const appWindow = getCurrentWindow();
+      await appWindow[action]();
+      if (action === "toggleMaximize") maximized = await appWindow.isMaximized();
+    } catch (error) {
+      console.error(`Window ${action} failed`, error);
+    }
+  }
   import { bridge, type EngineInfo } from "../api/bridgeClient";
   import { project, currentChapter, navigationStatus, bookAssignments, localUserId, assignedToMe } from "../stores";
   import { projectRoles, ROLE_NAMES } from "../projectRole";
@@ -69,15 +102,16 @@
   }
 </script>
 
-<div class="topbar no-print">
-  <div class="brand">
-    <div class="mark" /> Bridge
-    {#if engineInfo}<span class="version" title="Schema v{engineInfo.companionSchemaVersion}">{engineInfo.bridgeVersion}</span>{/if}
+<div class="topbar no-print" class:home-bar={screen === "home"} class:desktop-bar={desktop} data-tauri-drag-region>
+  <div class="brand" data-tauri-drag-region>
+    <div class="mark" data-tauri-drag-region /> Bridge
+    {#if engineInfo}<span class="version" data-tauri-drag-region title="Schema v{engineInfo.companionSchemaVersion}">{engineInfo.bridgeVersion}</span>{/if}
   </div>
+  {#if screen !== "home"}
   <div class="divider" />
 
   <nav class="breadcrumb" aria-label="Navigation">
-    <button class="crumb" class:current={screen === "home"} on:click={onGoHome}>Projects</button>
+    <button class="crumb" on:click={onGoHome}>Projects</button>
     {#if screen === "dashboard" || screen === "validation" || screen === "review" || screen === "report"}
       <span class="crumb-sep">›</span>
       {#if screen === "validation"}
@@ -115,6 +149,7 @@
       {/if}
     {/if}
   </nav>
+  {/if}
 
   {#if screen === "editor"}
     <div class="chapter-nav" role="group" aria-label="Chapter navigation">
@@ -151,20 +186,17 @@
     </div>
   {/if}
 
-  <div class="grow" />
+  <div class="grow" data-tauri-drag-region />
   <button
     class="sync-status"
     class:enabled={$navigationStatus.enabled}
     on:click={onOpenConnections}
-    title={$navigationStatus.ownerConflict ? "Another Bridge window owns desktop navigation" : "Paratext and Logos navigation"}
+    aria-label={$navigationStatus.enabled ? "Sync on" : "Sync off"}
+    use:tooltip={$navigationStatus.ownerConflict ? "Sync: another Bridge window owns navigation" : `Sync ${$navigationStatus.enabled ? "on" : "off"} · Paratext ${$navigationStatus.paratext.error ? "error" : $navigationStatus.paratext.connected ? "connected" : "disconnected"} · Logos ${$navigationStatus.logos.error ? "error" : $navigationStatus.logos.connected ? "connected" : "disconnected"}`}
+    class:sync-error={Boolean($navigationStatus.paratext.error || $navigationStatus.logos.error || $navigationStatus.ownerConflict)}
   >
-    {#if $navigationStatus.enabled}
-      <span class:connected={$navigationStatus.paratext.connected} class:error={Boolean($navigationStatus.paratext.error)}>P</span>
-      <span class:connected={$navigationStatus.logos.connected} class:error={Boolean($navigationStatus.logos.error)}>L</span>
-      Sync
-    {:else}
-      Sync off
-    {/if}
+    <UiIcon name="sync" />
+    <span class="sync-dot" class:connected={$navigationStatus.enabled} aria-hidden="true"></span>
   </button>
   {#if screen === "dashboard"}
     <button class="btn primary" on:click={onGenerateReport}>Generate report</button>
@@ -172,7 +204,14 @@
   {#if screen === "editor"}
     <button class="btn primary" disabled={!exportEnabled} on:click={onOpenExport}>Export</button>
   {/if}
-  <button class="btn ghost" on:click={onOpenSettings}>Settings</button>
+  <button class="btn ghost settings-icon" aria-label="Settings" use:tooltip={"Settings"} on:click={onOpenSettings}><UiIcon name="settings" /></button>
+  {#if desktop}
+    <div class="window-controls" role="group" aria-label="Window controls">
+      <button aria-label="Minimize window" title="Minimize" on:click={() => windowAction("minimize")}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10"/></svg></button>
+      <button aria-label={maximized ? "Restore window" : "Maximize window"} title={maximized ? "Restore" : "Maximize"} on:click={() => windowAction("toggleMaximize")}><svg viewBox="0 0 16 16" aria-hidden="true">{#if maximized}<path d="M5 5V3h8v8h-2M3 5h8v8H3z"/>{:else}<path d="M3 3h10v10H3z"/>{/if}</svg></button>
+      <button class="window-close" aria-label="Close window" title="Close" on:click={() => windowAction("close")}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3 3 10 10M3 13 13 3"/></svg></button>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -215,13 +254,47 @@
   .sync-status:hover { background: var(--surface-2); }
   .sync-status span { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--border-strong); color: var(--surface); font-size: var(--fs-3xs); }
   .sync-status span.connected { background: var(--success); }
-  .sync-status span.error { background: var(--danger); }
   .btn { font-size: var(--fs-sm); font-weight: 600; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); cursor: pointer; flex-shrink: 0; }
   .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .btn.primary:disabled { background: #B9C6E0; border-color: #B9C6E0; color: #fff; cursor: not-allowed; }
   .btn.ghost { background: transparent; border-color: var(--border); }
+  .sync-status, .btn.settings-icon { position: relative; display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 8px; background: transparent; transition: color .15s, background .15s; }
+  .sync-status:hover, .btn.settings-icon:hover, .sync-status:focus-visible, .btn.settings-icon:focus-visible { color: var(--accent); background: var(--accent-bg); }
+  .sync-status.sync-error:hover { color: var(--danger); background: var(--danger-bg); }
+  @media (prefers-reduced-motion: reduce) {
+    .sync-status, .btn.settings-icon { transition: none; }
+  }
+  .sync-status .sync-dot { position: absolute; right: 3px; bottom: 3px; width: 5px; height: 5px; border: 2px solid var(--surface); }
+  .sync-status.enabled { color: var(--accent); }
+  .sync-status.sync-error { color: var(--danger); }
+  .sync-status.sync-error .sync-dot { background: var(--danger); }
   @media (max-width: 900px) {
     .goto { width: 110px; }
     .crumb { max-width: 130px; }
   }
+  .topbar { min-width: 0; }
+  .desktop-bar { padding-right: 0; user-select: none; }
+  .grow { align-self: stretch; min-width: 24px; }
+  .home-bar { height: 48px; gap: 12px; }
+  .home-bar .btn, .home-bar .sync-status { min-height: 30px; font-size: var(--fs-2xs); }
+  .window-controls { display: flex; align-self: stretch; margin-left: 4px; flex-shrink: 0; }
+  .window-controls button { display: grid; place-items: center; width: 44px; min-height: 36px; border: 0; padding: 0; background: transparent; color: var(--text); cursor: pointer; }
+  .window-controls svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.2; }
+  .window-controls button:hover { background: var(--border); }
+  .window-controls .window-close:hover { background: #c42b1c; color: white; }
+  .topbar button:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+  @media (max-width: 480px) {
+    .home-bar .brand { flex: 1; }
+    .home-bar .grow { display: none; }
+    .home-bar .window-controls { margin-left: auto; }
+    .desktop-bar.home-bar { padding-right: 0; }
+  }
+  @media (max-width: 640px) {
+    .home-bar { height: auto; min-height: 60px; flex-wrap: wrap; padding: 10px 12px; gap: 8px; }
+    .home-bar .brand { flex-wrap: wrap; }
+    .home-bar .breadcrumb { flex-shrink: 0; }
+    .home-bar .divider { display: none; }
+    .home-bar .btn { padding: 8px 10px; }
+  }
+  .topbar.home-bar .settings-icon { padding: 0; }
 </style>

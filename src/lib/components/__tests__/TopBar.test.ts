@@ -1,7 +1,14 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 
-const { engineInfo } = vi.hoisted(() => ({ engineInfo: vi.fn() }));
+const { engineInfo, desktop, minimize, toggleMaximize, closeWindow, isMaximized, onResized, stopResize } = vi.hoisted(() => ({
+  engineInfo: vi.fn(), desktop: vi.fn(() => false), minimize: vi.fn(), toggleMaximize: vi.fn(),
+  closeWindow: vi.fn(), isMaximized: vi.fn(), onResized: vi.fn(), stopResize: vi.fn(),
+}));
+vi.mock("@tauri-apps/api/core", () => ({ isTauri: desktop }));
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({ minimize, toggleMaximize, close: closeWindow, isMaximized, onResized }),
+}));
 
 vi.mock("../../api/bridgeClient", () => ({
   bridge: { engineInfo },
@@ -131,5 +138,50 @@ describe("TopBar chapter navigation (issue #53)", () => {
     mount({ screen: "dashboard" });
     expect(screen.queryByLabelText("Previous chapter")).toBeNull();
     expect(screen.queryByLabelText("Next chapter")).toBeNull();
+  });
+});
+
+describe("TopBar window controls", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    desktop.mockReturnValue(true);
+    engineInfo.mockResolvedValue({ bridgeVersion: "0.19.0", companionSchemaVersion: 15 });
+    isMaximized.mockResolvedValue(false);
+    onResized.mockResolvedValue(stopResize);
+  });
+
+  it("minimizes, maximizes, restores and closes through the desktop window API", async () => {
+    mount({ screen: "home" });
+    await fireEvent.click(screen.getByRole("button", { name: "Minimize window" }));
+    expect(minimize).toHaveBeenCalledOnce();
+    isMaximized.mockResolvedValue(true);
+    await fireEvent.click(screen.getByRole("button", { name: "Maximize window" }));
+    await screen.findByRole("button", { name: "Restore window" });
+    isMaximized.mockResolvedValue(false);
+    await fireEvent.click(screen.getByRole("button", { name: "Restore window" }));
+    await screen.findByRole("button", { name: "Maximize window" });
+    expect(toggleMaximize).toHaveBeenCalledTimes(2);
+    await fireEvent.click(screen.getByRole("button", { name: "Close window" }));
+    expect(closeWindow).toHaveBeenCalledOnce();
+  });
+
+  it("keeps settings and sync accessible and releases its resize listener", async () => {
+    const onOpenSettings = vi.fn();
+    const onOpenConnections = vi.fn();
+    const view = mount({ screen: "home", onOpenSettings, onOpenConnections });
+    await fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await fireEvent.click(screen.getByRole("button", { name: /Sync/ }));
+    expect(onOpenSettings).toHaveBeenCalledOnce();
+    expect(onOpenConnections).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("navigation")).toBeNull();
+    await waitFor(() => expect(onResized).toHaveBeenCalledOnce());
+    view.unmount();
+    expect(stopResize).toHaveBeenCalledOnce();
+  });
+
+  it("hides desktop window controls when viewed in a browser", () => {
+    desktop.mockReturnValue(false);
+    mount({ screen: "home" });
+    expect(screen.queryByRole("group", { name: "Window controls" })).toBeNull();
   });
 });

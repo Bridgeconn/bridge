@@ -587,6 +587,22 @@ def inspect_import(source_path: str | Path) -> dict[str, Any]:
     }
 
 
+def select_import_books(preview: dict[str, Any], selected_book_ids: list[str] | None = None) -> dict[str, Any]:
+    """Validate an explicit selection and retain source order before classifying or writing."""
+    if selected_book_ids is None:
+        return preview
+    if not isinstance(selected_book_ids, list) or not selected_book_ids or any(
+        not isinstance(book_id, str) or not book_id.strip() for book_id in selected_book_ids
+    ):
+        raise ProjectError("Select at least one valid book to import.")
+    selected = {book_id.strip().lower() for book_id in selected_book_ids}
+    available = {book["bookId"].lower() for book in preview["books"]}
+    unknown = selected - available
+    if unknown:
+        raise ProjectError(f"Selected books are no longer available: {', '.join(sorted(unknown))}")
+    return {**preview, "books": [book for book in preview["books"] if book["bookId"].lower() in selected]}
+
+
 def _slug(value: str, fallback: str) -> str:
     normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", str(value or "").strip()).strip("-_.").lower()
     return normalized or fallback
@@ -1085,7 +1101,8 @@ def materialize_lazy_project(project_root: str | Path, *,
 
 def import_source(source_path: str | Path, destination_root: str | Path, metadata: dict[str, Any], *,
                   progress: ImportProgress | None = None,
-                  cancel: ImportCancel | None = None) -> dict[str, Any]:
+                  cancel: ImportCancel | None = None,
+                  selected_book_ids: list[str] | None = None) -> dict[str, Any]:
     """Write the imported project(s) under ``destination_root``.
 
     Everything is built under one staging directory and moved into place only
@@ -1097,7 +1114,7 @@ def import_source(source_path: str | Path, destination_root: str | Path, metadat
     source = Path(source_path).resolve()
     destination = Path(destination_root).resolve()
     destination.mkdir(parents=True, exist_ok=True)
-    preview = inspect_import(source)
+    preview = select_import_books(inspect_import(source), selected_book_ids)
     combined = copy.deepcopy(preview.get("metadata", {}))
     combined.update({key: str(value).strip() for key, value in metadata.items() if value is not None})
     missing = [key for key in ("languageId", "languageName", "projectName", "bibleName") if not combined.get(key)]

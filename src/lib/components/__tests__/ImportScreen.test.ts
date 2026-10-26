@@ -120,6 +120,54 @@ describe("ImportScreen background import (#231)", () => {
     openProject.mockResolvedValue({ ...opened });
   });
 
+  it("hides project search when there are no registered projects", async () => {
+    render(ImportScreen, { props: { onOpened: vi.fn() } });
+    await screen.findByText(/No projects are registered yet/);
+    expect(screen.queryByRole("searchbox", { name: "Search projects" })).toBeNull();
+  });
+
+  it("selects all books initially, supports bulk selection, and imports only checked books", async () => {
+    const multi = preview();
+    multi.books.push({ bookId: "phm", bookName: "Philemon", sourceFile: "C:/sources/PHM.usfm", verseCount: 1, hasAlignments: false });
+    inspectImport.mockImplementation(async (_path, _metadata, selected) => selected
+      ? { ...multi, books: multi.books.filter((book) => selected.includes(book.bookId)) } : multi);
+    importStatus.mockResolvedValue(snapshot({ state: "cancelled" }));
+    await renderWithPreview();
+    expect(screen.getByRole("checkbox", { name: "Import Titus" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Import Philemon" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Unselect all" })).toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "Select all" })).toBeNull();
+    await fireEvent.click(screen.getByRole("checkbox", { name: "Unselect all" }));
+    expect(screen.getByRole("checkbox", { name: "Select all" })).not.toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "Unselect all" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Import 0 books" })).toBeDisabled();
+    expect(screen.getByText("Select at least one book.")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("checkbox", { name: "Select all" }));
+    expect(screen.getByRole("checkbox", { name: "Import Titus" })).toBeChecked();
+    await fireEvent.click(screen.getByRole("checkbox", { name: "Import Titus" }));
+    expect(screen.getByRole("checkbox", { name: "Select all" })).not.toBeChecked();
+    await fireEvent.click(screen.getByRole("checkbox", { name: "Select all" }));
+    expect(screen.getByRole("checkbox", { name: "Unselect all" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Import Titus" })).toBeChecked();
+    await fireEvent.click(screen.getByRole("checkbox", { name: "Import Titus" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Import book" }));
+    await waitFor(() => expect(importStart).toHaveBeenCalledWith(SOURCE, expect.anything(), false, ["phm"]));
+    expect(inspectImport).toHaveBeenLastCalledWith(SOURCE, expect.anything(), ["phm"]);
+    expect(screen.getByRole("checkbox", { name: "Import Titus" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Import Philemon" })).toBeChecked();
+  });
+
+  it("refuses a partial import when an older engine ignores the selection", async () => {
+    const multi = preview();
+    multi.books.push({ bookId: "phm", bookName: "Philemon", sourceFile: "C:/sources/PHM.usfm", verseCount: 1, hasAlignments: false });
+    inspectImport.mockResolvedValue(multi);
+    await renderWithPreview();
+    await fireEvent.click(screen.getByRole("checkbox", { name: "Import Titus" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Import book" }));
+    await screen.findByText(/Book selection requires the updated engine/);
+    expect(importStart).not.toHaveBeenCalled();
+  });
+
   it("shows the bar and Cancel as soon as the job starts, then opens the primary book", async () => {
     // The first poll is held back so the banner can be checked as drawn from
     // the start snapshot alone, before any status has answered.

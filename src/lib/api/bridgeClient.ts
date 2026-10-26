@@ -886,8 +886,8 @@ export const bridge = {
     return call("triage.results", { book });
   },
 
-  inspectImport(path: string, metadata?: ImportMetadata): Promise<ImportPreview> {
-    return call("project.inspectImport", { path, metadata });
+  inspectImport(path: string, metadata?: ImportMetadata, selectedBookIds?: string[]): Promise<ImportPreview> {
+    return call("project.inspectImport", { path, metadata, ...(selectedBookIds ? { selectedBookIds } : {}) });
   },
 
   importProject(path: string, metadata: ImportMetadata, allowDuplicate = false): Promise<ProjectInfo> {
@@ -897,8 +897,8 @@ export const bridge = {
   /** The same import as a background job (#231): the snapshot comes back at
    * once, `importStatus` is polled, and the caller opens the primary book
    * itself from the result's `primaryProjectPath`. */
-  importStart(path: string, metadata: ImportMetadata, allowDuplicate = false): Promise<ImportJobSnapshot> {
-    return call("project.import.start", { path, metadata, allowDuplicate });
+  importStart(path: string, metadata: ImportMetadata, allowDuplicate = false, selectedBookIds?: string[]): Promise<ImportJobSnapshot> {
+    return call("project.import.start", { path, metadata, allowDuplicate, ...(selectedBookIds ? { selectedBookIds } : {}) });
   },
 
   importStatus(jobId: string): Promise<ImportJobSnapshot> {

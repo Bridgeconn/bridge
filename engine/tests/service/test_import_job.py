@@ -179,3 +179,56 @@ def test_status_and_cancel_without_a_job_are_clean_errors(tmp_path, method):
     response = call(engine, method, {"jobId": ""})
     assert response["success"] is False
     assert response["error"]["code"] == "import_job_not_found"
+
+
+def test_selected_books_are_the_only_books_imported_registered_and_duplicate_checked(tmp_path):
+    engine = _engine(tmp_path)
+    source = _collection(tmp_path)
+    started = call(engine, "project.import.start", {
+        "path": str(source), "metadata": METADATA, "selectedBookIds": ["phm"],
+    })
+    assert started["success"], started
+    finished = _wait(engine, started["result"]["jobId"])
+    assert finished["state"] == "succeeded", finished
+    assert finished["totalBooks"] == 1
+    assert [book["bookId"] for book in finished["result"]["projects"]] == ["phm"]
+    assert len(_project_dirs(tmp_path / "projects")) == 1
+    assert (source / "57TIT.SFM").exists() and (source / "58PHM.SFM").exists()
+    listed = call(engine, "project.list")["result"]["projects"]
+    assert len(listed) == 1 and listed[0]["bookId"] == "phm"
+
+    inspected = call(engine, "project.inspectImport", {
+        "path": str(source), "metadata": METADATA, "selectedBookIds": ["phm"],
+    })
+    assert inspected["success"], inspected
+    assert [book["bookId"] for book in inspected["result"]["books"]] == ["phm"]
+    assert inspected["result"]["duplicates"]["classification"] == "exactDuplicate"
+    assert inspected["result"]["duplicates"]["inputBookCount"] == 1
+    duplicate = call(engine, "project.import.start", {
+        "path": str(source), "metadata": METADATA, "selectedBookIds": ["phm"],
+    })
+    assert _wait(engine, duplicate["result"]["jobId"])["state"] == "failed"
+    assert len(_project_dirs(tmp_path / "projects")) == 1
+
+    other = call(engine, "project.import.start", {
+        "path": str(source), "metadata": METADATA, "selectedBookIds": ["tit"],
+    })
+    other_finished = _wait(engine, other["result"]["jobId"])
+    assert other_finished["state"] == "succeeded", other_finished
+    assert [book["bookId"] for book in other_finished["result"]["projects"]] == ["tit"]
+
+
+@pytest.mark.parametrize("selection", [[], ["unknown"], "tit", [3]])
+def test_invalid_book_selection_cannot_write_projects(tmp_path, selection):
+    engine = _engine(tmp_path)
+    source = _collection(tmp_path)
+    inspected = call(engine, "project.inspectImport", {
+        "path": str(source), "metadata": METADATA, "selectedBookIds": selection,
+    })
+    assert not inspected["success"]
+    started = call(engine, "project.import.start", {
+        "path": str(source), "metadata": METADATA, "selectedBookIds": selection,
+    })
+    finished = _wait(engine, started["result"]["jobId"])
+    assert finished["state"] == "failed", finished
+    assert not _project_dirs(tmp_path / "projects")

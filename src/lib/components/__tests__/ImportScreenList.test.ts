@@ -52,6 +52,20 @@ describe("ImportScreen projects list (#238)", () => {
     expect(screen.getByText(/opened .* by Revant/)).toBeInTheDocument();
   });
 
+  it("keeps progress and location collapsed until project details are expanded", async () => {
+    const { container } = render(ImportScreen, { props: { onOpened: vi.fn() } });
+    await screen.findByText("NT review");
+    const details = container.querySelector("details")!;
+    expect(details.open).toBe(false);
+    expect(screen.getByRole("button", { name: "Open" })).toBeVisible();
+    await fireEvent.click(screen.getByText("Project details"));
+    expect(details.open).toBe(true);
+    expect(screen.getByText("checked 3/50 ch · reviewed 40/1533 · aligned 20/90 · LQA clean 70/90")).toBeVisible();
+    expect(screen.getByText("C:/projects/eng_bible_gen")).toBeVisible();
+    await fireEvent.click(screen.getByText("Project details"));
+    expect(details.open).toBe(false);
+  });
+
   it("says when nothing has been recorded or opened", async () => {
     listProjects.mockResolvedValue({ projects: [project({ progress: null, lastOpenedAt: "", lastOpenedByName: "" })] });
     render(ImportScreen, { props: { onOpened: vi.fn() } });
@@ -97,6 +111,44 @@ describe("ImportScreen projects list (#238)", () => {
     await waitFor(() => expect(unarchiveProject).toHaveBeenCalledWith("p-1"));
     await screen.findByText("NT review");
     expect(screen.queryByLabelText(/Show archived/)).toBeNull();
+  });
+
+  it("filters projects across name, book and language and restores them when cleared", async () => {
+    listProjects.mockResolvedValue({ projects: [project(), project({
+      projectId: "p-2", displayName: "Tamil study", bookName: "Titus", bookId: "tit", targetLanguage: "தமிழ்", targetLanguageId: "tam",
+    })] });
+    render(ImportScreen, { props: { onOpened: vi.fn() } });
+    await screen.findByText("NT review");
+    const search = screen.getByRole("searchbox", { name: "Search projects" });
+    await fireEvent.input(search, { target: { value: "  GEN english  " } });
+    expect(screen.getByText("NT review")).toBeInTheDocument();
+    expect(screen.queryByText("Tamil study")).toBeNull();
+    expect(screen.getByRole("status")).toHaveTextContent("1 of 2 projects");
+    await fireEvent.input(search, { target: { value: "தமிழ்" } });
+    expect(screen.getByText("Tamil study")).toBeInTheDocument();
+    expect(screen.queryByText("NT review")).toBeNull();
+    await fireEvent.input(search, { target: { value: "TAMIL STUDY" } });
+    expect(screen.getByText("Tamil study")).toBeInTheDocument();
+    await fireEvent.input(search, { target: { value: "unknown project" } });
+    expect(screen.getByText(/No projects match your search/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Import a file/ })).toBeVisible();
+    await fireEvent.click(screen.getByRole("button", { name: "Clear project search" }));
+    expect(search).toHaveValue("");
+    expect(screen.getByText("NT review")).toBeInTheDocument();
+    expect(screen.getByText("Tamil study")).toBeInTheDocument();
+  });
+
+  it("searches archived projects only when the archived filter is enabled", async () => {
+    listProjects.mockResolvedValue({ projects: [project(), project({
+      projectId: "p-2", displayName: "Archived study", archivedAt: "2026-10-14T10:00:00Z",
+    })] });
+    render(ImportScreen, { props: { onOpened: vi.fn() } });
+    await screen.findByText("NT review");
+    await fireEvent.input(screen.getByRole("searchbox", { name: "Search projects" }), { target: { value: "Archived study" } });
+    expect(screen.queryByText("Archived study (archived)")).toBeNull();
+    await fireEvent.click(screen.getByLabelText("Show archived (1)"));
+    expect(screen.getByText("Archived study (archived)")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("1 of 2 projects");
   });
 
   it("keeps Delete behind its confirmation", async () => {

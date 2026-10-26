@@ -52,6 +52,7 @@ from tc_ai_bridge.project_import import (
     import_checkpoint,
     import_source,
     inspect_import,
+    select_import_books,
     lazy_import_pending,
     materialize_lazy_project,
     record_collection_qa_run,
@@ -1698,14 +1699,16 @@ class BridgeEngine:
             "originalLanguageResource": original_language,
         }
 
-    def inspect_project_import(self, path: str, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+    def inspect_project_import(self, path: str, metadata: dict[str, Any] | None = None,
+                               selected_book_ids: list[str] | None = None) -> dict[str, Any]:
         """Read-only detection/validation used before the metadata form."""
-        preview = inspect_import(path)
+        preview = select_import_books(inspect_import(path), selected_book_ids)
         preview["duplicates"] = self.project_registry.classify(preview, metadata)
         return preview
 
     def import_project(self, path: str, metadata: dict[str, Any],
-                       destination_root: str = "", allow_duplicate: bool = False) -> dict[str, Any]:
+                       destination_root: str = "", allow_duplicate: bool = False,
+                       selected_book_ids: list[str] | None = None) -> dict[str, Any]:
         """Normalize USFM/SFM, Paratext folders, or tC archives, then open it.
 
         Existing translationCore state is copied intact. Raw Scripture becomes
@@ -1717,7 +1720,7 @@ class BridgeEngine:
         if not self._import_lock.acquire(blocking=False):
             raise ProjectError("Another project import is already running.")
         try:
-            result = self._import_and_register(path, metadata, destination_root, allow_duplicate)
+            result = self._import_and_register(path, metadata, destination_root, allow_duplicate, selected_book_ids=selected_book_ids)
         finally:
             self._import_lock.release()
         timer = _PhaseTimer()
@@ -1734,7 +1737,8 @@ class BridgeEngine:
     def _import_and_register(self, path: str, metadata: dict[str, Any], destination_root: str = "",
                              allow_duplicate: bool = False, *,
                              progress: Callable[[dict[str, Any]], None] | None = None,
-                             cancel: Callable[[], bool] | None = None) -> dict[str, Any]:
+                             cancel: Callable[[], bool] | None = None,
+                             selected_book_ids: list[str] | None = None) -> dict[str, Any]:
         """Inspect, write and register the import; the caller holds _import_lock.
 
         Never reads or writes self.project, so the import job (#231) runs it on
@@ -1744,7 +1748,7 @@ class BridgeEngine:
         """
         timer = _PhaseTimer()
         import_checkpoint(progress, cancel, phase="inspect")
-        preview = inspect_import(path)
+        preview = select_import_books(inspect_import(path), selected_book_ids)
         timer.mark("inspect")
         import_checkpoint(progress, cancel, phase="classify", bookCount=len(preview.get("books") or []))
         duplicate = self.project_registry.classify(preview, metadata)
@@ -1755,7 +1759,8 @@ class BridgeEngine:
                 "or explicitly choose Import as separate copy."
             )
         root = Path(destination_root).resolve() if destination_root else self.project_root
-        result = import_source(path, root, metadata, progress=progress, cancel=cancel)
+        result = import_source(path, root, metadata, progress=progress, cancel=cancel,
+                               **({"selected_book_ids": selected_book_ids} if selected_book_ids is not None else {}))
         timer.mark("import_source")
         # Past import_source the books are on disk; a cancel from here on is
         # too late and is ignored rather than leaving unregistered folders.
@@ -1784,7 +1789,8 @@ class BridgeEngine:
         return result
 
     def start_import(self, path: str, metadata: dict[str, Any],
-                     destination_root: str = "", allow_duplicate: bool = False) -> dict[str, Any]:
+                     destination_root: str = "", allow_duplicate: bool = False,
+                       selected_book_ids: list[str] | None = None) -> dict[str, Any]:
         """project.import.start (#231): the same import on a worker thread.
 
         The import lock is taken here, on the dispatcher, so the sync RPC and
@@ -1798,6 +1804,7 @@ class BridgeEngine:
             try:
                 return self._import_and_register(
                     path, metadata, destination_root, allow_duplicate, progress=progress, cancel=cancel,
+                    selected_book_ids=selected_book_ids,
                 )
             finally:
                 self._import_lock.release()
@@ -8064,17 +8071,17 @@ class BridgeEngine:
                 return EngineResponse.ok(request.id, result=self.triage_results(p.get("book", "")))
             if m == Methods.PROJECT_INSPECT_IMPORT:
                 return EngineResponse.ok(request.id, result=self.inspect_project_import(
-                    p["path"], p.get("metadata"),
+                    p["path"], p.get("metadata"), p.get("selectedBookIds"),
                 ))
             if m == Methods.PROJECT_IMPORT:
                 return EngineResponse.ok(request.id, result=self.import_project(
                     p["path"], p.get("metadata", {}), p.get("destinationRoot", ""),
-                    bool(p.get("allowDuplicate", False)),
+                    bool(p.get("allowDuplicate", False)), p.get("selectedBookIds"),
                 ))
             if m == Methods.PROJECT_IMPORT_START:
                 return EngineResponse.ok(request.id, result=self.start_import(
                     p["path"], p.get("metadata", {}), p.get("destinationRoot", ""),
-                    bool(p.get("allowDuplicate", False)),
+                    bool(p.get("allowDuplicate", False)), p.get("selectedBookIds"),
                 ))
             if m == Methods.PROJECT_IMPORT_STATUS:
                 return EngineResponse.ok(request.id, result=self.import_status(p.get("jobId", "")))
