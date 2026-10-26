@@ -21685,3 +21685,83 @@ verse as restored without writing). `npm run check` 0/0; `npm run test` 919 pass
 `scopedApply.test.ts`); `npm run build` ok. Full engine suite: see the issue comment.
 
 **Not watched.** The installed app on Robin's Hindi project; the frozen pair was not rebuilt here.
+
+## 2026-10-26 — Milestone 2 close-out (#402, #213) and the confirmation that never asked (#372)
+
+**What and why.** The last two frontend issues of milestone 2 "UI fixes / cosmetics" (due today) and
+the one P1 from milestone 3, as one session, frontend only, three commits on `main`
+(cc299b4, 82e5048, b8b6567; batch A rebased over Benz's #403, 734c134, which shares no file).
+#379 item 6 (Benz), #389 (Joel) and #373 (the parent walk) were left alone.
+
+**#402 — clicking a finding lands on its exact span.** One route, `findingFocus.ts`'s
+`revealFinding(id, {navigate, scroll})`: it sets the ring first (`focusedFindingId`, the renamed and
+widened `activeLanguageQaFindingId`; the ring CSS never was Language-QA-specific), runs the
+navigation, then looks for `[data-finding-ids~=id]` (retrying for ~400 ms, since a chapter's findings
+hydrate after its verses), scrolls it to `block: "center"` and adds a one-shot `reveal-flash` class
+(index.css, 1.2 s). `VerseList.scrollSelectedToTop` consults `pendingReveal()` after its tick and, when
+the verse it is about to pull to the top holds the mark being revealed, marks the key scrolled and
+stands down: that is the race between the verse-level scroll and the mark's `scrollIntoView` the issue
+named, resolved by making the verse scroll yield rather than by ordering. Entry points: the Language
+QA row (ring, `onNavigate`, reveal; a `context` finding only navigates), F8 (`goToMark` now goes
+through the same helper, centre instead of nearest), the Review panel cards (click on the card body;
+keyboard through the number badge, now a `<button>`, and a "Show in text" pill on Language QA cards),
+and a left click on an inline mark (`focusMarkFromClick`: `selectFromRow` with the modifiers, then
+reveal with `scroll: false`, because moving text under the pointer is what #179 forbids). Edit mode:
+`startVerseEdit(chapter, verse, caret?)` places the caret after a tick (`placeCaret`, code points →
+UTF-16 over the textarea's own value); `editWithSelection` moved from VerseList into `verseEditor.ts`
+and takes either finding type through `findingSpan()` (null offsets, or a heading / introduction /
+footnote Language QA finding → null → plain edit). Used by "Accept and edit", the ignored card's "Edit
+verse", a double-click on the ringed mark (only there: the first click of a double-click anywhere else
+clears the ring, the #236 behaviour kept and tested) and a new "Edit…" on the Greek Room mark menu.
+The `<mark on:click>` carries a `svelte-ignore` for the two a11y rules with the reason beside it: the
+row is the one tab stop and ←/→ + Shift+F10 are the marks' keyboard route. A whitespace check against
+HEAD's render confirmed the comment adds no text node inside the verse. `openSemanticSpan` untouched.
+
+**#213 — character styles, not poetry.** `utils/verseStyles.ts` `withStyleSpans(segments, ranges)`
+splits the finding segments once more at every style boundary and records the covering markers outer
+first (`styles` is a new optional field on `TextSegment`, carried through `withNoteMarkers`'s spread);
+`VerseList` converts `display.styles` bounds with `plainToUtf16` exactly as note positions, wraps a
+plain piece in `<span class="st-wj st-it">` and adds the same classes to a `<mark>` that underlines a
+styled word. CSS in VerseList, scoped under `.vbody`: italic family (`it em bk tl sls add qs bdit`),
+bold (`bd k bdit`), small caps (`nd sc`; a no-op in Indic scripts, deliberately), red letters (`wj` on
+a new `--wj: #9F1D1D`, browner than `--gr` so it is never read as a Greek Room mark), `sup`, `no`.
+Raw view draws nothing. **Poetry stopped:** `chapter.verseData` (bridge_service.py ~2515) sends
+`text`, `display`, `alignment`, `alignmentStatus`, plus `headings` and `editCounts`; no paragraph or
+poetry marker per verse exists in the payload or on disk, and `lift_verse("Line one \q2 line two")`
+yields only a removed range. A `\q2` indent needs one new engine field — the issue's own guess — and
+this frontend-only change did not add it; proposed issue text is in the #213 comment. The issue's
+claim that the display payload carries "the parser's paragraph/poetry structure" was wrong.
+
+**#372 — the confirmation that never asked.** `confirmAction.ts`: `askConfirmation(request)` resolves
+a boolean through a one-at-a-time store; `answerConfirmation(ok)`; a replacing question resolves the
+first as false. `ConfirmDialog.svelte` (`role="alertdialog"`, Cancel focused, Escape = Cancel, red
+confirm for `danger`, `--z-dialog-over-dialog`) is mounted once in App.svelte **outside** the project
+block, because Settings can ask with no project open. `ReviewPanel.startAIReview` awaits it for
+chapter/book (and re-checks `aiJobBusy` after the wait); `SettingsModal.removeApiKey` awaits it. No
+caller of `window.confirm`, `alert` or `prompt` is left in `src/`; no capability or ACL change
+(decision on the issue, Revant, 2026-10-24). The tests stub `window.confirm` as a Promise-returning
+function, the installed app's shape, and assert it is never consulted and that nothing starts before
+the answer.
+
+**Ran.** Batch A (after both commits): `npm run check` 0 errors / 0 warnings; `npm run test` 93 files,
+970 tests passed (22 new: `findingFocus.test.ts` 4, `ReviewPanelFindingFocus.test.ts` 4,
+`VerseList.test.ts` +8, `LanguageQaPanel.test.ts` +2, `verseStyles.test.ts` 4); `npm run build` ok.
+Batch B: `npm run check` 0/0; `npm run test` 95 files, 980 tests passed (10 new: `confirmAction.test.ts`
+5, `ReviewPanelConfirm.test.ts` 3, `SettingsModal.test.ts` 2 rewritten, `stackingLayers.test.ts` lists
+`ConfirmDialog`); `npm run build` ok. Both batches pushed after their gates.
+
+**Not run.** Engine pytest (no engine change), cargo (no src-tauri change), `npm run tauri dev`, the
+installed-app look at 1366x768 at text sizes 0.85–1.7 for the ring, the flash, the "Show in text"
+pill, the red letters and small caps, and the confirmation dialog over Settings; the macOS/Linux
+behaviour of #372. The #372 ACL finding was taken from `src-tauri/capabilities/default.json`, not a
+CDP session.
+
+**Found, not fixed** (proposed in the issue comments, no issues filed).
+- Poetry layout needs a per-verse paragraph marker from the engine (#213 comment has the issue text).
+- Every ReviewPanel test file logs "Could not restore issue resolutions TypeError" from
+  `TranslationHelpsReview.svelte:107` under the Proxy mock (already noted 2026-10-23). Noise.
+- Nothing stops a future `window.confirm` / `alert` / `prompt` caller: a lint rule or a file-scan test
+  pointing at `confirmAction.ts` (#372 comment).
+
+**Shipped.** #402, #213 and #372 closed with their comments; board items moved through In progress to
+Done by the close. Still open in milestone 2: #379 item 6 (Benz), #389 (Joel), #373 (the walk).
