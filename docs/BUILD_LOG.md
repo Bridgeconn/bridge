@@ -21922,3 +21922,37 @@ in this batch (the stand-in connector is the evidence, as it was for the finding
 reports no id the navigation check fails open while the note handoff refuses (it cannot confirm the
 destination). The refusal's wording in the Paratext notes panel itself is unchanged: that panel reads
 the notes files of the linked folder and never looked at the active window.
+
+## 2026-10-26 — Workbench v11: `paratext_links` (synced) and `paratext_outbox` (device-local) for Paratext write-back (#358 a)
+
+**What and why.** Step (a) of #358, the migration Revant handed back on 24 Oct. `WORKBENCH_SCHEMA_VERSION`
+10 → 11, one forward block, nothing rebuilt, no earlier block touched. The two tables are shaped exactly
+as the #358 body proposed:
+
+- `paratext_links` — human-owned and in `hub_sync.SYNCED_TABLES`: one row says a Bridge record
+  (`kind` ∈ issue_resolution / finding / correction_proposal, `local_id`) and a Paratext note thread
+  (`thread_id`) point at each other, with the `message_id` of the Bridge message that made the link and
+  its `direction`. Unique per `(project_id, book_id, kind, local_id, thread_id)`; indexed by thread.
+- `paratext_outbox` — this device's queue of plugin calls, in `MUTABLE_TABLES` (so it rides the
+  change_log like every store) but deliberately in `NOT_SYNCED_TABLES`: a hub carrying it to another PC
+  would send the same note twice. Row id = the `message_id` that goes into the note's "[Bridge ref …]"
+  footer, the idempotency key against the notes index; `op` (create_thread / add_comment / resolve),
+  `thread_id`, `status`, `attempts`, `last_error`, `sent_at`, `result_key` (the author+created pair
+  Paratext answers with, the only identity a Paratext note has). Thread content stays in the read-side
+  notes index; there is no `paratext_threads` table.
+
+Lifted columns are nullable (v3/v7's pattern, so the generic per-table tests write rows without them);
+`op` and `status` are validated in Python, not by a CHECK (v5's lesson). The pre-release amendment
+applies, so no data-preservation test was required; one was written anyway because it was cheap and
+pins the shape: `test_workbench_v10_to_v11_adds_the_paratext_link_and_outbox_tables_and_keeps_v10_data`.
+
+**Also.** `CLAUDE.md`: the on-disk shape block and the schema paragraph name v11 and the two tables.
+Version pins in five test files moved from 10 to 11; `test_every_workbench_table_is_classified_for_sync`
+now expects 13 synced tables and asserts the outbox is not one.
+
+**Ran.** `pytest tests/persistence tests/service/test_hub_sync.py`: 247 passed. The full engine suite
+and the frozen-pair smoke run once for the #358 batch when (c) lands; this commit is additive schema
+and lists only.
+
+**Next.** (b) connector 0.8.0; (c) the outbox and its flusher on the navigation poll thread, which is
+the first code to write these tables.
