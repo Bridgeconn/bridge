@@ -173,4 +173,28 @@ describe("PanelHeader (#379)", () => {
     expect(bar).toContain("background: var(--surface-2)");
     expect(bar).toMatch(/\.panel-title \{[^}]*font-size: var\(--fs-xs\)/);
   });
+
+  // Item 6 (Benz, 2026-10-26): one body padding and type scale, one surface.
+  // jsdom lays nothing out, so the rules are pinned where they are written.
+  it("gives every panel body --surface at --fs-xs, content 12px from the edge and 10px under the bar, no raw px", () => {
+    const source = (name: string) => readFileSync(resolve(process.cwd(), "src/lib/components", `${name}.svelte`), "utf-8");
+    const roots: Record<string, string> = { SourceTextPanel: "source-panel", ReferencePanel: "reference-panel",
+      LanguageQaPanel: "language-qa", ParatextNotesPanel: "pt-notes", ReviewPanel: "panel" };
+    for (const [name, root] of Object.entries(roots)) {
+      const text = source(name);
+      const rule = text.match(new RegExp(`\\.${root} \\{[^}]*\\}`))?.[0] ?? "";
+      expect(rule, `${name} root`).toContain("font-size: var(--fs-xs)");
+      expect(rule, `${name} root`).not.toContain("--surface-2");
+      expect(text, `${name} raw px`).not.toMatch(/font-size:\s*\d/);
+    }
+    // The three panels with one scroll box pad it 10px 12px.
+    expect(source("ParatextNotesPanel")).toMatch(/\.pt-scroll \{[^}]*padding: 10px 12px/);
+    expect(source("LanguageQaPanel")).toMatch(/\.panel-body \{[^}]*padding: 10px 12px/);
+    expect(source("ReviewPanel")).toMatch(/\.tab-content \{[^}]*padding: 10px 12px/);
+    // The two verse lists: the list's 4px plus each row's 6px 8px is the same 10px / 12px.
+    for (const name of ["SourceTextPanel", "ReferencePanel"]) {
+      expect(source(name), name).toMatch(/\n\s*ol \{[^}]*padding: 4px;/);
+      expect(source(name), name).toMatch(/li button \{[^}]*padding: 6px 8px/);
+    }
+  });
 });

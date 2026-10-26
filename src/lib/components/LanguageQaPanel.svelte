@@ -929,7 +929,9 @@
 
 <style>
   /* --z-panel (#288): a floating panel sits below every dialog. */
-  .language-qa { position: fixed; bottom: 40px; right: 16px; z-index: var(--z-panel); font-size: var(--fs-3xs); }
+  /* #379 item 6: the body reads at --fs-xs like every panel; the tab bar and
+     the filter row, chrome, at --fs-2xs like the bar's own actions. */
+  .language-qa { position: fixed; bottom: 40px; right: 16px; z-index: var(--z-panel); font-size: var(--fs-xs); }
   /* Docked: the column is the box; the section fills it and scrolls. */
   .language-qa.docked { position: static; flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .language-qa.docked section { width: auto; max-height: none; flex: 1; min-height: 0; margin: 0; border: 0;
@@ -941,7 +943,7 @@
   .panel-head { position: sticky; top: 0; z-index: 3; background: var(--surface); }
   /* Errors and the one-line coverage warning under the bar; nothing is
      drawn (no second line) when there is none of them. */
-  .head-meta { padding: 4px 14px 6px; border-bottom: 1px solid var(--border); }
+  .head-meta { padding: 4px 12px 6px; border-bottom: 1px solid var(--border); }
   .head-meta:not(:has(*)) { display: none; }
   .info-btn { width: 20px; height: 20px; padding: 0; border-radius: 50%; font: italic 700 var(--fs-3xs)/1 Georgia, "Times New Roman", serif; color: var(--accent); border-color: var(--accent); }
   .info-btn[aria-expanded="true"] { background: var(--accent); color: white; }
@@ -950,7 +952,7 @@
   .coverage-warn { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; margin: 2px 0; color: var(--warning); }
   /* #376: the (i) is a popover anchored under the bar (the sticky header is
      its containing block). It scrolls inside itself; the header never grows. */
-  .about { position: absolute; top: 100%; left: 8px; right: 8px; z-index: 4; margin: 0; padding: 10px 14px;
+  .about { position: absolute; top: 100%; left: 8px; right: 8px; z-index: 4; margin: 0; padding: 10px 12px;
     background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); border-radius: 8px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, .14); max-height: min(420px, 50vh); overflow: auto; outline: none; }
   .about p { margin: 4px 0; }
@@ -962,7 +964,7 @@
   .about-head h3 { flex: 1; margin: 0; font-size: var(--fs-xs); }
   .about-close { width: 22px; height: 22px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--text-3); font-size: var(--fs-3xs); line-height: 1; }
   .about-close:hover, .about-close:focus-visible { background: var(--accent-bg); color: var(--accent); outline: none; }
-  .panel-body { padding: 8px 14px 14px; }
+  .panel-body { padding: 10px 12px; }
   button { cursor: pointer; border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; background: var(--surface); color: inherit; }
   button:disabled { opacity: .5; cursor: default; }
   .launcher-row { display: flex; justify-content: flex-end; align-items: center; gap: 4px; }
@@ -979,8 +981,9 @@
   .where { margin-left: 8px; font-style: italic; }
   .reference { font-size: var(--fs-3xs); opacity: .85; border-left: 2px solid var(--border); padding-left: 6px; }
   /* The tab bar sits under the header and stays with it. */
-  .panel-tabs { position: sticky; top: var(--head-h, 0px); z-index: 2; display: flex; gap: 2px; padding: 0 10px;
-    background: var(--surface); border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; }
+  .panel-tabs { position: sticky; top: var(--head-h, 0px); z-index: 2; display: flex; gap: 2px; padding: 0 12px;
+    background: var(--surface); border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none;
+    font-size: var(--fs-2xs); }
   .panel-tabs button { flex: 1 0 auto; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none;
     padding: 8px 6px 6px; font-weight: 700; color: var(--text-2); white-space: nowrap; }
   /* #385: the book tab carries a name of any length and is the one that gives
@@ -991,7 +994,7 @@
   .panel-tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
   /* #376: the one filter row, pinned under the tab bar (#178). */
   .list-row { position: sticky; top: calc(var(--head-h, 0px) + var(--tabs-h, 0px)); z-index: 2; margin: 0;
-    padding: 6px 10px; background: var(--surface); border-bottom: 1px solid var(--border); }
+    padding: 6px 12px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: var(--fs-2xs); }
   .filter-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
   .segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
   .segmented button { border: 0; border-radius: 0; border-right: 1px solid var(--border); background: var(--surface); padding: 3px 8px; white-space: nowrap; }

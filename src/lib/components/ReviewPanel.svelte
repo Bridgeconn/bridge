@@ -1114,10 +1114,12 @@
 
 <style>
   /* Its column (SidePanel) sets the width and the left border. */
-  .panel { flex: 1; min-height: 0; background: var(--surface); display: flex; flex-direction: column; overflow: hidden; }
+  /* #379 item 6: the body is --surface at --fs-xs, padded 10px 12px. */
+  .panel { flex: 1; min-height: 0; background: var(--surface); display: flex; flex-direction: column; overflow: hidden;
+    font-size: var(--fs-xs); }
   .panel-header { padding: 8px 16px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
   .header-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
-  .panel-pinned { flex-shrink: 0; padding: 14px 16px; border-bottom: 1px solid var(--border); overflow-y: auto; max-height: 60vh; }
+  .panel-pinned { flex-shrink: 0; padding: 10px 12px; border-bottom: 1px solid var(--border); overflow-y: auto; max-height: 60vh; }
   .sub { flex: 1; min-width: 0; font-size: var(--fs-2xs); color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .panel-scroll { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
   .operation-status { display: flex; align-items: center; gap: 7px; border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; font-size: var(--fs-xs); line-height: 1.4; }
@@ -1129,7 +1131,7 @@
      the row scrolls rather than wraps should a wider UI font ever overflow it. */
   .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); flex-shrink: 0; padding: 10px 10px 0; background: var(--surface); overflow-x: auto; scrollbar-width: none; }
   .tabs::-webkit-scrollbar { display: none; }
-  .tab-content { flex: 1; overflow-y: auto; padding: 14px 16px; }
+  .tab-content { flex: 1; overflow-y: auto; padding: 10px 12px; }
   .tabs button {
     flex: 1 1 auto; position: relative; display: flex; align-items: center; justify-content: center;
     padding: 9px 4px 7px; font-size: var(--fs-3xs); font-weight: 700; color: var(--text-2); white-space: nowrap;
@@ -1228,7 +1230,7 @@
   .ai-run-buttons { display: flex; gap: 6px; margin-left: auto; }
   .ai-scope-btn { padding: 7px 12px; font-size: var(--fs-xs); font-weight: 700; border-radius: 7px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--accent); cursor: pointer; white-space: nowrap; }
   .edit-btn:disabled, .align-btn:disabled, .ai-scope-btn:disabled { opacity: .55; cursor: not-allowed; }
-  .empty-panel { padding: 24px 16px; font-size: var(--fs-sm); color: var(--text-3); display: flex; align-items: flex-start; gap: 10px; }
+  .empty-panel { padding: 10px 12px; font-size: var(--fs-sm); color: var(--text-3); display: flex; align-items: flex-start; gap: 10px; }
   .empty-panel span { flex: 1; }
   .ai-explain-section { border-color: var(--accent); }
   .ai-cost { margin-left: auto; font-size: var(--fs-2xs); font-weight: 400; color: var(--text-3); }
