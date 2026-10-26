@@ -130,8 +130,8 @@ def test_unavailable_connector_keeps_one_idempotent_note_safely_queued(
     # The fixture's link points at a folder that does not exist: the note
     # waits, and says why, before Paratext is ever asked (#358).
     assert "folder for this book is not available" in second["result"]["handoff"]["lastError"]
-    notes = resolution_project / ".apps" / "translationCoreAI" / "paratextNotes" / "Notes_AI_Suggestion.xml"
-    assert len(ET.parse(notes).getroot().findall("thread")) == 1
+    # No companion Notes 1.1 file any more (#358, decision 5).
+    assert not (resolution_project / ".apps" / "translationCoreAI" / "paratextNotes").exists()
     # One message in this device's outbox (#358), however often it is queued.
     outbox = _call(engine, "paratext.outbox")["result"]["items"]
     assert [item["messageId"] for item in outbox] == [second["result"]["handoff"]["messageId"]]

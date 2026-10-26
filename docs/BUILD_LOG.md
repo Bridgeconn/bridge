@@ -22039,3 +22039,17 @@ the thread by its first comment; the probe's flusher sends a queued note and is 
 kind refused). Shared builders in `tests/support/paratext_writeback.py` (a book linked to a real
 synthetic Paratext folder, and a stand-in 0.8.0 connector).
 
+
+## 2026-10-26 — Companion "Notes 1.1" file retired; TEAM_ARCHITECTURE §3.4 corrected (#358 d)
+
+Decision 5: `record_paratext_note`, `paratext_notes_path`, `paratext_note_sync_state_path`,
+`load/save_paratext_note_sync_state`, the two legacy-upgrade paths and `_target_language_code` are gone
+from `tc_project.py`; `paratext_notes.py` keeps `COMMENT_CHILD_ORDER` and `validate_comment_list`
+(the tests' synthetic Paratext folders are built against them) and loses the Notes 1.1 writer,
+reader and converters. Nothing on disk is deleted or migrated (pre-release amendment):
+`paratextNotes/Notes_AI_Suggestion.xml` in an older project is simply no longer written.
+`docs/TEAM_ARCHITECTURE.md` §3.4 said `paratextNotes/*.xml` was "Paratext's own format"; it was the
+Data Access web API's, which desktop Paratext never read — corrected in place, with what replaces it.
+`docs/ARCHITECTURE.md` and the manual checklist (SET-011, SET-012) follow. DECISIONS entry
+"plugin API only; no direct Notes_*.xml writes; ParatextData.dll not adopted", with the six answers.
+

@@ -487,11 +487,13 @@ Run this subset on every candidate installer before the full suite:
   unavailable state and Bridge remains responsive.
 - [ ] `SET-010 P1` With the companion loaded and matching project active, enable
   Paratext navigation; moves synchronize both directions without loops.
-- [ ] `SET-011 P0` Activate a different Paratext project; Bridge refuses note
-  handoff/navigation writes and identifies the project mismatch.
+- [ ] `SET-011 P0` Activate a different Paratext project; Bridge refuses navigation in
+  both directions and names both projects (#347). A note still goes to the book's linked
+  project by its id (connector 0.8.0, #358), never to the active one.
 - [ ] `SET-012 P1` Create a tN/tW issue resolution and queue Paratext handoff while
-  offline; audit and Notes 1.1 copy persist, Retry sends once, and repeats do not
-  duplicate the thread.
+  Paratext is closed; the note waits in the outbox (its card shows the last error), goes
+  out once when Paratext answers, and Retry or a second queue never duplicates the thread
+  (its `[Bridge ref …]` footer is checked in the notes files first).
 - [ ] `SET-013 P1` With Logos unavailable, Refresh reports a clean COM/unavailable
   state and does not crash or time out.
 - [ ] `SET-014 P1` With Logos open, enable navigation and move references both

@@ -5520,13 +5520,6 @@ class BridgeEngine:
         existing = outbox.get(message_id)
         if existing is not None and existing["status"] == outbox_module.SENT:
             return {"record": record, "handoff": self._handoff_from(existing, record)}
-        self.project.record_paratext_note(
-            chapter, verse, comment,
-            username=self.settings.reviewer_name or "Bridge Reviewer",
-            selected_text=str(record.get("selectedText") or ""),
-            metadata={"resolutionId": resolution_id, "paratextThreadType": "BridgeTranslationIssue"},
-            thread_id=message_id,
-        )
         item = outbox.enqueue(
             outbox_module.OP_CREATE, message_id=message_id, kind="issue_resolution", local_id=resolution_id,
             text=comment, reference=str(record.get("reference") or ""),
