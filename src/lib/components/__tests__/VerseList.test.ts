@@ -1213,6 +1213,60 @@ describe("landing on a finding's span (#402)", () => {
   });
 });
 
+describe("character styles from the display payload (#213)", () => {
+  // The engine's own display for this string (verseDisplayFixtures.ts):
+  // \nd over "Lord", \wj over "said so to him" with a nested \+it over "so".
+  const RED_LETTERS = "the \\nd Lord\\nd*, \\wj said \\+it so\\+it* to him\\wj*.";
+
+  it("wraps the styled words in their classes, nested styles stacked, and shows no marker", () => {
+    seed(RED_LETTERS);
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    const body = document.querySelector(".vbody") as HTMLElement;
+    expect(body.textContent?.trim()).toBe("the Lord, said so to him.");
+    expect(body.textContent).not.toContain("\\");
+    expect(body.querySelector(".st-nd")?.textContent).toBe("Lord");
+    expect(Array.from(body.querySelectorAll(".st-wj")).map((el) => el.textContent)).toEqual(["said ", "so", " to him"]);
+    const nested = body.querySelector(".st-it") as HTMLElement;
+    expect(nested.textContent).toBe("so");
+    expect(nested.classList.contains("st-wj")).toBe(true);
+  });
+
+  it("keeps a finding's underline on a styled word, and the style on the underlined word", () => {
+    // Finding offsets index the stored string, where the markers before
+    // "said" push it well past its place in the plain text.
+    const start = Array.from(RED_LETTERS.slice(0, RED_LETTERS.indexOf("said"))).length;
+    seed(RED_LETTERS, [finding({ id: "f1", start_offset: start, end_offset: start + 4, original_text: "said" })]);
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    const mark = document.querySelector('[data-finding-ids~="f1"]') as HTMLElement;
+    expect(mark.textContent).toBe("said");
+    expect(mark.classList.contains("m-gr")).toBe(true);
+    expect(mark.classList.contains("st-wj")).toBe(true);
+    expect(document.querySelector(".st-nd")?.textContent).toBe("Lord");
+  });
+
+  it("converts style bounds past an astral character to UTF-16, like note positions", () => {
+    // Not in the fixtures: a hand-built display with one italic span after a
+    // two-unit character. Code points 2-5 of "𝔸 abc d" are "abc".
+    const text = "𝔸 abc d";
+    seed(text);
+    verseDisplay.set({ [verseKey("1", "6")]: { plain: text, notes: [], removed: [], styles: [{ marker: "it", start: 2, end: 5 }], warnings: [] } });
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    expect(document.querySelector(".st-it")?.textContent).toBe("abc");
+  });
+
+  it("draws nothing in Raw view, where the markers themselves are shown", () => {
+    seed(RED_LETTERS);
+    rawView.set(true);
+    try {
+      render(VerseList, { props: { onSelect: vi.fn() } });
+      expect(document.querySelector(".st-wj")).toBeNull();
+      expect(document.querySelector(".vtext")?.textContent).toContain("\\wj");
+    } finally {
+      rawView.set(false);
+    }
+  });
+});
+
 describe("VerseList ring from the panel's F8", () => {
   beforeEach(() => seed("मसीह यीशु के दास पौलुस"));
   afterEach(() => {

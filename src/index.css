@@ -51,6 +51,9 @@
   --tw:#0F766E; --tw-bg:#E3F2F0;
   --align:#B45309; --align-bg:#FEF3E1;
   --gr:#DC2626; --gr-bg:#FCEBEB;
+  /* Words of Jesus (\wj, #213): a red that reads as print's red letters,
+     darker and browner than --gr so it is never taken for a Greek Room mark. */
+  --wj:#9F1D1D;
   /* Termbase-authority findings (terminology.deprecated-form) get their own
      colour and a double underline -- distinct from the four Greek Room/tN/tW/
      alignment sources above, since this is a different confidence class

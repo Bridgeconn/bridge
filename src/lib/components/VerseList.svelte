@@ -7,6 +7,7 @@
   import { unionInChapterOrder } from "../crossVerseSuggest";
   import { buildSegments } from "../utils/highlight";
   import { withNoteMarkers, type VerseNote, type VerseNoteKind } from "../utils/usfmNotes";
+  import { styleClasses, withStyleSpans, type StyleRange } from "../utils/verseStyles";
   import { identityDisplay, plainToUtf16, rawOffsetFromPlain, utf16Offset } from "../utils/verseDisplay";
   import { selectionInVerse } from "../utils/selection";
   import { addFlag } from "../flags";
@@ -911,6 +912,13 @@
     return display.notes.map((note) => ({ ...note, position: plainToUtf16(display, note.position) }));
   }
 
+  /** The engine's style bounds are code points into `plain` too (#213). */
+  function stylesForLayout(display: VerseDisplay): StyleRange[] {
+    return display.styles.map((span) => ({
+      marker: span.marker, start: plainToUtf16(display, span.start), end: plainToUtf16(display, span.end),
+    }));
+  }
+
   /** Display only. Language QA's start/end are raw-verse code-point offsets,
    * so to draw a mark over the rendered text (notes lifted out) they shift
    * the same way remapFindings' do. These copies go to buildSegments and
@@ -1100,7 +1108,7 @@
     {@const display = shownDisplay(key, $rawView, $verseDisplay, $verseTexts)}
     {@const remapped = remapFindings(highlightFindings, display)}
     {@const langDisplay = displayLanguageQaFindings(langFindings, display)}
-    {@const segments = buildSegments(display.plain, remapped, $nativeChecksByVerse[key] ?? [], $aiCheckReviewsByVerse[key] ?? [], langDisplay)}
+    {@const segments = withStyleSpans(buildSegments(display.plain, remapped, $nativeChecksByVerse[key] ?? [], $aiCheckReviewsByVerse[key] ?? [], langDisplay), stylesForLayout(display))}
     {@const menuFindingIds = markedFindingIds(remapped, display.plain.length, langDisplay)}
     {@const activeFindingId = menuFindingIds[activeIndexFor(key, menuFindingIds.length)]}
     {@const isEditingThis = $editingChapter === $currentChapter && $editingVerse === v}
@@ -1188,7 +1196,7 @@
                 the marks and Shift+F10 opens theirs (onVerseKeydown), so the mark takes no listener of its own.
                 --><!-- svelte-ignore a11y-click-events-have-key-events a11y-no-noninteractive-element-interactions
                 --><mark
-                class={piece.seg.className}
+                class="{piece.seg.className} {styleClasses(piece.seg.styles)}"
                 class:active-finding={$focusedFindingId
                   ? piece.seg.findingIds.includes($focusedFindingId)
                   : $selectedVerse === v && activeFindingId !== undefined && piece.seg.findingIds.includes(activeFindingId)}
@@ -1197,7 +1205,7 @@
                 title={piece.seg.title}
                 on:click={(event) => focusMarkFromClick(event, piece.seg.findingIds, v)}
                 on:contextmenu={(event) => onMarkContextMenu(event, piece.seg.findingIds, findings, langFindings, v)}
-              >{piece.seg.text}</mark>{#if piece.seg.numbers.length}<sup class="finding-num">{piece.seg.numbers.join(",")}</sup>{/if}{:else}{piece.seg.text}{#if piece.seg.numbers.length}<sup class="finding-num">{piece.seg.numbers.join(",")}</sup>{/if}{/if}
+              >{piece.seg.text}</mark>{#if piece.seg.numbers.length}<sup class="finding-num">{piece.seg.numbers.join(",")}</sup>{/if}{:else if piece.seg.styles?.length}<span class={styleClasses(piece.seg.styles)}>{piece.seg.text}</span>{#if piece.seg.numbers.length}<sup class="finding-num">{piece.seg.numbers.join(",")}</sup>{/if}{:else}{piece.seg.text}{#if piece.seg.numbers.length}<sup class="finding-num">{piece.seg.numbers.join(",")}</sup>{/if}{/if}
           {/each}
           </span>{#if $historyCountByVerse[key]}<button
               type="button"
@@ -1395,6 +1403,19 @@
   /* --font-target rather than plain inheritance so the leading below can be
      tuned for Indic ascender/descender depth without moving the UI chrome. */
   .vtext { font-family: var(--font-target); font-size: calc(var(--fs-xl) * var(--verse-scale, 1)); line-height: 1.85; color: var(--text); }
+  /* Character styles from the display payload (#213), drawn as a printed
+     Bible draws them and nothing more: italic for the italic family (\it,
+     \em, \bk book title, \tl transliterated, \sls, \add supplied words,
+     \qs Selah), bold for \bd and \k, small caps for the divine name (\nd)
+     and \sc, red letters for \wj. Small caps is a no-op in a script with no
+     case, so an Indic \nd looks like its neighbours -- deliberate: there is
+     nothing right to do to it. Nested styles stack on one element. */
+  .vbody .st-it, .vbody .st-em, .vbody .st-bk, .vbody .st-tl, .vbody .st-sls, .vbody .st-add, .vbody .st-qs, .vbody .st-bdit { font-style: italic; }
+  .vbody .st-bd, .vbody .st-k, .vbody .st-bdit { font-weight: 700; }
+  .vbody .st-nd, .vbody .st-sc { font-variant-caps: small-caps; }
+  .vbody .st-wj { color: var(--wj); }
+  .vbody .st-sup { vertical-align: super; font-size: 0.72em; line-height: 1; }
+  .vbody .st-no { font-style: normal; font-weight: 400; font-variant-caps: normal; }
   .finding-num { font-size: var(--fs-2xs); font-weight: 700; color: var(--accent); margin-left: 1px; }
   /* Where Shift+F10 would open the menu. A visible ring, not colour alone:
      the underline classes already carry the finding's source colour. It is
