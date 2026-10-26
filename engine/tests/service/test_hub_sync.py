@@ -79,9 +79,12 @@ def source(tmp_path):
 def test_every_workbench_table_is_classified_for_sync():
     assert set(SYNCED_TABLES) | set(NOT_SYNCED_TABLES) == set(MUTABLE_TABLES)
     assert not set(SYNCED_TABLES) & set(NOT_SYNCED_TABLES)
-    assert len(SYNCED_TABLES) == 12
+    assert len(SYNCED_TABLES) == 13
     for derived in ("progress_totals", "check_findings", "language_qa_cache", "alignment_verdicts"):
         assert derived in NOT_SYNCED_TABLES
+    # #358: the link travels, the device's outbox never does.
+    assert "paratext_links" in SYNCED_TABLES
+    assert "paratext_outbox" in NOT_SYNCED_TABLES
 
 
 def test_two_devices_exchange_a_decision_and_a_conflict_lands_on_both(tmp_path, hub, source):

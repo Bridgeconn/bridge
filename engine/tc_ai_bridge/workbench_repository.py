@@ -41,7 +41,7 @@ _GENERATIONS: dict[str, int] = {}
 _GENERATION_LOCK = threading.Lock()
 
 
-WORKBENCH_SCHEMA_VERSION = 10
+WORKBENCH_SCHEMA_VERSION = 11
 WORKBENCH_SCHEMA_ID = "bridge-workbench-v1"
 
 _IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -77,6 +77,8 @@ MUTABLE_TABLES: tuple[str, ...] = (
     "language_qa_flags",
     "alignment_null_decisions",
     "alignment_verdicts",
+    "paratext_links",
+    "paratext_outbox",
 )
 
 
@@ -748,6 +750,67 @@ ALTER TABLE team_members ADD COLUMN role TEXT;
 CREATE INDEX ix_team_members_user ON team_members(project_id, user_id);
 """
 
+# v11 (#358, Benz 2026-10-26): Paratext write-back's two tables. `paratext_links`
+# is human-owned and synced: one row says that a Bridge record (`kind` one of
+# issue_resolution / finding / correction_proposal, `local_id` its id) and a
+# Paratext note thread point at each other, with the `message_id` of the
+# Bridge message that made the link and its `direction`
+# (bridge_to_paratext / paratext_to_bridge). `paratext_outbox` is this
+# device's queue of plugin calls, NOT_SYNCED (hub_sync.py): a hub must never
+# carry it to another device, which would send the same note twice. Its row
+# id is the `message_id` that goes into the note's "[Bridge ref ...]" footer,
+# the idempotency key against the notes index; `op` is create_thread /
+# add_comment / resolve, `thread_id` the target thread, `status` queued /
+# sent / failed, `result_key` the author+created pair Paratext answered with,
+# the only identity a Paratext note has (no ids in the plugin API). Thread
+# content stays in the read-side notes index; there is no paratext_threads
+# table. Lifted columns are nullable, as in v3/v7, so the generic per-table
+# tests can write rows without them; `op` and `status` are validated in
+# Python (v5's lesson: a CHECK costs a rebuild to widen). Additive: nothing
+# is rebuilt.
+_MIGRATION_V11 = r"""
+CREATE TABLE paratext_links (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    book_id TEXT,
+    revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1),
+    actor_id TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    kind TEXT,
+    local_id TEXT,
+    thread_id TEXT,
+    message_id TEXT,
+    direction TEXT
+);
+CREATE UNIQUE INDEX ux_paratext_links_record_thread
+    ON paratext_links(project_id, book_id, kind, local_id, thread_id);
+CREATE INDEX ix_paratext_links_thread
+    ON paratext_links(project_id, book_id, thread_id);
+CREATE TABLE paratext_outbox (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    book_id TEXT,
+    revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1),
+    actor_id TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    op TEXT,
+    thread_id TEXT,
+    status TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    sent_at TEXT,
+    result_key TEXT
+);
+CREATE INDEX ix_paratext_outbox_status
+    ON paratext_outbox(project_id, status);
+"""
+
 _MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, _MIGRATION_V1),
     (2, _MIGRATION_V2),
@@ -759,6 +822,7 @@ _MIGRATIONS: tuple[tuple[int, str], ...] = (
     (8, _MIGRATION_V8),
     (9, _MIGRATION_V9),
     (10, _MIGRATION_V10),
+    (11, _MIGRATION_V11),
 )
 
 
