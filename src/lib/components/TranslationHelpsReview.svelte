@@ -173,9 +173,9 @@
         proposedCorrection: resolutionCorrection.trim(),
         evidence: aiReview?.evidence_used ?? [],
       });
-      const result = await bridge.queueIssueResolutionForParatext(
-        chapter, verse, record.resolutionId, String(connectorState?.project_id ?? ""),
-      );
+      // #347: the destination is the project this book was imported from (the
+      // engine reads its link); the project Paratext has active is not sent.
+      const result = await bridge.queueIssueResolutionForParatext(chapter, verse, record.resolutionId);
       // The queue call returns the record after the live handoff attempt. Use
       // that authoritative snapshot so a slower list request cannot repaint a
       // successfully sent item as queued.

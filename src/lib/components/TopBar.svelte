@@ -156,10 +156,13 @@
     class="sync-status"
     class:enabled={$navigationStatus.enabled}
     on:click={onOpenConnections}
-    title={$navigationStatus.ownerConflict ? "Another Bridge window owns desktop navigation" : "Paratext and Logos navigation"}
+    title={$navigationStatus.ownerConflict ? "Another Bridge window owns desktop navigation"
+      : $navigationStatus.paratext.mismatchMessage || "Paratext and Logos navigation"}
   >
     {#if $navigationStatus.enabled}
-      <span class:connected={$navigationStatus.paratext.connected} class:error={Boolean($navigationStatus.paratext.error)}>P</span>
+      <!-- #347: a different Paratext project active reads as an error, with the message naming both as the tooltip. -->
+      <span class:connected={$navigationStatus.paratext.connected}
+        class:error={Boolean($navigationStatus.paratext.error) || Boolean($navigationStatus.paratext.projectMismatch)}>P</span>
       <span class:connected={$navigationStatus.logos.connected} class:error={Boolean($navigationStatus.logos.error)}>L</span>
       Sync
     {:else}

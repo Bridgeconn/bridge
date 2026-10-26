@@ -1086,12 +1086,12 @@ export const bridge = {
     });
   },
 
+  /** The engine sends the note to the Paratext project the book was imported
+   *  from (#347); the caller names no project. */
   queueIssueResolutionForParatext(
-    chapter: string, verse: string, resolutionId: string, expectedProjectId = "",
+    chapter: string, verse: string, resolutionId: string,
   ): Promise<IssueResolutionHandoffResult> {
-    return call("issueResolution.queueParatext", {
-      chapter, verse, resolutionId, expectedProjectId,
-    });
+    return call("issueResolution.queueParatext", { chapter, verse, resolutionId });
   },
 
   retryIssueResolutionParatext(

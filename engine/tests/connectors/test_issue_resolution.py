@@ -38,6 +38,11 @@ def resolution_project(tmp_path: Path) -> Path:
         ]}},
     )
     _write_json(root / "tit" / "1.json", {"1": "alpha beta gamma"})
+    # #347: the book's link to its Paratext project (#356) names the project
+    # a note goes to; the folder itself need not exist for that.
+    _write_json(root / ".bridge" / "collection.json", {
+        "paratext": {"guid": "ptx-titus", "folder": str(tmp_path / "pt-missing" / "TIT"), "name": "Titus PT"},
+    })
     _write_json(
         root / ".apps" / "translationCore" / "index" / "translationNotes" / "tit" / "figs-metaphor.json",
         [{
@@ -153,10 +158,7 @@ def test_confirmed_matching_project_sends_once_and_preserves_message_identity(
     monkeypatch.setattr(bridge_service_module, "ParatextConnectorClient", LiveConnector)
     engine = _engine(tmp_path, resolution_project)
     saved = _save(engine, _check(engine))
-    params = {
-        "chapter": "1", "verse": "1", "resolutionId": saved["resolutionId"],
-        "expectedProjectId": "ptx-titus",
-    }
+    params = {"chapter": "1", "verse": "1", "resolutionId": saved["resolutionId"]}
 
     first = _call(engine, "issueResolution.queueParatext", params)
     second = _call(engine, "issueResolution.queueParatext", params)
@@ -189,12 +191,14 @@ def test_active_project_mismatch_never_sends(resolution_project, tmp_path, monke
     saved = _save(engine, _check(engine))
     result = _call(engine, "issueResolution.queueParatext", {
         "chapter": "1", "verse": "1", "resolutionId": saved["resolutionId"],
-        "expectedProjectId": "ptx-titus",
     })
 
     assert result["success"] is True
     assert result["result"]["handoff"]["status"] == "queued"
     assert "does not match" in result["result"]["handoff"]["lastError"]
+    # #347: the message names both projects; the destination is the link's.
+    assert "Titus PT (ptx-titu…)" in result["result"]["handoff"]["lastError"]
+    assert result["result"]["handoff"]["expectedProjectId"] == "ptx-titus"
 
 
 def test_scripture_edit_marks_resolution_stale_and_requests_automatic_recheck(

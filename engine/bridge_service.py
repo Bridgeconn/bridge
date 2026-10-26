@@ -121,7 +121,7 @@ from tc_ai_bridge.logos_connector import LogosConnectorClient, LogosConnectorErr
 from tc_ai_bridge import paratext_install
 from tc_ai_bridge import paratext_link
 from paratext_session import ParatextSession
-from tc_ai_bridge.navigation import NavigationSyncCoordinator
+from tc_ai_bridge.navigation import NavigationSyncCoordinator, project_mismatch_message
 from tc_ai_bridge.models import QAIssue, TokenRef, VerseAlignment
 from tc_ai_bridge.secret_store import AppSettings
 from tc_ai_bridge.workspace_repository import WorkspaceRepository, project_path_key, WorkspaceError
@@ -849,6 +849,7 @@ class BridgeEngine:
         self._navigation = NavigationSyncCoordinator(
             paratext_client=lambda: ParatextConnectorClient(),
             logos_client=self._logos_client_instance,
+            paratext_expected=self._expected_paratext_project,
         )
         self._navigation.configure(
             paratext=self.settings.paratext_navigation,
@@ -5283,6 +5284,20 @@ class BridgeEngine:
         # #357: the notes index builds on its own daemon thread, never here.
         self._paratext.ensure_notes_index()
 
+    def _expected_paratext_project(self) -> dict[str, str]:
+        """#347 (Revant's decision, 2026-10-24): the Paratext project the open
+        book was imported from -- its link Guid in ``.bridge/collection.json``
+        (#356) -- never the project Paratext has active. {} when no linked
+        book is open. Cheap: read from the session, no disk, so the navigation
+        probe can ask on every poll."""
+        session = self._paratext
+        if self.project is None or session is None or not session.guid:
+            return {}
+        resolution = session.resolution
+        settings = resolution.settings
+        name = settings.name if settings is not None else str((resolution.link or {}).get("name") or "")
+        return {"id": session.guid, "name": name}
+
     def _paratext_session(self) -> ParatextSession:
         if self._paratext is None:
             return ParatextSession(paratext_link.LinkResolution(paratext_link.NOT_PARATEXT, None),
@@ -5408,7 +5423,11 @@ class BridgeEngine:
     ) -> dict[str, Any]:
         item = dict(item)
         item["attempts"] = int(item.get("attempts") or 0) + 1
-        expected_project_id = str(item.get("expectedProjectId") or "").strip()
+        # #347: the destination is the linked project, read again on every
+        # attempt so an item queued earlier follows the link too.
+        expected = self._expected_paratext_project()
+        expected_project_id = str(expected.get("id") or "").strip()
+        item["expectedProjectId"] = expected_project_id
         try:
             state = ParatextConnectorClient().get_state()
             capabilities = {str(capability).strip().casefold() for capability in state.capabilities}
@@ -5418,12 +5437,12 @@ class BridgeEngine:
                 )
             if not expected_project_id:
                 raise ParatextConnectorError(
-                    "Confirm the destination Paratext project before sending this note."
+                    "This book is not linked to a Paratext project, so Bridge cannot tell which project the note belongs to; it stays queued."
                 )
-            if state.project_id.casefold() != expected_project_id.casefold():
-                raise ParatextConnectorError(
-                    "The active Paratext project does not match the project confirmed for this handoff."
-                )
+            active = {"project_id": str(getattr(state, "project_id", "") or ""),
+                      "project_name": str(getattr(state, "project_name", "") or "")}
+            if active["project_id"].casefold() != expected_project_id.casefold():
+                raise ParatextConnectorError(project_mismatch_message(expected, active))
             payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
             response = ParatextConnectorClient().create_note(
                 str(payload.get("reference") or ""), str(payload.get("selectedText") or ""),
@@ -5442,7 +5461,7 @@ class BridgeEngine:
         return {"record": record, "handoff": item}
 
     def queue_issue_resolution_for_paratext(
-        self, chapter: str, verse: str, resolution_id: str, expected_project_id: str = "",
+        self, chapter: str, verse: str, resolution_id: str,
     ) -> dict[str, Any]:
         self._require_project()
         record = self.project.load_issue_resolution(chapter, verse, resolution_id)
@@ -5466,7 +5485,8 @@ class BridgeEngine:
         }
         item.update({
             "status": "queued", "contentSignature": signature,
-            "expectedProjectId": str(expected_project_id or item.get("expectedProjectId") or ""),
+            # #347: the linked project, never the one Paratext has active.
+            "expectedProjectId": str(self._expected_paratext_project().get("id") or ""),
             "notePath": str(note_path),
             "payload": {
                 "reference": record["reference"], "selectedText": record.get("selectedText", ""),
@@ -8994,7 +9014,7 @@ class BridgeEngine:
                 ))
             if m == Methods.ISSUE_RESOLUTION_QUEUE_PARATEXT:
                 return EngineResponse.ok(request.id, result=self.queue_issue_resolution_for_paratext(
-                    p["chapter"], p["verse"], p["resolutionId"], p.get("expectedProjectId", ""),
+                    p["chapter"], p["verse"], p["resolutionId"],
                 ))
             if m == Methods.ISSUE_RESOLUTION_RETRY_PARATEXT:
                 return EngineResponse.ok(request.id, result=self.retry_issue_resolution_paratext(

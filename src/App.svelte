@@ -1317,6 +1317,17 @@
   // `$:` statement only for the names written in it, and the old
   // `currentBridgeReference()` call never re-ran, so Bridge never published a
   // verse change to Paratext or Logos (#110).
+  // #347: when Paratext has a different project active, the engine stops
+  // following and sending navigation and says so in the status; show that
+  // sentence once each time it appears (the top bar keeps it as a tooltip).
+  let lastMismatchMessage = "";
+  $: {
+    const message = $navigationStatus.paratext.mismatchMessage ?? "";
+    if (message !== lastMismatchMessage) {
+      lastMismatchMessage = message;
+      if (message) showNavigationNotice(message);
+    }
+  }
   $: navigationReference = bridgeReference($project, $currentChapter, $selectedVerse);
   $: if (!navigationReference) {
     lastNavigationReference = "";
