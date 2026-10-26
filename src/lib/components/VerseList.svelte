@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
-  import { verseNums, verseTexts, verseDisplay, headingsByVerse, findingsByVerse, checkStatusByVerse, alignmentStatusByVerse, selectedVerse, selectedVerseSet, currentChapter, verseKey, nativeChecksByVerse, aiCheckReviewsByVerse, checkingProgress, languageQaFindingsByVerse, project, flagsByVerse, historyCountByVerse, activeLanguageQaFindingId, checkGroupsByVerse, targetLang } from "../stores";
+  import { verseNums, verseTexts, verseDisplay, headingsByVerse, findingsByVerse, checkStatusByVerse, alignmentStatusByVerse, selectedVerse, selectedVerseSet, currentChapter, verseKey, nativeChecksByVerse, aiCheckReviewsByVerse, checkingProgress, languageQaFindingsByVerse, project, flagsByVerse, historyCountByVerse, paratextNoteCountsByVerse, activeLanguageQaFindingId, checkGroupsByVerse, targetLang, targetDir, reviewTabRequest } from "../stores";
   import { checksRunNote } from "../checkSelection";
   import { alignmentStatusLabel, isAlignmentComplete } from "../alignmentStatus";
   import { rangeBetween } from "../crossVerseRange";
@@ -13,7 +13,9 @@
   import FlagDialog from "./FlagDialog.svelte";
   import FlagPopover from "./FlagPopover.svelte";
   import VerseHistoryPopover from "./VerseHistoryPopover.svelte";
-  import { rawView } from "../editorPrefs";
+  import { rawView, revealSidePanel } from "../editorPrefs";
+  import { openIssueSummary } from "../verseIssues";
+  import { loadParatextNoteCounts, noteCountFor } from "../paratextNotes";
   import type { FlagInput, LanguageQaFlag } from "../types/languageQa";
   import type { VerseDisplay } from "../types/finding";
   import VerseNotesPopup from "./VerseNotesPopup.svelte";
@@ -40,6 +42,8 @@
   import { requestAIReview, aiJobActive, type AIReviewScope } from "../aiReviewUi";
 
   export let onSelect: (verse: string) => void;
+  // #357: Paratext note counts for the badge, a chapter at a time.
+  $: if ($project?.path && $currentChapter) void loadParatextNoteCounts($currentChapter);
   /** Opens a verse anywhere in the book (an occurrence in another chapter). */
   export let onNavigate: (book: string, chapter: string, verse: string) => void = () => {};
   // The word whose occurrences are listed (verse menu), or null.
@@ -154,7 +158,7 @@
    * The inline Language QA context menu, in the indic-qa editor's order: the
    * word and what was found; each suggestion (learned fixes first) with its
    * kind and frequency shown and Chapter / Book buttons on its row (the item
-   * itself is "here"); Forget a learned fix; Add to the project word list
+   * itself is "here"); Forget a learned fix; Add to dictionary (this book)
    * (only where it would silence the finding); Ignore, with Book / Project on
    * its row and a rule-wide submenu; False positive; Flag, Copy, Search,
    * occurrences, Edit; and related words, which arrive after the menu opens.
@@ -199,7 +203,7 @@
       }] : []),
       ...(addable ? [{
         id: "add-word",
-        label: `Add “${word}” to the project word list`,
+        label: `Add “${word}” to dictionary (this book)`,
         separatorBefore: true,
         disabled: busy,
         title: "This word is spelt right in this project: stop reporting it as a spelling problem anywhere in the book.",
@@ -313,7 +317,7 @@
     return [
       { id: "word-header", header: true, target: true, label: `“${word.word}”`,
         tag: hasSelection ? "selected text" : "no finding here" },
-      ...(single ? [{ id: "add-word", label: `Add “${word.word}” to the project word list`, disabled: !$project,
+      ...(single ? [{ id: "add-word", label: `Add “${word.word}” to dictionary (this book)`, disabled: !$project,
         title: "This word is spelt right in this project: never report it as a spelling problem in the book." }] : []),
       { id: "copy", label: hasSelection ? "Copy selection" : "Copy word" },
       { id: "search", label: "Search in this book", disabled: !$project, title: "Every place this text occurs in the book" },
@@ -1068,7 +1072,8 @@
     {@const checkStatus = $checkStatusByVerse[key]}
     {@const alignmentStatus = $alignmentStatusByVerse[key] ?? "untouched"}
     {@const langFindings = $languageQaFindingsByVerse[key] ?? []}
-    {@const openCount = findings.filter((f) => f.status === "open").length + langFindings.length}
+    {@const issues = openIssueSummary(findings, langFindings)}
+    {@const openCount = issues.count}
     {@const clear = checkStatus === "succeeded" && openCount === 0 && isAlignmentComplete(alignmentStatus)}
     {@const clearTitle = verseClearTitle(checkStatus, openCount, alignmentStatus) + checksRunNote($checkGroupsByVerse[key])}
     {@const highlightFindings = findings.filter((f) => f.status !== "ignored" && f.status !== "accepted")}
@@ -1098,7 +1103,22 @@
       on:contextmenu={(e) => openVerseMenu(e, v)}
     >
       <div class="vnum" title={clearTitle}>
-        {v}{#if clear}&nbsp;✓{:else if checkStatus === "failed" || checkStatus === "cancelled"}&nbsp;⚠{/if}
+        <span class="vnum-text">{v}{#if clear}&nbsp;✓{:else if checkStatus === "failed" || checkStatus === "cancelled"}&nbsp;⚠{/if}</span>
+        {#if openCount}
+          <!-- #383: the open-issue count, coloured by the worst open severity;
+               absent when the verse is clear so ✓ stands alone. A click selects
+               the verse and shows the Review panel on the first open finding's
+               tab, as the PT badge does for Paratext notes. -->
+          <button
+            type="button"
+            class="issue-pill sev-{issues.worst}"
+            data-testid="open-issue-pill"
+            title={issues.title}
+            aria-label={`Verse ${v}: ${issues.title}. Show them`}
+            on:dblclick|stopPropagation
+            on:click|stopPropagation={() => { onSelect(v); reviewTabRequest.set(issues.tab); revealSidePanel("review"); }}
+          >{openCount}</button>
+        {/if}
       </div>
       {#if isEditingThis}
         <div
@@ -1110,7 +1130,7 @@
           role="presentation"
         >
           <div class="vedit-row">
-            <textarea use:autosize bind:value={$editText} disabled={$editSaving} />
+            <textarea use:autosize bind:value={$editText} disabled={$editSaving} dir={$targetDir} lang={$targetLang} />
             <div class="edit-actions">
               <button
                 class="icon-btn save" on:click={() => void saveVerseEdit()}
@@ -1123,8 +1143,10 @@
           {#if $editError}<p class="edit-error">{$editError}</p>{/if}
         </div>
       {:else}
-        <div class="vtext" class:raw={$rawView}>
-          <span class="vbody">
+        <!-- #323: the project's direction on the text block too, so an RTL
+             verse's lines start at the right, not only its runs reordered. -->
+        <div class="vtext" class:raw={$rawView} dir={$targetDir}>
+          <span class="vbody" dir={$targetDir} lang={$targetLang}>
           {#each withNoteMarkers(segments, notesForLayout(display), flagMarkers($flagsByVerse[key] ?? [], display)) as piece}
             {#if piece.kind === "flag"}<button
                 type="button"
@@ -1162,7 +1184,15 @@
               }}
               title={`Edited ${$historyCountByVerse[key]}×: show the change history`}
               aria-label={`Change history of verse ${v}: ${$historyCountByVerse[key]} edit${$historyCountByVerse[key] === 1 ? "" : "s"}`}
-            >↺{$historyCountByVerse[key]}</button>{/if}
+            >↺{$historyCountByVerse[key]}</button>{/if}{#if noteCountFor($paratextNoteCountsByVerse, $currentChapter, v).open}{@const pt = noteCountFor($paratextNoteCountsByVerse, $currentChapter, v).open}<button
+              type="button"
+              class="pt-notes-btn"
+              data-testid="paratext-note-badge"
+              on:dblclick|stopPropagation
+              on:click|stopPropagation={() => { onSelect(v); revealSidePanel("paratext"); }}
+              title={`${pt} open Paratext note${pt === 1 ? "" : "s"}: show them`}
+              aria-label={`Paratext notes on verse ${v}: ${pt} open`}
+            >PT {pt}</button>{/if}
           {#if $editWarnings?.key === key}
             <p class="edit-warning" role="status">Saved, but check the markers: {$editWarnings.warnings.join("; ")}</p>
           {/if}
@@ -1324,7 +1354,17 @@
   .verse { display: flex; gap: 10px; padding: 9px 10px; border-radius: 7px; margin-bottom: 2px; cursor: pointer; border: 1px solid transparent; }
   .verse:hover { background: var(--surface-2); }
   .verse.active { background: var(--accent-bg); border-color: #C7D9FB; }
-  .vnum { font-size: var(--fs-xs); font-weight: 700; color: var(--text-3); width: 26px; flex-shrink: 0; padding-top: 2px; }
+  /* #383: the number keeps its 26px column; the pill sits beside it in a
+     wider, fixed-width box so a two-digit count never wraps and every row's
+     text starts at the same x. */
+  .vnum { font-size: var(--fs-xs); font-weight: 700; color: var(--text-3); width: 52px; flex-shrink: 0; padding-top: 2px; display: flex; align-items: baseline; gap: 4px; }
+  .vnum-text { min-width: 26px; white-space: nowrap; }
+  .issue-pill { flex-shrink: 0; min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box; border-radius: 999px; border: 1px solid transparent;
+    font: inherit; font-family: var(--font-ui); font-size: var(--fs-3xs); font-weight: 700; line-height: 16px; text-align: center; cursor: pointer; }
+  .issue-pill.sev-high { background: var(--danger-bg); color: var(--danger); border-color: var(--danger); }
+  .issue-pill.sev-medium { background: var(--warning-bg); color: var(--warning); border-color: var(--warning); }
+  .issue-pill.sev-low, .issue-pill.sev-info { background: var(--surface-2); color: var(--text-2); border-color: var(--border-strong); }
+  .issue-pill:hover, .issue-pill:focus-visible { border-color: var(--accent); color: var(--accent); outline: none; }
   .verse.approved .vnum { color: var(--success); }
   .verse.check-failed .vnum { color: var(--danger, #ef4444); }
   /* --font-target rather than plain inheritance so the leading below can be
@@ -1359,6 +1399,10 @@
   .flag-btn.resolved { color: var(--text-3); }
   .history-btn { margin-left: 6px; padding: 0 3px; border: 0; background: none; cursor: pointer; font: inherit;
     font-family: var(--font-ui); font-size: var(--fs-2xs); color: var(--text-3); vertical-align: super; }
+  .pt-notes-btn { margin-left: 6px; padding: 0 4px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2);
+    color: var(--text-2); cursor: pointer; font: inherit; font-family: var(--font-ui); font-size: var(--fs-3xs); font-weight: 700;
+    line-height: 1.5; vertical-align: super; }
+  .pt-notes-btn:hover, .pt-notes-btn:focus-visible { color: var(--accent); border-color: var(--accent); outline: none; }
   .history-btn:hover, .history-btn:focus-visible { color: var(--accent); background: var(--surface-2); border-radius: 3px; outline: none; }
   .vtext.raw { white-space: pre-wrap; font-size: calc(var(--fs-md) * var(--verse-scale, 1)); }
   .edit-warning { margin: 4px 0 0; font-family: var(--font-ui); font-size: var(--fs-2xs); color: var(--warning); }

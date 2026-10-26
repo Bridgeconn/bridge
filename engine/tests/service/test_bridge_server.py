@@ -67,9 +67,10 @@ def test_main_parses_serve_and_the_desktop_default_is_stdio():
     import main
 
     assert main._serve_args(["--resources-dir", "x"]) is None
-    assert main._serve_args(["--serve"]) == {"data_dir": "", "host": "127.0.0.1", "port": 8765}
-    assert main._serve_args(["--serve", "--data-dir", "D:/hub", "--host", "0.0.0.0", "--port", "9000"]) == {
-        "data_dir": "D:/hub", "host": "0.0.0.0", "port": 9000,
+    assert main._serve_args(["--serve"]) == {"data_dir": "", "host": "127.0.0.1", "port": 8765, "parent_pid": None}
+    assert main._serve_args(["--serve", "--data-dir", "D:/hub", "--host", "0.0.0.0", "--port", "9000",
+                             "--parent-pid", "4242"]) == {
+        "data_dir": "D:/hub", "host": "0.0.0.0", "port": 9000, "parent_pid": 4242,
     }
 
 
@@ -82,8 +83,15 @@ def test_the_stdio_path_never_imports_the_server():
             for alias in (node.names if isinstance(node, ast.Import) else [ast.alias(name=node.module or "")])
         }
         assert not imported & {"bridge_server", "fastapi", "starlette", "uvicorn"}, name
-    spec = (ENGINE_ROOT / "bridge-engine.spec").read_text(encoding="utf-8")
-    assert "'bridge_server'" in spec and "'fastapi'" in spec and "'uvicorn'" in spec
+    # Since 2026-10-23 (#46) the frozen sidecar carries the server for
+    # Settings > Team > Start a hub: nothing of it is excluded, and the
+    # argv-only import of bridge_server is named for the freeze.
+    spec = ast.parse((ENGINE_ROOT / "bridge-engine.spec").read_text(encoding="utf-8"))
+    keywords = {kw.arg: ast.literal_eval(kw.value) for node in ast.walk(spec)
+                if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "Analysis"
+                for kw in node.keywords if kw.arg in {"excludes", "hiddenimports"}}
+    assert not set(keywords["excludes"]) & {"bridge_server", "fastapi", "starlette", "uvicorn"}
+    assert "bridge_server" in keywords["hiddenimports"]
 
 
 def test_serve_answers_rpc_with_the_stdio_envelope(tmp_path, fixture_project):

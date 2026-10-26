@@ -34,3 +34,47 @@ describe("ExportModal publication gate (layered-rules 4.5)", () => {
     expect(pickSavePath).toHaveBeenCalledTimes(1);  // the override reuses the chosen path
   });
 });
+
+describe("ExportModal Escape (#321)", () => {
+  it("closes on Escape, as Close does, and returns focus to the invoker", async () => {
+    const opener = document.createElement("button");
+    opener.textContent = "Export";
+    document.body.appendChild(opener);
+    opener.focus();
+    const onClose = vi.fn();
+    const { unmount } = render(ExportModal, { props: { onClose } });
+    await fireEvent.keyDown(window, { key: "Enter" });
+    expect(onClose).not.toHaveBeenCalled();
+    await fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledOnce();
+    unmount();
+    expect(document.activeElement).toBe(opener);
+    opener.remove();
+  });
+});
+
+describe("ExportModal aligned export with lettered segments (#307)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    pickSavePath.mockResolvedValue("/out/jon-aligned.usfm");
+  });
+
+  it("says which verses were written without alignment", async () => {
+    exportAligned.mockResolvedValueOnce({ written: true, path: "/out/jon-aligned.usfm", chapters: 1,
+      unalignedVerses: ["5a", "5b"].map((verse) => ({ reference: `1:${verse}`, chapter: "1", verse,
+        reason: "no-source-tokens", detail: "No original-language source tokens" })) });
+    render(ExportModal, { props: { onClose: vi.fn() } });
+    await fireEvent.click(screen.getByText("Aligned USFM 3"));
+    expect(await screen.findByText(/Wrote 1 chapter\(s\)/)).toBeInTheDocument();
+    expect(screen.getByText("2 verse(s) written without alignment (no original-language source): 1:5a, 1:5b"))
+      .toBeInTheDocument();
+  });
+
+  it("adds no line when every verse could carry alignment", async () => {
+    exportAligned.mockResolvedValueOnce({ written: true, path: "/out/jon-aligned.usfm", chapters: 1, unalignedVerses: [] });
+    render(ExportModal, { props: { onClose: vi.fn() } });
+    await fireEvent.click(screen.getByText("Aligned USFM 3"));
+    expect(await screen.findByText(/Wrote 1 chapter\(s\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/written without alignment/)).not.toBeInTheDocument();
+  });
+});

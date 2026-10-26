@@ -10,6 +10,7 @@
 import { writable, get } from "svelte/store";
 import { checkingProgress, verseKey } from "./stores";
 import { editSaving, recheckingKey } from "./verseEditor";
+import { revealSidePanel } from "./editorPrefs";
 
 export const alignmentOpen = writable(false);
 export const alignmentKey = writable("");
@@ -32,10 +33,16 @@ function alignmentBusy(): boolean {
 
 /** Guards match ReviewPanel's original "Align words" button: no verse, a
  * background check run, an in-flight edit save, or a post-edit recheck all
- * mean the alignment data underneath the modal isn't stable yet. */
+ * mean the alignment data underneath the modal isn't stable yet.
+ *
+ * The modal is mounted inside the Review side panel, which stays mounted but
+ * hidden while closed, so the panel is opened too (#306): from a verse row
+ * with Review closed the dialog was otherwise in the page but invisible. Only
+ * ever opened here, never toggled shut. */
 export function openAlignment(chapter: string, verse: string): boolean {
   if (!verse || alignmentBusy()) return false;
   alignmentKey.set(verseKey(chapter, verse));
+  revealSidePanel("review");
   alignmentOpen.set(true);
   return true;
 }

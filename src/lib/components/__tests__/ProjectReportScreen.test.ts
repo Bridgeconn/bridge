@@ -105,7 +105,8 @@ describe("ProjectReportScreen", () => {
 
     const headers = screen.getAllByRole("columnheader").map((h) => h.textContent);
     expect(headers).toEqual([
-      "Error category", "Book", "Chapter", "Verse", "Issue and explanation", "AI proposal", "Fixed by", "Pass / fail",
+      "Error category", "Book", "Chapter", "Verse", "Issue and explanation", "Check suggestion", "AI proposal",
+      "Fixed by", "Pass / fail",
     ]);
     expect(screen.getByText("Machine (Bridge AI)")).toBeInTheDocument();
     expect(screen.getByText("Select: தேவன்")).toBeInTheDocument();
@@ -114,6 +115,31 @@ describe("ProjectReportScreen", () => {
     // Charts carry their identities in text, never colour alone.
     expect(screen.getByRole("figure", { name: "Issues by category" })).toHaveTextContent("Alignment");
     expect(screen.getByRole("figure", { name: "Fixed by" })).toHaveTextContent("Machine");
+  });
+
+  it("shows a check's own suggestion under Check suggestion, never under AI proposal (#317)", () => {
+    mount({
+      report: sampleReport({
+        rows: [
+          reportRow({ id: "rut:names", engine: "names", checkSuggestion: "More common spelling: என்று" }),
+          reportRow({
+            id: "rut:tn", category: "translationNotes", engine: "translationNotes", aiProposal: "Select: தேவன்",
+          }),
+        ],
+      }),
+    });
+    const headers = screen.getAllByRole("columnheader").map((h) => h.textContent);
+    const checkCol = headers.indexOf("Check suggestion");
+    const aiCol = headers.indexOf("AI proposal");
+    const [names, tn] = tableRows().map((row) => within(row).getAllByRole("cell"));
+    expect(names[checkCol]).toHaveTextContent("More common spelling: என்று");
+    expect(names[aiCol]).toHaveTextContent("—");
+    expect(tn[checkCol]).toHaveTextContent("—");
+    expect(tn[aiCol]).toHaveTextContent("Select: தேவன்");
+    // The export carries the two as separate, separately labelled columns.
+    const labels = EXPORT_COLUMNS.map((c) => [c.key, c.label]);
+    expect(labels).toContainEqual(["checkSuggestion", "Check suggestion"]);
+    expect(labels).toContainEqual(["aiProposal", "AI proposal"]);
   });
 
   it("exports the filtered rows as CSV to the path the user picks", async () => {

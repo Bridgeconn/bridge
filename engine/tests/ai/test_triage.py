@@ -14,7 +14,7 @@ import threading
 
 import pytest
 
-from tc_ai_bridge.ai_client import OpenAIResponsesClient
+from tc_ai_bridge.ai_client import AIError, AITransportError, OpenAIResponsesClient
 from tc_ai_bridge.tc_project import TranslationCoreProject, read_triage_records
 from tc_ai_bridge.triage import (
     MAX_BATCH, build_batches, build_items, build_batch_input, canonical_evidence,
@@ -487,22 +487,63 @@ def test_a_raising_client_degrades_the_batch_instead_of_ending_the_run(fixture_p
 
 
 def test_a_network_failure_says_so_rather_than_blaming_the_parser(fixture_project):
-    """The reason is shown to the reviewer. Telling someone the response
+    """The error is shown to the reviewer. Telling someone the response
     'could not be parsed' when the endpoint was unreachable sends them
-    debugging the wrong thing."""
+    debugging the wrong thing. And nothing is stored: nobody judged the
+    finding (#318)."""
     project = TranslationCoreProject(fixture_project)
     _plant_findings(project, {"1": [_finding(id="f1")]})
 
     def boom(instructions, input_text):
-        raise RuntimeError("Network error contacting OpenAI: connection refused")
+        raise AITransportError("Network error contacting OpenAI: connection refused")
 
     summary = _run(project, boom)
 
-    reason = next(iter(project.load_triage_records().values()))["reason"]
-    assert "could not be reached" in reason
-    assert "connection refused" in reason
-    assert "parse" not in reason.lower()
+    assert project.load_triage_records() == {}
     assert "could not be reached" in summary["lastError"]
+    assert "connection refused" in summary["lastError"]
+    assert "parse" not in summary["lastError"].lower()
+    assert (summary["failedBatches"], summary["unreachedBatches"], summary["triaged"]) == (1, 1, 0)
+
+
+@pytest.mark.parametrize("error", [
+    AITransportError("Network error contacting OpenAI: [Errno 11001] getaddrinfo failed"),
+    TimeoutError("timed out"),
+    ConnectionResetError(10054, "An existing connection was forcibly closed by the remote host"),
+])
+def test_a_batch_that_never_reached_the_model_stores_nothing(fixture_project, error):
+    """Refused, DNS, timeout, reset: told apart from a bad answer by type,
+    not by message text (#318). An earlier verdict is kept, not overwritten."""
+    project = TranslationCoreProject(fixture_project)
+    _plant_findings(project, {"1": [_finding(id="f1"), _finding(id="f2", explanation="other")]})
+    _run(project, FakeModel())
+    before = project.load_triage_records()
+    assert len(before) == 2
+
+    def unreachable(instructions, input_text):
+        raise error
+
+    summary = _run(project, unreachable, force=True)
+
+    assert project.load_triage_records() == before
+    assert summary["unreachedBatches"] == summary["failedBatches"] == summary["batches"] == 1
+    assert summary["triaged"] == 0
+
+
+def test_a_model_error_that_is_not_transport_still_records_uncertain(fixture_project):
+    """Only an unreached model stores nothing. Anything else that goes wrong
+    keeps the existing behaviour, uncertain at confidence 0."""
+    project = TranslationCoreProject(fixture_project)
+    _plant_findings(project, {"1": [_finding(id="f1")]})
+
+    def rejected(instructions, input_text):
+        raise AIError("OpenAI API error HTTP 401: invalid key")
+
+    summary = _run(project, rejected)
+
+    [record] = project.load_triage_records().values()
+    assert (record["verdict"], record["confidence"]) == ("uncertain", 0)
+    assert (summary["failedBatches"], summary["unreachedBatches"], summary["triaged"]) == (1, 0, 1)
 
 
 def test_an_unparseable_response_still_blames_the_parser(fixture_project):

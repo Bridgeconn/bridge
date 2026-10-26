@@ -6,6 +6,7 @@
   // (the review panel's live checks, Language QA's F8 walk).
   import { SIDE_PANEL_LIMITS, clampPanelWidth, setSidePanel, sidePanels } from "../editorPrefs";
   import type { SidePanelId } from "../editorPrefs";
+  import { foldedPanels } from "../panelFit";
 
   export let id: SidePanelId;
   export let label: string;
@@ -22,6 +23,9 @@
 
   $: limits = SIDE_PANEL_LIMITS[id];
   $: open = $sidePanels[id].open;
+  // Open but folded to its rail entry because the window is too narrow (#324):
+  // hidden like a closed panel, its saved state untouched.
+  $: folded = open && $foldedPanels.has(id);
   // A column never takes more than 45% of the window, whatever was saved.
   $: maxWidth = Math.max(limits.min, Math.min(limits.max, Math.floor(innerWidth * 0.45)));
   $: width = Math.min(dragWidth ?? $sidePanels[id].width, maxWidth);
@@ -71,8 +75,8 @@
 <svelte:window bind:innerWidth />
 
 {#if open || keepMounted}
-  <section class="side-panel" id={`side-panel-${id}`} aria-label={label} hidden={!open}
-    class:closing style:width="{width}px">
+  <section class="side-panel" id={`side-panel-${id}`} aria-label={label} hidden={!open || folded}
+    class:closing style:width="{width}px" style:min-width="{limits.min}px">
     <!-- svelte-ignore a11y-no-noninteractive-tabindex a11y-no-noninteractive-element-interactions -->
     <div class="resize-handle" class:dragging={dragWidth !== null}
       role="separator" aria-orientation="vertical"
@@ -87,7 +91,9 @@
 {/if}
 
 <style>
-  .side-panel { position: relative; flex-shrink: 0; display: flex; flex-direction: column; min-height: 0;
+  /* Shrinks before the verse list does, down to its own minimum (#324); below
+     that, panelFit.ts folds it to the rail instead of letting the row overflow. */
+  .side-panel { position: relative; flex-shrink: 1; display: flex; flex-direction: column; min-height: 0;
     overflow: hidden; border-left: 1px solid var(--border); background: var(--surface); }
   .side-panel[hidden] { display: none; }
   .side-panel.closing { opacity: .55; }

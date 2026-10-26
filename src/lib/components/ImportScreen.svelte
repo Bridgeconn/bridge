@@ -301,6 +301,16 @@
         projectName: preview.metadata.projectName ?? "",
         bibleName: preview.metadata.bibleName ?? "",
       };
+      // A detected code with no name (a Paratext LanguageIsoCode, #308) is
+      // named from the same table the search uses. Paratext's own <Language>
+      // is the name only when the code is not in that table (#355).
+      const detected = !metadata.languageName && metadata.languageId
+        ? languages.find((language) => language.iso6393 === metadata.languageId)
+        : undefined;
+      if (detected) metadata = { ...metadata, languageName: detected.name };
+      else if (!metadata.languageName && preview.paratextLanguageName) {
+        metadata = { ...metadata, languageName: preview.paratextLanguageName };
+      }
       languageQuery = metadata.languageName || metadata.languageId;
     } catch (value) {
       error = message(value);
@@ -489,7 +499,21 @@
         </p>
       {:else if projects.length > 0}
         <section class="projects" aria-label="Known projects">
-          {#each filteredProjects as item (item.projectId)}
+          {#each filteredProjects as item (item.conflict ? `conflict:${item.path}` : item.projectId)}
+            {#if item.conflict}
+              <!-- #309: a managed folder whose identity the registry refused. It
+                   has no projectId of its own, so it offers no actions. -->
+              <article class="project-row conflict">
+                <div class="book-badge">{item.bookId?.toUpperCase() || "?"}</div>
+                <div class="project-copy">
+                  <strong>{displayName(item)}</strong>
+                  <span>{(item.bookCount ?? 1) > 1 ? `${item.bookCount} books` : item.bookName}{item.bibleName ? ` · ${item.bibleName}` : ""}</span>
+                  <span class="conflict-message" role="alert">{item.conflict.message}</span>
+                  {#if item.conflict.registeredPath}<small title={item.conflict.registeredPath}>Registered copy: {item.conflict.registeredPath}</small>{/if}
+                  <small title={item.path}>This copy: {item.path}</small>
+                </div>
+              </article>
+            {:else}
             <article class:missing={item.missing} class:archived={Boolean(item.archivedAt)} class="project-row">
               <div class="book-badge">{item.bookId?.toUpperCase() || "?"}</div>
               <div class="project-copy">
@@ -505,22 +529,24 @@
               </div>
               <div class="project-actions" role="group" aria-label={`Actions for ${displayName(item)}`}>
               {#if item.missing}
-                <button class="small-button" on:click={() => locate(item)} disabled={loading}>Locate</button>
-                <button class="small-button danger" on:click={() => forget(item)} disabled={loading}>Forget</button>
+                <button class="small-button icon-action" on:click={() => locate(item)} disabled={loading}
+                  title={`Locate ${displayName(item)}`} aria-label={`Locate ${displayName(item)}`}>📂︎</button>
+                <button class="small-button icon-action danger" on:click={() => forget(item)} disabled={loading}
+                  title={`Forget ${displayName(item)}`} aria-label={`Forget ${displayName(item)}`}>✕</button>
               {:else if confirmingId === item.projectId}
                 <span class="confirm-copy">Delete permanently?</span>
                 <button class="small-button danger" on:click={() => deleteProject(item)} disabled={loading}>Confirm</button>
                 <button class="small-button" on:click={() => (confirmingId = "")} disabled={loading}>Cancel</button>
               {:else}
-                <button class="small-button action-icon primary" aria-label="Open" use:tooltip={"Open"} on:click={() => openPath(item.path, item.projectId)} disabled={loading}><UiIcon name="open" /></button>
-                <button class="small-button action-icon" aria-label="Rename" use:tooltip={"Rename"} on:click={() => startRename(item)} disabled={loading}><UiIcon name="rename" /></button>
+                <button class="small-button action-icon primary" aria-label={`Open ${displayName(item)}`} use:tooltip={`Open ${displayName(item)}`} on:click={() => openPath(item.path, item.projectId)} disabled={loading}><UiIcon name="open" /></button>
+                <button class="small-button action-icon" aria-label={`Rename ${displayName(item)}`} use:tooltip={`Rename ${displayName(item)}`} on:click={() => startRename(item)} disabled={loading}><UiIcon name="rename" /></button>
                 {#if item.archivedAt}
-                  <button class="small-button action-icon" aria-label="Unarchive" use:tooltip={"Unarchive"} on:click={() => setArchived(item, false)} disabled={loading}><UiIcon name="unarchive" /></button>
+                  <button class="small-button action-icon" aria-label={`Unarchive ${displayName(item)}`} use:tooltip={`Unarchive ${displayName(item)}`} on:click={() => setArchived(item, false)} disabled={loading}><UiIcon name="unarchive" /></button>
                 {:else}
-                  <button class="small-button action-icon" aria-label="Archive" use:tooltip={"Archive"} on:click={() => setArchived(item, true)} disabled={loading}><UiIcon name="archive" /></button>
+                  <button class="small-button action-icon" aria-label={`Archive ${displayName(item)}`} use:tooltip={`Archive ${displayName(item)}`} on:click={() => setArchived(item, true)} disabled={loading}><UiIcon name="archive" /></button>
                 {/if}
                 {#if item.managed}
-                  <button class="small-button action-icon danger" aria-label="Delete" use:tooltip={"Delete"} on:click={() => (confirmingId = item.projectId)} disabled={loading}><UiIcon name="delete" /></button>
+                  <button class="small-button action-icon danger" aria-label={`Delete ${displayName(item)}`} use:tooltip={`Delete ${displayName(item)}`} on:click={() => (confirmingId = item.projectId)} disabled={loading}><UiIcon name="delete" /></button>
                 {/if}
               {/if}
               </div>
@@ -533,6 +559,7 @@
                 </div>
               </details>
             </article>
+            {/if}
           {/each}
         </section>
         {#if filteredProjects.length === 0}
@@ -550,6 +577,12 @@
         <div>
           <h1>Confirm project details</h1>
           <p class="source" title={preview.sourcePath}>{preview.sourcePath}</p>
+          {#if preview.paratext}
+            <p class="paratext-link" data-testid="paratext-link">
+              Paratext project <strong>{preview.paratext.name}</strong>{preview.paratext.fullName ? ` (${preview.paratext.fullName})` : ""}
+              · Guid <code>{preview.paratext.guid}</code>
+            </p>
+          {/if}
         </div>
         <button class="back action-icon" aria-label="Back to projects" use:tooltip={"Back to projects"} on:click={reset} disabled={loading}><UiIcon name="back" /></button>
       </div>
@@ -665,6 +698,8 @@
   .project-row { flex-wrap: wrap; min-height: 66px; display: flex; align-items: center; gap: 11px; padding: 9px 11px; border-bottom: 1px solid var(--border); }
   .project-row:last-child { border-bottom: 0; }
   .project-row.missing { background: #fff9ed; }
+  .project-row.conflict { background: #fff9ed; }
+  .conflict-message { color: var(--danger); }
   .book-badge { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 8px; background: var(--accent-bg); color: var(--accent); font-size: var(--fs-2xs); font-weight: 800; flex-shrink: 0; }
   .project-copy { display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 2px; }
   .project-copy strong { font-size: var(--fs-sm); color: var(--text); }
@@ -673,9 +708,14 @@
   .project-row.archived { opacity: .7; }
   .progress-line { font-size: var(--fs-2xs); color: var(--text-2); }
   .rename-input { font: inherit; font-weight: 700; padding: 2px 6px; border: 1px solid var(--accent); border-radius: 4px; background: var(--surface); color: var(--text); width: 100%; box-sizing: border-box; }
-  .small-button { border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); color: var(--text); padding: 6px 10px; cursor: pointer; font-size: var(--fs-2xs); }
+  .small-button { height: var(--control-h); box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); color: var(--text); padding: 0 10px; cursor: pointer; font-size: var(--fs-2xs); flex-shrink: 0; }
   .small-button.primary { border-color: var(--accent); color: var(--accent); }
   .small-button.danger { color: var(--danger); }
+  /* #375: a 28x28 glyph button; the glyph is drawn upright and monochrome
+     from the UI font, never from an icon font (CLAUDE.md gotcha 9). */
+  .small-button.icon-action { width: var(--control-h); padding: 0; font-family: var(--font-ui); font-size: var(--fs-sm); line-height: 1; }
+  .small-button.icon-action:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .small-button.icon-action.danger:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
   .confirm-copy { color: var(--danger); font-size: var(--fs-2xs); font-weight: 650; flex-shrink: 0; }
   .empty { background: var(--surface-2); color: var(--text-2); border-radius: 8px; padding: 14px; font-size: var(--fs-xs); margin: 0 0 18px; }
   .choice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -686,6 +726,8 @@
   .link-button, .back { display: block; border: 0; background: none; color: var(--accent); cursor: pointer; font-size: var(--fs-xs); margin: 15px auto 0; }
   .header-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding-bottom: 18px; border-bottom: 1px solid var(--border); }
   .source { color: var(--text-2); font-size: var(--fs-2xs); margin: 7px 0 0; max-width: 650px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .paratext-link { color: var(--text-2); font-size: var(--fs-2xs); margin: 4px 0 0; max-width: 650px; overflow-wrap: anywhere; }
+  .paratext-link code { font-size: var(--fs-2xs); }
   .back { margin: 4px 0 0; white-space: nowrap; }
   .duplicate-notice { display: flex; flex-direction: column; gap: 3px; margin-top: 16px; border: 1px solid #e8c268; border-radius: 8px; background: #fff9e9; color: #7a5500; padding: 10px 12px; font-size: var(--fs-2xs); }
   .duplicate-notice.exact { border-color: #e6a9a9; background: #fff2f2; color: #8b2d2d; }

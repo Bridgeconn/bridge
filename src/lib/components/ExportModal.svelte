@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { bridge } from "../api/bridgeClient";
   import { project } from "../stores";
   import type { ExportGateItem } from "../api/bridgeClient";
@@ -6,8 +7,22 @@
   export let onClose: () => void;
   export let reviewComplete = false;
 
+  // #321: Escape does what the Close button does (it stays enabled while an
+  // export is writing, so Escape does too), and focus goes back to the
+  // button that opened the dialog (the CheckerSettingsDialog pattern).
+  let openedFrom: Element | null = null;
+  onMount(() => {
+    openedFrom = document.activeElement;
+    return () => { if (openedFrom instanceof HTMLElement && openedFrom.isConnected) openedFrom.focus(); };
+  });
+
+  function onWindowKeydown(event: KeyboardEvent): void {
+    if (event.key === "Escape" && !event.defaultPrevented) onClose();
+  }
+
   let exporting = false;
   let resultMessage = "";
+  let unalignedMessage = "";
   let errorMessage = "";
   // The publication gate (layered-rules 4.5): an export with blocking items
   // open comes back unwritten with the items; the reviewer can tick the
@@ -31,11 +46,22 @@
     blocked = null;
     resultMessage = `Wrote ${result.chapters} chapter(s) to ${result.path}`
       + (result.overridden ? " (exported over the publication gate; the override is recorded)" : "");
+    unalignedMessage = unalignedLine(result.unalignedVerses ?? []);
+  }
+
+  // A verse with no original-language source tokens (a lettered segment such
+  // as 5a) is written without alignment rather than refusing the book (#307).
+  function unalignedLine(verses: { reference: string }[]): string {
+    if (verses.length === 0) return "";
+    const refs = verses.slice(0, 6).map((v) => v.reference).join(", ")
+      + (verses.length > 6 ? `, and ${verses.length - 6} more` : "");
+    return `${verses.length} verse(s) written without alignment (no original-language source): ${refs}`;
   }
 
   async function doExport(kind: "aligned" | "nonAligned") {
     exporting = true;
     resultMessage = "";
+    unalignedMessage = "";
     errorMessage = "";
     try {
       const bookId = $project?.bookId ?? "export";
@@ -66,6 +92,8 @@
     }
   }
 </script>
+
+<svelte:window on:keydown={onWindowKeydown} />
 
 <div class="modal-overlay">
   <div class="modal">
@@ -104,6 +132,7 @@
 
     {#if exporting}<p class="status">Writing…</p>{/if}
     {#if resultMessage}<p class="status success">{resultMessage}</p>{/if}
+    {#if resultMessage && unalignedMessage}<p class="status note">{unalignedMessage}</p>{/if}
     {#if errorMessage}<p class="status error">{errorMessage}</p>{/if}
 
     <div class="modal-actions">
@@ -126,6 +155,7 @@
   .status { font-size: var(--fs-xs); margin: 8px 0 0; }
   .status.success { color: var(--success); }
   .status.error { color: var(--danger); }
+  .status.note { color: var(--text-2); }
   .gate { border: 1px solid var(--danger); border-radius: 10px; padding: 10px 12px; margin: 4px 0 8px; font-size: var(--fs-xs); }
   .gate-title { margin: 0 0 6px; font-weight: 700; color: var(--danger); }
   .gate ul { margin: 0 0 8px; padding-left: 18px; max-height: 160px; overflow: auto; }

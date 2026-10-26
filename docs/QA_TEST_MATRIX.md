@@ -210,7 +210,7 @@ d` markers in the reader are expected until Phase 2 of #91. 20 tests in `tests/p
 | E03 | Footnotes/headings/poetry/milestones | No silent structural loss | PASS — source-template export; explicit fallback without source |
 | E04 | ESFM content | Supported markers preserved or limitation made explicit | PASS — custom markers retained by source-template export |
 | E05 | Windows bundle | Both helper executables are present and runnable | PASS — Beta 4 app and NSIS installer produced; both workers are version-checked, hash-matched across staging locations, and exercised by the enhanced frozen smoke |
-| E06 | macOS/Linux bundles | Build, permissions and runtime behavior verified | BLOCKED |
+| E06 | macOS/Linux bundles | Build, permissions and runtime behavior verified | PARTIAL — since 2026-10-12 (#250, selvabenz/Bridge) `release.yml` builds an arm64 DMG (ad-hoc signed, sidecar signatures checked), an AppImage and a deb, each gated by the frozen-sidecar smoke and `cargo test` on that OS; nobody has launched Bridge on a real macOS or Linux desktop, and #251–#253 record the known runtime gaps |
 | E07 | QA report CSV/TSV export | Filtered rows written with a UTF-8 BOM, RFC-4180 quoting, the reviewer's column labels | PASS — source tests |
 | E08 | QA report PDF (print) | Only the report prints, every filtered row, across pages | NOT RUN — print CSS compiles and `window.print()` is invoked (Vitest); WebView2 print preview not exercised |
 
@@ -353,12 +353,124 @@ Philemon broken twice (duplicate `\v 1`; missing `\v 2` + unclosed `\bd`), Tamil
 | Import | FAIL — #301 (returning to Projects reopens the last dropped file's import review; a second drop shows the first file) |
 | Fonts | FAIL on 0.18.0, fixed on main — every English verse in Vijaya's italic Latin (#286, f9adccb) |
 
+## 0.18.0 installed-app regression walk, QA 02 / 03 / 04 / 06 (2026-10-16)
+
+Same build and setup as 2026-10-15 (installed 0.18.0 (575235b), scratch `LOCALAPPDATA`, real CDP input;
+folder pickers driven with real keystrokes and clicks). Fixtures are disposable copies under
+`D:\Claude Lab\Claude outputs\qa-0.18.0\2026-10-16\fixtures`: the Jonah structure fixture, IRV Tamil
+RUT/OBA/JON, Malayalam RUT/OBA, Odia RUT, a UTF-8 BOM 3JN with Hebrew and Greek, a real Paratext
+project (DevaTest, 27 NT books), two 66-book IRV folders (Kannada, Telugu), a real Bridge-made tC
+project (IRV Tamil PHP) as folder, `.zip` and `.tcore`, and negative samples. Per-case detail is on
+#153, #154, #155 and #157.
+
+| Case | Result |
+|---|---|
+| IMP-001 – IMP-004, IMP-007, IMP-009 – IMP-018 | PASS — IMP-009: a zip with `../`, `..\`, absolute and drive entries refused ("Archive contains an unsafe path …"), nothing written outside; IMP-010: BOM, Hebrew, Greek, Odia stored byte-identical; IMP-011/012 by the `tauri://drag-*` events, not a physical Explorer drag |
+| IMP-005 | PASS for `.zip`/`.tcore`; `.tstudio` BLOCKED (no sample) |
+| IMP-006 | FAIL — #308 (Paratext `LanguageIsoCode` `sa:::` copied raw, import blocked until a language is picked); books, names and an unchanged source otherwise |
+| IMP-008 | FAIL — #310 (QA report gate "No blocking issues" at 0% checked and with high USFM findings open); a duplicate verse is refused at import |
+| Project Home | FAIL — #309 (re-importing a Bridge-made project keeps its id; with both folders known `project.list` fails and Home shows "No projects are registered yet") |
+| PRJ-001 – PRJ-006, PRJ-008 – PRJ-012 | PASS — PRJ-004: a moved 3-book collection relocated from one book; PRJ-008: 135 entries, Home 4.1 s after launch, `project.list` ≤ 0.45 s |
+| PRJ-007 | FAIL — #311 (a damaged `workspace.sqlite3` crash-loops the engine at start) |
+| EDT-001, EDT-002, EDT-005 – EDT-009, EDT-011, EDT-013 – EDT-015 | PASS — EDT-008/013: an NFD é and Tamil text identical after restart; EDT-006 bridge/segment rows after verse 10 are #302 |
+| EDT-003, EDT-004 | FAIL — #200 (cross-chapter jump lands on verse 1; no message for bad input; `5:1` in a 1-chapter book opens an empty chapter) |
+| EDT-010 | FAIL — #127 (a stale editor save overwrites newer text; `verse.edit` carries no expected text) |
+| EDT-012 | PASS against a stand-in for the Paratext companion on its named pipe, not real Paratext: an edit in progress blocks the move with a message, Cancel then follows |
+| TH-001 – TH-008 | PASS — offline selection editing (exact, refused, multiple with occurrence, nothing to select, clear with history kept) and the no-key AI message |
+| TH-009 – TH-018 | BLOCKED — need a configured AI provider |
+| ALN-001 – ALN-003, ALN-005 – ALN-014 | PASS — 1:1, 1:many, many:1, many:many groups with token identity and repeated-word occurrence kept; a stale Align Words save refused ("The alignment file changed on disk …"); Undo and Restore selected byte-identical; an edit marks the verse invalid and keeps surviving groups; all of it after a restart. #306 still applies to the row glyph with the Review panel closed |
+| ALN-004 | PARTIAL — bank → column pointer drag works; column → bank drag is not in 0.18.0 (added by #285 in 0.19.0) |
+| ALN-015 | BLOCKED — needs an AI provider |
+| ALN-016 | FAIL — #312 (a group whose target words are not adjacent refuses the whole book's aligned export, on real IRV Tamil PHP data) and #307; the round trip on a clean book with two groups keeps both groups and every verse |
+| REV-003, REV-005, REV-006, REV-008, REV-012 – REV-014 | PASS — REV-009/014 (P0): dispositions, notes and append-only history survive a restart; an edit marks the analysis and every finding Stale. REV-012: no "cancelled" message and the old "Analysis complete" banner stays |
+| REV-009 | PASS for persistence; the reviewer is shown as a raw actor id, #313 |
+| REV-004, REV-010 | PARTIAL — a running job is not shown while another scope is selected; scopes keep their own status |
+| REV-001, REV-002, REV-015 | Card out of date — one Passage analysis view with passage/chapter/book/range scopes, no Word/Semantic/QA tabs |
+| REV-007, REV-011 | NOT RUN — no cross-verse finding in the data; no empty scope tried |
+| COR-001, COR-002, COR-006, COR-008 – COR-010, COR-012, COR-014, COR-016 | PASS — manual insertion proposal on a confirmed finding; a stale proposal refuses Apply; Cancel writes nothing; a double Apply gives one Scripture write and one intent; re-analysis leaves verification PENDING; UNCERTAIN offers no Mark corrected; the whole ledger (4 proposals, 2 intents, 1 verification, 14 events) survives a restart |
+| COR-003 | PASS with defect — #314 (the insertion slider runs over raw text with markup; Apply would have written `\x QA-COR-2- \xo …`) |
+| COR-005 | PARTIAL — the old wording is kept as an event snapshot but not shown in the panel |
+| COR-007 | FAIL — #315 (after a rejection no new proposal can be created for the finding) |
+| COR-013 | FAIL on a verse with markup — #316 (job hashes lifted text, verifier raw text: ANALYSIS_NOT_CURRENT forever); PASS on a plain verse (UNCERTAIN with reason codes) |
+| COR-004, COR-015 | BLOCKED — no provider; no PASSED verification reachable with lexical-only retrieval |
+| COR-011 | NOT RUN — no kill timed around Apply |
+| RPT-003, RPT-004, RPT-006, RPT-007, RPT-010, RPT-012 | PASS — book/category/severity/text filters agree with tiles and counts; Clear filters restores 1,776; row link opens the verse; unopened collection books listed "Not yet opened — no checks run"; filtered CSV/TSV: BOM, 44 rows, quoting, Tamil intact |
+| RPT-005 | FAIL — #317 (a Greek Room check's own suggestion shown and exported as "AI proposal") |
+| RPT-011 | FAIL — #211 still on 0.18.0 (PDF bar charts not drawn, a strip of dashes down the right side) |
+| RPT-015 | FAIL — #318 (an unreachable model leaves an "Uncertain · 0%" verdict on every finding); the error itself is clean and the engine stays up |
+| RPT-001, RPT-009 | PARTIAL — reports build in 1–2 s (no progress to watch); empty report clear, failure not forced |
+| RPT-013, RPT-014, RPT-016 | BLOCKED — need a real AI provider (RPT-014 is P0) |
+| RPT-002, RPT-008 | NOT RUN |
+| SET-002, SET-003, SET-004, SET-006, SET-009, SET-013, SET-015, SET-016 | PASS — SET-004 (P0): the key exists only as `api_key_dpapi`; a unique marker was found in no file, log, export or the Diagnostics view, also after failed calls to a dead local endpoint |
+| SET-005 | FAIL — #319 (no way to remove a saved key) |
+| SET-011 | FAIL — #320 (Paratext navigation never checked against the active Paratext project) |
+| SET-001 | PARTIAL — panes open by mouse; keyboard and Security pane not exercised; Diagnostics ignores Escape |
+| SET-007, SET-008, SET-010, SET-012, SET-014 | NOT RUN — no other resource version, no network cut, no real Paratext/Logos |
+| EXP-003 – EXP-009 | PASS — export identical to source structure; existing-name and unwritable destinations go through explicit Windows prompts; export writes CRLF and drops a source BOM |
+| EXP-002 | FAIL — #312, #307 on real data; a clean two-group book round-trips |
+| EXP-001 | Card out of date — Export is offered with a "Review is not complete" warning and an explicit override for blocking gate items, never disabled |
+| EXP-010 | OBSERVATION — save dialogs open in the last folder used by any save |
+| A11Y-002, A11Y-010, A11Y-013 | PASS — visible focus ring and logical Project Home order; 19 scripts each drawn by a real font, no tofu (Latin in Vijaya on 0.18.0 is #286); no visible control without an accessible name on seven screens |
+| A11Y-001 | FAIL — #322 (Enter on a book's Open in the dashboard does nothing) |
+| A11Y-003 | FAIL — #321 (Escape does not close Settings, Engine diagnostics, Export, Assignments) |
+| A11Y-008 | FAIL — #324 (at ~1000 px wide the verse list scrolls out of view) |
+| A11Y-011 | FAIL — #323 (RTL project: verse list and editor laid out LTR) |
+| A11Y-015 | OBSERVATION — raw codes (CONFIRMED_TRANSLATION_ERROR, ANALYSIS_NOT_CURRENT, code-point ranges, actor ids) on normal screens |
+| A11Y-004 – A11Y-007, A11Y-009, A11Y-012, A11Y-014 | NOT RUN — no screen reader, contrast tool, scaling change or zoom test |
+| ROB-002, ROB-014, ROB-015 | PASS — engine killed with a project open: restarted and reconnected in ~10 s (status bar kept "Engine: ready"); no sockets from app or engine; the working project differs from its backup only by the authorised edits and Bridge metadata |
+| ROB-003, ROB-006, ROB-008, ROB-009, ROB-011, ROB-013 | PASS by reference — INS-009, IMP-014/COR-010/CHK-010, REV-014/COR-008, COR-016, EDT-005, SET-004 |
+| ROB-004 | PARTIAL — unwritable/existing destinations via Windows prompts; full disk not tried |
+| ROB-005 | FAIL — #311 |
+| ROB-001, ROB-007, ROB-010, ROB-012 | NOT RUN |
+| REL-005 | PASS — the v0.18.0 `smoke_sidecars.py` against the installed workers |
+| REL-006 | Recorded — `Bridge_0.18.0_x64-setup.exe` 81,040,879 bytes, sha256 `382de3ae…` (= release asset), app 0.18.0, workers and uninstaller: all NotSigned; source 575235b |
+| REL-001, REL-008 | OPEN — P0 failures #127, #307, #310, #311, #312, #315, #316, #320; sign-off pending |
+| GR-13 | PASS — Collection QA over three books with Greek Room and Language QA, re-run skips all unchanged; progress % stays 0 |
+| CHK-006 | FAIL (versification part) — #325 (UGNT 3JN 1:15 dropped for a 14-verse target, no finding) |
+| DATA-004 | NOT COVERED — the "IRV Urdu" fixture is Devanagari, not RTL (corrected on #151) |
+
+## 0.20.0 installed-app walk: release smoke, the 0.18.0 fixes, Paratext (2026-10-23)
+
+A focused walk, not a full regression (Benz's scope, 2026-10-23): the release smoke, every 0.18.0 failure
+that 0.20.0 fixes, Paratext #354–#357 and the reference Bible #289. Installed 0.20.0 (966b50b), scratch
+`LOCALAPPDATA`, 1366×768, real CDP input; native Save As and Select Folder driven with real keystrokes.
+Fixtures are disposable copies under `D:\Claude Lab\Claude outputs\qa-0.20.0\2026-10-23\fixtures` (the
+0.18.0 set, an Arabic-script Urdu Ruth, and copies of the Paratext projects IRVTam, DVT and BHDNT without
+`.hg`). Issue numbers are RevantCI's; the selvabenz copies of #306–#324 are +27, #289 is selvabenz #317.
+The ledger with every message quoted is in that folder.
+
+| Case | Result |
+|---|---|
+| SMK-001 – SMK-008 | PASS — SMK-006: aligned export of Jonah writes the book, 1:5a/1:5b unaligned and named in the dialog; both exports re-import. SMK-008: title-bar close leaves no process (1.9 s), three times |
+| EDT-010 (#127) | PASS — a stale editor save is refused, the newer text quoted, the typed text kept |
+| ALN-001 / SMK-005 (#306) | PASS — Align Words from a verse row with the Review panel closed opens on screen |
+| EXP-002 lettered segments (#307) | PASS — PHP's discontinuous group (#312) not re-walked, no fix in 0.20.0 |
+| IMP-006 (#308) | PASS — DVT `sa:::` → Sanskrit / `san` pre-filled |
+| Project Home (#309) | PASS — a Bridge-made project opened in place plus its `.zip` imported: `project.list` lists all 8, the copy gets a new id and `importedFrom` |
+| REV-009 (#313) | PASS — Alignment Review history names the reviewer. Correction-proposal history still shows the actor id |
+| COR-003 (#314) | PASS — insertion points are word boundaries and the verse end after `\f*`, none inside the note |
+| COR-007 (#315) | PASS — after a rejection a new proposal is created; the old one is kept as SUPERSEDED |
+| COR-013 (#316) | PASS on a verse with a footnote — verification reaches UNCERTAIN with reason codes |
+| RPT-005 (#317) | PASS — screen and CSV: the check's suggestion in "Check suggestion", "AI proposal" empty |
+| RPT-015 (#318) | PASS — dead endpoint: "2 batches could not reach the model", 0 `triage_verdicts` rows |
+| SET-005 (#319) | PASS for removal — the confirmation is never shown, #326 |
+| A11Y-003 (#321) | PASS — Escape closes Export, Assignments, Settings, Engine diagnostics; focus returns to the opener |
+| A11Y-001 (#322) | PASS — Enter on a book's Open opens it |
+| A11Y-011 (#323) | PASS — RTL verse text and editor carry `dir="rtl"`. Picking Urdu still leaves the import form LTR (optional in the issue) |
+| A11Y-008 (#324) | PASS — 1000×680 with two side panels: verse list ~340 px, no horizontal scroll |
+| #354, #355 | PASS — IRVTam: 66 books, four RegExBackup files skipped with reasons, Tamil pre-filled, dashboard in 10.3 s; the three Paratext copies byte-identical after every test |
+| #356 | PASS — linked; moved (same-Guid candidate under My Paratext 9 Projects offered); missing → Relink… refuses another project's folder and relinks all 27 books to the right one |
+| #357 | PASS — JOS 3:4 PT 3 badge and its three threads; an edited note appears after reopening the book |
+| #289 | PASS — Change → BHDNT shown for Joshua and for Ruth of the same collection; Settings Clear → built-in Old Version. The open Reference panel keeps the old Bible until reopened |
+| New | #326 (P1; selvabenz #372) — `window.confirm` is the dialog plugin's async version and is refused by the ACL, so the chapter/book AI review ("may … incur API charges") and Remove key run without asking |
+| Not walked | #200, #211, #310, #311, #312, #320, #325 (no fix in 0.20.0); AI cases with a real key |
+
 ## Team hub, dashboard, users and projects: the two-laptop walk (#281)
 
 The hardware walk for requirements 4, 5 and 6. Two laptops on one LAN, both with the installed **0.17.0** (`Bridge_0.17.0_x64-setup.exe`, release v0.17.0, built from 81ff377). Laptop **A** (Benz) runs the hub and desktop A. Laptop **B** (Revant) runs desktop B and the browser dashboard. There is no third machine, so the dashboard rows use B's Chrome and Edge, not the hub's own machine. Rows are in walking order: some depend on earlier ones. Each row ends PASS, or FAIL with the issue it was filed under (failures found here are filed without asking first, per #281).
 
 **Facts checked in the code before the walk (2026-10-14), which shape the steps:**
-- The installed `bridge-engine.exe` cannot serve the hub: `bridge-engine.spec` excludes `bridge_server`, FastAPI and uvicorn by design (the `[server]` pip extra). The hub runs from a source checkout.
+- The installed `bridge-engine.exe` cannot serve the hub: `bridge-engine.spec` excludes `bridge_server`, FastAPI and uvicorn by design (the `[server]` pip extra). The hub runs from a source checkout. *(Since 2026-10-23 the sidecar carries the server and Settings › Team › Start a hub runs it; see DECISIONS 2026-10-23.)*
 - Hub defaults: `127.0.0.1:8765`. A LAN needs `--host 0.0.0.0`.
 - A desktop syncs only the open book: automatically every 60 s, or on **Sync now**.
 - **Settings › Team** does not refresh itself. Reopen it to see a new "Last synced" or a new conflict.
@@ -391,6 +503,11 @@ The hardware walk for requirements 4, 5 and 6. Two laptops on one LAN, both with
 | M84 | **Assignment from the dashboard reaches My work.** As admin, **Assign…** RUT → "Chapter 1" to Revant → **Done** → "Saved. Devices pick it up on their next sync." On B, **Sync now**, then reopen the project dashboard: **My work (1)** and "book: … · ch 1: Revant", with "Ch 1 ●" in the chapter select. | NOT RUN — 0.17.0 |
 | M85 | **Reporter is read-only.** Dashboard: sign out, then sign in with the reporter code → Projects and **Export CSV** work, with no Users tab and no **Assign…**. Desktop: on B, **Leave the hub** ("Left the hub; nothing on this device was removed."), join with the reporter code, make a decision → **Sync now** shows "… is a reporter and cannot push changes." Then record whether B still receives A's later decisions: the code pushes before it pulls, so a reporter with unpushed rows may never pull. File it if so. | NOT RUN — 0.17.0 |
 | M86 | **1366x768.** At 1366x768 and 100% scaling, every screen above shows with no clipped button or hidden field: Settings › Users, Settings › Team (with a conflict listed), the Assign dialog, the name picker, the import banner, the projects list, the dashboard tabs. | NOT RUN — 0.17.0 |
+| M87 | **Start a hub from the installed app** (#46, DECISIONS 2026-10-23). On A, not joined: Settings › Team shows **Start a hub** and **Join a hub**, both enabled. **Start a hub** → "Starting the hub…" → within ~10 s "running on this machine", "Others join at http://&lt;A's name&gt;:8765" and a join code. Start is now disabled. Windows Firewall asks once: allow on private networks. `%LOCALAPPDATA%\Bridge\hub\hub.log` holds "Bridge hub on http://0.0.0.0:8765". | NOT RUN |
+| M88 | **Join this hub, then link.** On A, **Join this hub** → "Joined as &lt;A's user&gt; (project_admin)", the hosting box stays with **Stop the hub**. Open RUT → **Link this book** → **Sync now** → "Last synced" has a time. | NOT RUN |
+| M89 | **A second machine joins.** On B, **Join a hub** → type `http://<A's name>:8765` → within a second **Start a hub** is disabled with "A hub already answers at … Join it instead." Enter A's join code → **Join** → link RUT → a decision made on A reaches B after both sync (as M79). | NOT RUN |
+| M90 | **Start disabled when a hub already runs here.** With a source hub already on port 8765 (`python main.py --serve`), open Settings › Team on that machine: **Start a hub** is disabled with "Something on this machine already answers on port 8765, probably a hub. Join it instead."; **Join a hub** works. | NOT RUN |
+| M91 | **Stop, close, relaunch.** **Stop the hub** → "Hub stopped.", Start enabled again; B's **Sync now** shows the unreachable error within ~10 s. Start again, then close Bridge on A → `Get-Process bridge-engine` returns nothing and `cargo build` is not blocked (gotcha 13). Relaunch A → the hub comes back by itself, Start disabled. | NOT RUN |
 
 Requirement 6 figures to record with their measured numbers: M81 (500 decisions, seconds), M80 (conflict visible, N on each side), M82 (offline unaffected, and the time for the error to show).
 

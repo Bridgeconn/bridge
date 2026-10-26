@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PanelHeader from "./PanelHeader.svelte";
   import { onDestroy, tick } from "svelte";
   import { bridge } from "../api/bridgeClient";
   import { languageQaChannel, nudgeLanguageQa } from "../languageQaInline";
@@ -96,6 +97,11 @@
   let learnedBusy = false;
   let learnedError = "";
   // Book words: the book's words outside the dictionary (last pass).
+  // #385: the tab is named for the open book ("Words in Genesis") so it says
+  // which book it lists as the reviewer moves between books. The engine fills
+  // bookName from the USFM \h or \toc2 header, else the English table; the
+  // fallback here is the dashboard's: the code, upper-cased.
+  $: bookLabel = $project?.bookName || ($project?.bookId ?? status?.book ?? "").toUpperCase() || "this book";
   let bookWords: BookWordRow[] = [];
   let bookWordsReason = "";
   let bookWordsLoaded = false;
@@ -104,7 +110,7 @@
   let ticked = new Set<string>();
   let tickAtLeast = 5;
   let wordScope: "book" | "project" = "book";
-  // Dictionary: the project word list.
+  // Dictionary: the project's own words (the pack's dictionary is never written).
   let projectWords: HouseStyleEntry[] = [];
   let flags: LanguageQaFlag[] = [];
   let flagsLoaded = false;
@@ -256,12 +262,25 @@
   let aboutBox: HTMLDivElement | null = null;
   let headHeight = 0;
   let tabsHeight = 0;
+  // #376: the Kinds dropdown in the filter row, closed the same three ways.
+  let kindsOpen = false;
+  let kindsButton: HTMLButtonElement | null = null;
+  let kindsBox: HTMLDivElement | null = null;
+
+  // #376: the title's state word: "completed", "paused", "checking 12/50".
+  $: stateWord = !status ? (error ? "unavailable" : "starting")
+    : `${status.state}${(status.completedChapters ?? 0) < (status.totalChapters ?? 0)
+      ? ` ${status.completedChapters ?? 0}/${status.totalChapters ?? 0}` : ""}`;
+
+  function closeAbout(): void {
+    aboutOpen = false;
+    infoButton?.focus();
+  }
 
   function onWindowPointerdown(event: PointerEvent): void {
-    if (!aboutOpen) return;
     const target = event.target instanceof Node ? event.target : null;
-    if (target && (aboutBox?.contains(target) || infoButton?.contains(target))) return;
-    aboutOpen = false;
+    if (aboutOpen && !(target && (aboutBox?.contains(target) || infoButton?.contains(target)))) aboutOpen = false;
+    if (kindsOpen && !(target && (kindsBox?.contains(target) || kindsButton?.contains(target)))) kindsOpen = false;
   }
 
   function toggleCategory(category: string): void {
@@ -328,8 +347,12 @@
 
   function onWindowKeydown(event: KeyboardEvent): void {
     if (aboutOpen && event.key === "Escape") {
-      aboutOpen = false;
-      infoButton?.focus();
+      closeAbout();
+      return;
+    }
+    if (kindsOpen && event.key === "Escape") {
+      kindsOpen = false;
+      kindsButton?.focus();
       return;
     }
     if (event.key !== "F8" || event.ctrlKey || event.altKey || event.metaKey || !$project) return;
@@ -415,7 +438,7 @@
       return;
     }
     bookWords = bookWords.map((w) => (ticked.has(w.word) ? { ...w, status: "added" } : w));
-    bookWordsNotice = `${words.length} word${words.length === 1 ? "" : "s"} added to the project word list.`;
+    bookWordsNotice = `${words.length} word${words.length === 1 ? "" : "s"} added to the dictionary.`;
     ticked = new Set();
   }
 
@@ -513,47 +536,54 @@
       <!-- The header stays put while the panel scrolls: title, the (i), Pause and
            Close, then one status line and, when a pass left text out, the warning. -->
       <div class="panel-head" bind:clientHeight={headHeight}>
-        <div class="head-row">
-          <h2>Language QA · Offline</h2>
+        <!-- #379: the shared header bar; the (i) and Pause are this panel's
+             actions, and Close does what the rail does (or folds the floating
+             box). #376: the title carries the state word; everything else
+             that used to be always visible is behind the (i), a popover that
+             never changes the header's height. Errors and the one-line
+             coverage warning stay in view. -->
+        <PanelHeader id="languageQa" title={`Language QA · ${stateWord}`} label="Language QA" onClose={toggle}>
           <button type="button" class="info-btn" bind:this={infoButton} aria-label="About these checks"
             aria-expanded={aboutOpen} aria-controls="language-qa-about"
             title="What Language QA checks, and what it does not" on:click={() => (aboutOpen = !aboutOpen)}>i</button>
-          <span class="grow" />
           {#if status}
-            <button type="button" on:click={togglePause} disabled={busy || status.state === "failed"}>
-              {status.state === "paused" ? "Resume checks" : "Pause checks"}
+            <button type="button" on:click={togglePause} disabled={busy || status.state === "failed"}
+              aria-label={status.state === "paused" ? "Resume checks" : "Pause checks"}
+              title={status.state === "paused" ? "Resume the checks" : "Pause the checks"}>
+              {status.state === "paused" ? "Resume" : "Pause"}
             </button>
           {/if}
-          <button on:click={toggle} aria-label="Close Language QA">Close</button>
-        </div>
-        {#if status}
-          <p class="status-line">
-            {status.language?.name || status.language?.language || "Detecting language"}
-            {#if status.language} · {status.language.script.toLowerCase()} script{/if}
-            {#if status.language && status.language.pack !== "common"} · {status.language.pack} rules{/if}
-            · {status.state} · {status.completedChapters ?? 0}/{status.totalChapters ?? 0} chapters
-            · {status.totalFindings} review candidates
-          </p>
-        {/if}
+        </PanelHeader>
+        <div class="head-meta">
         {#if error}<p class="alert" role="alert">{error}</p>{/if}
         {#if status?.error}<p class="alert" role="alert">{status.error}</p>{/if}
-        {#if status && (status.incomplete || status.limitations.length)}
-          <div class="coverage-warn">
-            {#if status.incomplete}<span class="notice">Coverage incomplete. Omitted text has not passed QA.</span>{/if}
-            {#if status.limitations.length}
-              <details>
-                <summary>Coverage details ({status.limitations.length})</summary>
-                <ul>{#each status.limitations as limitation}<li>{limitation}</li>{/each}</ul>
-              </details>
-            {/if}
-          </div>
+        {#if status?.incomplete}
+          <p class="coverage-warn"><span class="notice">Coverage incomplete. Omitted text has not passed QA.</span>
+            {#if status.limitations.length}<button type="button" class="link" on:click={() => (aboutOpen = true)}>details ({status.limitations.length})</button>{/if}</p>
         {/if}
+        </div>
       {#if aboutOpen}
         <!-- Behind the (i) at Benz's request (DECISIONS 2026-10-09, superseding
-             2026-09-24): what the checks cover, and what they never do. -->
-        <div id="language-qa-about" class="about" role="region" aria-label="What Language QA checks"
-          bind:this={aboutBox}>
-          <p>Checks run automatically for the open book and after edits.</p>
+             2026-09-24): what the checks cover, and what they never do; since
+             #376 also the full status line, the list and key hints and the
+             tabs' explanations. A popover anchored to the (i): it scrolls
+             inside itself and never resizes the header. -->
+        <div id="language-qa-about" class="about" role="dialog" aria-label="What Language QA checks"
+          tabindex="-1" bind:this={aboutBox}>
+          <div class="about-head">
+            <h3>About Language QA</h3>
+            <button type="button" class="about-close" aria-label="Close this note" on:click={closeAbout}>✕</button>
+          </div>
+          <p>Checks run offline, on this computer, automatically for the open book and after edits.</p>
+          {#if status}
+            <p class="status-line">
+              {status.language?.name || status.language?.language || "Detecting language"}
+              {#if status.language} · {status.language.script.toLowerCase()} script{/if}
+              {#if status.language && status.language.pack !== "common"} · {status.language.pack} rules{/if}
+              · {status.state} · {status.completedChapters ?? 0}/{status.totalChapters ?? 0} chapters
+              · {status.totalFindings} review candidates
+            </p>
+          {/if}
           {#if status?.language}<p>{detectionLabels[status.language.basis] ?? ""}</p>{/if}
           {#if status}
             <p>{status.language?.message ?? (status.state === "paused" ? "Checks paused. Resume when ready." : "Preparing language checks…")}</p>
@@ -583,24 +613,49 @@
           </div>
           {/if}
           {#if status}<p class="muted">{status.coverage?.summary ?? ""} {status.storage}</p>{/if}
+          <p class="muted">No candidates from the enabled checks is not publication approval.</p>
+          {#if status?.limitations.length}
+            <h3>Coverage details ({status.limitations.length})</h3>
+            <ul class="limitations">{#each status.limitations as limitation}<li>{limitation}</li>{/each}</ul>
+          {/if}
+          <h3>Lists</h3>
+          <ul>
+            <li><b>Findings:</b> what the enabled checks found; Verse, Chapter or Book narrows the list.</li>
+            <li><b>Re-check:</b> ignored before, under an older version of the rule. Check each one again.</li>
+            <li><b>False positives:</b> marked as false positives and hidden from the verse text.</li>
+          </ul>
+          <p class="muted" aria-keyshortcuts="F8 Shift+F8">F8 / Shift+F8: next / previous mark in the text.</p>
+          <h3>Tabs</h3>
+          <ul>
+            <li><b>Words in {bookLabel}:</b> words in the book that are not in the dictionary, most used first. Add the
+              ones that are right to the dictionary; they stop being reported as spelling problems. Nothing here changes the text.</li>
+            <li><b>Flags:</b> questions reviewers raised on the text (⚑). A flag never changes the verse.</li>
+            <li><b>Edits:</b> every recorded change to this book's text, newest first. Open a verse's ↺ to restore an earlier wording.</li>
+            <li><b>Dictionary:</b> words this project accepts, and fixes it learned: a word you replaced is offered again
+              where it recurs, in this book and the project's other books (blue dotted); Forget applies to every book.
+              The language pack's own dictionary is read-only.</li>
+          </ul>
         </div>
       {/if}
       </div>
       {#if status}
         <div class="panel-tabs" role="tablist" aria-label="Language QA panel" bind:clientHeight={tabsHeight}>
           <button role="tab" aria-selected={panelTab === "findings"} on:click={() => showPanelTab("findings")}>Issues</button>
-          <button role="tab" aria-selected={panelTab === "bookWords"} on:click={() => showPanelTab("bookWords")}>Book words</button>
+          <button role="tab" class="book-tab" aria-selected={panelTab === "bookWords"} title={`Words in ${bookLabel}`}
+            on:click={() => showPanelTab("bookWords")}>Words in {bookLabel}</button>
           <button role="tab" aria-selected={panelTab === "flags"} on:click={() => showPanelTab("flags")}>Flags</button>
           <button role="tab" aria-selected={panelTab === "edits"} on:click={() => showPanelTab("edits")}>Edits</button>
           <button role="tab" aria-selected={panelTab === "dictionary"} on:click={() => showPanelTab("dictionary")}>Dictionary</button>
         </div>
         {#if panelTab === "findings"}
-          <!-- Which list stays in reach with the header and tabs (#178); the
-               other filters scroll with the list. -->
-          <div class="filter-row list-row">
-            <span class="filter-label">List</span>
+          <!-- #376: one filter row, pinned with the header and tabs (#178): the
+               list switch, the scope, and Kinds as one dropdown. It wraps to a
+               second line at the panel's minimum width, never a third. -->
+          <div class="filter-bar list-row">
             <div class="views segmented" role="tablist" aria-label="Language QA lists">
-              <button role="tab" aria-selected={view === "findings"} on:click={() => showView("findings")}>Findings</button>
+              <button role="tab" aria-selected={view === "findings"} on:click={() => showView("findings")}>
+                Findings ({live?.totalFindings ?? status.totalFindings})
+              </button>
               <button role="tab" aria-selected={view === "recheck"} on:click={() => showView("recheck")}>
                 Re-check ({status.recheckCount ?? 0})
               </button>
@@ -608,54 +663,48 @@
                 False positives ({status.falsePositiveCount ?? 0})
               </button>
             </div>
-          </div>
-        {/if}
-        <div class="panel-body">
-        {#if panelTab === "findings"}
-        <!-- The filters, one labelled row each: how much of the book, which
-             kinds. -->
-        <div class="filters">
-          {#if view === "recheck"}
-            <p class="filter-hint">Ignored before, under an older version of the rule. Check each one again.</p>
-          {:else if view === "falsePositives"}
-            <p class="filter-hint">Marked as false positives and hidden from the verse text.</p>
-          {/if}
-          <div class="filter-row">
-            <span class="filter-label">Show</span>
             <div class="scope-row segmented" role="radiogroup" aria-label="Show findings for">
               {#each [["verse", "Verse"], ["chapter", "Chapter"], ["book", "Book"]] as [value, label]}
                 <button role="radio" aria-checked={listScope === value} disabled={value === "verse" && view !== "findings"}
                   on:click={() => showScope(value === "verse" ? "verse" : value === "chapter" ? "chapter" : "book")}>{label}</button>
               {/each}
             </div>
-          </div>
-          {#if Object.keys(legendCounts).length}
-            <div class="filter-row">
-              <span class="filter-label">Kinds</span>
-              <div class="legend" role="group" aria-label="Kinds of finding">
-                {#each Object.entries(legendCounts) as [category, count] (category)}
-                  <button aria-pressed={shownCategories.includes(category)} on:click={() => toggleCategory(category)}
-                    title={shownCategories.includes(category) ? "Shown; click to stop narrowing to it" : "Show only this kind (and any others ticked)"}>
-                    <mark class="swatch {markClass(category)}">ab</mark>
-                    {categoryLabel(category)}
-                    <span class="n">{count}</span>
-                  </button>
-                {/each}
-                {#if shownCategories.length}
-                  <button type="button" class="link clear" on:click={clearCategories}>Clear</button>
+            {#if Object.keys(legendCounts).length}
+              <div class="kinds">
+                <button type="button" class="kinds-btn" bind:this={kindsButton} aria-expanded={kindsOpen}
+                  aria-controls="language-qa-kinds" aria-haspopup="true"
+                  title={shownCategories.length ? "Narrowed to the kinds ticked" : "Every kind is shown; tick kinds to narrow the list"}
+                  on:click={() => (kindsOpen = !kindsOpen)}>
+                  Kinds · {shownCategories.length ? `${shownCategories.length} of ${Object.keys(legendCounts).length}` : Object.keys(legendCounts).length} ▾
+                </button>
+                {#if kindsOpen}
+                  <div id="language-qa-kinds" class="legend" role="group" aria-label="Kinds of finding" bind:this={kindsBox}>
+                    {#each Object.entries(legendCounts) as [category, count] (category)}
+                      <button aria-pressed={shownCategories.includes(category)} on:click={() => toggleCategory(category)}
+                        title={shownCategories.includes(category) ? "Shown; click to stop narrowing to it" : "Show only this kind (and any others ticked)"}>
+                        <mark class="swatch {markClass(category)}">ab</mark>
+                        {categoryLabel(category)}
+                        <span class="n">{count}</span>
+                      </button>
+                    {/each}
+                    {#if shownCategories.length}
+                      <button type="button" class="link clear" on:click={clearCategories}>Clear</button>
+                    {/if}
+                  </div>
                 {/if}
               </div>
-            </div>
-          {/if}
-          <p class="filter-hint keys" aria-keyshortcuts="F8 Shift+F8">F8 / Shift+F8: next / previous mark</p>
-        </div>
+            {/if}
+          </div>
+        {/if}
+        <div class="panel-body">
+        {#if panelTab === "findings"}
         {#if listScope === "verse" && !$selectedVerse}
           <p class="muted">Select a verse to list its findings.</p>
         {:else if listScope === "verse" && !listed.length}
           <p class="muted">No findings in this verse{shownCategories.length ? " of the kinds ticked" : ""}.</p>
         {/if}
         {#if listScope !== "verse" && view === "findings" && status.state === "completed" && !status.totalFindings}
-          <p>No candidates found by the enabled checks. This is not publication approval.</p>
+          <p class="muted">No candidates found by the enabled checks.</p>
         {/if}
         <ol aria-label={view === "findings" ? "Language QA findings" : view === "recheck" ? "Findings to re-check" : "False positives"} start={listScope === "verse" ? 1 : status.offset + 1}>
           {#each listed as finding (finding.id)}
@@ -692,8 +741,7 @@
         {/if}
         {:else if panelTab === "bookWords"}
           <section aria-label="Book words" class="book-words">
-            <p class="muted">Words in this book that are not in the dictionary, most used first. Add the ones that are right
-              to the project word list; they stop being reported as spelling problems. Nothing here changes the text.</p>
+            <p class="muted">Words in {bookLabel} that are not in the dictionary, most used first.</p>
             {#if !bookWordsLoaded}
               <p class="muted">Loading…</p>
             {:else if bookWordsReason}
@@ -720,7 +768,7 @@
                             title="Open its first verse">{row.word}</button>
                         </td>
                         <td>{row.countBook}</td><td>{row.countIrv}</td><td>{row.countOv}</td>
-                        <td>{row.status === "added" ? "in word list" : row.status === "irv_ok" ? "IRV word" : row.status}</td>
+                        <td>{row.status === "added" ? "in dictionary" : row.status === "irv_ok" ? "IRV word" : row.status}</td>
                       </tr>
                     {/each}
                   </tbody>
@@ -732,14 +780,14 @@
                   <option value="book">this book</option>
                   <option value="project">every book of the project</option>
                 </select>
-                <button on:click={addTicked} disabled={!ticked.size || bookWordsBusy}>Add to the project word list</button>
+                <button on:click={addTicked} disabled={!ticked.size || bookWordsBusy}>Add to dictionary ({wordScope === "project" ? "every book" : "this book"})</button>
               </div>
               {#if bookWordsNotice}<p class="muted" role="status">{bookWordsNotice}</p>{/if}
             {/if}
           </section>
         {:else if panelTab === "flags"}
           <section aria-label="Flags" class="flags">
-            <p class="muted">Questions reviewers raised on the text (⚑). A flag never changes the verse.</p>
+            <p class="muted">Reviewers' questions on the text (⚑).</p>
             <label class="toggle"><input type="checkbox" bind:checked={showResolved} /> Show resolved</label>
             {#if flagsError}<p role="alert">{flagsError}</p>{/if}
             {#if !flagsLoaded}
@@ -772,7 +820,7 @@
           </section>
         {:else if panelTab === "edits"}
           <section aria-label="Edits" class="edits">
-            <p class="muted">Every recorded change to this book's text, newest first. Open a verse's ↺ to restore an earlier wording.</p>
+            <p class="muted">Changes to this book's text, newest first.</p>
             {#if editsError}<p role="alert">{editsError}</p>{/if}
             {#if !editsLoaded}
               <p class="muted">Loading…</p>
@@ -799,10 +847,13 @@
             {/if}
           </section>
         {:else if panelTab === "dictionary"}
+          <!-- #384: the tab says what it holds. The pack's own dictionary is read-only
+               by contract (NOTICE.md, contract 2); the rows here are the project's additions. -->
+          <p class="muted dictionary-intro">Words this project accepts, and fixes it learned. The language pack's own dictionary is read-only.</p>
           <section aria-label="Project words" class="dictionary">
             <h3>Project words</h3>
             {#if !projectWords.length}
-              <p class="muted">None yet. Add words from Book words or a word's menu.</p>
+              <p class="muted">None yet. Add words from “Words in {bookLabel}” or a word's menu.</p>
             {:else}
               <ul class="words">
                 {#each projectWords as entry (entry.key)}
@@ -814,8 +865,7 @@
           </section>
           <section aria-label="Learned fixes" class="dictionary">
             <h3>Learned fixes</h3>
-            <p class="muted">
-              A word you replaced is offered again where it recurs, in this book and the project's other books (blue dotted). Forget applies to every book.
+            <p class="muted">Replaced words, offered again where they recur.
               {#if !learnedOn}Learned fixes are off in Settings › Language QA.{/if}
             </p>
             {#if learnedError}<p role="alert">{learnedError}</p>{/if}
@@ -868,7 +918,7 @@
 
 <style>
   /* --z-panel (#288): a floating panel sits below every dialog. */
-  .language-qa { position: fixed; bottom: 40px; right: 16px; z-index: var(--z-panel); font-size: 12px; }
+  .language-qa { position: fixed; bottom: 40px; right: 16px; z-index: var(--z-panel); font-size: var(--fs-3xs); }
   /* Docked: the column is the box; the section fills it and scrolls. */
   .language-qa.docked { position: static; flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .language-qa.docked section { width: auto; max-height: none; flex: 1; min-height: 0; margin: 0; border: 0;
@@ -877,21 +927,30 @@
      the parts, not the section, so both sticky rows span the full width. */
   section { width: min(560px, calc(100vw - 32px)); max-height: min(580px, calc(100vh - 150px)); overflow: auto; padding: 0; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 24px #0003; margin-bottom: 8px; }
   .paging { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  h2 { font-size: 15px; margin: 0; white-space: nowrap; }
-  .panel-head { position: sticky; top: 0; z-index: 3; background: var(--surface); padding: 10px 14px 8px; border-bottom: 1px solid var(--border); }
-  .head-row { display: flex; align-items: center; gap: 6px; }
-  .head-row .grow { flex: 1; }
-  .info-btn { width: 20px; height: 20px; padding: 0; border-radius: 50%; font: italic 700 12px/1 Georgia, "Times New Roman", serif; color: var(--accent); border-color: var(--accent); }
+  .panel-head { position: sticky; top: 0; z-index: 3; background: var(--surface); }
+  /* Errors and the one-line coverage warning under the bar; nothing is
+     drawn (no second line) when there is none of them. */
+  .head-meta { padding: 4px 14px 6px; border-bottom: 1px solid var(--border); }
+  .head-meta:not(:has(*)) { display: none; }
+  .info-btn { width: 20px; height: 20px; padding: 0; border-radius: 50%; font: italic 700 var(--fs-3xs)/1 Georgia, "Times New Roman", serif; color: var(--accent); border-color: var(--accent); }
   .info-btn[aria-expanded="true"] { background: var(--accent); color: white; }
-  .status-line { margin: 4px 0 0; color: var(--text-2); }
-  .alert { margin: 4px 0 0; color: var(--danger); }
-  .coverage-warn { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; margin-top: 4px; color: var(--warning); }
-  .coverage-warn details { color: var(--text-2); }
-  .coverage-warn details ul { max-height: 120px; overflow: auto; margin: 4px 0; }
-  .coverage-warn summary { cursor: pointer; }
-  .about { margin: 8px -14px -8px; padding: 10px 14px; background: var(--surface-2); border-top: 1px solid var(--border);
-    max-height: min(320px, 45vh); overflow: auto; }
+  .status-line { margin: 4px 0; color: var(--text-2); }
+  .alert { margin: 2px 0; color: var(--danger); }
+  .coverage-warn { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; margin: 2px 0; color: var(--warning); }
+  /* #376: the (i) is a popover anchored under the bar (the sticky header is
+     its containing block). It scrolls inside itself; the header never grows. */
+  .about { position: absolute; top: 100%; left: 8px; right: 8px; z-index: 4; margin: 0; padding: 10px 14px;
+    background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .14); max-height: min(420px, 50vh); overflow: auto; outline: none; }
   .about p { margin: 4px 0; }
+  .about h3 { font-size: var(--fs-2xs); margin: 10px 0 2px; }
+  .about ul { margin: 2px 0; padding-left: 18px; }
+  .about li { padding: 2px 0; border: 0; }
+  .about .limitations { max-height: 120px; overflow: auto; }
+  .about-head { display: flex; align-items: center; gap: 8px; }
+  .about-head h3 { flex: 1; margin: 0; font-size: var(--fs-xs); }
+  .about-close { width: 22px; height: 22px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--text-3); font-size: var(--fs-3xs); line-height: 1; }
+  .about-close:hover, .about-close:focus-visible { background: var(--accent-bg); color: var(--accent); outline: none; }
   .panel-body { padding: 8px 14px 14px; }
   button { cursor: pointer; border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; background: var(--surface); color: inherit; }
   button:disabled { opacity: .5; cursor: default; }
@@ -903,70 +962,76 @@
   li { padding: 8px 0; border-bottom: 1px solid var(--border, #ddd); }
   /* Target text, in the target face (#286): under --font-ui a Gurmukhi line's
      danda was drawn from Vijaya, slanted, beside letters from Nirmala UI. */
-  .evidence { font-family: var(--font-target); font-size: 16px; white-space: pre-wrap; }
+  .evidence { font-family: var(--font-target); font-size: var(--fs-md); white-space: pre-wrap; }
   .severity, .category { margin-left: 8px; }
   .recheck { margin-left: 8px; font-weight: 600; color: var(--warning); }
   .where { margin-left: 8px; font-style: italic; }
-  .reference { font-size: 12px; opacity: .85; border-left: 2px solid var(--border); padding-left: 6px; }
+  .reference { font-size: var(--fs-3xs); opacity: .85; border-left: 2px solid var(--border); padding-left: 6px; }
   /* The tab bar sits under the header and stays with it. */
   .panel-tabs { position: sticky; top: var(--head-h, 0px); z-index: 2; display: flex; gap: 2px; padding: 0 10px;
     background: var(--surface); border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; }
-  .panel-tabs button { flex: 1 1 auto; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none;
+  .panel-tabs button { flex: 1 0 auto; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none;
     padding: 8px 6px 6px; font-weight: 700; color: var(--text-2); white-space: nowrap; }
+  /* #385: the book tab carries a name of any length and is the one that gives
+     way at the panel's minimum width -- one line, cut with an ellipsis, the
+     full name in its title. The other tabs keep their width. */
+  .panel-tabs .book-tab { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .panel-tabs button:hover { color: var(--text); }
   .panel-tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
-  .filters { margin: 4px 0 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); }
-  .filter-row { display: grid; grid-template-columns: 44px 1fr; align-items: center; gap: 8px; margin: 4px 0; }
-  /* The list switch, pinned under the tab bar; padded to line up with the filter box's rows. */
+  /* #376: the one filter row, pinned under the tab bar (#178). */
   .list-row { position: sticky; top: calc(var(--head-h, 0px) + var(--tabs-h, 0px)); z-index: 2; margin: 0;
-    padding: 6px 25px; background: var(--surface); border-bottom: 1px solid var(--border); }
-  .filter-label { font-size: 11px; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: .03em; }
-  .filter-hint { margin: 2px 0 2px 52px; font-size: 11px; color: var(--text-3); }
-  .segmented { display: inline-flex; flex-wrap: wrap; justify-self: start; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
-  .segmented button { border: 0; border-radius: 0; border-right: 1px solid var(--border); background: var(--surface); padding: 3px 10px; }
+    padding: 6px 10px; background: var(--surface); border-bottom: 1px solid var(--border); }
+  .filter-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+  .segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .segmented button { border: 0; border-radius: 0; border-right: 1px solid var(--border); background: var(--surface); padding: 3px 8px; white-space: nowrap; }
   .segmented button:last-child { border-right: 0; }
   .segmented button[aria-selected="true"], .segmented button[aria-checked="true"] { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
-  .legend .clear { font-size: 11px; color: var(--accent); align-self: center; }
-  .dictionary h3 { font-size: 13px; margin: 10px 0 4px; }
+  .kinds { position: relative; }
+  .kinds-btn { padding: 3px 8px; border-radius: 6px; white-space: nowrap; }
+  .kinds-btn[aria-expanded="true"] { background: var(--accent-bg); color: var(--accent); border-color: var(--accent); }
+  .legend { position: absolute; top: calc(100% + 4px); left: 0; z-index: 3; min-width: 220px; max-width: min(360px, calc(100vw - 32px));
+    max-height: min(320px, 50vh); overflow: auto; padding: 8px; background: var(--surface); border: 1px solid var(--border-strong);
+    border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, .14); display: flex; flex-wrap: wrap; gap: 4px; }
+  .legend .clear { font-size: var(--fs-3xs); color: var(--accent); align-self: center; }
+  .dictionary h3 { font-size: var(--fs-2xs); margin: 10px 0 4px; }
   .flags .toggle { display: flex; gap: 6px; align-items: center; }
   .book-words .tick-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0; }
   .book-words input[type="number"] { width: 48px; }
   .book-words .table-box { max-height: 260px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
   .book-words table { width: 100%; border-collapse: collapse; }
-  .book-words th { position: sticky; top: 0; background: var(--surface); text-align: left; font-size: 11px;
+  .book-words th { position: sticky; top: 0; background: var(--surface); text-align: left; font-size: var(--fs-3xs);
     color: var(--text-3); padding: 4px; border-bottom: 1px solid var(--border); }
   .book-words td { padding: 3px 4px; border-bottom: 1px solid var(--border); }
-  .book-words td.word { font-family: var(--font-target); font-size: 15px; }
+  .book-words td.word { font-family: var(--font-target); font-size: var(--fs-sm); }
   .book-words tr.added td { opacity: .55; }
   .link { border: 0; background: none; padding: 0; font: inherit; color: inherit; text-decoration: underline dotted; }
   .dictionary .words { list-style: none; padding: 0; margin: 0; }
   .dictionary .words li { display: flex; gap: 8px; align-items: center; padding: 3px 0; border: 0; }
-  .dictionary .words .word { font-family: var(--font-target); font-size: 15px; }
+  .dictionary .words .word { font-family: var(--font-target); font-size: var(--fs-sm); }
   .flags li.resolved { opacity: .7; }
-  .legend { display: flex; flex-wrap: wrap; gap: 4px; }
-  .legend button { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 2px 8px; }
+  .legend button { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-3xs); padding: 2px 8px; }
   .legend button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-bg); }
-  .legend .swatch { background: none; padding: 0 2px; font-size: 12px; }
+  .legend .swatch { background: none; padding: 0 2px; font-size: var(--fs-3xs); }
   .legend .n { color: var(--text-3); font-variant-numeric: tabular-nums; }
-  .walk-status { margin: 0; font-size: 11px; color: var(--text-2); }
+  .walk-status { margin: 0; font-size: var(--fs-3xs); color: var(--text-2); }
   .walk-status:empty { display: none; }
-  .edits h3 { font-size: 13px; margin: 10px 0 2px; }
+  .edits h3 { font-size: var(--fs-2xs); margin: 10px 0 2px; }
   .edits del { background: var(--danger-bg); color: var(--danger); }
   .edits ins { background: var(--success-bg); color: var(--success); text-decoration: none; }
   .dictionary table { width: 100%; border-collapse: collapse; }
-  .dictionary th { text-align: left; font-size: 11px; color: var(--text-3); padding: 4px; border-bottom: 1px solid var(--border); }
+  .dictionary th { text-align: left; font-size: var(--fs-3xs); color: var(--text-3); padding: 4px; border-bottom: 1px solid var(--border); }
   .dictionary td { padding: 4px; border-bottom: 1px solid var(--border); }
-  .dictionary td.word { font-family: var(--font-target); font-size: 15px; }
+  .dictionary td.word { font-family: var(--font-target); font-size: var(--fs-sm); }
   .dictionary tr.forgotten td { opacity: .55; }
   .dictionary tr.forgotten td.word { text-decoration: line-through; }
-  .history-toggle { font-size: 11px; padding: 2px 6px; }
+  .history-toggle { font-size: var(--fs-3xs); padding: 2px 6px; }
   .notice { font-weight: 600; }
   .muted { opacity: .75; }
   .scope { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; margin: 8px 0; padding: 8px; border: 1px solid var(--border); border-radius: 6px; }
-  .scope h3 { font-size: 12px; margin: 0 0 4px; }
+  .scope h3 { font-size: var(--fs-3xs); margin: 0 0 4px; }
   .scope ul { margin: 0; padding-left: 16px; }
   .scope li { padding: 2px 0; border: 0; }
-  .scope .reason { display: block; font-size: 11px; opacity: .75; }
+  .scope .reason { display: block; font-size: var(--fs-3xs); opacity: .75; }
   .scope p { grid-column: 1 / -1; margin: 4px 0 0; }
   @media (max-width: 480px) { .scope { grid-template-columns: 1fr; } }
 </style>

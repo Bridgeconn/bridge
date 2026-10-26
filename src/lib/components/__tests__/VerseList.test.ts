@@ -3,7 +3,8 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { get } from "svelte/store";
 import { tick } from "svelte";
 
-const { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRecord, housestyleSetState, languageQaLearnedForget, languageQaScopeFind, verseHistory, languageQaWordsAdd, languageQaOccurrences } = vi.hoisted(() => ({
+const { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRecord, housestyleSetState, languageQaLearnedForget, languageQaScopeFind, verseHistory, languageQaWordsAdd, languageQaOccurrences, paratextNotesForChapter } = vi.hoisted(() => ({
+  paratextNotesForChapter: vi.fn(),
   languageQaWordsAdd: vi.fn(),
   languageQaOccurrences: vi.fn(),
   verseHistory: vi.fn(),
@@ -18,7 +19,7 @@ const { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRec
 }));
 
 vi.mock("../../api/bridgeClient", () => ({
-  bridge: { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRecord, housestyleSetState, languageQaLearnedForget, languageQaScopeFind, verseHistory, languageQaWordsAdd, languageQaOccurrences },
+  bridge: { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRecord, housestyleSetState, languageQaLearnedForget, languageQaScopeFind, verseHistory, languageQaWordsAdd, languageQaOccurrences, paratextNotesForChapter },
 }));
 import { lqaFinding } from "./languageQaFixture";
 import { scopeDialog } from "../../scopedApply";
@@ -43,9 +44,11 @@ import {
   languageQaFindingsByVerse,
   project,
   historyCountByVerse,
+  paratextNoteCountsByVerse,
   activeLanguageQaFindingId,
+  resetBookState, reviewTabRequest
 } from "../../stores";
-import { rawView } from "../../editorPrefs";
+import { rawView, setSidePanel, sidePanels } from "../../editorPrefs";
 import { alignmentOpen, alignmentKey } from "../../alignmentUi";
 import { cancelVerseEdit, editingChapter, editingVerse, editSaving, recheckingKey } from "../../verseEditor";
 import { aiReviewRequest, aiJobActive } from "../../aiReviewUi";
@@ -251,7 +254,7 @@ describe("VerseList footnote handling", () => {
       await fireEvent.contextMenu(mark);
       await fireEvent.click(screen.getByRole("menuitem", { name: 'Use "அந்தக் காகம்"' }));
       const manual = points.slice(0, start).join("") + "அந்தக் காகம்" + points.slice(end).join("");
-      expect(editVerse).toHaveBeenCalledWith("1", "6", manual);
+      expect(editVerse).toHaveBeenCalledWith("1", "6", manual, raw);
       expect(manual).toContain("\\f + \\ft குறிப்பு\\f* அந்தக் காகம் பறந்தது.");
     } finally {
       languageQaFindingsByVerse.set({});
@@ -358,7 +361,7 @@ describe("VerseList footnote handling", () => {
       const items = await openMenu({ suggestions: five });
       expect(items.filter(([label]) => label?.startsWith("Use "))).toEqual(five.map((s) => [`Use "${s.text}"`, s.rationale]));
       await fireEvent.click(screen.getByRole("menuitem", { name: 'Use "அந்தக்காகம்"' }));
-      expect(editVerse).toHaveBeenCalledWith("1", "6", "அந்தக்காகம் பறந்தது.");
+      expect(editVerse).toHaveBeenCalledWith("1", "6", "அந்தக்காகம் பறந்தது.", "அந்த காகம் பறந்தது.");
       await waitFor(() => expect(decideVerse).toHaveBeenCalledWith("1", "6", "lqa-1", "accepted", undefined,
         expect.objectContaining({ chosenSuggestion: "அந்தக்காகம்", chosenRank: 2, suggestedReplacement: "அந்தக்காகம்" })));
     });
@@ -554,7 +557,7 @@ describe("VerseList footnote handling", () => {
     expect(screen.getByRole("menuitem", { name: "Accept finding" }))
       .toHaveAttribute("title", expect.stringContaining("proposed correction"));
     await fireEvent.click(screen.getByRole("menuitem", { name: "Accept finding" }));
-    expect(editVerse).toHaveBeenCalledWith("1", "6", "omega beta");
+    expect(editVerse).toHaveBeenCalledWith("1", "6", "omega beta", "alpha beta");
     expect(runVerseChecks).toHaveBeenCalledWith("1", "6", ["tN", "tW", "alignment", "text"]);
   });
 
@@ -681,6 +684,34 @@ describe("VerseList alignment glyph (issue #70)", () => {
     expect(get(alignmentKey)).toBe(verseKey("1", "6"));
   });
 
+  it("opens the Review side panel the modal is mounted in when it is closed (#306)", async () => {
+    setSidePanel("review", { open: false });
+    setSidePanel("languageQa", { open: true });
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    await fireEvent.click(glyph());
+    expect(get(alignmentOpen)).toBe(true);
+    expect(get(sidePanels).review.open).toBe(true);
+    // The other panels are left as they were.
+    expect(get(sidePanels).languageQa.open).toBe(true);
+    // Opening again with Review already open never toggles it shut.
+    alignmentOpen.set(false);
+    await fireEvent.click(glyph());
+    expect(get(sidePanels).review.open).toBe(true);
+    setSidePanel("languageQa", { open: false });
+  });
+
+  it("leaves the Review panel closed when the guard refuses to open (#306)", async () => {
+    setSidePanel("review", { open: false });
+    checkingProgress.set({
+      running: true, percent: 40, label: "Checking…", jobId: "j1", state: "running", error: "", scope: "chapter",
+    });
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    await fireEvent.click(glyph());
+    expect(get(alignmentOpen)).toBe(false);
+    expect(get(sidePanels).review.open).toBe(false);
+    setSidePanel("review", { open: true });
+  });
+
   it("does not also trigger the row's own select/edit handlers", async () => {
     const onSelect = vi.fn();
     render(VerseList, { props: { onSelect } });
@@ -700,6 +731,33 @@ describe("VerseList alignment glyph (issue #70)", () => {
     await fireEvent.click(glyph());
     expect(onSelect).not.toHaveBeenCalled();
     expect(get(alignmentOpen)).toBe(false);
+  });
+});
+
+describe("VerseList text direction (#323)", () => {
+  beforeEach(() => seed(PHP_1_6));
+  afterEach(() => { cancelVerseEdit(); project.set(null); });
+
+  async function rendered(direction: string | undefined) {
+    project.set({ path: "/p", bookId: "rut", targetLanguageId: "URD", targetLanguageDirection: direction } as never);
+    const { container } = render(VerseList, { props: { onSelect: vi.fn() } });
+    const body = container.querySelector(".vbody") as HTMLElement;
+    const text = container.querySelector(".vtext") as HTMLElement;
+    const dirs = { body: body.getAttribute("dir"), text: text.getAttribute("dir"), lang: body.getAttribute("lang") };
+    await fireEvent.click(screen.getByLabelText("Edit verse 6"));
+    const editor = container.querySelector("textarea") as HTMLTextAreaElement;
+    return { ...dirs, editor: editor.getAttribute("dir"), editorLang: editor.getAttribute("lang") };
+  }
+
+  it("lays out an RTL project's verse text and editor right to left", async () => {
+    expect(await rendered("rtl")).toEqual({ body: "rtl", text: "rtl", lang: "urd", editor: "rtl", editorLang: "urd" });
+  });
+
+  it("keeps an LTR project, or one with no recorded direction, left to right", async () => {
+    expect(await rendered("ltr")).toMatchObject({ body: "ltr", text: "ltr", editor: "ltr" });
+    cleanup();
+    cancelVerseEdit();
+    expect(await rendered(undefined)).toMatchObject({ body: "ltr", editor: "ltr" });
   });
 });
 
@@ -1113,7 +1171,7 @@ describe("VerseList word actions, as the indic-qa editor offers them", () => {
     expect(menu.textContent).toContain("“यीशु”");
     expect(screen.getByRole("menuitem", { name: "Copy word" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Flag “यीशु” for review…" })).toBeEnabled();
-    await fireEvent.click(screen.getByRole("menuitem", { name: "Add “यीशु” to the project word list" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Add “यीशु” to dictionary (this book)" }));
     await waitFor(() => expect(languageQaWordsAdd).toHaveBeenCalledWith("/p", ["यीशु"], "book"));
   });
 
@@ -1132,7 +1190,7 @@ describe("VerseList word actions, as the indic-qa editor offers them", () => {
     render(VerseList, { props: { onSelect: vi.fn() } });
     await fireEvent.contextMenu(document.querySelector('[data-finding-ids~="u1"]') as HTMLElement);
     const started = performance.now();
-    await fireEvent.click(screen.getByRole("menuitem", { name: "Add “यीशु” to the project word list" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Add “यीशु” to dictionary (this book)" }));
     expect(document.querySelector('[data-finding-ids~="u1"]')).toBeNull();
     expect(performance.now() - started).toBeLessThan(250);
     await waitFor(() => expect(languageQaWordsAdd).toHaveBeenCalledWith("/p", ["यीशु"], "book"));
@@ -1141,7 +1199,7 @@ describe("VerseList word actions, as the indic-qa editor offers them", () => {
     languageQaFindingsByVerse.set({ "1:6": [{ ...typo, id: "m1", category: "unicode", ruleId: "ta-irv/indicqa.shape.malformed" }] });
     render(VerseList, { props: { onSelect: vi.fn() } });
     await fireEvent.contextMenu(document.querySelector('[data-finding-ids~="m1"]') as HTMLElement);
-    expect(screen.queryByRole("menuitem", { name: /to the project word list/ })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: /to dictionary/ })).toBeNull();
   });
 });
 
@@ -1219,6 +1277,74 @@ describe("VerseList right-click, ring and notices (#236)", () => {
     expect(notice()).not.toBeNull();
     await fireEvent.click(within(notice() as HTMLElement).getByRole("button", { name: "Dismiss" }));
     expect(notice()).toBeNull();
+  });
+});
+
+describe("VerseList open-issue pill (#383)", () => {
+  // seed() leaves the Language QA store alone; these tests fill it.
+  beforeEach(() => languageQaFindingsByVerse.set({}));
+  afterEach(() => { languageQaFindingsByVerse.set({}); reviewTabRequest.set(null); });
+  const pill = () => screen.queryByTestId("open-issue-pill");
+  const gr = (id: string, severity: QaFinding["severity"] = "low") =>
+    finding({ id, engine: "wildebeest", check_type: "wildebeest.script.mixed", category: "unicode", severity });
+
+  it("shows the count with a breakdown in its title, coloured by the worst open severity", async () => {
+    seed("alpha beta", [gr("g1", "low"), finding({ id: "a1", engine: "local", category: "alignment", severity: "medium" })]);
+    languageQaFindingsByVerse.set({ [verseKey("1", "6")]: [lqaFinding({ id: "l1", severity: "high" })] });
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    const badge = pill() as HTMLElement;
+    expect(badge).toHaveTextContent("3");
+    expect(badge.getAttribute("title")).toBe("3 open findings · 1 Greek Room, 1 alignment, 1 Language QA");
+    expect(badge).toHaveClass("sev-high");
+    expect(verseRow().querySelector(".vnum")?.textContent).not.toContain("✓");
+  });
+
+  it("counts down as findings are decided and disappears at zero, when ✓ takes over", async () => {
+    const two = [gr("g1"), gr("g2", "medium")];
+    seed("alpha beta", two);
+    checkStatusByVerse.set({ [verseKey("1", "6")]: "succeeded" });
+    alignmentStatusByVerse.set({ [verseKey("1", "6")]: "complete" });
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    expect(pill()).toHaveTextContent("2");
+    expect(pill()).toHaveClass("sev-medium");
+
+    findingsByVerse.set({ [verseKey("1", "6")]: [two[0], { ...two[1], status: "ignored" }] });
+    await tick();
+    expect(pill()).toHaveTextContent("1");
+    expect(pill()).toHaveClass("sev-low");
+
+    findingsByVerse.set({ [verseKey("1", "6")]: two.map((f) => ({ ...f, status: "ignored" as const })) });
+    await tick();
+    expect(pill()).toBeNull();
+    expect(verseRow().querySelector(".vnum")?.textContent).toContain("✓");
+  });
+
+  it("keeps the ⚠ of a failed check beside the pill", async () => {
+    seed("alpha beta", [gr("g1")]);
+    checkStatusByVerse.set({ [verseKey("1", "6")]: "failed" });
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    expect(verseRow().querySelector(".vnum")?.textContent).toContain("⚠");
+    expect(pill()).toHaveTextContent("1");
+  });
+
+  it("a click selects the verse and reveals the Review panel on the first open finding's tab", async () => {
+    setSidePanel("review", { open: false });
+    seed("alpha beta", [finding({ id: "t1", engine: "local", category: "translation_note" }), gr("g1")]);
+    const onSelect = vi.fn();
+    render(VerseList, { props: { onSelect } });
+    await fireEvent.click(pill() as HTMLElement);
+    expect(onSelect).toHaveBeenCalledWith("6");
+    expect(get(sidePanels).review.open).toBe(true);
+    expect(get(reviewTabRequest)).toBe("tntw");
+
+    cleanup();
+    reviewTabRequest.set(null);
+    seed("alpha beta", []);
+    languageQaFindingsByVerse.set({ [verseKey("1", "6")]: [lqaFinding({ id: "l1" })] });
+    render(VerseList, { props: { onSelect } });
+    await fireEvent.click(pill() as HTMLElement);
+    expect(get(reviewTabRequest)).toBe("lqa");
+    reviewTabRequest.set(null);
   });
 });
 
@@ -1304,5 +1430,49 @@ describe("the verse container carries the project language (#286)", () => {
     project.set({ path: "/p", bookId: "php", bookName: "Philippians", chapters: ["1"] } as never);
     render(VerseList, { props: { onSelect: vi.fn() } });
     expect((document.querySelector(".editor-scroll") as HTMLElement).hasAttribute("lang")).toBe(false);
+  });
+});
+
+
+// #357: the Paratext note badge, fed a chapter at a time by paratextNotes.ts.
+describe("VerseList Paratext note badge (#357)", () => {
+  beforeEach(() => {
+    seed(PHP_1_6);
+    paratextNoteCountsByVerse.set({});
+    paratextNotesForChapter.mockReset();
+  });
+  afterEach(() => {
+    project.set(null);
+    setSidePanel("paratext", { open: false, width: 340 });
+  });
+
+  it("loads the chapter's counts and shows the open threads on the verse", async () => {
+    paratextNotesForChapter.mockResolvedValue({
+      state: "ready", book: "PHP", chapter: "1", verses: {}, counts: { "6": { open: 2, resolved: 1 } },
+    });
+    project.set({ path: "C:/p/php", bookId: "php", bookName: "Philippians", targetLanguage: "Hindi",
+                  tcVersion: "", chapters: ["1"], checkTypes: {} });
+    const onSelect = vi.fn();
+    render(VerseList, { props: { onSelect } });
+
+    const badge = await screen.findByRole("button", { name: "Paratext notes on verse 6: 2 open" });
+    expect(badge).toHaveTextContent("PT 2");
+    expect(paratextNotesForChapter).toHaveBeenCalledWith("1");
+    expect(get(paratextNoteCountsByVerse)).toEqual({ [verseKey("1", "6")]: { open: 2, resolved: 1 } });
+
+    await fireEvent.click(badge);
+    expect(onSelect).toHaveBeenCalledWith("6");
+    expect(get(sidePanels).paratext.open).toBe(true);
+  });
+
+  it("shows no badge without open threads, and the counts go with the book", async () => {
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    paratextNoteCountsByVerse.set({ [verseKey("1", "6")]: { open: 0, resolved: 3 } });
+    await tick();
+    expect(screen.queryByTestId("paratext-note-badge")).toBeNull();
+    paratextNoteCountsByVerse.set({ [verseKey("1", "6")]: { open: 1, resolved: 0 } });
+    expect(await screen.findByTestId("paratext-note-badge")).toHaveTextContent("PT 1");
+    resetBookState();
+    expect(get(paratextNoteCountsByVerse)).toEqual({});
   });
 });

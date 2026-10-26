@@ -100,6 +100,43 @@ def test_the_curated_map_only_keeps_safe_pairs():
     assert lexicon.count("சு") == 0 and lexicon.count("நே") == 0 and lexicon.count("கை") > 0
 
 
+def test_the_shipped_lexicon_is_read_a_line_at_a_time_and_unchanged_by_it():
+    """One json.loads of the whole file held the GIL ~100 ms (it stalled the
+    dispatcher); the file is laid out a member per line, in bounded lines, and
+    the line reader gives exactly what json.loads gives."""
+    import gzip
+    text = gzip.decompress(ta_lexicon_path().read_bytes()).decode("utf-8")
+    lines = text.split("\n")
+    assert len(lines) > 50 and max(len(line) for line in lines) < 200_000
+    whole = json.loads(text)
+    by_lines, deferred = lexicon_module.parse_lexicon_text(text, defer=("buckets",))
+    assert list(by_lines) == list(whole) and by_lines["buckets"] == {} and deferred["buckets"]
+    assert read_lexicon_json(ta_lexicon_path()) == whole
+    loaded = lexicon_module.load_lexicon(ta_lexicon_path())
+    assert loaded.pending_buckets and not loaded.buckets  # parsed on first use, not at load
+    assert loaded.candidates("உடன்பட்டிக்கையை")
+    assert loaded.pending_buckets is None and list(loaded.buckets.items()) == list(whole["buckets"].items())
+    assert loaded.forms == whole["forms"] and list(loaded.forms) == list(whole["forms"])
+
+
+def test_the_lexicon_line_layout_round_trips_and_an_older_file_still_reads(tmp_path):
+    big = lexicon_module.LEXICON_PIECE * 2 + 3
+    data = {"version": "v", "forms": {f"w{i}": [i, 1] for i in range(big, 0, -1)},
+            "common": [f"c{i}" for i in range(big)], "buckets": {f"k{i}": [i] for i in range(big)},
+            "deprecated": {"a,\"\n": "b"}, "protected": [], "corpus": {}}
+    path = tmp_path / "lexicon.json.gz"
+    lexicon_module.write_lexicon_json(path, data)
+    assert read_lexicon_json(path) == data and list(read_lexicon_json(path)["forms"]) == list(data["forms"])
+    import gzip
+    assert json.loads(gzip.decompress(path.read_bytes())) == data  # still one JSON document
+    loaded = lexicon_module.load_lexicon(path)
+    loaded.candidates("x")
+    assert loaded.buckets == data["buckets"] and loaded.deprecated == data["deprecated"]
+    old = tmp_path / "old.json"
+    old.write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    assert read_lexicon_json(old) == data and lexicon_module.load_lexicon(old).buckets == data["buckets"]
+
+
 def test_lexicon_loads_within_the_startup_budget():
     lexicon_module._LOADED.pop(ta_lexicon_path(), None)
     started = time.perf_counter()

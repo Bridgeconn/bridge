@@ -197,4 +197,54 @@ describe("ProjectDashboard", () => {
       expect(onLoadReport).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe("keyboard on a book row (#322)", () => {
+    function mountRow(canAssign = false) {
+      const onSelectBook = vi.fn();
+      const onPreviewBook = vi.fn();
+      const onAssign = vi.fn();
+      render(ProjectDashboard, {
+        props: {
+          projectName: "Ruth", books, loading: false, error: "",
+          onSelectBook, onPreviewBook, onRetry: () => {},
+          report: null, reportLoading: false, reportError: "",
+          canAssign, onAssign,
+        },
+      });
+      return { onSelectBook, onPreviewBook, onAssign };
+    }
+
+    // jsdom does not turn Enter on a button into a click, so do what a browser
+    // does: click only if the keydown was not cancelled on its way up.
+    async function pressEnter(button: HTMLElement) {
+      button.focus();
+      const notCancelled = await fireEvent.keyDown(button, { key: "Enter" });
+      if (notCancelled) await fireEvent.click(button);
+      return notCancelled;
+    }
+
+    it("Enter on Open opens the book, not a preview", async () => {
+      const { onSelectBook, onPreviewBook } = mountRow();
+      expect(await pressEnter(screen.getByRole("button", { name: "Open" }))).toBe(true);
+      expect(onSelectBook).toHaveBeenCalledWith("/projects/rut");
+      expect(onPreviewBook).not.toHaveBeenCalled();
+    });
+
+    it("Enter on Assign… assigns, not a preview", async () => {
+      const { onAssign, onPreviewBook } = mountRow(true);
+      expect(await pressEnter(screen.getByRole("button", { name: "Assign…" }))).toBe(true);
+      expect(onAssign).toHaveBeenCalledWith("/projects/rut");
+      expect(onPreviewBook).not.toHaveBeenCalled();
+    });
+
+    it("Enter or Space on the row itself still previews", async () => {
+      const { onSelectBook, onPreviewBook } = mountRow();
+      const bookRow = screen.getByRole("button", { name: "Open" }).closest(".book-row") as HTMLElement;
+      expect(await fireEvent.keyDown(bookRow, { key: "Enter" })).toBe(false);
+      await fireEvent.keyDown(bookRow, { key: " " });
+      expect(onPreviewBook).toHaveBeenCalledTimes(2);
+      expect(onPreviewBook).toHaveBeenCalledWith("/projects/rut");
+      expect(onSelectBook).not.toHaveBeenCalled();
+    });
+  });
 });

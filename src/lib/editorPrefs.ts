@@ -1,4 +1,4 @@
-import { writable, type Writable } from "svelte/store";
+import { get, writable, type Writable } from "svelte/store";
 
 /**
  * Per-browser editor preferences (indic-qa keeps the same ones in the
@@ -36,20 +36,22 @@ const isBoolean = (value: unknown): value is boolean => typeof value === "boolea
  * Close button, or by dragging its left edge to the right past its minimum
  * (Benz, 2026-10-09). Several may be open side by side.
  */
-export type SidePanelId = "source" | "reference" | "languageQa" | "review";
+export type SidePanelId = "source" | "reference" | "languageQa" | "paratext" | "review";
 export interface SidePanelState { open: boolean; width: number }
 export type SidePanels = Record<SidePanelId, SidePanelState>;
 
 /** Left to right, as they stand between the text and the rail. The source text
  * (#67) sits next to the verses it is the original of. */
-export const SIDE_PANEL_ORDER: readonly SidePanelId[] = ["source", "reference", "languageQa", "review"];
+/** Paratext notes (#357) sit beside Review, where findings are decided. */
+export const SIDE_PANEL_ORDER: readonly SidePanelId[] = ["source", "reference", "languageQa", "paratext", "review"];
 /** Panels a saved layout from before they existed lacks; they start closed
  * rather than throwing the reviewer's other widths away. */
-const ADDED_LATER: readonly SidePanelId[] = ["source"];
+const ADDED_LATER: readonly SidePanelId[] = ["source", "paratext"];
 export const SIDE_PANEL_LIMITS: Record<SidePanelId, { min: number; max: number; initial: number }> = {
   source: { min: 220, max: 640, initial: 320 },
   reference: { min: 200, max: 640, initial: 300 },
   languageQa: { min: 320, max: 760, initial: 440 },
+  paratext: { min: 260, max: 640, initial: 340 },
   review: { min: 300, max: 720, initial: 400 },
 };
 
@@ -79,6 +81,7 @@ function defaultSidePanels(): SidePanels {
     reference: { open: legacy("bridge.editor.referencePanel.v1", isBoolean) ?? false,
                  width: width === undefined ? SIDE_PANEL_LIMITS.reference.initial : clampPanelWidth("reference", width) },
     languageQa: { open: false, width: SIDE_PANEL_LIMITS.languageQa.initial },
+    paratext: { open: false, width: SIDE_PANEL_LIMITS.paratext.initial },
     review: { open: !(legacy("bridge.editor.reviewPanelCollapsed.v1", isBoolean) ?? false),
               width: SIDE_PANEL_LIMITS.review.initial },
   };
@@ -106,20 +109,48 @@ sidePanels.update((all) => {
   return filled;
 });
 
+/**
+ * The panels in the order they were last asked to open, most recent last
+ * (#324). Not saved: it only decides which panel folds first when the window
+ * is too narrow for all of them (panelFit.ts), so the one just opened is the
+ * one shown. Asking an already open panel to open moves it to the end too,
+ * which is how a folded panel is brought back.
+ */
+export const sidePanelRecency = writable<SidePanelId[]>([]);
+
+function markOpened(id: SidePanelId): void {
+  sidePanelRecency.update((order) => [...order.filter((other) => other !== id), id]);
+}
+
 export function setSidePanel(id: SidePanelId, patch: Partial<SidePanelState>): void {
+  if (patch.open) markOpened(id);
   sidePanels.update((all) => ({
     ...all,
     [id]: { ...all[id], ...patch, ...(patch.width === undefined ? {} : { width: clampPanelWidth(id, patch.width) }) },
   }));
 }
 
+/** Open a panel and make sure it is the one shown, even if it was already
+ * open but folded for width; an open panel's saved state is left as it is. */
+export function revealSidePanel(id: SidePanelId): void {
+  if (get(sidePanels)[id].open) markOpened(id);
+  else setSidePanel(id, { open: true });
+}
+
 export function toggleSidePanel(id: SidePanelId): void {
+  if (!get(sidePanels)[id].open) markOpened(id);
   sidePanels.update((all) => ({ ...all, [id]: { ...all[id], open: !all[id].open } }));
 }
 
-/** The dashboard's Collection QA panel folded to its header row. A run in
- * progress always shows its table, whatever this says. */
-export const collectionQaCollapsed = persisted("bridge.dashboard.collectionQaCollapsed.v1", false, isBoolean);
+/** The dashboard's Collection QA panel folded to its header row. Folded by
+ * default (#380); a saved choice wins, and a run in progress always shows
+ * its table, whatever this says. */
+export const collectionQaCollapsed = persisted("bridge.dashboard.collectionQaCollapsed.v1", true, isBoolean);
+
+/** The dashboard's project details block (eyebrow, book heading, Paratext
+ * strip) folded to one row: the name and the subtitle (#374). Open by
+ * default; remembered per device. */
+export const projectDetailsCollapsed = persisted("bridge.dashboard.projectDetailsCollapsed.v1", false, isBoolean);
 
 /** The verse text exactly as stored, USFM markers and all, instead of the
  * reader's clean text. Marks stay on the same characters. */

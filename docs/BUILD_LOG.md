@@ -17916,6 +17916,95 @@ and its titles, the glyph class; npm run build ok. Not run: the desktop app.
 The layout change is the largest of the session, and nothing in jsdom shows
 how the columns sit at 1366×768.
 
+## 2026-10-12 — macOS (Apple Silicon) and Linux release bundles, on the fork (#250)
+
+Benz asked for macOS and Linux releases on selvabenz/Bridge, explicitly not on
+RevantCI yet. Decisions taken first (AskUserQuestion): a new pre-release tag on
+the fork; Apple Silicon only; pipeline-only scope with the runtime gaps filed,
+not fixed; ad-hoc signing, since there is no Apple Developer certificate.
+
+**What actually blocked it.** Less than the docs implied. `tauri.conf.json`
+already listed `dmg`, `appimage` and `deb`, `icon.icns` existed, `sidecar.rs`
+had its `cfg(not(windows))` branch, `smoke_sidecars.py` and `usfm_adapter.py`
+already chose the extension by platform, and the fork already carried the
+`stage3-semantic-db-v0.3` asset (same sha256 as RevantCI's). The real
+blockers, each found by reading rather than assumed:
+
+1. `release.yml` was one Windows job: a hardcoded `bridge-engine.exe` smoke
+   path, an NSIS-only locate step, and a draft-release step that three
+   parallel legs would race (`gh release create` fails on the second
+   "already exists").
+2. `build-sidecars.ps1` joined paths with backslash literals. pwsh on macOS
+   and Linux does not treat a backslash as a separator, so the script would
+   have created one directory literally named with the backslash in it.
+3. `constraints-py312-windows.txt` pinned `pefile` and `pywin32-ctypes`
+   unconditionally; both are PyInstaller's Windows-only transitive deps.
+4. `.gitignore` ignored `bridge-engine-*` and `*.exe` but not a
+   `bridge-usfm-checker-<triple>` with no extension.
+5. Apple Silicon refuses to run an unsigned arm64 binary at all, and Tauri's
+   bundler skips signing entirely when no identity is set.
+
+**What changed.** `release.yml` is now a `prepare` job (frontend checks once,
+the release draft once, on ubuntu) and a `build` matrix of three legs:
+`windows-latest` (NSIS, the steps unchanged), `macos-15` (arm64 DMG,
+`APPLE_SIGNING_IDENTITY=-`, then `codesign --verify --deep --strict` on the
+.app and `codesign -dv` on both sidecars inside `Contents/MacOS`, which exits
+non-zero on an unsigned file) and `ubuntu-22.04` (AppImage and deb, after
+Tauri 2's documented apt list). Every leg keeps the frozen-sidecar smoke and
+`cargo test` as hard gates; the smoke path picks the extension from
+`$IsWindows`. The locate step takes a space-separated list of globs from the
+matrix, throws when any matches nothing, and writes a multiline `paths`
+output that both the artifact upload and `gh release upload` consume. The
+tag expression moved to a workflow-level `RELEASE_TAG` so the draft and the
+upload read one definition. `build-sidecars.ps1` uses forward slashes
+(Windows PowerShell accepts them) and runs `chmod +x` on the two copies when
+there is no `.exe` extension. The constraints file keeps its name and gains
+`sys_platform` markers (`pefile`, `pywin32-ctypes` on win32; `macholib` on
+darwin). QA matrix E06 moves from BLOCKED to PARTIAL.
+
+**Runner choices.** `macos-13` was retired in December 2025 and `macos-14`
+retires on 2026-11-02 with brownouts through October, so `macos-15`. No Intel
+leg: `macos-15-intel` is the last x86_64 image and PyInstaller cannot
+cross-build the sidecar, so one would need its own native leg. `ubuntu-22.04`
+over `-latest` because the AppImage inherits the build host's glibc floor.
+
+**What a user sees.** The DMG is ad-hoc signed, not notarized: Gatekeeper asks
+for right-click > Open the first time, or `xattr -d com.apple.quarantine`.
+The AppImage needs FUSE 2 on older distributions; the deb declares its webkit
+dependency itself.
+
+**Filed, not fixed (fork issues).** #251: `secret_store.py` persists the API
+key and the Paratext code only behind `os.name == 'nt'`, so off Windows a
+saved key lasts the session and the Settings label still says "DPAPI on
+Windows". #252: `_default_app_root()` falls back to `~/Bridge/data` rather
+than the platform data folder. #253: the POSIX `kill_process_tree` sends
+SIGKILL, which PyInstaller's bootloader cannot forward to its Python child.
+
+**Verified.** On Windows: `pip install --dry-run` resolves the marker-bearing
+constraints file (the darwin pin is skipped on win32, the win32 pins still
+apply); the edited `build-sidecars.ps1` builds both exes into
+`src-tauri/binaries/` and the frozen smoke passes; the workflow YAML parses.
+On the fork: see the run links in the PR. Not verified anywhere: launching
+Bridge on a real macOS or Linux desktop. The first dispatch run of this
+workflow is the first time the Tauri crate has ever compiled on either OS.
+
+**CI runs (fork, same day).** Dispatch run 38231024308: Windows and Linux
+green on the first try; macOS built, smoked, tested and signed, then the
+verify step failed because the bundler deletes `bundle/macos/Bridge.app`
+once the DMG is packed when `dmg` is the only macOS target (f1bbb41 mounts
+the DMG read-only and verifies inside it). Dispatch run 38233849078: all
+green; `codesign -dv` shows `Signature=adhoc` with `flags=0x10002(adhoc,runtime)`
+on both sidecars. Tag run 38235008945: the macOS attach failed with
+"no matches found for `U`" -- with one bundle, `Where-Object` hands back a
+bare string and splatting a string passes one character per argument; the
+Linux leg only worked because it had two (16a47f5 forces `@(...)`). The tag
+was moved to 16a47f5 and tag run 38236268130 went green on every leg. The
+draft pre-release `v0.14.0-mac-linux.1` on selvabenz/Bridge carries
+`Bridge_0.14.0_x64-setup.exe` (77 MB), `Bridge_0.14.0_aarch64.dmg` (97 MB),
+`Bridge_0.14.0_amd64.AppImage` (193 MB) and `Bridge_0.14.0_amd64.deb`
+(125 MB). Publishing it is Benz's click. `fork/main` was fast-forwarded to
+the same commit; nothing was pushed to RevantCI.
+
 ## 2026-10-12 — Benz's decisions of 2026-10-12 recorded (#226)
 
 Benz answered the 2026-10-09 requirements list by email. Four DECISIONS.md
@@ -21076,3 +21165,495 @@ gets one; two books of a collection share it. `ReferencePanel.test.ts` (5 new): 
 reads, a cancelled picker does nothing, Change and the built-in label, Change beside an unreadable
 folder, the Settings link. `SettingsModal.test.ts` (2): Browse saves at once with no Apply, Clear goes
 back to built in; no project, a hint. Gates as recorded on the issue.
+
+## 2026-10-16 — 0.18.0 regression walk: QA 02, 03, 04, 06 (#153, #154, #155, #157)
+
+**What.** Continued the installed-app regression walk on 0.18.0 (575235b) with real input over
+WebView2's debug port on scratch profiles. Results are in `QA_TEST_MATRIX.md` (the 2026-10-16 section)
+and on each card. No code changed.
+
+**Found, filed (all on the board as Todo):**
+- #308: Paratext `LanguageIsoCode` is copied raw (`sa:::`), so the language is never filled in.
+- #309: re-importing a Bridge-made project keeps its `.bridge/project.json` id. Once both folders are
+  known, `project.list` fails and Project Home shows no projects at all.
+- #310: the QA report gate reads "No blocking issues" both before any check and with high USFM findings
+  open. It counts only AI-review issues and ignores coverage.
+- #311: a damaged `workspace.sqlite3` crash-loops the engine at startup.
+
+Evidence added to existing issues: #127 (EDT-010: a stale editor save overwrote newer text in the
+installed app) and #200 (Go to: a missing chapter replaces the context; a verse inside a bridge does
+nothing).
+
+**Measured.** 135 registry entries: Home 4.1 s after launch, `project.list` 287–445 ms, a 66-book
+re-inspection 1.4 s, 66-book imports 10.2 s and 12.1 s. The re-check after editing an aligned verse completed in about
+1.75 s.
+
+**Method notes.**
+- EDT-012 used a stand-in for the Paratext companion on its named pipe (same protocol), not real
+  Paratext.
+- Drops are the `tauri://drag-*` events, not a physical Explorer drag.
+- AI cases (TH-009–018) were not run: no provider is configured, and sending text to one is Benz's call.
+
+## 2026-10-16 (later) — 0.18.0 regression walk: QA 07 and QA 09 (#158, #160)
+
+**What.** Walked manual word alignment and Alignment Review on the installed 0.18.0 with real input. Results
+are in `QA_TEST_MATRIX.md` (2026-10-16 section) and on the cards. No code changed.
+
+**Found, filed (on Project 6 as Todo):**
+- #312: aligned USFM export refuses the whole book when one group's target words are not adjacent. This
+  happens on the real IRV Tamil PHP data (PHP 1:2, ἀπὸ Θεοῦ καὶ Χριστοῦ → two separated Tamil words), and
+  Align Words lets a reviewer build such groups.
+- #313: Alignment Review history shows the reviewer as a raw actor id, not their name.
+
+**Watched working.**
+- A stale Align Words save is refused, and the other write is kept.
+- Undo and Restore selected return the verse byte-for-byte.
+- A clean book's aligned export and re-import keep both groups and all 21 verses.
+- Review decisions and their append-only history survive a restart.
+- A verse edit marks the passage analysis and all its findings Stale.
+
+## 2026-10-16 (evening) — 0.18.0 regression walk: QA 10 corrections (#161)
+
+**What.** Walked the Stage 9B correction path on the installed 0.18.0 with a copy of the IRV Tamil PHP
+project and no AI key. The path is: confirm → manual proposal → edit (human review) → Review application →
+Apply → affected re-analysis → verify. Results are in `QA_TEST_MATRIX.md` and on #161. No code changed.
+
+**Found, filed (Project 6, Todo):**
+- #314: the insertion point slider covers raw verse text including markup. On PHP 1:1 the Apply
+  confirmation showed `\x QA-COR-2- \xo …`. I cancelled, so nothing was written.
+- #315: after a rejection there is no way to create another proposal for that finding.
+- #316: verification is never available on a verse with markup. The job records sha256 of the lifted
+  text and the verifier compares it with sha256 of the raw text. I recomputed both from the stored job.
+
+**Watched working.**
+- Stale proposals are refused.
+- A double Apply produced one Scripture write and one intent.
+- PENDING stays PENDING after re-analysis.
+- UNCERTAIN offers no Mark corrected.
+- Every proposal, event, intent and verification row survived a restart.
+
+## 2026-10-16 (night) — 0.18.0 regression walk: QA 11, 12, 13 (#162, #163, #164)
+
+**What.** Walked the QA report, settings and connectors, and export on the installed 0.18.0. For the AI
+paths I used a dummy key with the base URL pointed at `http://127.0.0.1:9/v1`, so no request or Scripture
+left the machine. Results are in `QA_TEST_MATRIX.md` and on the cards. No code changed.
+
+**Found, filed (Project 6, Todo):**
+- #317: the report's "AI proposal" column holds a Greek Room check's own suggestion.
+- #318: a triage run that cannot reach the model stores "Uncertain · 0%" on all 137 findings.
+- #319: there is no way to remove a saved API key.
+- #320: Paratext navigation is never compared with the active Paratext project. The GUID setting in
+  `secret_store.py` is unused, and a stand-in companion reporting another project drove navigation.
+
+Evidence added to #211: the PDF print layout is still broken on 0.18.0.
+
+**Watched working.**
+- The key exists only DPAPI-wrapped: a unique marker was found in no file, log or view.
+- Connectors report a clean unavailable state and stop when disabled.
+- Report filters, counts and CSV/TSV agree.
+- Overwrite and permission errors in export go through explicit Windows prompts.
+
+## 2026-10-16 (late) — 0.18.0 regression walk: QA 14, 15, 16 and leftovers (#165, #166, #167, #175, #156)
+
+**What.** Walked accessibility/localization, reliability and release sign-off on the installed 0.18.0, then
+the GR-13 collection run and the CHK-006 versification case. No code changed.
+
+**Found, filed (Project 6, Todo):**
+- #321: Escape does not close Settings, Diagnostics, Export or Assignments.
+- #322: Enter on a book's Open in the dashboard does nothing. The row's keydown calls `preventDefault()`.
+- #323: an RTL project's verse list and editor are LTR.
+- #324: around 1000 px wide the verse list scrolls out of view.
+- #325: a source verse beyond the target's versification (UGNT 3JN 1:15) is dropped without a finding.
+
+**Corrected.** DATA-004 on #151: the "IRV Urdu" fixture is Devanagari, so it was not an RTL target.
+
+**Measured.**
+- An engine killed with a project open came back and reconnected in about 10 s.
+- The app and engine held no network sockets.
+- The working PHP project differs from its backup only by the three authorised verse edits and Bridge
+  metadata.
+- The v0.18.0 frozen smoke passes against the installed workers.
+- The installer matches the release asset (sha256 `382de3ae…`, NotSigned).
+
+## 2026-10-22 — Twelve bugs from the 0.18.0 walk fixed (#127, #306, #307, #313–#319, #321, #323)
+
+**What.** One commit per issue, from the bugs filed in the 2026-10-16 regression walk. Bugs in Revant's
+files (#308, #309, #311, #322, #324, and the Assignments dialog part of #321) and the ones whose issue
+asks a question first (#310, #312, #320, #325) are not touched.
+
+- **#306** `openAlignment` opens the Review side panel (never toggles it shut), because AlignmentModal is
+  mounted inside that keepMounted panel and was invisible while it was closed. App.svelte not touched.
+- **#313** Alignment Review history resolves a HUMAN actor id to the user's name from `users.list`
+  (`userNames` store). An unknown id stays the id; `legacy:human` is unchanged.
+- **#319** Settings > AI provider has "Remove key" (with a confirm). It sends `settings.set { apiKey: "" }`,
+  which `secret_store.set_api_key` already treats as clearing, so the engine needed no change.
+- **#321** Escape closes Settings, Engine diagnostics and Export exactly as their close button does, and
+  focus goes back to the opener. AssignmentsDialog is Revant's file and is left alone.
+- **#323** New `targetDir` store from `targetLanguageDirection`. The verse text and the inline editor carry
+  `dir` (and `lang`). The row's number cell is not changed; to be checked in the app.
+- **#307** Aligned export writes a verse with no source tokens (every lettered segment, 5a/5b) as plain
+  `\w` words with no `\zaln-s`, instead of refusing the book. The result lists them as `unalignedVerses`
+  and the export dialog names them. No publication-gate rule was added for them.
+- **#317** A Greek Room row's own `suggested_replacement` moves to a new `checkSuggestion` field and
+  "Check suggestion" column (screen and CSV/TSV). `aiProposal` holds only AI provider wording.
+- **#318** A triage batch that never reached the model (`ai_http.TransportFailure` /
+  `ai_client.AITransportError`, `TimeoutError`, `ConnectionError`; by type, not message text) stores
+  nothing. The run reports `unreachedBatches`, and `triaged` counts only stored records. A model that
+  answered without a usable verdict still stores uncertain. HTTP 401/429/500 are unchanged.
+- **#127** The correction route already refused stale writes (`StrictScriptureEditContext`); the pin test
+  only checked parameter names and is now two positive tests. The real gap was `verse.edit`:
+  `apply_scripture_edit` takes `expected_old_text`, the editor sends the text it opened with, and a
+  mismatch is a `REVISION_CONFLICT` refusal. The typed text stays in the box and the newer text is quoted.
+  A second Save then replaces the newer text on purpose. The scoped Language QA apply/undo do not pass it.
+- **#314** The correction insertion slider offers only `LiftedVerse.insertion_points()` (verse start, verse
+  end, each word end after its closing markup), sent by the engine as `insertionOffsets`. The proposal
+  save/edit/regenerate path and Apply refuse an insertion strictly inside a removed range
+  (`removed_range_containing`). The trimmed-wording gap noted on the issue is not decided.
+- **#315** A new proposal after a rejection names the rejected one (`supersedesProposalId`) and goes
+  through the existing supersede path that "Generate another suggestion" uses. The old proposal keeps its
+  wording and review status and gains a SUPERSEDED event. A plain create after a rejection is still refused.
+- **#316** `_current_target_hash` reads the verse through `project_current_passage_index`, the same
+  lifted text the analysis job hashed. Every marked-up verse was permanently ANALYSIS_NOT_CURRENT before.
+  No verification rule changed. Hashes in correction eligibility and application stay raw, as their
+  stored counterparts are.
+
+**Why.** These are the P0/P1 failures behind REL-001 on #167 that needed no decision beyond what each
+issue already says.
+
+**Measured.**
+- Frontend: `npm run check` 0 errors, 0 warnings. `npm run test` 865 of 866 passed; the one failure was a
+  100 ms click-budget test that passed on rerun (124 of 124 in the three timing files). `npm run build` ok.
+- Engine, `pytest -n 6`: 5476 passed, 13 failed, 3 xfailed. Twelve failures came from the worktree
+  missing the gitignored `bridge_semantic_source_v0.3.sqlite`; with it, all 21 Stage 3 tests pass. The
+  thirteenth, `test_moved_project_retains_identity_but_live_copy_is_rejected`, also fails serially on
+  unchanged main, so it is not caused by this batch.
+- Frozen sidecars rebuilt with `build-sidecars.ps1`; `scripts/smoke_sidecars.py` passed (engine ready in 3.4 s; export/undo,
+  alignment, registry, Hindi pack and ta-irv indic-qa layer all succeeded).
+- Checked against translationCore's own `word-aligner` 1.1.1 for #312: `merge` writes one
+  `\zaln-s … \zaln-e` pair per run of adjacent target words, and `unmerge` reads the runs back as one
+  group. No code changed for #312.
+
+**Not done.** No installed-app walk of these fixes yet.
+
+**Found, not fixed.**
+- Verification can stay ANALYSIS_NOT_CURRENT for good when an edit lands after the affected re-analysis.
+- Five other one-bad-verse refusals remain in the aligned exporter.
+- Prepared applications from before #314 resume without the new check.
+
+## 2026-10-22 (later) — Five more walk bugs, and the Language QA scan no longer starves the dispatcher (#308, #309, #321, #322, #324)
+
+**What.** Benz authorised this batch in files that were Revant's under the working split (project_import.py,
+project_registry.py, App.svelte, ProjectDashboard.svelte, AssignmentsDialog.svelte). From today Benz's repo
+(selvabenz/Bridge) is `origin` and RevantCI/bridge is `fork`. Issue numbers below are RevantCI's; the
+selvabenz copies are upstream + 27 (#306–#325 → #333–#352).
+
+- **#308** `_paratext_language_id()` takes the part of `<LanguageIsoCode>` before the first ":", maps a
+  two-letter code to ISO 639-3 (new `iso639.py`, all 184 codes, generated from the `iso-639-3` package the
+  import form already uses), keeps a three-letter code, and leaves anything else empty. The import form
+  fills the language name from its own table for a known code.
+- **#309** Two halves. `project.list` no longer fails for every project when one folder's identity clashes:
+  that folder becomes a conflict row (message, registered path, copy path, no actions) and the rest are
+  listed. Import of a Bridge-made project mints a new projectId **only when the source's id is registered
+  here at a path that still exists** (Benz's choice, 2026-10-22); the source ids go to
+  `.bridge/import.json` `importedFrom`, and a copied `collection.json` becomes a one-book collection of the
+  copy. A project from another machine keeps its id and history. The copy's `.apps/translationCoreAI/`
+  rows stay as copied and are filtered out by the new id.
+- **#321** The Assignments dialog closes on Escape, as Settings, Diagnostics and Export already do.
+- **#322** A book row's keydown ignores events from its inner buttons, so Enter on Open opens the book.
+- **#324** The verse list keeps a minimum width (340 px, more at larger text sizes); side panels shrink to
+  their minimums, then the one opened longest ago folds to its rail entry (visual only, saved panel state
+  unchanged). The status bar stays on one line with a full tooltip.
+- **Language QA responsiveness (CI's benchmark gate).** A watchdog thread in the engine showed `ping`
+  stalls of 250–900 ms during a scan while the `language-qa` thread sat in single C calls:
+  `json.loads` of the indic-qa IRV snapshot (ta 434 ms, ml 769 ms), `pickle.dumps/loads` of its in-memory
+  copy (ta ~200 ms, ml ~500–680 ms) and full `gc.collect()`. In the app that is a UI freeze near the end of
+  every scan. Now:
+  - The snapshot is format 2: gzip JSON lines, each line at most 2048 entries of one container. The old
+    format is still read. The cache is one pickle stream of the same pieces.
+  - `gc.collect()` is removed from the book switch; the old state is let go piece by piece.
+  - The Tamil lexicon is laid out one member per line (still one valid JSON document) and read a line at
+    a time; its deletion buckets parse on first use.
+  - All five `irv_state.json.gz` and `ta-irv/lexicon.json.gz` were re-encoded losslessly by
+    `scripts/convert_pack_pieces.py`, which refuses to write unless the new file decodes to exactly the old
+    one (types, values, dict order, provenance, the 47 human pairs); `--against b7d3940` passes.
+
+**Measured.**
+- Longest single GIL hold: file restore ta 182 → 30–44 ms, ml 513 → 32–69 ms; cache restore ml 74–87 →
+  16–29 ms; release ml 81 → 14–21 ms; lexicon load 54–59 → 14–17 ms. What remains above 50 ms is
+  automatic gen-2 GC.
+- Findings byte-identical old vs new: 433 findings over 15 passes on all five packs (PHM, RUT, PHM).
+- Memory peak across five book switches: ta 298 → 277 MB, ml 335 → 341 MB.
+- Gates on this batch: `npm run check` 0/0; `npm run test` 887/887; `npm run build` ok; engine
+  `pytest -n 6` 5511 passed, 0 failed; ta/hi/ml human-label gates pass; frozen sidecars rebuilt and
+  `smoke_sidecars.py` passed.
+
+**Not fixed yet.** The benchmark gate still flakes locally at about the old rate (final code 1 fail in 6
+Tamil runs; baseline 2 in 6). The rest of the tail is not the scan: `ping` itself spends 175–235 ms in
+`_authorize` → `local_user()`, because `WorkspaceRepository._connect` opens a new SQLite connection (four
+PRAGMAs, `synchronous=FULL`) on every call, and each GIL handover waits behind the scan thread. The
+`verse.decide (languageQa)` p95 is taken over 10 samples, so one slow decide fails it. Being worked next.
+
+## 2026-10-22 (evening) — Per-request role check no longer opens SQLite; Language QA gate 10/10
+
+**What.** The rest of the benchmark gate's tail was not the workspace database (that brief was wrong;
+`local_user()` is cached and only `project.open` opens workspace.sqlite3). It was `_authorize` ->
+`project_role` -> `TranslationCoreProject.team_role()` -> `workbench.get('team_members')`: the dispatcher
+releases its workbench connection after every request (#113), so every request paid a fresh open, five
+PRAGMAs, a SELECT and a close, each a GIL handover behind the scan thread. `team_role()` now keeps each
+user's answer stamped with the workbench's per-file `write_generation` (bumped by `_write`, `_delete`,
+`batch` and the hub pull's `import_event_lines`), read before the row. Language QA requests also stop
+resolving both paths on every call when the request carries the project's own path string.
+Authorization semantics are unchanged; `ping` is still authorised.
+
+**Measured (2 cores, during a scan).** ping: 1.00 -> 0.01 opens per request, max 78-223 -> 6-9 ms.
+Gate (`--gate --cores 2 --p95-budget-ms 300`): baseline 8 of 9 passed (one 330 ms ping); final 10 of 10
+Tamil (max ping 19-174 ms) and 2 of 2 Hindi. Engine suite `-n 4` 5515 passed, 0 failed; frozen
+sidecars rebuilt and `smoke_sidecars.py` passed. A role change decides the next request for a local
+setRole, a second handle on the same book and a pulled team_members event (4 new tests).
+
+**Open, for Benz/Revant.** A second Bridge process writing the same book does not invalidate this cache
+(same limit as `local_user()` today). `verse.decide` tails are disk syncs in `commit()` and the
+per-request close (WAL checkpoint); `SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE` would help but widens the
+power-cut window. The gate's 10-sample p95 is effectively the maximum.
+
+## 2026-10-23 — Paratext batch 1, part one: read-only reader and whole-project import (#354, #355)
+
+**What (#354, d38474b).** New `engine/tc_ai_bridge/paratext_project.py`, a read-only reader for a
+Paratext 9 project folder: `Settings.xml` (both naming forms, `BooksPresent` over Paratext's 123-book
+canon, `LanguageIsoCode` split, quotes/characters/words, Guid, sha256), the book-file scan from the naming
+pattern (RegExBackup*, .BAK, peripherals and files without `\c` skipped with a reason; BooksPresent
+mismatches are warnings), refs, BookNames/CommentTags/ProjectUserAccess, and the Project Notes index:
+`iterparse` + `elem.clear()` over every `Notes_*.xml`, threads merged across users by `Thread` id,
+status/assignee/tags folded in date order, JSON round trip, unchanged files reused. Every file is read as
+bytes between two equal stats with up to three retries; `ParatextFolderReader` keeps the previous parse as
+stale while Paratext is mid-save. No function opens a file for writing (pinned by a test that patches
+`open`/`os.open`). Synthetic builder `tests/support/paratext_fixture.py`; dev script
+`scripts/paratext_smoke.py` (output on #354, not committed).
+
+**What (#355, c437ce0).** `inspect_import` takes a Paratext folder's books from its naming pattern
+instead of scanning every `.sfm`; skips are warnings on the review screen; a pattern naming nothing falls
+back to the old scan, which now skips RegExBackup* and never walks into `.hg`. Language: a known ISO code
+leaves the name to the import screen's ISO 639-3 table, and Paratext's free-text `<Language>` is used only
+for an unknown code (Benz, 2026-10-22: DVT's `<Language>` is "TestDeva"). The link block is written as
+`paratext` into every sibling's `.bridge/collection.json`; the review screen shows the Paratext name and
+Guid. The #308 two-letter mapping (8eeb87a) is kept, so `sa:::` gives `san`, not the issue's `sa`.
+
+**Why.** IRVTam failed import ("More than one source file identifies the same book: mat": RegExBackup
+files start with `\id MAT`) and BHDNT failed (`A7INTBHDNT.SFM` has no `\c`). Both reproduced before the fix.
+
+**Measured.** Real projects (read only; sha256 of each folder, `.hg` excluded and never listed, equal before
+and after every run): IRVTam 66 books + 4 RegExBackup skipped; BHDNT 66 + INT/GLO skipped; DVT 27, `sa`;
+IRVHin 66. `build_notes_index` on IRVTam 2.03 s (19,743 threads, 24,664 comments; the 42.6 MB file 1.52 s);
+JOS 3:4 thread `8a14411f` found. Desktop (`npm run tauri dev` on freshly built sidecars, scratch
+LOCALAPPDATA): IRVTam and BHDNT imported as 66 book projects each with the skips on the review screen,
+DVT pre-filled Sanskrit/`san` and imported 27; all 159 `collection.json` carry the link.
+Gates: engine `pytest -n auto` 5584 passed, 0 failed; `npm run check` 0/0, `npm run test` 891/891,
+`npm run build` ok; `smoke_sidecars.py` on the rebuilt frozen pair passed.
+
+**Flake found and fixed (cf5940b).** The first engine run failed
+`test_preload_runs_once_on_a_background_thread` once. Root cause in `names_adapter.preload_async`: it took
+`_lock`, which `_ensure_uroman` holds for the whole ~5 s Uroman build, so a second call made while the
+preload thread was already building waited out the build and returned None (the failing run's stderr:
+"uroman preload took 5004ms", the test's own 5 s gate timeout). Reproduced deterministically (2.00 s, then
+None); thread creation now has its own lock, and a new test pins that order.
+
+## 2026-10-23 — Paratext batch 1, part two: project link and read-only notes (#356, #357)
+
+**What (#356, b4f57d9).** `engine/tc_ai_bridge/paratext_link.py` resolves the `paratext` block an import
+writes to every sibling's `collection.json`: `linked` (Settings.xml Guid matches), `folderMoved` (same
+Guid found under Paratext's `Settings_Directory`, offered as `candidate`), `guidMismatch`,
+`folderMissing`, `notParatext`. Resolution never fails an open. `relink()` refuses a folder with another
+Guid and rewrites `paratext.folder` in every sibling, keeping every other key. `engine/paratext_session.py`
+holds the resolution and a memoizing reader; `project.open` attaches it and keeps it while the Guid is
+the same. RPCs `paratext.linkStatus`, `.refresh`, `.bookNames` (read) and `.relink` (write), classified in
+`authorization.py`. A status line with Refresh/Relink sits under the dashboard header
+(`ParatextLinkStatus.svelte`). It needs an open book, so it is on the collection dashboard, not on the
+project list the app calls "Project Home".
+
+**What (#357, 5966ec4, 323e4b0).** The notes index is built on a daemon thread that `project.open`
+starts; each notes request stats the `Notes_*.xml` files (fingerprint over name, size, mtime_ns) and a
+change starts a rebuild that reuses unchanged files. RPCs answer `building` until the first build and
+`stale` while a rebuild runs. Cache: `paratext-cache/<guid>/notes-<fingerprint>.jsonl.gz`, gzip JSON lines
+(header + one compact row per comment) read a line at a time. A single `json.loads` of the 30 MB index
+took 4 s and would hold the GIL for about a second. No workbench table or migration; nothing written into
+the Paratext folder. RPCs `paratext.notesForChapter` / `.notesForVerse` / `.noteThread`; `linkStatus`
+gains `notesIndex`. UI: a "Paratext" side panel (`ParatextNotesPanel.svelte`) and a `PT n` verse badge from
+`paratextNoteCountsByVerse` (verseKey-keyed, cleared by `resetBookState()`), loaded per chapter in
+VerseList (not App.svelte).
+
+**Measured.** IRVTam (19,743 threads): cold build 3.85 s in the app (4.2 s in-process alongside
+`project.open`'s own work); from the 5.7 MB cache 1.3 s. 130 pings during a cold build: p95 0.1 ms,
+max 146 ms. 33 during a cache load: max 13 ms. Probed GIL holds: build ≤ 38 ms, cache read ≤ 64 ms
+(GC accounts for part of it).
+Desktop walk (`npm run tauri dev`, rebuilt sidecars, scratch LOCALAPPDATA): JOS 3:4 shows Benz's thread
+("3,000 அடிகள்" → "ஒரு கிலோமீட்டர்") and the two AI-QA threads; JOS 3 badges match the counts. Refresh after an
+edited note: proven on a scratch copy of IRVTam (same Guid, relinked), where the panel showed "Updating
+from Paratext…" and then the edited text. Not yet watched with a note edited in Paratext itself. Renaming
+`IRVTam` inside `My Paratext 9 Projects`: the project opened, the line said the folder moved and offered
+the new path, and Relink rewrote all 66 siblings; renamed back and relinked the same way. A rename inside
+the projects folder reports `folderMoved`, not `folderMissing`: that state needs a folder that is gone
+(covered by the RPC tests). sha256 of the four projects equal before and after.
+Gates: frontend check 0/0, test 909/909, build ok; frozen sidecars rebuilt, `smoke_sidecars.py` passed,
+frozen engine answers `paratext.linkStatus`. Engine suite: two full runs, 2 failed / 5595 passed, then
+1 failed / 5596 passed. Each failure passed in the other run, and none runs Paratext code (Benz accepted the
+gate on that evidence): `test_projects_list_management::…summed_progress…` takes 61–77 s in every run
+against an 80 s budget; `test_language_qa::test_continuous_foreground_polling_does_not_starve_worker` has a
+fixed 3 s deadline; `test_names_check::test_engine_info_builds_no_uroman…` failed once after 10.9 s with
+the error not captured.
+
+## 2026-10-23 — 0.20.0 release and focused installed-app walk
+
+**What.** v0.20.0 tagged from 966b50b and published on selvabenz/Bridge (release runs 39881910354 and
+39884651058 green: Windows, macOS Apple Silicon, Linux AppImage/deb). Then a focused walk of the installed
+Windows build, scoped by Benz: the release smoke, every 0.18.0 failure that 0.20.0 fixes, Paratext
+#354–#357 and the reference Bible #289. Results are in QA_TEST_MATRIX.md (2026-10-23 section); the ledger,
+shots and harness are in `D:\Claude Lab\Claude outputs\qa-0.20.0\2026-10-23`.
+
+**Measured.** All SMK cases and all 17 re-walked fixes pass in the installed app. IRVTam (66 books) imports
+to the dashboard in 10.3 s; the three Paratext copies were byte-identical after import, notes indexing, a
+reference read and the relink tests.
+
+**Found.** #326 (selvabenz #372, P1): `window.confirm` is replaced by the dialog plugin's async version and
+refused by the ACL (only open/save are allowed), so `if (!window.confirm(…))` never stops anything: the
+chapter/book AI review and Remove key run without asking. Minor, not filed: correction-proposal history
+shows the actor id; a rejected proposal still offers Edit/Reject; the open Reference panel keeps the old
+Bible after Clear until reopened; the header stays clickable over the Export dialog; the no-key triage
+message speaks of "an AI alignment proposal".
+
+**Harness notes.** Since 0.19.0 the splash is the process's first window: size the largest visible window.
+Never post WM_CLOSE to every window of the process; tao's `Tao Thread Event Target` window is one of them and
+closing it leaves the shell and engine running with no window.
+
+## 2026-10-23 — Settings > Team: Start a hub / Join a hub (#46)
+
+**What and why.** Benz asked for two buttons on Settings > Team, Start a hub and Join a hub, with Start
+disabled while a hub is already running. A real Start reverses the packaging half of two decisions
+(2026-09-11 "never in the desktop sidecar", 2026-10-15 #227 "excluded from `bridge-engine.spec`"). Benz
+decided the reversal on 2026-10-23; it is recorded in DECISIONS.md first, before any code.
+
+**Design.** The engine starts the hub as its own child (`subprocess.Popen` of `sys.executable --serve`
+frozen, `python main.py --serve` from source). The child's stdout goes to `%LOCALAPPDATA%\Bridge\hub\hub.log`
+and never to the JSON-lines pipe. It lives only while Bridge is open: `--parent-pid` makes it exit when the
+engine does, Rust's `taskkill /T` already kills the tree on app exit, and `atexit` stops it on a clean exit.
+`hub.status` reports the server state without any network call; `hub.probe` does one short `GET /health`.
+No src-tauri change.
+
+**Choices Benz made in the session.**
+- The hub lives only while Bridge is open and comes back on the next launch. A detached hub was turned
+  down: a onefile child shares the parent's extraction folder, which is deleted on exit. A permanent hub
+  stays on the pip `[server]` route.
+- The engine spawns the hub, not Rust. This needs no capability or Rust change and keeps the hub state
+  next to the sync thread.
+- Tracked on #46 itself, with no new issue.
+- Benz authorised edits in Revant's hub files and in src-tauri; none in src-tauri turned out to be needed.
+
+**Fixed before committing.** The tests caught these:
+- `atexit` called `hub_stop()`, which also cleared autostart, so closing Bridge would have switched the
+  relaunch off. Exit now only kills the child.
+- The start watcher marked the hub `running` before it saved autostart, so a status read in between saw
+  `running` with autostart off. Autostart is now saved first.
+- `hub.status` could mark a dying child `failed` before the watcher did, with a generic message instead
+  of the end of `hub.log`. Only the watcher now judges a child that is still starting.
+- The loopback port check timed out at 0.2 s and `hub.status` took about 200 ms, because a connect to a
+  closed port on Windows waits out the whole timeout. The timeout is now 0.1 s.
+
+**What landed.** 7de3026 the decision (DECISIONS 2026-10-23 and the pointers in TEAM_ARCHITECTURE, the hub
+review, QA_TEST_MATRIX and CLAUDE.md). d4b7586 packaging: the spec carries the server, the `[server]`
+packages are pinned in the constraints, `--parent-pid` with `process_watch.watch_parent`, and a `--serve`
+step in `smoke_sidecars.py`. c16d102 `hub.start`, `hub.stop`, `hub.probe` and `hub.status.server`.
+ccae425 the two buttons in TeamPane. QA_TEST_MATRIX M87-M91 are the installed-app walk.
+
+**Ran and watched.**
+- Engine `pytest -n auto`: 5608 passed, 3 xfailed (24 min 57 s). `test_hub_sync.py` and
+  `test_bridge_server.py::test_serve_*` used to skip in the local venv and now run, because the server
+  packages are installed. `test_hub_server_control.py` includes one real hub started from source
+  (`python main.py --serve`): it reaches `/health`, gives an admin code and stops.
+- Frontend: `npm run check` 0/0, `npm run test` 87 files / 917 tests, `npm run build` ok.
+- `build-sidecars.ps1` then `smoke_sidecars.py`: passed. The frozen exe's `--serve` answered `/health` in
+  4.59 s. Engine ready in 2.31 s. `bridge-engine.exe` is 19,860,771 bytes.
+- The frozen engine driven over stdio (a scratch script, not committed):
+  - `hub.start` reached `running` in under 4 s and the admin code joined as project_admin.
+  - `hub.log` holds the banner, so nothing reached the protocol pipe.
+  - Three new `bridge-engine.exe` processes while it ran. A child that unpacked its own copy would make
+    four, so the child probably reused the parent's extraction. That is inferred from the count, not
+    checked against `sys._MEIPASS`.
+  - Closing the engine's stdin, as the shell does on exit, left no `bridge-engine` process, and the port
+    stopped answering.
+
+**Not run.** `npm run tauri dev` and the installed-app walk M87-M91, the Windows Firewall prompt, and a
+second machine. No src-tauri change, so no cargo gate.
+
+**Found, not fixed.**
+- The hub's own engine keeps `settings.json` in `Bridge\hub`. It still opens the desktop's
+  `%LOCALAPPDATA%\Bridge\data\workspace.sqlite3`, because `tc_project.py:303` uses `_default_app_root()`.
+  A hub run from source on the same machine has always done this; a hub started from the desktop now
+  makes it the normal case.
+- A hub started from the desktop serves no dashboard, because `dist-dashboard/` is not bundled. Everyone
+  joins with the admin code, and there is no way to make an editor or reporter code without the dashboard.
+- Starlette 1.9 warns that `httpx` with its TestClient is deprecated (the existing `test_serve_*`).
+- `scripts/install-hub-task.ps1`, which DECISIONS 2026-10-15 names as the way to run a permanent hub
+  under Task Scheduler, does not exist.
+
+**Environment notes.**
+- The local engine venv had none of the `[server]` packages. They are installed now, from the new pins.
+- `build-sidecars.ps1` must not be run with `*>&1` under PowerShell 5.1: PyInstaller's INFO lines on
+  stderr become errors and stop the script.
+
+**Shipped.** Pushed to selvabenz/Bridge `main` on 2026-10-23 (4d5273c..17fc497). The close-out is a
+comment on #46 (issuecomment-6358310384); #46 stays closed and in Done. CI run 39907268785 on 17fc497 passed:
+engine, frontend and ci-ok succeeded; golden-notice and rust were skipped (no golden or src-tauri change).
+
+## 2026-10-23 — Milestone 2 "UI fixes / cosmetics", ten issues in two batches (#377, #384, #385, #374, #380, #383, #375, #379, #376, #378)
+
+**Summary.** Benz's 2026-10-23 list of UI fixes (parent #373), worked in two batches on `main`, one
+commit per issue, each closed out in a comment on the issue. All frontend; no engine, schema or
+src-tauri change, so the engine pytest suite and the cargo gates were not run. The installed-app look
+at 1366x768 at each text size was not checked anywhere in this batch; that walk is Revant's or Benz's.
+
+**Batch 1** (d272b86..d8a6eed): f16f402 #377 one `--control-h` (28px) token for the top bar's controls
+and the report header; 181985c #384 "Add to dictionary" and a Dictionary tab subtitle that says the pack
+dictionary is read-only; a286faa #385 the Book words tab reads "Words in {book name}" with the
+dashboard's fallback and an ellipsis at the panel minimum; 726963a #374 the dashboard's project details
+block folds to one row (`projectDetailsCollapsed`, open by default); 80467f5 #380 Collection QA folded by
+default with a slimmer folded row ("Run all again" kept until Benz says otherwise); d8a6eed #383 an
+open-issue count pill beside the verse number, coloured by the worst open severity, click reveals the
+Review panel on the first finding's tab through a new `reviewTabRequest` store (`.vnum` widened 26→52px,
+so every row's text starts 26px further right: the one visible layout change).
+
+**Batch 2** (d8a6eed..c1c864d): 7091c7f #375 Rename / Archive / Delete as 28x28 glyph buttons with the
+action and project as tooltip and accessible name, Open kept as text (design-pass decision; 🗑︎ and 📂︎
+need a Windows check); c656619 #379 step 1, `PanelHeader.svelte` as the one header bar on all five side
+panels, Paratext included — mounted by each panel rather than drawn by SidePanel, because a Svelte 4 slot
+cannot be filled from a grandchild and the actions are bound to each panel's state; the item 6 list stays
+open on the issue for Benz; a32a498 #376 the Language QA panel's one filter row (list switch, scope, a
+Kinds dropdown), the state word in the title, everything else behind the (i) as a popover that never
+grows the header, every raw px size an `--fs-*` token; c1c864d #378 the Assign dialog as person once →
+tick chapters (range, Shift-click, whole book) → one Apply that sends one existing `team_assignments` call
+per changed chapter (no batch RPC; `assign()` in App.svelte resolves true/false and the dashboard reloads
+once per batch).
+
+**Ran and watched.**
+- Batch 1 at d8a6eed: `npm run check` 0 errors / 0 warnings; `npm run test` 90 files / 937 tests;
+  `npm run build` ok.
+- Batch 2 at c1c864d: `npm run check` 0 errors / 0 warnings; `npm run test` 90 files / 948 tests;
+  `npm run build` ok.
+- New or rewritten Vitest files: `controlHeight.test.ts`, `ProjectDashboardFold.test.ts`,
+  `verseIssues.test.ts`, `AssignmentsDialog.test.ts`; additions in `LanguageQaPanel`, `VerseList`,
+  `CollectionQaPanel`, `ImportScreenList`, `SidePanel` and `ReviewPanelLanguageQa` tests.
+
+**Not run.** Engine pytest (no engine change), cargo (no src-tauri change), `npm run tauri dev`, the
+installed-app walk at 1366x768 at text sizes 0.85–1.7, the Tamil / Punjabi book-name check for #385
+(from code: `\h`, else `\toc2`, else the English table), the row-count measurement for #376 at 440px
+and 320px, and the Windows rendering of the #375 glyphs.
+
+**Found, not fixed** (proposed in the issue comments, no issues filed).
+- `ReviewPanelGreekRoom.test.ts` logs "Could not restore issue resolutions TypeError" six times per run:
+  its bridge mock lacks the issue-resolutions method (`TranslationHelpsReview.svelte:110`). Noise.
+- Language QA: F8 is inert while the (i) popover is open, because the F8 handler stands down for any
+  `[role="dialog"]` in the page (#376 comment).
+- Review shows two header lines (the shared bar, then count + actions) where the other panels show one;
+  one for the #379 item 6 discussion.
+
+**Shipped.** Pushed to Bridgeconn/bridge `main` (d272b86..c1c864d) on 2026-10-23. Issues #377, #384,
+#385, #374, #380, #383, #375, #376 and #378 closed with their comments; #379 closed out for step 1 and
+reopened for item 6. #402, #213, #389 and #373 in the milestone were out of scope and untouched.

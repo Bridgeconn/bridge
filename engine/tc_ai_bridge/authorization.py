@@ -174,10 +174,16 @@ _READ = (
     "reviewHistory.getEntityHistory",
     "analysisJob.status", "analysisJob.getRecent", "analysisJob.getScopeStatus",
     "paratext.getState", "paratext.connectorStatus", "issueResolution.list", "logos.getState",
+    # #356: the Paratext project link; refresh only drops this device's memos.
+    "paratext.linkStatus", "paratext.refresh", "paratext.bookNames",
+    # #357: the linked project's Project Notes, read-only.
+    "paratext.notesForChapter", "paratext.notesForVerse", "paratext.noteThread",
     "navigation.status", "navigation.poll", "navigation.bridgeChanged", "navigation.resolve",
     "users.list", "users.setCurrent",
     "assignments.list",
     "hub.status", "hub.conflicts",
+    # #46: asks whether a hub answers at an address; changes nothing.
+    "hub.probe",
 )
 
 _RUN_CHECKS = (
@@ -212,6 +218,8 @@ _WRITE = (
     "semanticReview.decideLocation", "semanticReview.decideMeaning",
     "issueResolution.save", "issueResolution.queueParatext", "issueResolution.retryParatext",
     "paratext.setReference", "paratext.installConnector", "logos.setReference", "settings.set",
+    # #356: rewrites the link in every sibling's collection.json.
+    "paratext.relink",
 )
 
 _MANAGE_PROJECTS = (
@@ -221,6 +229,8 @@ _MANAGE_PROJECTS = (
     "assignments.set", "assignments.clear",
     # #80: joining a hub and linking a book change what this device shares.
     "hub.join", "hub.leave", "hub.link",
+    # #46: hosting the team's hub on this machine.
+    "hub.start", "hub.stop",
 )
 
 # #237: anyone may see who exists and sign in as themselves at startup; only

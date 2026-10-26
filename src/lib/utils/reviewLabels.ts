@@ -294,6 +294,17 @@ export function actorDisplayId(actorId: string | null | undefined): string {
   return id === "human" ? LEGACY_HUMAN_LABEL : id;
 }
 
+/** #313: a person's name for a HUMAN history row, from the workspace users
+ *  list. An id not known on this device stays the id; `legacy:human` stays
+ *  `legacy:human` (#237). */
+export function actorDisplayName(
+  actorId: string | null | undefined, names: Readonly<Record<string, string>>,
+): string {
+  const id = actorDisplayId(actorId);
+  if (!id || id === LEGACY_HUMAN_LABEL) return id;
+  return names[id] || id;
+}
+
 /**
  * V11-002: the backend always sends providerMetadata as `{}` rather than
  * null when a history event has no AI provenance (e.g. a HUMAN edit), so

@@ -73,7 +73,7 @@
   };
 </script>
 
-<section class="collection-qa" aria-label="Collection QA">
+<section class="collection-qa" class:folded={!open} aria-label="Collection QA">
   <div class="head">
     <button type="button" class="fold" aria-expanded={open} aria-controls="collection-qa-body"
       aria-label={open ? "Collapse Collection QA" : "Expand Collection QA"} disabled={active}
@@ -156,6 +156,13 @@
 
 <style>
   .collection-qa { border: 1px solid var(--border, #e5e7eb); border-radius: 8px; padding: 12px 14px; margin: 0 0 16px; }
+  /* #380: the folded row is about half the open card's height: ▸, the title,
+     the summary and the Run buttons on one line, less padding, less margin. */
+  .collection-qa.folded { padding: 6px 14px; margin-bottom: 8px; }
+  .collection-qa.folded .head { flex-wrap: nowrap; min-width: 0; }
+  .collection-qa.folded .progress { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .collection-qa.folded .actions { flex-wrap: nowrap; flex-shrink: 0; }
+  .collection-qa.folded button { padding: 4px 10px; }
   .head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   h3 { margin: 0; font-size: var(--fs-md, 15px); }
   .fold { border: 0; padding: 0 2px; width: 20px; font-size: var(--fs-xs, 12px); color: var(--text-2, #4b5563); }

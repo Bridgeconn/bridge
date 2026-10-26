@@ -4,7 +4,7 @@ export function reportRow(overrides: Partial<ReportRow> = {}): ReportRow {
   const row: ReportRow = {
     id: "rut:x", category: "greekRoom", engine: "wildebeest", checkType: "wildebeest.script.mixed",
     severity: "high", book: "rut", bookName: "Ruth", chapter: "1", verse: "1", reference: "RUT 1:1",
-    issue: "Mixed script", explanation: "Latin character inside Tamil text.", aiProposal: "",
+    issue: "Mixed script", explanation: "Latin character inside Tamil text.", checkSuggestion: "", aiProposal: "",
     aiVerdict: "", status: "open", resolution: "unresolved", result: "fail", fixedBy: "",
     fixedByDetail: "", decidedAt: "", note: "", selection: "", triageHash: "",
     languageQaCategory: "", ruleId: "", packVersion: "", layer: "", confidence: "", suggestions: "",

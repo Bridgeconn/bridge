@@ -93,6 +93,13 @@ def _default_app_root() -> Path:
     return root
 
 
+def hub_data_dir() -> Path:
+    """Where a hub started from Settings > Team keeps its data (#46): a
+    sibling of ``data``, so the hub's own settings never mix with the
+    desktop's."""
+    return _default_app_root().parent / 'hub'
+
+
 def _is_secret_key(key: str) -> bool:
     """DPAPI-wrapped values stay in settings.json; everything else is a
     `settings_kv` row in the workspace database (#77)."""
@@ -230,6 +237,18 @@ class AppSettings:
     def clear_hub(self) -> None:
         for key in ('hub_url', 'hub_identity', 'hub_links', 'hub_token_dpapi', '_session_hub_token'):
             self.data.pop(key, None)
+        self.save_sanitized()
+
+    @property
+    def hub_server_autostart(self) -> bool:
+        """This device started a hub and did not stop it (#46): start it again
+        on the next launch."""
+        return bool(self.data.get('hub_server_autostart'))
+
+    def set_hub_server_autostart(self, value: bool) -> None:
+        if bool(value) == self.hub_server_autostart:
+            return
+        self.data['hub_server_autostart'] = bool(value)
         self.save_sanitized()
 
     def get_hub_token(self) -> str:

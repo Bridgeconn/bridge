@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PanelHeader from "./PanelHeader.svelte";
   import { onDestroy, onMount } from "svelte";
   import { bridge } from "../api/bridgeClient";
   import { decideLanguageQaFindingOptimistically, decideLocalFinding } from "../findingActions";
@@ -20,7 +21,7 @@
   import {
     selectedVerse, selectedFindings, currentChapter,
     checkingProgress, verseKey, checkGroupsByVerse,
-    aiCheckReviewsByVerse, nativeChecksByVerse, project, reviewerMode,
+    aiCheckReviewsByVerse, nativeChecksByVerse, project, reviewerMode, reviewTabRequest
   } from "../stores";
   import {
     editingChapter, editingVerse, editText, editSaving, editError, editErrorKey,
@@ -31,6 +32,7 @@
   import { greekRoomChapterSummary, greekRoomVerseRunning, runVerseGreekRoom } from "../verseChecks";
   import { aiReviewRequest, aiJobActive } from "../aiReviewUi";
   import { setSidePanel } from "../editorPrefs";
+  import type { ReviewTab } from "../verseIssues";
   import type { AiExplainResult, AIReviewJobSnapshot, FindingStatus, QaFinding } from "../types/finding";
 
   $: openFindingCount = $selectedFindings.filter((f) => f.status === "open").length;
@@ -539,8 +541,14 @@
     high: "badge-wrong", medium: "badge-review", low: "badge-review", info: "badge-review",
   };
 
-  type ReviewTab = "greekroom" | "tntw" | "lqa" | "ai";
   let activeTab: ReviewTab = "greekroom";
+  // #383: the verse row's open-issue pill asks for the tab of the first open
+  // finding; taken once, then cleared, so a later click on the row's tab
+  // bar is not overridden.
+  $: if ($reviewTabRequest) {
+    activeTab = $reviewTabRequest;
+    reviewTabRequest.set(null);
+  }
 
   // #202: a Greek Room result lands where the reader is looking. When a run
   // finishes for the selected verse -- the button here, or a chapter or book
@@ -595,18 +603,15 @@
      unmounted: a running check, an open tab or a draft carries on. -->
 <div class="panel">
   {#if $selectedVerse}
-    <!-- Two short rows, neither of which wraps: the reference with the fold
-         button, then the open count with the two per-verse actions. At the
-         panel's 400px the title and both buttons do not fit on one row, and
-         a wrapped row cost a third line of height. The AI run is not here --
-         it lives in the AI review tab with its progress and errors, so a run
-         can be started and watched in one place. -->
+    <!-- The reference and Close are the shared header bar (#379); under it
+         one short row that never wraps: the open count with the two per-verse
+         actions. At the panel's 400px the title and both buttons do not fit
+         on one row, and a wrapped row cost a third line of height. The AI run
+         is not here -- it lives in the AI review tab with its progress and
+         errors, so a run can be started and watched in one place. -->
+    <PanelHeader id="review" label="the review panel"
+      title={`Review ${($project?.bookId ?? "").toUpperCase()} ${$currentChapter}:${$selectedVerse}`} />
     <div class="panel-header">
-      <div class="header-row">
-        <div class="ref">Review {($project?.bookId ?? "").toUpperCase()} {$currentChapter}:{$selectedVerse}</div>
-        <button type="button" class="collapse-btn" on:click={() => setSidePanel("review", { open: false })}
-          aria-label="Close the review panel" title="Close (the Review button on the right opens it again)">✕</button>
-      </div>
       <div class="header-row">
         <div class="sub">{openFindingCount} open finding(s)</div>
         <div class="verse-actions">
@@ -872,7 +877,7 @@
                     on:click={() => (lqaFlagDraft = f)}>⚑ Flag…</button>
                   {#if canAddProjectWord(f)}
                     <button class="ignore" title="This word is spelt right in this project: stop reporting it anywhere in the book"
-                      on:click={() => addLqaWord(f)}>Add to word list</button>
+                      on:click={() => addLqaWord(f)}>Add to dictionary (this book)</button>
                   {/if}
                   <button class="ignore" title="Copy the flagged text" on:click={() => copyWord(f.originalText.trim())}>Copy</button>
                   <button class="ignore" title="Every place this text occurs in the book"
@@ -1033,10 +1038,9 @@
     </div>
 
   {:else}
+    <PanelHeader id="review" title="Review" label="the review panel" />
     <div class="empty-panel">
       <span>Select a verse to review its findings.</span>
-      <button type="button" class="collapse-btn" on:click={() => setSidePanel("review", { open: false })}
-        aria-label="Close the review panel" title="Close (the Review button on the right opens it again)">✕</button>
     </div>
   {/if}
 </div>
@@ -1062,15 +1066,9 @@
 <style>
   /* Its column (SidePanel) sets the width and the left border. */
   .panel { flex: 1; min-height: 0; background: var(--surface); display: flex; flex-direction: column; overflow: hidden; }
-  .collapse-btn {
-    flex-shrink: 0; width: 22px; height: 22px; padding: 0; border-radius: 5px; border: 0;
-    background: transparent; color: var(--text-3); cursor: pointer; font-size: var(--fs-3xs);
-  }
-  .collapse-btn:hover { background: var(--accent-bg); color: var(--accent); }
-  .panel-header { padding: 10px 16px 8px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
+  .panel-header { padding: 8px 16px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
   .header-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
   .panel-pinned { flex-shrink: 0; padding: 14px 16px; border-bottom: 1px solid var(--border); overflow-y: auto; max-height: 60vh; }
-  .ref { flex: 1; min-width: 0; font-size: var(--fs-md); font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .sub { flex: 1; min-width: 0; font-size: var(--fs-2xs); color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .panel-scroll { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
   .operation-status { display: flex; align-items: center; gap: 7px; border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; font-size: var(--fs-xs); line-height: 1.4; }

@@ -3,13 +3,34 @@
    *  book, see when it last synced, and settle conflicts. Optional: nothing
    *  here is needed to work, and the app never waits on the hub. A conflict
    *  is another person's change to a decision you also changed; yours stays,
-   *  theirs is shown, and nothing is overwritten. */
-  import { onMount } from "svelte";
+   *  theirs is shown, and nothing is overwritten.
+   *
+   *  #46: Start a hub runs one on this machine, as a child of the engine that
+   *  lives only while Bridge is open (DECISIONS 2026-10-23). Start is
+   *  disabled while a hub already runs here, or answers at the address typed
+   *  under Join a hub; joining stays open either way. */
+  import { onDestroy, onMount } from "svelte";
   import { bridge } from "../api/bridgeClient";
-  import type { HubConflict, HubStatus } from "../types/finding";
+  import type { HubConflict, HubProbe, HubStatus } from "../types/finding";
+
+  const START_POLL_MS = 1000;
+  const PROBE_DEBOUNCE_MS = 400;
 
   let status: HubStatus | null = null;
   let conflicts: HubConflict[] = [];
+  let mode: "choose" | "join" = "choose";
+  let probe: HubProbe | null = null;
+  let pollTimer: ReturnType<typeof setTimeout> | null = null;
+  let probeTimer: ReturnType<typeof setTimeout> | null = null;
+
+  $: server = status?.server ?? null;
+  $: hubHere = server?.state === "running";
+  $: startBlockedBy = !server ? ""
+    : hubHere ? "A hub is already running on this machine."
+    : server.state === "starting" ? "The hub is starting."
+    : server.portInUse ? `Something on this machine already answers on port ${server.port}, probably a hub. Join it instead.`
+    : probe?.reachable ? `A hub already answers at ${probe.url}. Join it instead.`
+    : "";
 
   /** What the other device changed. A Language QA overrides row (#277) is
    *  named for what it is: their Checker settings for a pack, with the rules
@@ -32,6 +53,10 @@
   let notice = "";
 
   onMount(() => { void refresh(); });
+  onDestroy(() => {
+    if (pollTimer) clearTimeout(pollTimer);
+    if (probeTimer) clearTimeout(probeTimer);
+  });
 
   async function refresh() {
     try {
@@ -41,6 +66,37 @@
     } catch (value) {
       error = message(value);
     }
+    // The engine answers hub.start at once; follow the start until it ends.
+    if (pollTimer) clearTimeout(pollTimer);
+    pollTimer = status?.server?.state === "starting" ? setTimeout(() => void refresh(), START_POLL_MS) : null;
+  }
+
+  /** Is a hub answering at the typed address? Only an http(s) address is
+   *  asked; anything else waits until it looks like one. */
+  function addressChanged() {
+    if (probeTimer) clearTimeout(probeTimer);
+    probe = null;
+    const address = url.trim();
+    if (!/^https?:\/\/\S+/.test(address)) return;
+    probeTimer = setTimeout(async () => {
+      try {
+        const answer = await bridge.hubProbe(address);
+        if (url.trim() === address) probe = answer;
+      } catch {
+        probe = null;
+      }
+    }, PROBE_DEBOUNCE_MS);
+  }
+
+  function startHub() {
+    // No notice: the "Starting the hub…" line follows the start itself.
+    void run("", () => bridge.hubStart());
+  }
+
+  function joinThisHub() {
+    if (!server?.adminJoinCode) return;
+    // A blank name joins as this device's own user.
+    void run("Joined the hub.", () => bridge.hubJoin(server!.url, server!.adminJoinCode!, displayName.trim()));
   }
 
   async function run(label: string, action: () => Promise<unknown>) {
@@ -80,6 +136,28 @@
   everything works the same when it is unreachable.
 </p>
 
+{#if server && server.state === "starting"}
+  <p class="desc">Starting the hub…</p>
+{:else if server && hubHere}
+  <div class="hosting">
+    <div class="row"><span class="label">Hub</span><span>running on this machine</span></div>
+    <div class="row"><span class="label">Others join at</span><span>{server.lanUrl}</span></div>
+    {#if server.adminJoinCode}
+      <div class="row"><span class="label">Join code</span><span class="code">{server.adminJoinCode}</span></div>
+    {/if}
+    <p class="desc">The hub runs while Bridge is open here, and starts again the next time Bridge opens. If Windows asks, allow Bridge on private networks so others can reach it.</p>
+    <div class="actions">
+      {#if status && !status.joined && server.adminJoinCode}
+        <button class="small-button primary" on:click={joinThisHub} disabled={busy}>Join this hub</button>
+      {/if}
+      <button class="small-button danger" on:click={() => run("Hub stopped.", () => bridge.hubStop())} disabled={busy}>Stop the hub</button>
+    </div>
+  </div>
+{/if}
+{#if server?.error && server.state !== "running" && server.state !== "starting"}
+  <p class="error log">The hub could not start or stopped: {server.error}</p>
+{/if}
+
 {#if status && status.joined}
   <div class="row"><span class="label">Hub</span><span>{status.url}</span></div>
   <div class="row"><span class="label">Joined as</span><span>{status.identity.displayName ?? ""} ({status.identity.role ?? ""})</span></div>
@@ -114,13 +192,22 @@
   <div class="actions">
     <button class="small-button danger" on:click={() => run("Left the hub; nothing on this device was removed.", () => bridge.hubLeave())} disabled={busy}>Leave the hub</button>
   </div>
-{:else}
+{:else if status}
+  <div class="actions">
+    <button class="small-button" class:primary={!startBlockedBy} on:click={startHub}
+      disabled={busy || !!startBlockedBy} title={startBlockedBy || "Run a hub on this machine for your team"}>Start a hub</button>
+    <button class="small-button" class:primary={mode !== "join" && !!startBlockedBy} on:click={() => (mode = "join")}
+      disabled={busy} aria-pressed={mode === "join"}>Join a hub</button>
+  </div>
+  {#if startBlockedBy && !hubHere && server?.state !== "starting"}<p class="desc">{startBlockedBy}</p>{/if}
+  {#if mode === "join"}
   <form class="join" on:submit|preventDefault={join}>
-    <label><span>Hub address</span><input bind:value={url} placeholder="http://team-hub:8765" aria-label="Hub address" disabled={busy} /></label>
+    <label><span>Hub address</span><input bind:value={url} on:input={addressChanged} placeholder="http://team-hub:8765" aria-label="Hub address" disabled={busy} /></label>
     <label><span>Join code</span><input bind:value={joinCode} placeholder="1A2B-3C4D-5E6F" aria-label="Join code" disabled={busy} /></label>
     <label><span>Your name on the team</span><input bind:value={displayName} placeholder="Your display name" aria-label="Your name on the team" disabled={busy} /></label>
     <button type="submit" class="small-button primary" disabled={busy || !url.trim() || !joinCode.trim()}>Join</button>
   </form>
+  {/if}
 {/if}
 {#if notice}<p class="notice">{notice}</p>{/if}
 {#if error}<p class="error">{error}</p>{/if}
@@ -143,4 +230,7 @@
   .small-button:disabled { opacity: .5; cursor: default; }
   .notice { color: var(--pass); font-size: var(--fs-xs); }
   .error { color: var(--danger); font-size: var(--fs-xs); }
+  .error.log { white-space: pre-wrap; max-height: 10em; overflow: auto; }
+  .hosting { border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin: 0 0 12px; }
+  .code { font-family: var(--font-mono, monospace); letter-spacing: .05em; }
 </style>

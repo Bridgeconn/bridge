@@ -17,8 +17,10 @@
   import { startFlagLoader } from "./lib/flags";
   import ReferencePanel from "./lib/components/ReferencePanel.svelte";
   import SourceTextPanel from "./lib/components/SourceTextPanel.svelte";
+  import ParatextNotesPanel from "./lib/components/ParatextNotesPanel.svelte";
   import FindingContextMenu from "./lib/components/FindingContextMenu.svelte";
   import { TEXT_SCALES, bumpTextScale, rawView, sidePanels, textScale, toggleSidePanel } from "./lib/editorPrefs";
+  import { verseMin } from "./lib/panelFit";
   import SidePanel from "./lib/components/SidePanel.svelte";
   import SideRail from "./lib/components/SideRail.svelte";
   import {
@@ -601,15 +603,22 @@
     }
   }
 
-  async function assign(chapter: string, userId: string): Promise<void> {
+  /** One chapter ("" = whole book) set or cleared through the existing
+   *  team_assignments calls (#240). #378: the Assign dialog applies a batch
+   *  as one call per changed chapter, so the dashboard is refreshed once by
+   *  onApplied rather than after each; resolves false when the save failed,
+   *  so the dialog stops there. */
+  async function assign(chapter: string, userId: string, refresh = true): Promise<boolean> {
     assigningBusy = true;
     assigningError = "";
     try {
       const listed = userId ? await bridge.assignmentsSet(chapter, userId) : await bridge.assignmentsClear(chapter);
       bookAssignments.set(listed.assignments);
-      void loadDashboard();
+      if (refresh) void loadDashboard();
+      return true;
     } catch (error) {
       assigningError = error instanceof Error ? error.message : String(error);
+      return false;
     } finally {
       assigningBusy = false;
     }
@@ -1369,6 +1378,19 @@
     },
     { complete: 0, complete_cross_verse: 0, partial: 0, untouched: 0, invalid: 0 },
   );
+  // The status bar's facts, one per line, for its tooltip: a narrow window
+  // cuts the bar short (#324).
+  $: statusFacts = $project ? [
+    `Project: ${$project.bookName}`,
+    `Chapter: ${$currentChapter}`,
+    `✓ Approved: ${$approvedCount}/${$verseNums.length}`,
+    `Word alignment in this chapter: ${alignmentChapterSummary.complete} complete`
+      + (alignmentChapterSummary.complete_cross_verse ? ` · ${alignmentChapterSummary.complete_cross_verse} via cross-verse` : "")
+      + ` · ${alignmentChapterSummary.partial} partial`
+      + (alignmentChapterSummary.invalid ? ` · ${alignmentChapterSummary.invalid} invalid` : ""),
+    `${bookSummary.approvedChapters}/${bookSummary.totalChapters} chapters approved`,
+    `Greek Room on this chapter (open findings · verses checked): ${$greekRoomChapterSummary.checkedVerses === 0 ? "not run" : `${$greekRoomChapterSummary.openFindings} open · ${$greekRoomChapterSummary.checkedVerses}/${$greekRoomChapterSummary.totalVerses} verses`}`,
+  ].join("\n") : "";
 </script>
 
 <div class="frame print-expand">
@@ -1380,8 +1402,9 @@
       assignments={$bookAssignments}
       busy={assigningBusy}
       error={assigningError}
-      onSet={(chapter, userId) => void assign(chapter, userId)}
-      onClear={(chapter) => void assign(chapter, "")}
+      onSet={(chapter, userId) => assign(chapter, userId, false)}
+      onClear={(chapter) => assign(chapter, "", false)}
+      onApplied={() => void loadDashboard()}
       onClose={() => { assigningPath = ""; }}
     />
   {/if}
@@ -1568,7 +1591,9 @@
              dragging its left edge; several may be open at once. All start
              under the toolbar, level with the text. -->
         <div class="work-row">
-          <div class="editor-col">
+          <!-- #324: the verse list never goes below this width; the side
+               panels shrink and then fold to the rail first (panelFit.ts). -->
+          <div class="editor-col" style:min-width="{$verseMin}px">
             <VerseList onSelect={selectVerse} onNavigate={navigateToReportRow} />
           </div>
           {#if $project}
@@ -1585,6 +1610,9 @@
                 <LanguageQaPanel projectPath={$project.path} onNavigate={navigateToReportRow} docked />
               {/key}
             </SidePanel>
+            <SidePanel id="paratext" label="Paratext notes">
+              {#key $project.path}<ParatextNotesPanel />{/key}
+            </SidePanel>
           {/if}
           <SidePanel id="review" label="Review" keepMounted>
             <ReviewPanel onNavigate={navigateToReportRow} />
@@ -1596,16 +1624,20 @@
 
     <div class="statusbar">
       {#if $project}
+        <!-- One line (#324): the chapter facts truncate with an ellipsis in a
+             narrow window, the full line in the tooltip. -->
+        <span class="status-facts" title={statusFacts}>
         <span>Project: <b>{$project.bookName}</b></span>
         <span>Chapter: <b>{$currentChapter}</b></span>
         <span style="color:var(--success);">✓ Approved: {$approvedCount}/{$verseNums.length}</span>
-        <span title="Word-alignment status for this chapter">
+        <span>
           Alignment: {alignmentChapterSummary.complete} complete{#if alignmentChapterSummary.complete_cross_verse} · {alignmentChapterSummary.complete_cross_verse} via cross-verse{/if} · {alignmentChapterSummary.partial} partial
           {#if alignmentChapterSummary.invalid} · {alignmentChapterSummary.invalid} invalid{/if}
         </span>
         <span>{bookSummary.approvedChapters}/{bookSummary.totalChapters} chapters approved</span>
-        <span title="Greek Room on this chapter: open findings and verses checked">
+        <span>
           Greek Room: {$greekRoomChapterSummary.checkedVerses === 0 ? "not run" : `${$greekRoomChapterSummary.openFindings} open · ${$greekRoomChapterSummary.checkedVerses}/${$greekRoomChapterSummary.totalVerses} verses`}
+        </span>
         </span>
       {/if}
       <span class="grow" />
@@ -1615,7 +1647,7 @@
           Language QA{#if $languageQaChannel.error}: unavailable{:else if $languageQaChannel.status}: {$languageQaChannel.status.state}{#if $languageQaChannel.status.totalFindings} · {$languageQaChannel.status.totalFindings}{/if}{/if}
         </button>
       {/if}
-      {#if engineNotice}<span class="engine-notice">{engineNotice}</span>{/if}
+      {#if engineNotice}<span class="engine-notice" title={engineNotice}>{engineNotice}</span>{/if}
       <span>Engine: {engineStatus}</span>
       <button class="diagnostics-btn" on:click={() => diagnosticsOpen.set(true)}>
         Diagnostics
@@ -1706,8 +1738,14 @@
   .role-banner { margin: 0; padding: 6px 14px; background: var(--accent-bg); color: var(--accent); font-size: var(--fs-xs); font-weight: 600; border-bottom: 1px solid var(--border); }
   .toolbar-divider { width: 1px; height: 20px; background: var(--border-strong); }
   .grow { flex: 1; }
-  .statusbar { height: 28px; background: var(--surface); border-top: 1px solid var(--border); display: flex; align-items: center; padding: 0 16px; gap: 16px; font-size: var(--fs-xs); color: var(--text-2); flex-shrink: 0; }
+  .statusbar { height: 28px; background: var(--surface); border-top: 1px solid var(--border); display: flex; align-items: center; padding: 0 16px; gap: 16px; font-size: var(--fs-xs); color: var(--text-2); flex-shrink: 0; overflow: hidden; white-space: nowrap; }
+  .statusbar > * { flex-shrink: 0; }
+  /* The facts give way first, then an engine notice; buttons keep their labels. */
+  .statusbar > .status-facts { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .status-facts > span + span { margin-left: 16px; }
+  .statusbar > .grow { flex-shrink: 1; min-width: 0; }
   .engine-notice { color: var(--warning); font-weight: 600; }
+  .statusbar > .engine-notice { flex-shrink: 1; min-width: 40px; overflow: hidden; text-overflow: ellipsis; }
   .diagnostics-btn { position: relative; font-size: var(--fs-2xs); font-weight: 650; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--text-2); cursor: pointer; display: flex; align-items: center; gap: 5px; }
   .diagnostics-btn:hover { background: var(--surface); }
   .error-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--danger); }

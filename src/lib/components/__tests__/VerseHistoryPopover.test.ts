@@ -54,7 +54,7 @@ describe("VerseHistoryPopover", () => {
     await fireEvent.click(await screen.findByRole("button", { name: "Restore the text before this change" }));
     expect(editVerse).not.toHaveBeenCalled();
     await fireEvent.click(screen.getByRole("button", { name: /Restore it: the verse becomes/ }));
-    await waitFor(() => expect(editVerse).toHaveBeenCalledWith("1", "2", "अन्त \\nd प्रभु\\nd*"));
+    await waitFor(() => expect(editVerse).toHaveBeenCalledWith("1", "2", "अन्त \\nd प्रभु\\nd*", "अंत \\nd प्रभु\\nd*"));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(get(verseTexts)[verseKey("1", "2")]).toBe("अन्त \\nd प्रभु\\nd*");
     expect(get(historyCountByVerse)[verseKey("1", "2")]).toBe(2);

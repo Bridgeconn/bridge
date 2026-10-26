@@ -1,5 +1,7 @@
 <script lang="ts">
   import type { BookProgressEntry, ProjectReport, CoverageState } from "../types/finding";
+  import ParatextLinkStatus from "./ParatextLinkStatus.svelte";
+  import { projectDetailsCollapsed } from "../editorPrefs";
 
   export let projectName: string;
   export let subtitle = "";
@@ -32,6 +34,12 @@
   let bookSearch = "";
   let myWorkOnly = false;
 
+  // #374: the project details block folds to one row (▸, the name, the
+  // subtitle) so the book table starts higher on a 1366x768 screen; the
+  // Paratext strip and the book heading are hidden while folded. Remembered
+  // per device, open by default -- the same control as Collection QA's.
+  $: detailsOpen = !$projectDetailsCollapsed;
+
   function isMine(book: BookProgressEntry): boolean {
     return Boolean(myUserId) && (book.assignments ?? []).some((a) => a.assigneeId === myUserId);
   }
@@ -60,6 +68,16 @@
       .toLocaleLowerCase()
       .includes(normalizedBookSearch);
   });
+
+  /** #322: Enter or Space on the row previews the book. A key pressed on the
+   *  row's own Open or Assign… button bubbles here too; it is left alone so
+   *  the button's own activation (open, assign) still happens. */
+  function onBookRowKeydown(event: KeyboardEvent, book: BookProgressEntry): void {
+    if (event.target !== event.currentTarget) return;
+    if (book.missing || (event.key !== "Enter" && event.key !== " ")) return;
+    event.preventDefault();
+    onPreviewBook(book.path);
+  }
 
   function percent(part: number, total: number): number {
     if (total <= 0) return 0;
@@ -108,23 +126,32 @@
 </script>
 
 <div class="screen">
-  <div class="header">
+  <div class="header" class:folded={!detailsOpen}>
     <div class="header-left">
-      <span class="eyebrow">PROJECT</span>
+      <button type="button" class="fold" aria-expanded={detailsOpen} aria-controls="project-details"
+        aria-label={detailsOpen ? "Collapse project details" : "Expand project details"}
+        title={detailsOpen ? "Collapse" : "Expand"}
+        on:click={() => projectDetailsCollapsed.update((folded) => !folded)}>{detailsOpen ? "▾" : "▸"}</button>
+      {#if detailsOpen}<span class="eyebrow">PROJECT</span>{/if}
       <h1>{projectName}</h1>
       {#if subtitle}<span class="intro">· {subtitle}</span>{/if}
     </div>
-    <div class="header-right">
-      {#if report}
-        <div class="book-heading" title={openBook?.bookName || report.bookId?.toUpperCase()}>
-          <span class="book-native">{openBook?.bookName || report.bookId?.toUpperCase()}</span>
-          {#if openBook?.bookName}<span class="book-code">({report.bookId?.toUpperCase()})</span>{/if}
-        </div>
-      {:else}
-        <div class="book-heading" />
-      {/if}
-    </div>
+    {#if detailsOpen}
+      <div class="header-right" id="project-details">
+        {#if report}
+          <div class="book-heading" title={openBook?.bookName || report.bookId?.toUpperCase()}>
+            <span class="book-native">{openBook?.bookName || report.bookId?.toUpperCase()}</span>
+            {#if openBook?.bookName}<span class="book-code">({report.bookId?.toUpperCase()})</span>{/if}
+          </div>
+        {:else}
+          <div class="book-heading" />
+        {/if}
+      </div>
+    {/if}
   </div>
+  {#if detailsOpen}
+    <ParatextLinkStatus projectKey={`${projectName}:${openBookName}`} />
+  {/if}
 
   <div class="panels">
     <aside class="left-panel" aria-label="Books in this project">
@@ -161,7 +188,7 @@
                 tabindex={book.missing ? -1 : 0}
                 aria-disabled={book.missing}
                 on:click={() => !book.missing && onPreviewBook(book.path)}
-                on:keydown={(e) => !book.missing && (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onPreviewBook(book.path))}
+                on:keydown={(e) => onBookRowKeydown(e, book)}
               >
                 <div class="book-badge">{book.bookId?.toUpperCase() || "?"}</div>
                 <div class="book-copy">
@@ -356,7 +383,12 @@
      instead — the outer screen no longer scrolls at all. */
   .screen { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--surface); }
   .header { flex-shrink: 0; padding: 12px 32px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 18px; box-sizing: border-box; }
+  /* #374: folded, only the surrounding space goes; the h1 keeps its size. */
+  .header.folded { padding-top: 6px; padding-bottom: 6px; }
   .header-left { flex: 0 0 560px; min-width: 0; display: flex; align-items: baseline; gap: 8px; overflow: hidden; }
+  .header.folded .header-left { flex-basis: 100%; }
+  .fold { border: 0; padding: 0 2px; width: 20px; flex-shrink: 0; background: none; font: inherit; font-size: var(--fs-xs); color: var(--text-2); cursor: pointer; }
+  .fold:hover, .fold:focus-visible { color: var(--text); }
   .panels { flex: 1; min-height: 0; display: flex; overflow: hidden; }
   .left-panel { width: 560px; flex-shrink: 0; overflow-y: auto; border-right: 1px solid var(--border); box-sizing: border-box; }
   .list-area { padding: 20px 24px; box-sizing: border-box; }

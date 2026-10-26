@@ -7,6 +7,10 @@ import type {
 } from "../types/languageQa";
 import type { CollectionQaSnapshot } from "../types/collectionQa";
 import type {
+  ParatextBookNames, ParatextLinkStatus, ParatextNoteKind, ParatextNoteThread, ParatextNotesForChapter,
+  ParatextNotesForVerse, ParatextNotesIndexState,
+} from "../types/paratext";
+import type {
   HouseStyleEntry, HouseStyleEntryInput, HouseStyleListResponse,
 } from "../types/houseStyle";
 
@@ -26,6 +30,9 @@ export interface ExportResult {
   /** True when it was written over blocking items, with the override recorded. */
   overridden?: boolean;
   gate?: { blocking: boolean; items: ExportGateItem[]; counts: Record<string, number> };
+  /** Aligned USFM only: verses written with no alignment because they have no
+   *  original-language source tokens, e.g. a lettered segment 5a (#307). */
+  unalignedVerses?: { reference: string; chapter: string; verse: string; reason: string; detail: string }[];
 }
 import type {
   AIReviewChapterResponse,
@@ -66,6 +73,7 @@ import type {
   Assignment,
   AssignmentsList,
   HubConflict,
+  HubProbe,
   HubStatus,
   UserRole,
   TeamRoles,
@@ -302,8 +310,11 @@ export type EngineMethod =
   | "hub.join"
   | "hub.leave"
   | "hub.link"
+  | "hub.probe"
   | "hub.resolveConflict"
+  | "hub.start"
   | "hub.status"
+  | "hub.stop"
   | "hub.syncNow"
   | "assignments.list"
   | "assignments.set"
@@ -367,6 +378,13 @@ export type EngineMethod =
   | "paratext.connectorStatus"
   | "paratext.getState"
   | "paratext.installConnector"
+  | "paratext.linkStatus"
+  | "paratext.relink"
+  | "paratext.refresh"
+  | "paratext.bookNames"
+  | "paratext.notesForChapter"
+  | "paratext.notesForVerse"
+  | "paratext.noteThread"
   | "ping"
   | "project.delete"
   | "project.forget"
@@ -759,6 +777,21 @@ export const bridge = {
     return call("hub.resolveConflict", { conflictId, resolution });
   },
 
+  // -- a hub hosted on this machine (#46). start returns at once with the
+  // server "starting"; hub.status moves it to running or failed. probe is
+  // one short GET /health.
+  hubStart(options: { host?: string; port?: number; dataDir?: string } = {}): Promise<HubStatus> {
+    return call("hub.start", options);
+  },
+
+  hubStop(): Promise<HubStatus> {
+    return call("hub.stop");
+  },
+
+  hubProbe(url: string): Promise<HubProbe> {
+    return call("hub.probe", { url });
+  },
+
   // -- assignments (#240): for the open book. set and clear are a
   // project_admin's; "" as the chapter means the whole book.
   assignmentsList(): Promise<AssignmentsList> {
@@ -970,9 +1003,14 @@ export const bridge = {
     return call("verse.decide", { chapter, verse, findingId, status, comment, issue });
   },
 
-  editVerse(chapter: string, verse: string, newText: string): Promise<{
+  /** `expectedOldText` is the verse text the edit started from (#127): when
+   *  given and the stored verse no longer equals it, the engine writes nothing
+   *  and refuses with a REVISION_CONFLICT message. */
+  editVerse(chapter: string, verse: string, newText: string, expectedOldText?: string): Promise<{
     committed: boolean;
     issueResolutionsNeedingRecheck: number;
+    /** The text the engine stored (a typed save is trimmed); absent from an older engine. */
+    newText?: string;
     /** What the reader shows for the saved text (#91); absent from an older engine. */
     display?: import("../types/finding").VerseDisplay;
     /** Marker problems in the saved text; never blocking (the save happened). */
@@ -981,7 +1019,9 @@ export const bridge = {
      * learned replacement back (`action: "retracted"`). */
     learned?: VerseEditLearned;
   }> {
-    return call("verse.edit", { chapter, verse, newText });
+    return call("verse.edit", expectedOldText === undefined
+      ? { chapter, verse, newText }
+      : { chapter, verse, newText, expectedOldText });
   },
 
   /** #272: the chapter's stored findings, decisions applied, when they still
@@ -1291,6 +1331,43 @@ export const bridge = {
     return call("paratext.installConnector");
   },
 
+  /** #356: the open book's link to its Paratext project folder. */
+  paratextLinkStatus(): Promise<ParatextLinkStatus> {
+    return call("paratext.linkStatus");
+  },
+
+  /** #356: point every book of the collection at `folder`; refused unless it
+   *  holds the same Paratext project (Guid). */
+  paratextRelink(folder: string): Promise<ParatextLinkStatus> {
+    return call("paratext.relink", { folder });
+  },
+
+  /** #356: re-read the Paratext folder (drops this device's memos). */
+  paratextRefresh(): Promise<ParatextLinkStatus> {
+    return call("paratext.refresh");
+  },
+
+  paratextBookNames(): Promise<ParatextBookNames> {
+    return call("paratext.bookNames");
+  },
+
+  /** #357: the open book's Paratext notes in one chapter, with per-verse counts.
+   *  `state` is "building" until the index is ready. */
+  paratextNotesForChapter(
+    chapter: string, options: { includeResolved?: boolean; kinds?: ParatextNoteKind[] } = {},
+  ): Promise<ParatextNotesForChapter> {
+    return call("paratext.notesForChapter", { chapter, ...options });
+  },
+
+  /** #357: every Paratext note thread on one verse (a bridge covers each verse in it). */
+  paratextNotesForVerse(chapter: string, verse: string): Promise<ParatextNotesForVerse> {
+    return call("paratext.notesForVerse", { chapter, verse });
+  },
+
+  paratextNoteThread(threadId: string): Promise<{ state: ParatextNotesIndexState; thread: ParatextNoteThread | null }> {
+    return call("paratext.noteThread", { threadId });
+  },
+
   navigationStatus(context?: string): Promise<NavigationSyncState> {
     return call("navigation.status", { context });
   },
@@ -1457,6 +1534,8 @@ export const bridge = {
     humanProposedText?: string;
     explanation?: string;
     requestSuggestion?: boolean;
+    /** #315: the rejected proposal this new one replaces; it stays in history. */
+    supersedesProposalId?: string;
   }): Promise<CorrectionProposal> {
     return call("correction.createProposal", options);
   },

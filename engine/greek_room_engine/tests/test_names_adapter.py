@@ -232,3 +232,34 @@ def test_preload_runs_once_on_a_background_thread(fresh_uroman, monkeypatch):
     assert fresh_uroman.wait_for_preload(5) == "loaded"
     assert built == ["uroman-preload"]
     assert fresh_uroman.preload_async() is None  # nothing left to load
+
+
+def test_preload_called_again_mid_build_returns_the_thread_without_waiting(fresh_uroman, monkeypatch):
+    # The order the test above lost under a loaded full-suite run (2026-10-22):
+    # the preload thread was already building, holding _lock, when the second
+    # call came; that call waited out the whole build and then returned None.
+    import threading
+    import time
+
+    import uroman
+
+    entered = threading.Event()
+    gate = threading.Event()
+
+    class Slow:
+        default_data_dir = staticmethod(uroman.Uroman.default_data_dir)
+
+        def __init__(self):
+            entered.set()
+            gate.wait(5)
+
+    monkeypatch.setattr(uroman, "Uroman", Slow)
+    first = fresh_uroman.preload_async()
+    assert entered.wait(5), "the preload thread never started building"
+    started = time.perf_counter()
+    again = fresh_uroman.preload_async()
+    waited = time.perf_counter() - started
+    gate.set()
+    assert again is first
+    assert waited < 1.0
+    assert fresh_uroman.wait_for_preload(5) == "loaded"

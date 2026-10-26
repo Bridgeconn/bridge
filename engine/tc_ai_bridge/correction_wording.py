@@ -27,8 +27,10 @@ from .passage_semantic_models import (
     ReviewStatus,
     to_wire,
 )
+from .correction_eligibility import require_insertion_outside_markup
 from .passage_semantic_repository import FoundationConflict, FoundationValidationError
 from .security import ai_payload_manifest
+from .usfm_verse import lift_verse
 
 
 CORRECTION_WORDING_POLICY_VERSION = "correction-wording-v1"
@@ -197,6 +199,7 @@ class CorrectionWordingService:
                 "Stage 9B.1 requires one exact target span; multi-reference or disjoint "
                 "corrections need passage review."
             )
+        texts = self.eligibility.current_text_snapshot()
         current = self.eligibility.validate_current_text(
             displayed_reference=span.displayed_reference,
             expected_target_revision=span.target_text_revision,
@@ -204,10 +207,15 @@ class CorrectionWordingService:
             expected_span_text=span.original_text,
             start_code_point=span.start_code_point,
             end_code_point=span.end_code_point,
+            current_text=texts,
         )
         if not current.valid:
             detail = "; ".join(reason.detail for reason in current.reasons)
             raise FoundationConflict(f"Correction target revision conflict: {detail}")
+        require_insertion_outside_markup(
+            span.displayed_reference, texts.get(span.displayed_reference, ""),
+            span.start_code_point, span.end_code_point,
+        )
         context = self.runtime.qa_review.get_finding(finding_id)
         finding = context.get("finding") or {}
         allowed_units = set(str(x) for x in finding.get("sourceSemanticUnitIds") or ())
@@ -392,6 +400,10 @@ class CorrectionWordingService:
                 "text": text,
                 "targetTextRevision": revision,
                 "targetContentHash": content_hash,
+                # Raw code points an insertion may use: verse start and word
+                # ends, never inside markup or a note (#314). The panel offers
+                # only these; it does not parse USFM.
+                "insertionOffsets": list(lift_verse(text).insertion_points()),
             }
             current_targets.append(target)
             target_by_reference[reference] = target
@@ -588,18 +600,50 @@ class CorrectionWordingService:
         self, *, finding_id: str, intent: CorrectionIntent,
         human_proposed_text: str = "", explanation: str = "",
         request_suggestion: bool = False, actor_id: str,
+        supersedes_proposal_id: str = "",
     ) -> dict[str, Any]:
-        self._require_eligible(self.eligibility.evaluate(finding_id))
+        # #315: a rejected proposal still owns its finding, so a new one names
+        # it and goes through the same supersede path regenerate uses. The
+        # rejected wording and review status are kept; only its lifecycle
+        # becomes SUPERSEDED, with an appended event.
+        ignored: tuple[str, ...] = ()
+        superseded_revision = 0
+        if supersedes_proposal_id:
+            old = self.repository.correction_proposal(supersedes_proposal_id)
+            if str(old.get("qaFindingId") or "") != finding_id:
+                raise FoundationValidationError(
+                    "The proposal to supersede belongs to another finding"
+                )
+            if (
+                str(old.get("reviewStatus") or "") != ReviewStatus.HUMAN_REJECTED.value
+                or str(old.get("lifecycleStatus") or "") != LifecycleStatus.INACTIVE.value
+            ):
+                raise FoundationValidationError(
+                    "Only a rejected proposal can be superseded by a new proposal"
+                )
+            ignored = (supersedes_proposal_id,)
+            superseded_revision = int(old.get("revision") or 0)
+        self._require_eligible(self.eligibility.evaluate(
+            finding_id, ignore_proposal_ids=ignored,
+        ))
         context = self._validate_intent(finding_id, intent)
         proposal = self._build_proposal(
             finding_id=finding_id, intent=intent, context=context,
             human_proposed_text=human_proposed_text, explanation=explanation,
             request_suggestion=request_suggestion, actor_id=actor_id,
+            supersedes_proposal_id=supersedes_proposal_id or None,
         )
         # A provider call may take seconds. Re-check both eligibility and the
         # byte-exact span after it returns, immediately before persistence.
-        self._require_eligible(self.eligibility.evaluate(finding_id))
+        self._require_eligible(self.eligibility.evaluate(
+            finding_id, ignore_proposal_ids=ignored,
+        ))
         self._validate_intent(finding_id, intent)
+        if supersedes_proposal_id:
+            return self.repository.supersede_and_save_correction_proposal(
+                supersedes_proposal_id, expected_revision=superseded_revision,
+                replacement=proposal, actor_id=actor_id,
+            )
         self.repository.save_correction_proposal_v2(proposal)
         return self.repository.correction_proposal(proposal.id)
 

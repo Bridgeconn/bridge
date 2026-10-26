@@ -168,6 +168,9 @@ class ProjectRegistry:
         self._data = self._load()
         self._managed_discovered = False
         self._dirty = False
+        # #309: managed folders whose identity register() refused, from the
+        # last discovery pass. Never saved: they have no registry row.
+        self._conflicts: list[dict[str, Any]] = []
 
     def _load(self) -> dict[str, Any]:
         entries = self.workspace.load_project_entries()
@@ -383,7 +386,10 @@ class ProjectRegistry:
         return dict(entry)
 
     @_locked
-    def list_projects(self, *, refresh_managed: bool = True, collapse_collections: bool = False) -> list[dict[str, Any]]:
+    def list_projects(
+        self, *, refresh_managed: bool = True, collapse_collections: bool = False,
+        include_conflicts: bool = False,
+    ) -> list[dict[str, Any]]:
         self.managed_root.mkdir(parents=True, exist_ok=True)
         if refresh_managed or not self._managed_discovered:
             # Only NEW managed directories go through register()'s full
@@ -406,13 +412,23 @@ class ProjectRegistry:
             known_path_keys = {
                 entry.get("pathKey") for entry in self._data["projects"] if isinstance(entry, dict)
             }
+            conflicts: list[dict[str, Any]] = []
             for child in self.managed_root.iterdir():
                 if not child.is_dir() or child.name.startswith(".bridge-import-"):
                     continue
                 if canonical_path_key(child) in known_path_keys:
                     continue
                 if (child / "manifest.json").is_file() or (child / _LAZY_IMPORT_PATH).is_file():
-                    self.register(child, save=False)
+                    # #309: one folder whose identity conflicts with another
+                    # (a copy carrying the same .bridge/project.json) used to
+                    # fail the whole list. It is reported on its own row and
+                    # retried on the next pass; register() raises before it
+                    # writes anything, so the rest of the pass is unaffected.
+                    try:
+                        self.register(child, save=False)
+                    except ProjectIdentityError as exc:
+                        conflicts.append(self._conflict_entry(child, exc))
+            self._conflicts = conflicts
             self._managed_discovered = True
         for entry in self._data["projects"]:
             if not isinstance(entry, dict):
@@ -426,7 +442,54 @@ class ProjectRegistry:
         result = [dict(value) for value in self._data["projects"] if isinstance(value, dict)]
         result.sort(key=lambda value: str(value.get("lastOpenedAt") or ""), reverse=True)
         result.sort(key=lambda value: bool(value.get("missing")))
-        return self._collapse_collections(result) if collapse_collections else result
+        if collapse_collections:
+            result = self._collapse_collections(result)
+        if include_conflicts:
+            conflicts = [dict(value) for value in self._conflicts if Path(str(value["path"])).is_dir()]
+            result.extend(self._collapse_conflicts(conflicts) if collapse_collections else conflicts)
+        return result
+
+    def _conflict_entry(self, path: Path, error: ProjectIdentityError) -> dict[str, Any]:
+        """A row for a managed folder register() refused (#309). It has no
+        projectId of its own -- the one in its identity file belongs to the
+        other copy, so no action may target it -- and the conflict names the
+        identity and where it is already registered."""
+        identity = _read_json(path / _IDENTITY_PATH)
+        project_id = str(identity.get("projectId") or "")
+        other = self._find(project_id=project_id) if project_id else None
+        collection = _read_json(path / _COLLECTION_PATH)
+        return {
+            "projectId": "",
+            "collectionId": "",
+            "path": str(path),
+            "pathKey": canonical_path_key(path),
+            "managed": True,
+            "missing": False,
+            "lastOpenedAt": "",
+            **self._project_metadata(path),
+            "conflict": {
+                "message": str(error),
+                "projectId": project_id,
+                "collectionId": str(identity.get("collectionId") or collection.get("collectionId") or ""),
+                "registeredPath": str((other or {}).get("path") or ""),
+            },
+        }
+
+    @staticmethod
+    def _collapse_conflicts(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """One conflict row per copied collection, as for registered rows."""
+        result: list[dict[str, Any]] = []
+        by_collection: dict[str, dict[str, Any]] = {}
+        for entry in sorted(entries, key=lambda value: str(value.get("path") or "").lower()):
+            collection_id = str(entry["conflict"].get("collectionId") or "")
+            if collection_id and collection_id in by_collection:
+                by_collection[collection_id]["bookCount"] += 1
+                continue
+            if collection_id:
+                entry["bookCount"] = 1
+                by_collection[collection_id] = entry
+            result.append(entry)
+        return result
 
     @staticmethod
     def _collapse_collections(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -551,6 +614,13 @@ class ProjectRegistry:
         if changed:
             self._save()
         return changed
+
+    @_locked
+    def identity_in_use(self, project_id: str) -> bool:
+        """#309: is this projectId registered here at a path that still
+        exists? An import copy carrying it would clash, so it gets a new id."""
+        entry = self._find(project_id=project_id) if project_id else None
+        return entry is not None and Path(str(entry.get("path") or "")).exists()
 
     @_locked
     def get(self, project_id: str) -> dict[str, Any] | None:

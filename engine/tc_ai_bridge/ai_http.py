@@ -25,6 +25,13 @@ FALLBACK_CONNECT_TIMEOUT = 5.0
 AddrInfo = tuple[Any, Any, int, str, Any]
 
 
+class TransportFailure(Exception):
+    """The request never got an HTTP response: connection refused, DNS failure,
+    a connect timeout. Raised as `ai_client.AITransportError`; defined here, in
+    a stdlib-only leaf, so `triage` can tell "the model was never reached" from
+    "the model answered badly" by type without importing the client (#318)."""
+
+
 def connection_plan(
     infos: Sequence[AddrInfo], timeout: float | None, fallback_timeout: float | None = None,
 ) -> list[tuple[AddrInfo, float | None]]:

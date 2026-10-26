@@ -1,4 +1,5 @@
 import { perfBegin, perfEnd, perfInFlight } from "./perf";
+import type { ReviewTab } from "./verseIssues";
 import { writable, derived, get, type Writable } from "svelte/store";
 import type { AiCheckReview, AlignmentWorkStatus, Assignment, NativeCheckReview, NavigationSyncState, ProjectInfo, QaFinding, VerseDisplay, VerseHeading } from "./types/finding";
 import type { LanguageQaFinding, LanguageQaFlag } from "./types/languageQa";
@@ -15,6 +16,11 @@ export const project = writable<ProjectInfo | null>(null);
  *  order on it. Undefined (no attribute) when there is no project or the
  *  import recorded no code. */
 export const targetLang = derived(project, (value) => (value?.targetLanguageId || "").toLowerCase() || undefined);
+/** The open project's text direction from its manifest (#323), for the `dir`
+ *  of the verse list's text and the inline editor, as Align Words already does
+ *  from the same `target_language.direction`. Anything but "rtl" is ltr. */
+export const targetDir = derived(project, (value): "ltr" | "rtl" =>
+  (value?.targetLanguageDirection || "").trim().toLowerCase() === "rtl" ? "rtl" : "ltr");
 export const currentChapter = writable<string>("1");
 
 // Keyed by chapter number -> list of verse numbers in that chapter, always in
@@ -81,8 +87,16 @@ export const flagsByVerse = writable<Record<string, LanguageQaFlag[]>>({});
 // Recorded edits per verse (chapter.verseData's editCounts), for the ↺ mark;
 // bumped by every save the editor makes.
 export const historyCountByVerse = writable<Record<string, number>>({});
+/** #357: open/resolved Paratext note threads per verse of the open book, keyed
+ *  by verseKey() on Paratext's verse number; loaded a chapter at a time by
+ *  paratextNotes.ts. */
+export const paratextNoteCountsByVerse = writable<Record<string, { open: number; resolved: number }>>({});
 // The Language QA mark F8 / Shift+F8 moved to (the panel), ringed in the text.
 export const activeLanguageQaFindingId = writable<string | null>(null);
+
+/** #383: a tab the Review panel should show next, asked for from outside it
+ * (the verse row's open-issue pill). The panel reads it once and clears it. */
+export const reviewTabRequest = writable<ReviewTab | null>(null);
 export type ReviewerMode = "basic" | "advanced";
 export const reviewerMode = writable<ReviewerMode>("basic");
 
@@ -153,6 +167,7 @@ export function resetBookState(): void {
   languageQaFindingsByVerse.set({});
   flagsByVerse.set({});
   historyCountByVerse.set({});
+  paratextNoteCountsByVerse.set({});
   activeLanguageQaFindingId.set(null);
   loadedChapters.set({});
   selectedVerse.set(null);

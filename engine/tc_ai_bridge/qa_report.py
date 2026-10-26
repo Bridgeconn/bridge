@@ -93,8 +93,8 @@ _SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 EXPORT_FORMATS = {"csv": ",", "tsv": "\t"}
 
 DEFAULT_EXPORT_COLUMNS = [
-    "category", "book", "chapter", "verse", "issue", "explanation", "aiProposal",
-    "fixedBy", "result", "status", "severity",
+    "category", "book", "chapter", "verse", "issue", "explanation", "checkSuggestion",
+    "aiProposal", "fixedBy", "result", "status", "severity",
     # Language QA rows fill these; they are empty on every other row.
     "languageQaCategory", "ruleId", "packVersion", "layer", "confidence", "suggestions",
     "houseStyleSuppressed",
@@ -294,6 +294,10 @@ class _BookReportBuilder:
             "reference": "",
             "issue": "",
             "explanation": "",
+            # A deterministic check's own suggested fix (a QaFinding's
+            # suggested_replacement). Never AI output: wording an AI provider
+            # returned goes in aiProposal, and the two are never merged (#317).
+            "checkSuggestion": "",
             "aiProposal": "",
             "aiVerdict": "",
             "status": status,
@@ -381,7 +385,7 @@ class _BookReportBuilder:
                     chapter=chapter, verse=verse,
                     issue=title if sep else (check_type or title),
                     explanation=detail if sep else explanation,
-                    aiProposal=str(finding.get("suggested_replacement") or ""),
+                    checkSuggestion=str(finding.get("suggested_replacement") or ""),
                     status=status,
                     fixedBy="human" if resolved else "",
                     fixedByDetail="reviewer" if resolved else "",

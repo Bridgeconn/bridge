@@ -1077,6 +1077,32 @@ def test_settings_get_reflects_a_saved_api_key(tmp_path, monkeypatch):
     assert "_session_api_key" not in persisted
 
 
+def test_settings_set_empty_api_key_removes_the_stored_secret(tmp_path, monkeypatch):
+    """#319: Settings' "Remove key" sends `apiKey: ""`. That must drop the
+    DPAPI entry from settings.json, report hasApiKey false, and stay removed
+    after a restart."""
+    import os
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    from tc_ai_bridge.secret_store import AppSettings
+    settings_path = tmp_path / "settings.json"
+    engine = BridgeEngine(settings=AppSettings(path=settings_path))
+    call(engine, "settings.set", {"apiKey": "sk-test-123"})
+    if os.name == "nt":
+        assert "api_key_dpapi" in json.loads(settings_path.read_text(encoding="utf-8"))
+
+    removed = call(engine, "settings.set", {"apiKey": ""})
+    assert removed["success"] is True
+    assert removed["result"]["hasApiKey"] is False
+    assert call(engine, "settings.get")["result"]["hasApiKey"] is False
+    on_disk = json.loads(settings_path.read_text(encoding="utf-8"))
+    assert "api_key_dpapi" not in on_disk
+    assert "sk-test-123" not in settings_path.read_text(encoding="utf-8")
+
+    restarted = BridgeEngine(settings=AppSettings(path=settings_path))
+    assert call(restarted, "settings.get")["result"]["hasApiKey"] is False
+
+
 def test_settings_load_removes_legacy_plaintext_session_key(tmp_path, monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     from tc_ai_bridge.secret_store import AppSettings

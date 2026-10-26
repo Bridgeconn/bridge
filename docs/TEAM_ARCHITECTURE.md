@@ -37,8 +37,9 @@ Assumptions recorded alongside, not re-asked:
   human decisions.
 - `ai_review_results` and `triage_verdicts` are migrated rather than discarded; they cost
   tokens to regenerate. `check_cache` starts empty (a cache miss recomputes).
-- Hub server code is an optional `[server]` extra. The PyInstaller desktop sidecar never
-  imports it. Offline-first remains an invariant (`DECISIONS.md` 2026-09-11).
+- Hub server code is an optional `[server]` extra. The PyInstaller desktop sidecar's stdio
+  path never imports it. Since 2026-10-23 the sidecar carries it, so Settings > Team can
+  start a hub as a child process (DECISIONS 2026-10-23). Offline-first remains an invariant (`DECISIONS.md` 2026-09-11).
 
 ## 2. Target shape
 
@@ -284,7 +285,8 @@ events. `sync_conflicts` as a table, and any UI, remain ss7's.
   (`EngineMethod` in `bridgeClient.ts`, #115), so a web transport reuses that surface
   and replaces only `call()`'s `invoke("engine_call", …)`.
 - `bridge-engine --serve --data-dir <hub>`: FastAPI + uvicorn behind the optional
-  `[server]` extra, excluded from the PyInstaller spec. Threaded request handling here
+  `[server]` extra; excluded from the PyInstaller spec until 2026-10-23, when the
+  desktop sidecar started carrying it for Settings > Team > Start a hub. Threaded request handling here
   only; the stdio loop stays single-threaded (#12 owns the job coordinator).
 
 ## 7. Hub and sync (first slice)
@@ -308,7 +310,8 @@ events. `sync_conflicts` as a table, and any UI, remain ss7's.
   (project_admin); reports and CSV export (reporter and up); users and join codes
   (project_admin).
 - The desktop exe gains only a small Team section in Settings: hub URL, join code, sync
-  status.
+  status, and since 2026-10-23 Start a hub / Join a hub (a hub started there lives only
+  while Bridge is open).
 
 ## 9. Test suite (lands first)
 

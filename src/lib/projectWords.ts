@@ -13,7 +13,7 @@ export function isKnownMisspellingRule(ruleId: string): boolean {
 }
 
 /**
- * Whether "Add to the project word list" would silence this finding: one
+ * Whether "Add to dictionary" would silence this finding: one
  * word, in a category a project word hides, not a learned fix (that word is
  * the reviewer's own correction already, as the indic-qa editor says), and
  * not a reviewed misspelling. The verse menu and the review panel both ask
@@ -26,7 +26,8 @@ export function canAddProjectWord(finding: Pick<LanguageQaFinding, "category" | 
 }
 
 /**
- * Add words to the project word list: their spelling findings go from the
+ * Add words to the project's dictionary (the house-style word list; the
+ * pack's own dictionary is never written): their spelling findings go from the
  * chapter on screen at once, then the engine records them (a pass follows).
  * Put back if the engine refuses. Returns an error message, or "".
  */

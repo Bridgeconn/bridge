@@ -43,7 +43,55 @@ describe("CollectionQaPanel", () => {
     collectionQaCollapsed.set(false);
   });
 
+  // #380: folded by default. The store is made when the module loads, so the
+  // default is read from a fresh copy of the module against an empty storage,
+  // and a saved choice from one against storage that holds it.
+  describe("starts folded unless the device remembered otherwise (#380)", () => {
+    const KEY = "bridge.dashboard.collectionQaCollapsed.v1";
+    async function freshStore() {
+      vi.resetModules();
+      const prefs = await import("../../editorPrefs");
+      return get(prefs.collectionQaCollapsed);
+    }
+
+    it("defaults to folded on a fresh profile", async () => {
+      localStorage.removeItem(KEY);
+      expect(await freshStore()).toBe(true);
+    });
+
+    it("keeps a saved open choice", async () => {
+      localStorage.setItem(KEY, "false");
+      expect(await freshStore()).toBe(false);
+    });
+
+    it("shows the slim folded row with the summary and the Run button, no table", async () => {
+      collectionQaCollapsed.set(true);
+      render(CollectionQaPanel, { props: { bookCount: 2 } });
+      expect(await screen.findByText(/2 books · 1 done · last run/)).toBeInTheDocument();
+      expect(screen.queryByRole("table")).toBeNull();
+      expect(screen.getByRole("region", { name: "Collection QA" }).classList.contains("folded")).toBe(true);
+      expect(screen.getByRole("button", { name: "Run QA on all 2 books" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Run all again" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Expand Collection QA" }).getAttribute("aria-expanded")).toBe("false");
+    });
+
+    it("refolds after a run only if it was folded before", async () => {
+      collectionQaCollapsed.set(true);
+      collectionQaStatus.mockResolvedValue(snapshot({ jobId: "j1", state: "running", currentBook: "rut",
+        books: [book("rut", { state: "running" }), book("gen")] }));
+      render(CollectionQaPanel, { props: { bookCount: 2 } });
+      expect(await screen.findByRole("table")).toBeInTheDocument();
+      expect(screen.getByRole("region", { name: "Collection QA" }).classList.contains("folded")).toBe(false);
+      collectionQaStatus.mockResolvedValue(snapshot({ jobId: "j1", state: "succeeded",
+        books: [book("rut", { state: "done" }), book("gen", { state: "skipped" })] }));
+      await waitFor(() => expect(get(collectionQaRunning)).toBe(false), { timeout: 3000 });
+      await waitFor(() => expect(screen.queryByRole("table")).toBeNull());
+      expect(get(collectionQaCollapsed)).toBe(true);
+    });
+  });
+
   it("folds to its header, remembers it, and still offers a run", async () => {
+    collectionQaCollapsed.set(false);
     render(CollectionQaPanel, { props: { bookCount: 2 } });
     await screen.findByText("languageQa 3");
     await fireEvent.click(screen.getByRole("button", { name: "Collapse Collection QA" }));
@@ -65,6 +113,7 @@ describe("CollectionQaPanel", () => {
   });
 
   it("shows each book's last recorded run and offers a run, never starting one itself", async () => {
+    collectionQaCollapsed.set(false);
     render(CollectionQaPanel, { props: { bookCount: 2 } });
     expect(await screen.findByText("languageQa 3")).toBeInTheDocument();
     expect(screen.getByText("85")).toBeInTheDocument();
@@ -73,6 +122,7 @@ describe("CollectionQaPanel", () => {
   });
 
   it("starts a run, holds the app read-only while it runs, and releases it when it ends", async () => {
+    collectionQaCollapsed.set(false);
     collectionRunChecks.mockResolvedValue(snapshot({ jobId: "j1", state: "running", currentBook: "rut",
       books: [book("rut", { state: "running" }), book("gen")] }));
     render(CollectionQaPanel, { props: { bookCount: 2 } });

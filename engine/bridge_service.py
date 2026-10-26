@@ -102,7 +102,9 @@ from tc_ai_bridge.alignment_engine import (
     AlignmentError, apply_proposal, make_inventory, realign, unalign_bottom,
     validate_preparation_proposal,
 )
-from tc_ai_bridge.aligned_usfm import AlignedUsfmError, render_aligned_verse
+from tc_ai_bridge.aligned_usfm import (
+    NO_SOURCE_TOKENS_DETAIL, AlignedUsfmError, render_aligned_verse, unaligned_reason,
+)
 from tc_ai_bridge.alignment_reliability import (
     alignment_fingerprint, compile_link_proposal, structural_issues, target_token_fingerprint,
 )
@@ -118,6 +120,8 @@ from tc_ai_bridge.knowledge_base import KnowledgeBaseError
 from tc_ai_bridge.paratext_connector import ParatextConnectorClient, ParatextConnectorError
 from tc_ai_bridge.logos_connector import LogosConnectorClient, LogosConnectorError
 from tc_ai_bridge import paratext_install
+from tc_ai_bridge import paratext_link
+from paratext_session import ParatextSession
 from tc_ai_bridge.navigation import NavigationSyncCoordinator
 from tc_ai_bridge.models import QAIssue, TokenRef, VerseAlignment
 from tc_ai_bridge.secret_store import AppSettings
@@ -474,6 +478,12 @@ class Methods:
     HUB_SYNC_NOW = "hub.syncNow"
     HUB_CONFLICTS = "hub.conflicts"
     HUB_RESOLVE_CONFLICT = "hub.resolveConflict"
+    # #46: host a hub on this machine, as a child of this engine that lives
+    # only while Bridge is open (DECISIONS 2026-10-23); probe asks whether a
+    # hub answers at an address.
+    HUB_START = "hub.start"
+    HUB_STOP = "hub.stop"
+    HUB_PROBE = "hub.probe"
     ASSIGNMENTS_LIST = "assignments.list"
     ASSIGNMENTS_SET = "assignments.set"
     ASSIGNMENTS_CLEAR = "assignments.clear"
@@ -682,6 +692,15 @@ class Methods:
     # #282: install Bridge's Paratext connector on this PC (paratext_install.py).
     PARATEXT_CONNECTOR_STATUS = "paratext.connectorStatus"
     PARATEXT_INSTALL_CONNECTOR = "paratext.installConnector"
+    # #356: the open book's link to its Paratext project folder (paratext_link.py).
+    PARATEXT_LINK_STATUS = "paratext.linkStatus"
+    PARATEXT_RELINK = "paratext.relink"
+    PARATEXT_REFRESH = "paratext.refresh"
+    PARATEXT_BOOK_NAMES = "paratext.bookNames"
+    # #357: the linked project's Paratext Project Notes, read-only.
+    PARATEXT_NOTES_FOR_CHAPTER = "paratext.notesForChapter"
+    PARATEXT_NOTES_FOR_VERSE = "paratext.notesForVerse"
+    PARATEXT_NOTE_THREAD = "paratext.noteThread"
 
     ISSUE_RESOLUTION_LIST = "issueResolution.list"
     ISSUE_RESOLUTION_SAVE = "issueResolution.save"
@@ -778,6 +797,9 @@ class BridgeEngine:
         self._collection_jobs = CollectionJobManager()
         self._housestyle_learner = HouseStyleLearner()
         self._language_qa = LanguageQaManager()
+        # #356: the open book's Paratext session, kept across books of one
+        # Paratext project and replaced when the Guid changes.
+        self._paratext: ParatextSession | None = None
         # #277: books whose overrides file a hub pull rewrote; the dispatcher
         # rebinds Language QA on its next request (the pull is on the hub thread).
         self._language_qa_rebind_paths: set[str] = set()
@@ -820,6 +842,8 @@ class BridgeEngine:
         # Resolved lazily by current_actor_id(): working it out opens the
         # workspace database, and plenty of requests never write anything (#78).
         self._local_user: dict[str, str] | None = None
+        # (open project's path string, canonical_path_key of it): _is_open_project_path.
+        self._open_project_path_key: tuple[str, str] | None = None
 
         # Connector I/O is deliberately performed by NavigationSyncCoordinator's
         # daemon probe rather than this service's single-threaded stdio request loop.
@@ -981,6 +1005,7 @@ class BridgeEngine:
             "url": self.settings.hub_url, "identity": self.settings.hub_identity,
             "linkedHubProjectId": link or "", "sync": state, "openConflicts": conflicts,
             "syncing": bool(thread is not None and thread.is_alive() and getattr(self, "_hub_busy", False)),
+            "server": self._hub_server_view(),
         }
 
     def hub_join(self, url: str, join_code: str, display_name: str) -> dict[str, Any]:
@@ -1156,6 +1181,202 @@ class BridgeEngine:
         self.project.workbench.resolve_sync_conflict(int(conflict_id), resolution)
         return self.hub_conflicts()
 
+    # -- a hub hosted on this machine (#46, DECISIONS 2026-10-23) ------------
+
+    HUB_DEFAULT_PORT = 8765
+    HUB_START_TIMEOUT_SECONDS = 30.0
+
+    def _hub_server_state(self) -> dict[str, Any]:
+        state = getattr(self, "_hub_server", None)
+        if state is None:
+            self._hub_server_lock = threading.Lock()
+            self._hub_server_proc = None
+            state = self._hub_server = {
+                "state": "stopped", "pid": None, "host": "", "port": self.HUB_DEFAULT_PORT,
+                "dataDir": "", "startedAt": None, "error": None,
+            }
+        return state
+
+    @staticmethod
+    def _port_in_use(port: int) -> bool:
+        import socket
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            # A listener on loopback accepts in about a millisecond; a closed
+            # port on Windows waits out the whole timeout, and hub.status
+            # pays it.
+            sock.settimeout(0.1)
+            return sock.connect_ex(("127.0.0.1", int(port))) == 0
+
+    def _hub_server_view(self) -> dict[str, Any]:
+        """What Settings > Team shows about a hub on this machine. Local checks
+        only: the child's exit code and a loopback connect, never the network."""
+        import socket
+
+        from tc_ai_bridge.secret_store import hub_data_dir
+
+        state = self._hub_server_state()
+        with self._hub_server_lock:
+            proc = self._hub_server_proc
+            # A child that dies while starting is the start watcher's to
+            # report, with its log; here only a running hub that vanished.
+            if proc is not None and state["state"] == "running" and proc.poll() is not None:
+                state.update(state="stopped", error=f"The hub stopped (exit code {proc.returncode}).")
+                self._hub_server_proc = None
+            view = dict(state)
+        port = int(view["port"])
+        data_dir = Path(view["dataDir"] or hub_data_dir())
+        code = None
+        try:
+            code = (data_dir / "admin-join-code.txt").read_text(encoding="utf-8").splitlines()[0].strip() or None
+        except (OSError, IndexError):
+            pass
+        view.update(
+            url=f"http://127.0.0.1:{port}",
+            lanUrl=f"http://{socket.gethostname()}:{port}",
+            dataDir=str(data_dir),
+            adminJoinCode=code if view["state"] == "running" else None,
+            portInUse=view["state"] != "running" and self._port_in_use(port),
+            autostart=self.settings.hub_server_autostart,
+        )
+        return view
+
+    @staticmethod
+    def hub_serve_command(host: str, port: int, data_dir: str, parent_pid: int) -> list[str]:
+        """The frozen exe re-invokes itself with --serve; from source it is
+        `python main.py --serve`."""
+        args = ["--serve", "--data-dir", str(data_dir), "--host", str(host), "--port", str(int(port)),
+                "--parent-pid", str(int(parent_pid))]
+        if getattr(sys, "frozen", False):
+            return [sys.executable, *args]
+        return [sys.executable, str(Path(__file__).resolve().parent / "main.py"), *args]
+
+    def hub_start(self, host: str = "0.0.0.0", port: int = HUB_DEFAULT_PORT, data_dir: str = "") -> dict[str, Any]:
+        """Start a hub as this engine's child. Returns at once with state
+        `starting`; a watcher thread moves it to `running` once /health
+        answers, or `failed` with the end of hub.log."""
+        import subprocess
+
+        from tc_ai_bridge.secret_store import hub_data_dir
+
+        state = self._hub_server_state()
+        with self._hub_server_lock:
+            if state["state"] in {"starting", "running"}:
+                raise ProjectError(f"A hub is already running here on port {state['port']}.")
+            if self._port_in_use(port):
+                raise ProjectError(f"Something on this machine already answers on port {int(port)}, "
+                                   "probably a hub. Join it instead.")
+            root = Path(data_dir) if data_dir else hub_data_dir()
+            root.mkdir(parents=True, exist_ok=True)
+            log_path = root / "hub.log"
+            # The child must never write to this engine's stdout: that is the
+            # JSON-lines pipe to the shell, and serve() prints a banner.
+            log = log_path.open("a", encoding="utf-8")
+            try:
+                proc = subprocess.Popen(
+                    self.hub_serve_command(host, port, str(root), os.getpid()),
+                    stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                    cwd=None if getattr(sys, "frozen", False) else str(Path(__file__).resolve().parent),
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+            except OSError as exc:
+                log.close()
+                raise ProjectError(f"The hub could not be started: {exc}") from exc
+            log.close()
+            self._hub_server_proc = proc
+            state.update(state="starting", pid=proc.pid, host=str(host), port=int(port), dataDir=str(root),
+                         startedAt=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), error=None)
+        if not getattr(self, "_hub_server_atexit", False):
+            # Closing Bridge ends the hub but keeps autostart: hub_stop() is
+            # the person's choice, this is not.
+            atexit.register(self._kill_hub_on_exit)
+            self._hub_server_atexit = True
+        threading.Thread(target=self._watch_hub_start, args=(proc, log_path), name="bridge-hub-start",
+                         daemon=True).start()
+        return self.hub_status()
+
+    def _watch_hub_start(self, proc: Any, log_path: Path) -> None:
+        from tc_ai_bridge.hub_sync import probe_hub
+
+        state = self._hub_server_state()
+        deadline = time.monotonic() + self.HUB_START_TIMEOUT_SECONDS
+        url = f"http://127.0.0.1:{state['port']}"
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:
+                self._hub_start_ended(proc, "failed", self._hub_log_tail(log_path)
+                                      or f"The hub exited at once (exit code {proc.returncode}).")
+                return
+            if probe_hub(url, timeout=1.0, transport=getattr(self, "_hub_transport", None))["reachable"]:
+                # Saved before the state flips, so whoever sees `running`
+                # also sees autostart.
+                self.settings.set_hub_server_autostart(True)
+                self._hub_start_ended(proc, "running", None)
+                return
+            time.sleep(0.25)
+        self._hub_start_ended(proc, "failed", "The hub did not answer within "
+                              f"{int(self.HUB_START_TIMEOUT_SECONDS)} s. {self._hub_log_tail(log_path)}".strip())
+        self._kill_hub_tree(proc)
+
+    def _hub_start_ended(self, proc: Any, outcome: str, error: str | None) -> None:
+        state = self._hub_server_state()
+        with self._hub_server_lock:
+            if self._hub_server_proc is not proc or state["state"] != "starting":
+                return  # stopped meanwhile
+            state.update(state=outcome, error=error)
+            if outcome == "failed":
+                self._hub_server_proc = None
+
+    @staticmethod
+    def _hub_log_tail(log_path: Path, lines: int = 20) -> str:
+        try:
+            return "\n".join(log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:])
+        except OSError:
+            return ""
+
+    @staticmethod
+    def _kill_hub_tree(proc: Any) -> None:
+        import subprocess
+
+        if proc.poll() is not None:
+            return
+        if os.name == "nt":
+            # A tree kill, as the shell does for this engine (CLAUDE.md gotcha
+            # 13): the onefile bootloader's Python child holds the port.
+            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, check=False,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        else:
+            proc.terminate()
+        try:
+            proc.wait(5)
+        except Exception:  # noqa: BLE001 -- best effort; --parent-pid is the backstop
+            proc.kill()
+
+    def _kill_hub_on_exit(self) -> None:
+        proc = getattr(self, "_hub_server_proc", None)
+        if proc is not None:
+            self._kill_hub_tree(proc)
+
+    def hub_stop(self) -> dict[str, Any]:
+        """Stop the hub this engine started; a hub started any other way is
+        not this device's to stop. Idempotent."""
+        state = self._hub_server_state()
+        with self._hub_server_lock:
+            proc = self._hub_server_proc
+            self._hub_server_proc = None
+            state.update(state="stopped", pid=None, error=None)
+        if proc is not None:
+            self._kill_hub_tree(proc)
+        self.settings.set_hub_server_autostart(False)
+        return self.hub_status()
+
+    def hub_probe(self, url: str) -> dict[str, Any]:
+        from tc_ai_bridge.hub_sync import HubError, probe_hub
+
+        try:
+            return probe_hub(str(url or "").strip(), transport=getattr(self, "_hub_transport", None))
+        except HubError as exc:
+            raise ProjectError(str(exc)) from exc
+
     HUB_SYNC_INTERVAL_SECONDS = 60.0
 
     def _start_hub_thread(self) -> None:
@@ -1267,6 +1488,12 @@ class BridgeEngine:
             self._start_hub_thread()
         except Exception:  # noqa: BLE001 -- never let the hub delay startup
             pass
+        # #46: a hub this device started and did not stop comes back with it.
+        if self.settings.hub_server_autostart:
+            try:
+                self.hub_start()
+            except Exception as exc:  # noqa: BLE001 -- the reason shows in Settings > Team
+                _trace(f"hub autostart failed: {exc}")
         """Slow loads, started off the dispatcher once the sidecar is ready
         (main.py only: tests that build a BridgeEngine never pay them). Today:
         uroman for the names check, which engine.info used to build, ~5 s
@@ -1360,6 +1587,7 @@ class BridgeEngine:
         if self.project is not candidate:
             self._close_project_db_handles()
         self.project = candidate
+        self._attach_paratext(candidate.path)
         self.passage_semantic_runtime = None
         self._correction_application_service = None
         self._correction_affected_analysis_service = None
@@ -1510,7 +1738,7 @@ class BridgeEngine:
         """project.list: one row per project or collection, with the cached
         progress summed over the collection's books (#238) and who opened it
         last, from the workspace alone -- no project database is opened."""
-        rows = self.project_registry.list_projects(collapse_collections=True)
+        rows = self.project_registry.list_projects(collapse_collections=True, include_conflicts=True)
         all_entries = self.project_registry.list_projects(refresh_managed=False)
         by_collection: dict[str, list[dict[str, Any]]] = {}
         for entry in all_entries:
@@ -1759,8 +1987,11 @@ class BridgeEngine:
                 "or explicitly choose Import as separate copy."
             )
         root = Path(destination_root).resolve() if destination_root else self.project_root
-        result = import_source(path, root, metadata, progress=progress, cancel=cancel,
-                               **({"selected_book_ids": selected_book_ids} if selected_book_ids is not None else {}))
+        result = import_source(
+            path, root, metadata, progress=progress, cancel=cancel,
+            identity_in_use=self.project_registry.identity_in_use,
+            **({"selected_book_ids": selected_book_ids} if selected_book_ids is not None else {}),
+        )
         timer.mark("import_source")
         # Past import_source the books are on disk; a cancel from here on is
         # too late and is ignored rather than leaving unregistered folders.
@@ -5037,6 +5268,68 @@ class BridgeEngine:
     # handoff. Continuous navigation uses the coordinator below so slow/unavailable
     # desktop applications never block ordinary Bridge requests.
 
+    # -- #356: the Paratext project link. The logic is in paratext_link.py and
+    # paratext_session.py; these only pick the session and the project path.
+
+    def _paratext_cache_root(self) -> Path:
+        return self.settings.path.parent / "paratext-cache"
+
+    def _attach_paratext(self, project_path: Path) -> None:
+        """Resolve the opened book's link; keep the session when the Guid is
+        the same (another book of one Paratext project). Never fails an open."""
+        try:
+            resolution = paratext_link.resolve(project_path)
+        except Exception as exc:  # noqa: BLE001 -- a link problem never blocks an open
+            _trace(f"paratext link not resolved: {exc}")
+            resolution = paratext_link.LinkResolution(paratext_link.NOT_PARATEXT, None)
+        session = self._paratext
+        if session is not None and resolution.guid and session.guid == resolution.guid:
+            session.update(resolution)
+        else:
+            self._paratext = ParatextSession(resolution, self._paratext_cache_root())
+        # #357: the notes index builds on its own daemon thread, never here.
+        self._paratext.ensure_notes_index()
+
+    def _paratext_session(self) -> ParatextSession:
+        if self._paratext is None:
+            return ParatextSession(paratext_link.LinkResolution(paratext_link.NOT_PARATEXT, None),
+                                   self._paratext_cache_root())
+        return self._paratext
+
+    def paratext_link_status(self) -> dict[str, Any]:
+        return self._paratext_session().link_status()
+
+    def paratext_relink(self, folder: str) -> dict[str, Any]:
+        self._require_project()
+        paratext_link.relink(self.project.path, folder)
+        self._paratext_session().update(paratext_link.resolve(self.project.path))
+        return self.paratext_link_status()
+
+    def paratext_refresh(self) -> dict[str, Any]:
+        session = self._paratext_session()
+        if self.project is not None:
+            session.refresh(paratext_link.resolve(self.project.path))
+        return session.link_status()
+
+    def paratext_book_names(self) -> dict[str, Any]:
+        session = self._paratext_session()
+        return {"bookNames": session.book_names(), "state": session.resolution.state}
+
+    def _paratext_book(self) -> str:
+        self._require_project()
+        return str(self.project.book_id or "").upper()
+
+    def paratext_notes_for_chapter(self, chapter: str, include_resolved: bool = False,
+                                   kinds: list[str] | None = None) -> dict[str, Any]:
+        return self._paratext_session().notes_for_chapter(
+            self._paratext_book(), str(chapter), include_resolved=include_resolved, kinds=kinds)
+
+    def paratext_notes_for_verse(self, chapter: str, verse: str) -> dict[str, Any]:
+        return self._paratext_session().notes_for_verse(self._paratext_book(), str(chapter), str(verse))
+
+    def paratext_note_thread(self, thread_id: str) -> dict[str, Any]:
+        return self._paratext_session().note_thread(str(thread_id))
+
     def paratext_get_state(self) -> dict[str, Any]:
         state = ParatextConnectorClient().get_state()
         return asdict(state)
@@ -7482,21 +7775,31 @@ class BridgeEngine:
                     "ledgerPath": self._write_export_ledger(output_path)}
         summary = self.project.summary
         book = summary.book_id
+        # Verses written with no alignment because they have no source tokens
+        # (a lettered segment, #307): reported, not refused.
+        unaligned: list[dict[str, str]] = []
 
         def render(chapter: str, verse: str) -> str:
+            text = self.project.target_verse_text(chapter, verse)
+            alignment = self.project.load_verse_alignment(chapter, verse)
             try:
-                return render_aligned_verse(
-                    self.project.target_verse_text(chapter, verse),
-                    self.project.load_verse_alignment(chapter, verse),
-                )
+                rendered = render_aligned_verse(text, alignment)
             except AlignedUsfmError as exc:
                 raise ProjectError(
                     f"Cannot export aligned USFM at {book.upper()} {chapter}:{verse}: {exc}"
                 ) from exc
+            reason = unaligned_reason(text, alignment)
+            if reason is not None:
+                unaligned.append({
+                    "reference": f"{chapter}:{verse}", "chapter": chapter, "verse": verse,
+                    "reason": reason, "detail": NO_SOURCE_TOKENS_DETAIL,
+                })
+            return rendered
 
         content = self._source_preserving_usfm(render)
         fidelity = "source-preserving"
         if content is None:
+            unaligned.clear()
             fidelity = "simplified"
             lines = [f"\\id {book.upper()}", "\\usfm 3.0"]
             for chapter in self.project.chapters():
@@ -7528,6 +7831,7 @@ class BridgeEngine:
             "written": True, "path": output_path, "bookId": book,
             "chapters": len(self.project.chapters()), "format": "usfm3-aligned",
             "fidelity": fidelity, "alignmentStatus": status["counts"],
+            "unalignedVerses": unaligned,
             "gate": gate, "overridden": bool(gate and gate["blocking"]), "ledgerPath": ledger,
         }
 
@@ -7824,6 +8128,22 @@ class BridgeEngine:
                 _trace(f"rpc {request.method} took {elapsed * 1000:.0f}ms")
             self._release_thread_db_handles()
 
+    def _is_open_project_path(self, requested: str) -> bool:
+        """Whether a Language QA request's `projectPath` names the open project,
+        compared canonically. Path.resolve() is several filesystem calls, each
+        a GIL handover that waits behind a running scan, and every Language QA
+        request made two. The same string as the project's own path needs
+        none; the project's side is resolved once per project path (`project.open`
+        has already resolved it), so a request in another spelling pays one."""
+        own = str(self.project.path)
+        if requested == own:
+            return True
+        cached = getattr(self, "_open_project_path_key", None)
+        if cached is None or cached[0] != own:
+            cached = (own, canonical_path_key(own))
+            self._open_project_path_key = cached
+        return canonical_path_key(requested) == cached[1]
+
     def _release_thread_db_handles(self) -> None:
         """#113: the dispatcher's connections are reused within a request and
         released after it, so between requests nothing holds the database
@@ -7876,7 +8196,7 @@ class BridgeEngine:
                 # difference in case. That is what failed the Language QA
                 # latency gate in CI while every UI path worked, because the UI
                 # only ever echoes a path the engine itself produced.
-                if canonical_path_key(str(p.get("projectPath") or "")) != canonical_path_key(self.project.path):
+                if not self._is_open_project_path(str(p.get("projectPath") or "")):
                     raise ProjectError("Language QA request belongs to a different project.")
                 if m in {Methods.LANGUAGE_QA_LEARNED_LIST, Methods.LANGUAGE_QA_LEARNED_FORGET,
                          Methods.LANGUAGE_QA_LEARNED_RESTORE}:
@@ -8010,6 +8330,15 @@ class BridgeEngine:
                 return EngineResponse.ok(request.id, result=self.hub_sync_now())
             if m == Methods.HUB_CONFLICTS:
                 return EngineResponse.ok(request.id, result=self.hub_conflicts())
+            if m == Methods.HUB_START:
+                return EngineResponse.ok(request.id, result=self.hub_start(
+                    str(p.get("host") or "0.0.0.0"), int(p.get("port") or self.HUB_DEFAULT_PORT),
+                    str(p.get("dataDir") or ""),
+                ))
+            if m == Methods.HUB_STOP:
+                return EngineResponse.ok(request.id, result=self.hub_stop())
+            if m == Methods.HUB_PROBE:
+                return EngineResponse.ok(request.id, result=self.hub_probe(str(p.get("url") or "")))
             if m == Methods.HUB_RESOLVE_CONFLICT:
                 return EngineResponse.ok(request.id, result=self.hub_resolve_conflict(
                     int(p.get("conflictId") or 0), str(p.get("resolution") or ""),
@@ -8159,7 +8488,8 @@ class BridgeEngine:
                                            p.get("comment", ""), issue)
                 return EngineResponse.ok(request.id, result=result)
             if m == Methods.VERSE_EDIT:
-                result = self.edit_verse(p["chapter"], p["verse"], p["newText"])
+                result = self.edit_verse(p["chapter"], p["verse"], p["newText"],
+                                         expected_old_text=p.get("expectedOldText"))
                 return EngineResponse.ok(request.id, result=result)
             if m == Methods.VERSE_HISTORY:
                 return EngineResponse.ok(request.id, result=self.verse_history(p))
@@ -8544,6 +8874,7 @@ class BridgeEngine:
                     explanation=str(p.get("explanation") or ""),
                     request_suggestion=bool(p.get("requestSuggestion") or False),
                     actor_id=self.current_actor_id(),
+                    supersedes_proposal_id=str(p.get("supersedesProposalId") or ""),
                 ))
             if m == Methods.CORRECTION_EDIT_PROPOSAL:
                 return EngineResponse.ok(request.id, result=self.correction_edit_proposal(
@@ -8676,6 +9007,22 @@ class BridgeEngine:
             if m == Methods.PARATEXT_INSTALL_CONNECTOR:
                 # Returns at once; the install runs on its own thread (#282).
                 return EngineResponse.ok(request.id, result=self._connector_installer.start())
+            if m == Methods.PARATEXT_LINK_STATUS:
+                return EngineResponse.ok(request.id, result=self.paratext_link_status())
+            if m == Methods.PARATEXT_RELINK:
+                return EngineResponse.ok(request.id, result=self.paratext_relink(p["folder"]))
+            if m == Methods.PARATEXT_REFRESH:
+                return EngineResponse.ok(request.id, result=self.paratext_refresh())
+            if m == Methods.PARATEXT_BOOK_NAMES:
+                return EngineResponse.ok(request.id, result=self.paratext_book_names())
+            if m == Methods.PARATEXT_NOTES_FOR_CHAPTER:
+                return EngineResponse.ok(request.id, result=self.paratext_notes_for_chapter(
+                    p["chapter"], bool(p.get("includeResolved", False)), p.get("kinds"),
+                ))
+            if m == Methods.PARATEXT_NOTES_FOR_VERSE:
+                return EngineResponse.ok(request.id, result=self.paratext_notes_for_verse(p["chapter"], p["verse"]))
+            if m == Methods.PARATEXT_NOTE_THREAD:
+                return EngineResponse.ok(request.id, result=self.paratext_note_thread(p["threadId"]))
             if m == Methods.LOGOS_GET_STATE:
                 return EngineResponse.ok(request.id, result=self.logos_get_state())
             if m == Methods.LOGOS_SET_REFERENCE:

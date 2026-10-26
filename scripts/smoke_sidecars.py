@@ -98,6 +98,63 @@ def _fixture_project(root: Path) -> Path:
     return project
 
 
+def _free_port() -> int:
+    import socket
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _stop_tree(process: subprocess.Popen) -> None:
+    if sys.platform == "win32":
+        subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                       capture_output=True, check=False)
+    else:
+        process.terminate()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        process.kill()
+
+
+def _smoke_hub(engine: Path) -> None:
+    """The frozen exe serves the hub (#46, DECISIONS 2026-10-23): proof the
+    spec's hiddenimports carry FastAPI and uvicorn, which source tests cannot
+    show."""
+    import urllib.request
+
+    with tempfile.TemporaryDirectory(prefix="bridge-frozen-hub-") as temp:
+        data_dir = Path(temp) / "hub"
+        port = _free_port()
+        env = os.environ.copy()
+        env["LOCALAPPDATA"] = str(Path(temp) / "app-data")
+        started = time.monotonic()
+        with (Path(temp) / "hub.log").open("w", encoding="utf-8") as log:
+            process = subprocess.Popen(
+                [str(engine), "--serve", "--data-dir", str(data_dir), "--host", "127.0.0.1", "--port", str(port)],
+                stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, env=env,
+            )
+            try:
+                body = None
+                while time.monotonic() - started < 60 and process.poll() is None:
+                    try:
+                        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=2) as response:
+                            body = json.loads(response.read().decode("utf-8"))
+                            break
+                    except OSError:
+                        time.sleep(0.25)
+                elapsed = time.monotonic() - started
+            finally:
+                _stop_tree(process)
+        output = (Path(temp) / "hub.log").read_text(encoding="utf-8", errors="replace")
+        if body != {"status": "ok"}:
+            raise SystemExit(f"Frozen hub never answered /health (exit={process.returncode}):\n{output[-3000:]}")
+        if not (data_dir / "admin-join-code.txt").is_file():
+            raise SystemExit("Frozen hub answered but wrote no admin-join-code.txt")
+        print(f"Frozen hub answered /health in {elapsed:.2f}s.")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("engine", type=Path, help="Path to frozen bridge-engine executable")
@@ -620,13 +677,15 @@ def main() -> int:
                 process.kill()
                 process.communicate(timeout=5)
 
+    _smoke_hub(engine)
     print(
         "Frozen sidecar smoke test passed: real Wildebeest/Uroman loaded; "
         "pinned UGNT source tokens, versification, names/transliteration, "
         "alignment statistics/proposal packaging, "
         "AI explain packaging, desktop connectors, project registry/duplicate import, "
         "first-open live-review responsiveness, alignment/export/undo, "
-        "duplicate/missing-verse checks, the indic-qa Hindi pack and ta-irv's indic-qa layer succeeded."
+        "duplicate/missing-verse checks, the indic-qa Hindi pack, ta-irv's indic-qa layer "
+        "and the hub's --serve succeeded."
     )
     return 0
 

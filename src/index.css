@@ -157,6 +157,16 @@
   --z-popover: 70;
   --z-toast: 80;
   --z-startup: 200;
+
+  /* Control height (#377). Every control in the top bar -- the Sync button,
+     the chapter stepper and select, Go to, and the Generate report / Export /
+     Settings buttons -- and the report screen's header buttons are this tall,
+     so they sit on one line instead of a button whose height came from the
+     browser's default button font standing a few pixels proud of its
+     neighbours. Fixed in px, like the --fs-* ramp: the top bar does not
+     scale with the text-size control (--verse-scale is set on the work
+     column only), so the token does not either. */
+  --control-h: 28px;
 }
 
 /* #286: the target face in the project language's own order. Fallback is per

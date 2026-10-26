@@ -29,6 +29,11 @@ class AIError(RuntimeError):
     pass
 
 
+class AITransportError(AIError, ai_http.TransportFailure):
+    """The provider was never reached (see `ai_http.TransportFailure`). Still an
+    AIError, so every existing `except AIError` handles it unchanged."""
+
+
 _QUOTED_TEXT = re.compile(
     r'"([^"\r\n]+)"|\'([^\'\r\n]+)\'|“([^”\r\n]+)”|‘([^’\r\n]+)’'
 )
@@ -90,7 +95,7 @@ def default_transport(url: str, headers: dict[str, str], body: bytes, timeout: f
     except urllib.error.HTTPError as e:
         return e.code, e.read()
     except urllib.error.URLError as e:
-        raise AIError(f'Network error contacting OpenAI: {e.reason}') from e
+        raise AITransportError(f'Network error contacting OpenAI: {e.reason}') from e
 
 
 class OpenAIResponsesClient:

@@ -323,6 +323,13 @@ export interface CorrectionCurrentTarget {
   text: string;
   targetTextRevision: string;
   targetContentHash: string;
+  /**
+   * Raw code-point offsets an insertion may use (#314): the verse start and the
+   * end of each word, never inside USFM markup or a note. Engine-computed from
+   * the lifted verse; the panel offers only these. Absent from an older sidecar,
+   * in which case no insertion point is offered.
+   */
+  insertionOffsets?: number[];
 }
 
 export interface CorrectionReviewContext {

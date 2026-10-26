@@ -215,6 +215,9 @@ class TranslationCoreProject:
         self.workbench = WorkbenchRepository(self.companion_dir() / 'bridge-workbench.sqlite3')
         self._cross_verse_links = None  # CrossVerseLinkStore, built on first use (#117)
         self._null_decisions = None  # NullDecisionStore, built on first use (#216)
+        # team_role answers, stamped with the workbench write_generation they
+        # were read at: (generation, {user id: role or None}).
+        self._team_role_cache: tuple[int, dict[str, str | None]] | None = None
         # Identity for every workbench write. Injectable so a test can stamp a
         # known actor without touching app-level state; resolved lazily
         # otherwise, because working it out opens the workspace database and
@@ -2718,8 +2721,17 @@ class TranslationCoreProject:
             )
         return application
 
-    def apply_scripture_edit(self, chapter: str | int, verse: str | int, new_text: str, username: str = 'AI Bridge Reviewer', tags: list[str] | None = None, context_id: dict[str, Any] | None = None, *, strict_context: Any | None = None, journal_prepared_callback: Any | None = None, journal_metadata: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Human-only target verse edit with tC-compatible stale propagation and rollback."""
+    def apply_scripture_edit(self, chapter: str | int, verse: str | int, new_text: str, username: str = 'AI Bridge Reviewer', tags: list[str] | None = None, context_id: dict[str, Any] | None = None, *, strict_context: Any | None = None, expected_old_text: str | None = None, journal_prepared_callback: Any | None = None, journal_metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Human-only target verse edit with tC-compatible stale propagation and rollback.
+
+        `expected_old_text` (#127) is the verse text the caller's edit was made
+        against -- the editor sends the text it opened with. When given and the
+        stored verse no longer equals it exactly, the write is refused with
+        REVISION_CONFLICT and nothing is touched, so a stale save never
+        overwrites a newer verse. None keeps the historical behaviour. A
+        reviewed correction (`strict_context`) carries its own stricter
+        preconditions: the reviewed verse text, its content hash and the
+        Stage 6B target revision, all checked below."""
         if str(verse) == 'front':
             raise ProjectError('Front-matter editing is not enabled in v0.6; edit a numbered verse.')
         # Ordinary manual edits retain their historical trimming behaviour.
@@ -2731,6 +2743,13 @@ class TranslationCoreProject:
         chapter_path = self.book_dir / f'{chapter}.json'
         chapter_data = self.target_chapter(chapter)
         old_text = str(chapter_data.get(str(verse), ''))
+        if expected_old_text is not None:
+            if not isinstance(expected_old_text, str):
+                raise ProjectError('expected_old_text must be a string when given.')
+            if old_text != expected_old_text:
+                raise ProjectError(
+                    'REVISION_CONFLICT: the verse was changed after this edit was started; nothing was written.'
+                )
         if strict_context is not None:
             import hashlib
             if journal_prepared_callback is None:
@@ -3754,9 +3773,31 @@ class TranslationCoreProject:
         return roles
 
     def team_role(self, user_id: str) -> str | None:
-        """The user's role on this book, or None when the installation role applies."""
-        row = self.workbench.get('team_members', self._team_member_row_id(user_id))
-        return str(row['role']) if row and row.get('role') else None
+        """The user's role on this book, or None when the installation role applies.
+
+        authorize() asks this before every request, and the dispatcher lets go
+        of its workbench connection after every request (#113), so read
+        straight through it cost a fresh SQLite open, five PRAGMAs, a SELECT
+        and a close on every ping: each one a GIL handover, which behind a
+        CPU-bound Language QA scan added up to 200 ms. The answer is kept per
+        user and stamped with the workbench's `write_generation`, which every
+        committed row write in this process bumps (a local `team.setRole`, a
+        hub pull, any batch), so the request after a change re-reads it. The
+        generation is read *before* the row, so a write racing the read can
+        only make the stamp too old, never let a stale answer look current.
+        """
+        user_key = str(user_id)
+        generation = self.workbench.write_generation
+        cache = getattr(self, '_team_role_cache', None)
+        if cache is not None and cache[0] == generation and user_key in cache[1]:
+            return cache[1][user_key]
+        row = self.workbench.get('team_members', self._team_member_row_id(user_key))
+        role = str(row['role']) if row and row.get('role') else None
+        if cache is None or cache[0] != generation:
+            cache = (generation, {})
+            self._team_role_cache = cache
+        cache[1][user_key] = role
+        return role
 
     def set_team_role(self, user_id: str, role: str | None, *, set_by: str) -> bool:
         """Give `user_id` `role` on this book, or remove their row (None).

@@ -50,6 +50,9 @@ user. Narrows #45 to this scope.
 
 ## 2026-09-11 — The team hub is an optional sync peer, not the primary store
 
+*Superseded 2026-10-23 for packaging only: the desktop sidecar now carries the hub server
+(entry "The desktop sidecar carries the hub server"). The rest of this entry stands.*
+
 **Decision:** Collaboration is an optional `bridge-engine --serve` hub that exchanges
 per-project change-log events with desktops and serves a separate browser dashboard. The
 first slice syncs decisions, findings, progress and assignments only. Scripture text never
@@ -1050,6 +1053,9 @@ collection level (a device may hold a subset of books, and a lazy sibling has no
 **Revisit when:** a team needs to merge two projects that were worked on unlinked.
 
 ## 2026-10-15 — The hub is a pip `[server]` extra behind Task Scheduler, not a second exe (#227)
+*Superseded 2026-10-23 for packaging only: the server is no longer excluded from
+`bridge-engine.spec`, and Settings > Team can start a hub that lives while Bridge is open.
+"Not a second exe" and the Task Scheduler route for a permanent hub stand.*
 **Decision:** `bridge-engine --serve --data-dir <hub>` installs from the `[server]` extra
 (FastAPI, uvicorn), excluded from `bridge-engine.spec`; it runs as a Windows Task
 Scheduler task that starts at boot and restarts on failure, written by
@@ -1202,3 +1208,40 @@ sending a triaged finding to the provider again while its text is unchanged.
 case for a rule or a default-off type rather than a score (measured 2026-10-15:
 `names.spelling_similarity`, 0–1 of 20 real per book); or when reviewers ask for the filter's level
 to persist across launches.
+
+## 2026-10-23 — The desktop sidecar carries the hub server; "Start a hub" runs it as a child of the engine (Benz, #46)
+**Decision:** `bridge-engine.spec` no longer excludes `bridge_server`, FastAPI, Starlette or
+uvicorn. Settings > Team gets **Start a hub** and **Join a hub**. Start runs
+`bridge-engine --serve --data-dir %LOCALAPPDATA%\Bridge\hub --host 0.0.0.0 --port 8765
+--parent-pid <engine>` as a child of the engine process. It lives only while Bridge is open,
+and it comes back on the next launch if it was running. Start is disabled while a hub runs
+here or answers `/health` at the typed address. Decided by Benz, 2026-10-23.
+**Because:** a team should not need a source checkout and pip to try the hub (QA_TEST_MATRIX
+noted it as the barrier on 2026-10-14). A child started through `sys.executable` reuses the
+frozen parent's extraction, so there is still one exe and one release gate. The stdio path
+still imports nothing of the server; a test keeps that true.
+**Rules out:** a detached or boot-time hub started from the desktop (the pip `[server]` extra
+behind Task Scheduler remains the route for a permanent hub); any hub call on an import,
+check or open path (offline-first, 2026-09-11, unchanged). Supersedes only the packaging
+sentences of the 2026-09-11 hub entry and the 2026-10-15 #227 entry.
+**Revisit when:** a desktop-started hub has to outlive the app, or must serve the dashboard.
+
+## 2026-10-24 — A damaged workspace.sqlite3 is quarantined, restored from a startup backup, then rebuilt from data\projects; a hub-joined install re-pulls users and roles (Revant, #338)
+**Decision:** the engine always starts. On `sqlite3.DatabaseError` at open, `WorkspaceRepository`
+renames `workspace.sqlite3` and its `-wal` / `-shm` to a timestamped quarantine name (never
+deleted), then: (1) restores the last-good backup if one opens cleanly; (2) failing that, and only
+if time allows before 2 November, salvages table by table from the quarantined copy; (3) always
+rediscovers `data\projects`, the truth for the registry, merging into whatever survived; (4) reports
+what happened on the startup / `project.open` result and on Project Home, never as a fatal error.
+The backup is `VACUUM INTO` on every healthy **startup**, not shutdown. A hub-joined install then
+**re-pulls users and roles from the hub** instead of trusting the restored or salvaged local rows.
+Decided by Revant, 2026-10-24.
+**Because:** `.recover` is a `sqlite3` shell feature the frozen engine does not ship and Python's
+module has no equivalent, and `PRAGMA integrity_check` cannot run on a file that does not open, so
+SQLite's own repair cannot be tier 1. A startup backup makes salvage almost unnecessary and costs
+one statement; a crash on exit is one way the file gets damaged, so shutdown is the wrong moment.
+The hub is the source for membership; the local copy is a cache of it.
+**Rules out:** deleting the damaged file; a rebuild that drops users, roles, settings and external
+project paths when a backup exists; a startup that fails because the workspace store does.
+**Revisit when:** the hub protocol carries membership in `hub.pull` (then the re-pull is free), or
+when a workspace store schema bump makes a backup from an older version unreadable.

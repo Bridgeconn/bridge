@@ -98,6 +98,24 @@ def _target_word(token: TokenRef, original: str) -> str:
     )
 
 
+NO_SOURCE_TOKENS = "no-source-tokens"
+NO_SOURCE_TOKENS_DETAIL = (
+    "No original-language source tokens are available for this verse "
+    "(a lettered segment such as 5a, or a verse the source text does not have), "
+    "so it was written without alignment."
+)
+
+
+def unaligned_reason(text: str, alignment: VerseAlignment) -> str | None:
+    """Why `render_aligned_verse` writes this verse with no alignment at all,
+    or None when it can carry alignment. Only a verse that has target words
+    and no source tokens is reported; a verse that has source tokens but is
+    not aligned yet is ordinary unfinished work, counted by alignment status."""
+    if alignment.all_top() or not whitespace_tokens(text):
+        return None
+    return NO_SOURCE_TOKENS
+
+
 def render_aligned_verse(text: str, alignment: VerseAlignment) -> str:
     """Render translationCore alignment data in unfoldingWord's USFM 3
     `zaln`/`w` extension convention while preserving target punctuation and
@@ -106,6 +124,13 @@ def render_aligned_verse(text: str, alignment: VerseAlignment) -> str:
     Multiple source tokens sharing a target span are represented by nested
     milestones. A target span must be contiguous because a single USFM
     milestone cannot represent a discontinuous set without changing meaning.
+
+    A verse with no original-language source tokens -- every lettered segment
+    (5a, 5b), whose source is the whole verse 5 -- has nothing to align to, so
+    it is written unaligned: each target word as a `\\w` word with its
+    occurrence attributes, exactly as an unaligned word of an aligned verse,
+    and no `\\zaln-s` (#307). The caller reports it with `unaligned_reason`;
+    it is not refused.
     """
     spans = _token_spans(text)
     expected = [span.token.signature for span in spans]
@@ -113,10 +138,6 @@ def render_aligned_verse(text: str, alignment: VerseAlignment) -> str:
     if Counter(expected) != Counter(actual):
         raise AlignedUsfmError(
             "Alignment target tokens do not exactly match the current verse text. Recheck the verse before export."
-        )
-    if not alignment.all_top():
-        raise AlignedUsfmError(
-            "No original-language source tokens are available for aligned USFM export."
         )
 
     position_by_signature = {span.token.signature: index for index, span in enumerate(spans)}
