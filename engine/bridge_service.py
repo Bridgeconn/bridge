@@ -709,6 +709,7 @@ class Methods:
     ISSUE_RESOLUTION_RETRY_PARATEXT = "issueResolution.retryParatext"
     # #358: Paratext write-back through connector 0.8.0.
     PARATEXT_OUTBOX = "paratext.outbox"
+    PARATEXT_THREADS_FOR = "paratext.threadsFor"
     PARATEXT_FLUSH_OUTBOX = "paratext.flushOutbox"
     PARATEXT_REPLY_THREAD = "paratext.replyThread"
     PARATEXT_RESOLVE_THREAD = "paratext.resolveThread"
@@ -5559,6 +5560,30 @@ class BridgeEngine:
         return {"items": outbox.items(), "links": outbox.links(),
                 "expectedProjectId": str(self._expected_paratext_project().get("id") or "")}
 
+    def paratext_threads_for(self, kind: str, local_id: str) -> dict[str, Any]:
+        """What a finding or resolution card shows (#358 e): each Paratext thread
+        linked to the record, as the notes index has it (replies, `done`), and
+        the record's writes still in the outbox. Read-only: a Paratext reply or
+        `done` is shown here and never applied to the record (decision 3)."""
+        outbox = self._outbox()
+        session = self._paratext_session()
+        status = session.notes_index_status()
+        links = []
+        for link in outbox.links_for(kind, local_id):
+            found = session.note_thread(link["threadId"]).get("thread")
+            links.append({**{k: v for k, v in link.items() if k != "createdAt"}, "thread": found})
+        pending = [item for item in outbox.items(outbox_module.QUEUED)
+                   if item.get("kind") == kind and item.get("localId") == local_id]
+        # A create_thread already sent but whose thread the index has not shown
+        # yet is a link-to-be: show it as one, with no thread.
+        known = {link["messageId"] for link in links}
+        for item in outbox.items(outbox_module.SENT):
+            if (item.get("kind") == kind and item.get("localId") == local_id and item["op"] == outbox_module.OP_CREATE
+                    and not item["threadId"] and item["messageId"] not in known):
+                links.append({"kind": kind, "localId": local_id, "threadId": "", "messageId": item["messageId"],
+                              "direction": outbox_module.TO_PARATEXT, "thread": None})
+        return {"state": status["state"], "links": links, "pending": pending}
+
     def paratext_flush_outbox(self) -> dict[str, Any]:
         touched = self._flush_outbox()
         return {"touched": touched, **self.paratext_outbox()}
@@ -9118,6 +9143,10 @@ class BridgeEngine:
                 ))
             if m == Methods.PARATEXT_OUTBOX:
                 return EngineResponse.ok(request.id, result=self.paratext_outbox())
+            if m == Methods.PARATEXT_THREADS_FOR:
+                return EngineResponse.ok(request.id, result=self.paratext_threads_for(
+                    str(p.get("kind") or ""), str(p.get("localId") or ""),
+                ))
             if m == Methods.PARATEXT_FLUSH_OUTBOX:
                 return EngineResponse.ok(request.id, result=self.paratext_flush_outbox())
             if m == Methods.PARATEXT_REPLY_THREAD:

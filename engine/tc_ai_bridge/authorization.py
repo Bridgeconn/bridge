@@ -179,7 +179,7 @@ _READ = (
     # #357: the linked project's Project Notes, read-only.
     "paratext.notesForChapter", "paratext.notesForVerse", "paratext.noteThread",
     # #358: this device's outbox and the book's thread links, read-only.
-    "paratext.outbox",
+    "paratext.outbox", "paratext.threadsFor",
     "navigation.status", "navigation.poll", "navigation.bridgeChanged", "navigation.resolve",
     "users.list", "users.setCurrent",
     "assignments.list",

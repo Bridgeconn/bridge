@@ -22053,3 +22053,27 @@ Data Access web API's, which desktop Paratext never read — corrected in place,
 `docs/ARCHITECTURE.md` and the manual checklist (SET-011, SET-012) follow. DECISIONS entry
 "plugin API only; no direct Notes_*.xml writes; ParatextData.dll not adopted", with the six answers.
 
+
+## 2026-10-26 — Finding and resolution cards show the Paratext thread; Reply / Resolve in Paratext / Link existing thread (#358 e)
+
+`ParatextThreadPanel.svelte` under an issue resolution's actions: each linked thread with its
+comments as Paratext has them (the Bridge footer hidden from the reader), "Open in Paratext" or
+"Resolved in Paratext" (a tooltip says the Bridge status is unchanged; nothing is applied, decision 3),
+Reply and Resolve in Paratext through the outbox (a write that cannot go shows as queued with its
+reason), and Link existing thread from the verse's other threads. A sent note whose thread is not in
+the index yet says so. Engine read `paratext.threadsFor`. The resolution editor gains the
+"Include the proposed correction and evidence" tick (decision 2) and names the destination as the
+linked project, not the active window; its old "Notes 1.1 copy" line is gone.
+Tests: `ParatextThreadPanel.test.ts` (4), and `test_a_card_shows_its_threads_with_paratext_replies_and_a_done_and_changes_nothing`.
+
+**Not built: decision 3's "offered as one click".** A Paratext reply or `done` is shown, never
+applied; what the one click should do on the Bridge side (mark the resolution resolved? a status that
+does not exist today) is not covered by the six answers, so it is a question on #358, not a guess here.
+
+**Batch gates (a)-(e), 2026-10-26.** Engine `pytest -n auto`: 5632 passed, 3 xfailed, 1 failed
+(`test_the_list_carries_summed_progress_and_the_latest_open_with_its_user`, the projects list, not
+touched here; it passed on its own rerun: a timing flake under load, as listed on #353). Frontend:
+`npm run check` 0/0, `npm run test` 96 files 988 passed, `npm run build` ok. Connector 0.8.0
+installed into Paratext 9.5.110.1 by `paratext_install.install()` with Paratext closed (one UAC prompt);
+`installed_version` now reads 0.8.0. The frozen-pair smoke and the live BRTST round trip are recorded
+below when run.

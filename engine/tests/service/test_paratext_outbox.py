@@ -192,3 +192,41 @@ def test_an_unknown_kind_is_refused(tmp_path, monkeypatch, method):
     reread_notes(engine)
     result = call(engine, method, {"threadId": "T9", "kind": "verse", "localId": "r", "text": "x"})
     assert result["success"] is False and "kind must be one of" in str(result)
+
+
+def test_a_card_shows_its_threads_with_paratext_replies_and_a_done_and_changes_nothing(tmp_path, monkeypatch):
+    """#358 (e): the card's read. A sent note with no thread yet is a link-to-be;
+    once Paratext's file has it, the thread comes with its replies; a `done` in
+    Paratext is shown as resolved there and the resolution's own status stays."""
+    connector = stand_in()
+    monkeypatch.setattr(bridge_service_module, "ParatextConnectorClient", connector)
+    engine, folder = open_linked_review_project(tmp_path, monkeypatch)
+    resolution_id = saved_resolution(engine)
+    handoff = _queue(engine, resolution_id)["handoff"]
+    params = {"kind": "issue_resolution", "localId": resolution_id}
+
+    before = call(engine, "paratext.threadsFor", params)["result"]
+    assert [(l["threadId"], l["thread"]) for l in before["links"]] == [("", None)]
+    assert before["pending"] == []
+
+    from tests.support.paratext_fixture import write_notes_file
+    write_notes_file(folder, "Yesu Selva Benz", [
+        {"thread": "T5", "verse_ref": "TIT 1:1", "date": "2026-10-26T10:00:00.1234567+05:30", "status": "todo",
+         "contents": ["Bridge review", f"[Bridge ref {handoff['messageId']}]"]},
+    ])
+    write_notes_file(folder, "Translator", [
+        {"thread": "T5", "verse_ref": "TIT 1:1", "date": "2026-10-27T09:00:00.0000000+05:30", "status": "done",
+         "contents": ["Fixed in Paratext."]},
+    ])
+    reread_notes(engine)
+    call(engine, "paratext.flushOutbox")
+    status_before = call(engine, "issueResolution.list", {"chapter": "1", "verse": "1"})["result"]["items"][0]["status"]
+
+    after = call(engine, "paratext.threadsFor", params)["result"]
+
+    [link] = after["links"]
+    assert link["threadId"] == "T5" and link["thread"]["resolved"] is True
+    assert [c["user"] for c in link["thread"]["comments"]] == ["Yesu Selva Benz", "Translator"]
+    record = call(engine, "issueResolution.list", {"chapter": "1", "verse": "1"})["result"]["items"][0]
+    assert record["status"] == status_before
+    assert len(connector.calls) == 1
