@@ -44,6 +44,20 @@ namespace TranslationCoreAiBridge.ParatextConnector
         public string last_origin_id { get; set; }
         public bool note_created { get; set; }
         public string[] capabilities { get; set; }
+
+        // 0.8.0 (#358): every Paratext project this PC holds, so Bridge can
+        // address a note by project id rather than by whatever window is active.
+        public List<Dictionary<string, object>> projects { get; set; }
+        // 0.8.0: what create_note / add_comment answer with. A Paratext note has
+        // no id; (author, created) is the only identity its file carries, so
+        // Bridge keeps both to find the thread again.
+        public string author { get; set; }
+        public string created { get; set; }
+        public Dictionary<string, object> anchor { get; set; }
+        public bool comment_added { get; set; }
+        public bool resolved { get; set; }
+        // 0.8.0: list_notes.
+        public List<Dictionary<string, object>> notes { get; set; }
     }
 
     internal static class BridgeJson
@@ -56,6 +70,30 @@ namespace TranslationCoreAiBridge.ParatextConnector
                 return String.Empty;
             return Convert.ToString(payload[key]) ?? String.Empty;
         }
+
+        internal static bool GetBool(IDictionary<string, object> payload, string key)
+        {
+            if (payload == null || !payload.ContainsKey(key) || payload[key] == null)
+                return false;
+            object value = payload[key];
+            if (value is bool) return (bool)value;
+            string text = Convert.ToString(value) ?? String.Empty;
+            return text.Equals("true", StringComparison.OrdinalIgnoreCase) || text == "1";
+        }
+
+        internal static int GetInt(IDictionary<string, object> payload, string key, int fallback)
+        {
+            if (payload == null || !payload.ContainsKey(key) || payload[key] == null)
+                return fallback;
+            int parsed;
+            if (Int32.TryParse(Convert.ToString(payload[key]), out parsed)) return parsed;
+            return fallback;
+        }
+
+        internal static IDictionary<string, object> GetObject(IDictionary<string, object> payload, string key)
+        {
+            if (payload == null || !payload.ContainsKey(key)) return null;
+            return payload[key] as IDictionary<string, object>;
+        }
     }
 }
-

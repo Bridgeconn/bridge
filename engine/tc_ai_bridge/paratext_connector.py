@@ -36,6 +36,10 @@ class ConnectorState:
     last_origin_id: str = ''
     capabilities: list[str] = field(default_factory=list)
     error: str = ''
+    # 0.8.0 (#358): every project on this PC, [{id, short_name, long_name,
+    # language, type, editable}], so a note is addressed by the book's link
+    # Guid rather than by the active window (#347).
+    projects: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def from_response(cls, data: dict[str, Any]) -> 'ConnectorState':
@@ -59,7 +63,17 @@ class ConnectorState:
             last_origin_id=str(data.get('last_origin_id', '') or ''),
             capabilities=[str(x) for x in data.get('capabilities', [])] if isinstance(data.get('capabilities'), list) else [],
             error=str(data.get('error', '') or ''),
+            projects=[dict(p) for p in data.get('projects', []) if isinstance(p, dict)]
+            if isinstance(data.get('projects'), list) else [],
         )
+
+    def project_named(self, project_id: str) -> dict[str, Any] | None:
+        """The `projects` entry with this id (case-insensitive), or None."""
+        wanted = str(project_id or '').strip().casefold()
+        for entry in self.projects:
+            if str(entry.get('id') or '').casefold() == wanted:
+                return entry
+        return None
 
 
 class ParatextConnectorClient:
@@ -131,7 +145,13 @@ class ParatextConnectorClient:
         before_context: str = '',
         after_context: str = '',
         message_id: str = '',
+        external_author: str = '',
     ) -> dict[str, Any]:
+        """Create a Project Note thread in the project `project_id` (0.8.0
+        requires it; the active window is never the destination). The body is
+        written as given: a Bridge footer is the caller's to add. Answers with
+        `author`, `created` (ISO 8601, seven fractional digits, the file's
+        precision) and `anchor`, the identity the thread can be found by."""
         return self._exchange('create_note', {
             'reference': reference,
             'selected_text': selected_text,
@@ -141,5 +161,28 @@ class ParatextConnectorClient:
             'before_context': before_context,
             'after_context': after_context,
             'message_id': message_id,
-            'external_author': 'AI Suggestion',
+            'external_author': external_author,
+        })
+
+    # -- 0.8.0 (#358): read a chapter's notes, reply to a thread, resolve it.
+    # A thread is named by `key`: its anchor (verse_ref, offset, selected_text)
+    # and its first comment (first_author, first_created); exactly one must
+    # match or the plugin refuses.
+
+    def list_notes(self, project_id: str, book: str, chapter: str, *, unresolved_only: bool = False) -> dict[str, Any]:
+        return self._exchange('list_notes', {
+            'project_id': project_id, 'book': book, 'chapter': str(chapter),
+            'unresolved_only': bool(unresolved_only),
+        })
+
+    def add_comment(self, project_id: str, book: str, chapter: str, key: dict[str, Any], text: str,
+                    assignee: str = '') -> dict[str, Any]:
+        return self._exchange('add_comment', {
+            'project_id': project_id, 'book': book, 'chapter': str(chapter),
+            'key': dict(key), 'text': text, 'assignee': assignee,
+        })
+
+    def resolve_note(self, project_id: str, book: str, chapter: str, key: dict[str, Any]) -> dict[str, Any]:
+        return self._exchange('resolve_note', {
+            'project_id': project_id, 'book': book, 'chapter': str(chapter), 'key': dict(key),
         })
