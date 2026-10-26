@@ -643,33 +643,28 @@
      unmounted: a running check, an open tab or a draft carries on. -->
 <div class="panel">
   {#if $selectedVerse}
-    <!-- The reference and Close are the shared header bar (#379); under it
-         one short row that never wraps: the open count with the two per-verse
-         actions. At the panel's 400px the title and both buttons do not fit
-         on one row, and a wrapped row cost a third line of height. The AI run
-         is not here -- it lives in the AI review tab with its progress and
-         errors, so a run can be started and watched in one place. -->
+    <!-- The shared header bar (#379): the reference, then in its actions
+         slot the open count and the two per-verse actions as glyph buttons
+         with the action as tooltip (item 6: one line, like every panel; the
+         glyph-with-tooltip shape is #375's). The AI run is not here -- it
+         lives in the AI review tab with its progress and errors, so a run can
+         be started and watched in one place. -->
     <PanelHeader id="review" label="the review panel"
-      title={`Review ${($project?.bookId ?? "").toUpperCase()} ${$currentChapter}:${$selectedVerse}`} />
-    <div class="panel-header">
-      <div class="header-row">
-        <div class="sub">{openFindingCount} open finding(s)</div>
-        <div class="verse-actions">
-        <button
-          class="align-btn"
-          on:click={() => openAlignment($currentChapter, $selectedVerse ?? "")}
-          disabled={$checkingProgress.running || Boolean($editingChapter) || $editSaving || Boolean($recheckingKey)}
-          title={$checkingProgress.running ? "Wait for background checking to finish before aligning" : "Review word alignment"}
-        >⇄ Align words</button>
-        <button
-          class="edit-btn"
-          on:click={startEdit}
-          disabled={$checkingProgress.running || Boolean($editingChapter) || $editSaving || Boolean($recheckingKey)}
-          title={$checkingProgress.running ? "Wait for background checking to finish before editing" : "Edit this verse"}
-        >✎ Edit verse</button>
-        </div>
-      </div>
-    </div>
+      title={`Review ${($project?.bookId ?? "").toUpperCase()} ${$currentChapter}:${$selectedVerse}`}>
+      <span class="open-count" title={`${openFindingCount} open finding(s) on this verse`}>{openFindingCount} open</span>
+      <button
+        class="align-btn" aria-label="Align words"
+        on:click={() => openAlignment($currentChapter, $selectedVerse ?? "")}
+        disabled={$checkingProgress.running || Boolean($editingChapter) || $editSaving || Boolean($recheckingKey)}
+        title={$checkingProgress.running ? "Align words: wait for background checking to finish" : "Align words: review the word alignment of this verse"}
+      >⇄</button>
+      <button
+        class="edit-btn" aria-label="Edit verse"
+        on:click={startEdit}
+        disabled={$checkingProgress.running || Boolean($editingChapter) || $editSaving || Boolean($recheckingKey)}
+        title={$checkingProgress.running ? "Edit verse: wait for background checking to finish" : "Edit verse: change the text of this verse"}
+      >✎</button>
+    </PanelHeader>
 
     {#if hasPinnedStatus}
     <div class="panel-pinned">
@@ -1117,24 +1112,23 @@
   /* #379 item 6: the body is --surface at --fs-xs, padded 10px 12px. */
   .panel { flex: 1; min-height: 0; background: var(--surface); display: flex; flex-direction: column; overflow: hidden;
     font-size: var(--fs-xs); }
-  .panel-header { padding: 8px 16px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
-  .header-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
   .panel-pinned { flex-shrink: 0; padding: 10px 12px; border-bottom: 1px solid var(--border); overflow-y: auto; max-height: 60vh; }
-  .sub { flex: 1; min-width: 0; font-size: var(--fs-2xs); color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .panel-scroll { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
   .operation-status { display: flex; align-items: center; gap: 7px; border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; font-size: var(--fs-xs); line-height: 1.4; }
   .operation-status.checking { color: var(--accent); background: var(--accent-bg); }
   .operation-status.saved { color: var(--success); background: var(--success-bg); }
   .operation-status.failed { color: var(--danger); background: var(--danger-bg); }
-  /* One line, every label whole. At 400px the four labels fit only if the
-     count and the live dot stay out of the flow (they sit in the corner), and
-     the row scrolls rather than wraps should a wider UI font ever overflow it. */
-  .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); flex-shrink: 0; padding: 10px 10px 0; background: var(--surface); overflow-x: auto; scrollbar-width: none; }
+  /* #379 item 6: Language QA's tab bar (.panel-tabs there), right under the
+     bar. One line, every label whole; the count and the live dot stay out of
+     the flow (they sit in the corner), and the row scrolls rather than wraps
+     should a wider UI font ever overflow it. */
+  .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); flex-shrink: 0; padding: 0 12px;
+    background: var(--surface); overflow-x: auto; scrollbar-width: none; font-size: var(--fs-2xs); }
   .tabs::-webkit-scrollbar { display: none; }
   .tab-content { flex: 1; overflow-y: auto; padding: 10px 12px; }
   .tabs button {
-    flex: 1 1 auto; position: relative; display: flex; align-items: center; justify-content: center;
-    padding: 9px 4px 7px; font-size: var(--fs-3xs); font-weight: 700; color: var(--text-2); white-space: nowrap;
+    flex: 1 0 auto; position: relative; display: flex; align-items: center; justify-content: center;
+    padding: 8px 6px 6px; font-size: inherit; font-weight: 700; color: var(--text-2); white-space: nowrap;
     background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0;
     cursor: pointer;
   }
@@ -1222,9 +1216,13 @@
   /* #202: the chapter's Greek Room result, under the run button. */
   .chapter-summary { margin: 4px 0 8px; font-size: var(--fs-xs); color: var(--text-2); }
   .decision-row button:disabled { opacity: .55; cursor: not-allowed; }
-  .verse-actions { display: flex; gap: 6px; flex: 0 0 auto; }
-  .edit-btn { padding: 5px 9px; font-size: var(--fs-2xs); font-weight: 700; border-radius: 6px; border: none; background: var(--accent-bg); color: var(--accent); cursor: pointer; white-space: nowrap; }
-  .align-btn { padding: 5px 9px; font-size: var(--fs-2xs); font-weight: 700; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); cursor: pointer; white-space: nowrap; }
+  /* The bar's actions: the count as text, the two actions as 24px glyph
+     buttons, the same size as the bar's Close. */
+  .open-count { font-size: var(--fs-2xs); color: var(--text-2); white-space: nowrap; }
+  .edit-btn, .align-btn { width: 24px; height: 24px; padding: 0; font-size: var(--fs-xs); font-weight: 700; line-height: 1;
+    border-radius: 6px; cursor: pointer; white-space: nowrap; }
+  .edit-btn { border: none; background: var(--accent-bg); color: var(--accent); }
+  .align-btn { border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); }
   .ai-run-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
   .ai-run-label { font-size: var(--fs-sm); font-weight: 700; color: var(--text); white-space: nowrap; }
   .ai-run-buttons { display: flex; gap: 6px; margin-left: auto; }

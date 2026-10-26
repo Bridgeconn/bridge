@@ -191,6 +191,13 @@ describe("PanelHeader (#379)", () => {
     expect(source("ParatextNotesPanel")).toMatch(/\.pt-scroll \{[^}]*padding: 10px 12px/);
     expect(source("LanguageQaPanel")).toMatch(/\.panel-body \{[^}]*padding: 10px 12px/);
     expect(source("ReviewPanel")).toMatch(/\.tab-content \{[^}]*padding: 10px 12px/);
+    // Review's tab bar is Language QA's: the body gutter, the same button padding, --fs-2xs.
+    for (const [name, rule] of [["LanguageQaPanel", "panel-tabs"], ["ReviewPanel", "tabs"]]) {
+      const text = source(name);
+      expect(text, name).toMatch(new RegExp(`\\.${rule} \\{[^}]*padding: 0 12px`));
+      expect(text, name).toMatch(new RegExp(`\\.${rule} \\{[^}]*font-size: var\\(--fs-2xs\\)`));
+      expect(text, name).toMatch(new RegExp(`\\.${rule} button \\{[^}]*padding: 8px 6px 6px`));
+    }
     // The two verse lists: the list's 4px plus each row's 6px 8px is the same 10px / 12px.
     for (const name of ["SourceTextPanel", "ReferencePanel"]) {
       expect(source(name), name).toMatch(/\n\s*ol \{[^}]*padding: 4px;/);

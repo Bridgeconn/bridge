@@ -162,12 +162,16 @@ describe("ReviewPanel folding (#236)", () => {
     expect(tabs.map((tab) => tab.textContent?.trim().replace(/\s*\d+$/, ""))).toEqual(
       ["Greek Room", "Core check", "Language QA", "AI review"]);
     expect(screen.getByRole("tab", { name: /Core check/ }).getAttribute("title")).toBe("Translation Notes, Words alignment");
-    // #379: the reference and Close are the shared bar; the one header row
-    // below it holds the count and the actions.
-    expect(document.querySelector("[data-panel-bar='review']")).not.toBeNull();
-    const rows = document.querySelectorAll(".panel-header .header-row");
-    expect(rows).toHaveLength(1);
-    expect(rows[0].querySelector(".verse-actions")).not.toBeNull();
+    // #379 item 6: the reference, the open count and the two per-verse
+    // actions are all in the shared bar, so Review shows one line like the
+    // other panels; nothing sits between the bar and the tabs.
+    const bar = document.querySelector("[data-panel-bar='review']") as HTMLElement;
+    expect(bar).not.toBeNull();
+    expect(bar.querySelector(".panel-actions .open-count")?.textContent).toMatch(/^\d+ open$/);
+    expect(bar.querySelector(".panel-actions button[aria-label='Align words']")).not.toBeNull();
+    expect(bar.querySelector(".panel-actions button[aria-label='Edit verse']")).not.toBeNull();
+    expect(document.querySelector(".panel-header")).toBeNull();
+    expect(bar.nextElementSibling?.querySelector("[role='tablist']") ?? bar.nextElementSibling).not.toBeNull();
   });
 
   it("closes its column from its header, and the choice is remembered", async () => {
