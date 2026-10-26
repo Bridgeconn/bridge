@@ -12,6 +12,8 @@
   import ReviewPanel from "./lib/components/ReviewPanel.svelte";
   import LanguageQaPanel from "./lib/components/LanguageQaPanel.svelte";
   import ScopeConfirmDialog from "./lib/components/ScopeConfirmDialog.svelte";
+  import ConfirmDialog from "./lib/components/ConfirmDialog.svelte";
+  import { confirmRequest } from "./lib/confirmAction";
   import ScopeNotice from "./lib/components/ScopeNotice.svelte";
   import { resetScopedApply, scopeDialog } from "./lib/scopedApply";
   import { startFlagLoader } from "./lib/flags";
@@ -1687,6 +1689,10 @@
   {#if $settingsOpen}
     <SettingsModal initialPane={settingsInitialPane} onClose={() => settingsOpen.set(false)} />
   {/if}
+
+  <!-- #372: the in-app confirmation (chapter/book AI review, Remove key).
+       Outside the project block: Settings can ask with no project open. -->
+  {#if $confirmRequest}<ConfirmDialog />{/if}
 
   {#if $diagnosticsOpen}
     <DiagnosticsPanel onClose={() => diagnosticsOpen.set(false)} />

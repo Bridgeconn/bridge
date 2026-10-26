@@ -46,7 +46,7 @@ describe("stacking layers (#288)", () => {
   it("puts a dialog or popup opened from a dialog on --z-dialog-over-dialog", () => {
     for (const [name, selector] of [
       ["CheckerSettingsDialog", ".overlay"], ["LanguageQaHistoryPopup", ".overlay"], ["LexiconPopup", ".overlay"],
-      ["FlagDialog", ".overlay"], ["ScopeConfirmDialog", ".overlay"], ["OccurrencesPopup", ".overlay"],
+      ["FlagDialog", ".overlay"], ["ScopeConfirmDialog", ".overlay"], ["ConfirmDialog", ".overlay"], ["OccurrencesPopup", ".overlay"],
       ["VerseNotesPopup", ".overlay"], ["CrossVerseAlignmentModal", ".menu-overlay"],
     ]) {
       expect(rule(component(name), selector), `${name} ${selector}`).toContain("z-index: var(--z-dialog-over-dialog)");

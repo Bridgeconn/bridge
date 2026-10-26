@@ -30,6 +30,7 @@
   } from "../verseEditor";
   import { alignmentOpen, alignmentKey, openAlignment } from "../alignmentUi";
   import { findingSpan, revealFinding } from "../findingFocus";
+  import { askConfirmation } from "../confirmAction";
   import { greekRoomChapterSummary, greekRoomVerseRunning, runVerseGreekRoom } from "../verseChecks";
   import { aiReviewRequest, aiJobActive } from "../aiReviewUi";
   import { setSidePanel } from "../editorPrefs";
@@ -411,9 +412,15 @@
   ) {
     if (!verse || aiJobBusy) return;
     const requestedReference = `${$project?.path ?? ""}::${verseKey(chapter, verse)}`;
-    if (scope !== "verse" && !window.confirm(
-      `Run AI review for this ${scope}? Each verse may use one or two model requests and incur API charges.`,
-    )) return;
+    // #372: an in-app question, awaited. window.confirm never asked in the
+    // installed app (the dialog plugin's async stand-in rejects, and a Promise
+    // is truthy), so a paid run over the whole chapter or book started at once.
+    if (scope !== "verse" && !(await askConfirmation({
+      title: `Run AI review for this ${scope}?`,
+      body: "Each verse may use one or two model requests and incur API charges.",
+      confirmLabel: `Run for the ${scope}`,
+    }))) return;
+    if (aiJobBusy) return;
     aiExplainError = "";
     aiPollFailed = false;
     aiExplainErrorJobId = "";

@@ -4,6 +4,7 @@
   import { onDestroy, onMount } from "svelte";
   import { bridge, type EngineInfo } from "../api/bridgeClient";
   import { nudgeLanguageQa } from "../languageQaInline";
+  import { askConfirmation } from "../confirmAction";
   import { manualOverrideMode, navigationStatus, project, reviewerMode } from "../stores";
   import type { InlineConfidence, NavigationSyncState, ParatextConnectorStatus, SettingsData, TerminologyRule, UserRole } from "../types/finding";
   import type { HouseStyleEntry, HouseStyleListResponse, HouseStyleProposal } from "../types/houseStyle";
@@ -192,7 +193,13 @@
    *  already clears it (secret_store.set_api_key drops the DPAPI entry); only
    *  the key is sent, so unsaved edits to the other fields are not saved by it. */
   async function removeApiKey() {
-    if (!window.confirm("Remove the saved API key from this computer? AI features stop working until a key is entered again.")) return;
+    // #372: in-app, awaited; window.confirm never asked in the installed app.
+    if (!(await askConfirmation({
+      title: "Remove the saved API key?",
+      body: "The key is removed from this computer. AI features stop working until a key is entered again.",
+      confirmLabel: "Remove key",
+      danger: true,
+    }))) return;
     saving = true;
     saveMessage = "";
     try {
