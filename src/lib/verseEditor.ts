@@ -6,7 +6,10 @@
 // 400px-wide review panel — without either component needing to reach
 // into the other's internals.
 import { get, writable } from "svelte/store";
+import { tick } from "svelte";
 import { bridge } from "./api/bridgeClient";
+import { codePointToUtf16 } from "./utils/codePoints";
+import { findingSpan, type FindingSpan } from "./findingFocus";
 import { decideLanguageQaFinding } from "./findingActions";
 import { nudgeLanguageQa } from "./languageQaInline";
 import { editorCheckList } from "./checkSelection";
@@ -132,7 +135,14 @@ function isRevisionConflict(message: string): boolean {
   return message.includes("REVISION_CONFLICT");
 }
 
-export function startVerseEdit(chapter: string, verse: string): boolean {
+/**
+ * Open a verse for editing. With `caret` (#402), the textarea opens with that
+ * raw-verse span selected once it is rendered, so a finding's "Edit" lands
+ * on the words it is about; without one the verse opens as before. Engine
+ * offsets are code points and a textarea selection is UTF-16, so the span is
+ * converted over the raw text the editor holds.
+ */
+export function startVerseEdit(chapter: string, verse: string, caret: FindingSpan | null = null): boolean {
   if (!verse || get(checkingProgress).running || get(editSaving) || get(recheckingKey)) return false;
   editingChapter.set(chapter);
   editingVerse.set(verse);
@@ -142,7 +152,27 @@ export function startVerseEdit(chapter: string, verse: string): boolean {
   editErrorKey.set("");
   editWarnings.set(null);
   pendingAcceptFindingId = "";
+  if (caret) void placeCaret(verseKey(chapter, verse), caret);
   return true;
+}
+
+async function placeCaret(key: string, caret: FindingSpan): Promise<void> {
+  await tick();
+  const area = document.querySelector<HTMLTextAreaElement>(`[data-verse-key="${CSS.escape(key)}"] textarea`);
+  if (!area) return;
+  const text = area.value;
+  area.focus();
+  area.setSelectionRange(codePointToUtf16(text, caret.start), codePointToUtf16(text, caret.end));
+}
+
+/**
+ * "Edit…" on a finding: the verse opens with the finding's span selected.
+ * Either finding type; one whose span cannot be located (null offsets, a
+ * heading or footnote finding) opens the verse with no selection, exactly as
+ * a plain Edit does. False when an edit, a save or a check is running.
+ */
+export function editWithSelection(finding: QaFinding | LanguageQaFinding, chapter: string, verse: string): boolean {
+  return startVerseEdit(chapter, verse, findingSpan(finding));
 }
 
 /** Put a verse back to an earlier wording (change history): an ordinary

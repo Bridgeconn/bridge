@@ -29,6 +29,7 @@
     setPendingAcceptFinding, applyLanguageQaSuggestedFix,
   } from "../verseEditor";
   import { alignmentOpen, alignmentKey, openAlignment } from "../alignmentUi";
+  import { findingSpan, revealFinding } from "../findingFocus";
   import { greekRoomChapterSummary, greekRoomVerseRunning, runVerseGreekRoom } from "../verseChecks";
   import { aiReviewRequest, aiJobActive } from "../aiReviewUi";
   import { setSidePanel } from "../editorPrefs";
@@ -505,14 +506,46 @@
     startVerseEdit($currentChapter, $selectedVerse ?? "");
   }
 
+  /** Edit from a finding's card (#402): the verse opens with the finding's
+   * words selected, or plain when the finding has no span. */
+  function editFinding(finding: QaFinding) {
+    startVerseEdit($currentChapter, $selectedVerse ?? "", findingSpan(finding));
+  }
+
   // "Accept and edit" on a specific Greek Room finding: same edit session
   // as startEdit, but remembers which finding this was so a successful
   // save can record it as "accepted" (see setVerseEditSavedHook below)
   // rather than leaving it open for the next recheck to silently re-decide.
-  function acceptAndEdit(findingId: string) {
-    if (startVerseEdit($currentChapter, $selectedVerse ?? "")) {
-      setPendingAcceptFinding(findingId);
+  // The caret lands on the finding's span (#402).
+  function acceptAndEdit(finding: QaFinding) {
+    if (startVerseEdit($currentChapter, $selectedVerse ?? "", findingSpan(finding))) {
+      setPendingAcceptFinding(finding.id);
     }
+  }
+
+  /**
+   * A card is clickable (#402): the finding's mark is ringed and scrolled
+   * into view in the verse text. A click on one of the card's own controls
+   * is that control's, not the card's. Keyboard: the number badge (Greek
+   * Room, local checks) and the "Show in text" button (Language QA) are the
+   * reachable controls; Enter on the card itself does the same when it has
+   * focus. A finding with no drawn mark (no span, a heading or footnote
+   * finding) changes nothing: the verse is selected already.
+   */
+  function showInText(findingId: string): void {
+    void revealFinding(findingId);
+  }
+
+  function cardClick(event: MouseEvent, findingId: string): void {
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest("button, a, input, textarea, select, summary, details")) return;
+    showInText(findingId);
+  }
+
+  function cardKeydown(event: KeyboardEvent, findingId: string): void {
+    if (event.key !== "Enter" || event.target !== event.currentTarget) return;
+    event.preventDefault();
+    showInText(findingId);
   }
 
   onMount(() => {
@@ -692,9 +725,12 @@
         <div class="section">
           <div class="section-title">Already computed in background pass</div>
           {#each $selectedFindings.filter((f) => !isGreekRoom(f.engine)) as f}
-            <div class="finding source-{categoryClass(f.category)}">
+            <div class="finding source-{categoryClass(f.category)}" role="presentation"
+              on:click={(event) => cardClick(event, f.id)} on:keydown={(event) => cardKeydown(event, f.id)}>
               <div class="verdict">
-                {#if findingNumberMap.has(f.id)}<span class="finding-num-badge" title="Marked in the verse text">{findingNumberMap.get(f.id)}</span>{/if}
+                {#if findingNumberMap.has(f.id)}<button type="button" class="finding-num-badge" title="Show in the verse text"
+                  aria-label={`Show finding ${findingNumberMap.get(f.id)} in the verse text`}
+                  on:click={() => showInText(f.id)}>{findingNumberMap.get(f.id)}</button>{/if}
                 <span class="badge {severityBadge[f.severity]}">{f.severity}</span>
                 <span class="check-id">{f.category}</span>
                 {#if f.status !== "open"}<span class="badge badge-decided">{f.status}</span>{/if}
@@ -748,9 +784,12 @@
             </p>
             {#if greekRoomError}<p class="none failed">Greek Room could not run: {greekRoomError}</p>{/if}
             {#each grOpenFindings as f}
-              <div class="finding source-{categoryClass(f.category)}">
+              <div class="finding source-{categoryClass(f.category)}" role="presentation"
+                on:click={(event) => cardClick(event, f.id)} on:keydown={(event) => cardKeydown(event, f.id)}>
                 <div class="verdict">
-                  {#if findingNumberMap.has(f.id)}<span class="finding-num-badge" title="Marked in the verse text">{findingNumberMap.get(f.id)}</span>{/if}
+                  {#if findingNumberMap.has(f.id)}<button type="button" class="finding-num-badge" title="Show in the verse text"
+                    aria-label={`Show finding ${findingNumberMap.get(f.id)} in the verse text`}
+                    on:click={() => showInText(f.id)}>{findingNumberMap.get(f.id)}</button>{/if}
                   <span class="badge {severityBadge[f.severity]}">{f.severity}</span>
                   <span class="engine-badge">{f.engine}</span>
                   <span class="check-id">{f.check_type}</span>
@@ -773,7 +812,7 @@
                 <div class="decision-row two-up">
                   <button
                     class="edit-inline"
-                    on:click={() => acceptAndEdit(f.id)}
+                    on:click={() => acceptAndEdit(f)}
                     disabled={$checkingProgress.running || Boolean($editingChapter) || $editSaving || Boolean($recheckingKey)}
                     title={$checkingProgress.running ? "Wait for background checking to finish before editing" : "Edit this verse and mark this finding accepted"}
                   >✎ Accept and edit</button>
@@ -834,7 +873,7 @@
                   <div class="decision-row two-up">
                     <button
                       class="edit-inline"
-                      on:click={startEdit}
+                      on:click={() => editFinding(f)}
                       disabled={$checkingProgress.running || Boolean($editingChapter) || $editSaving || Boolean($recheckingKey)}
                       title={$checkingProgress.running ? "Wait for background checking to finish before editing" : "Edit this verse"}
                     >✎ Edit verse</button>
@@ -851,8 +890,11 @@
             <div class="section-title">Language QA</div>
             {#if lqaNotice}<p class="lqa-notice" class:failed={lqaNoticeError} role="status">{lqaNotice}</p>{/if}
             {#each lqaFindings as f (f.id)}
-              <div class="finding lqa-finding" data-lqa-id={f.id}>
+              <div class="finding lqa-finding" data-lqa-id={f.id} role="presentation"
+                on:click={(event) => cardClick(event, f.id)} on:keydown={(event) => cardKeydown(event, f.id)}>
                 <div class="verdict">
+                  {#if !f.context}<button type="button" class="finding-num-badge locate" title="Show in the verse text"
+                    aria-label={`Show “${f.originalText}” in the verse text`} on:click={() => showInText(f.id)}>Show in text</button>{/if}
                   <span class="badge {severityBadge[f.severity] ?? 'badge-review'}">{f.severity}</span>
                   <span class="engine-badge">{isLearnedFinding(f) ? "learned fix" : f.category}</span>
                   <span class="check-id">{f.ruleId}</span>
@@ -1129,6 +1171,13 @@
     font-size: var(--fs-3xs); font-weight: 800; color: white; background: var(--accent); border-radius: 50%;
     flex-shrink: 0;
   }
+  /* #402: the badge is the card's keyboard route to its mark in the text. A
+     button keeps the badge's look; the Language QA one carries a text label
+     (there is no number to show) in the same pill. */
+  button.finding-num-badge { font-family: var(--font-ui); border: none; padding: 0; cursor: pointer; line-height: 1; }
+  button.finding-num-badge.locate { width: auto; height: 18px; padding: 0 7px; border-radius: 999px; font-weight: 700; white-space: nowrap; }
+  button.finding-num-badge:hover, button.finding-num-badge:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .finding[role="presentation"] { cursor: pointer; }
   .save-state { margin-left: auto; font-size: var(--fs-2xs); color: var(--text-3); white-space: nowrap; }
   .save-state.saved { color: var(--success); }
   .save-state.failed { color: var(--danger); }

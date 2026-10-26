@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
-  import { verseNums, verseTexts, verseDisplay, headingsByVerse, findingsByVerse, checkStatusByVerse, alignmentStatusByVerse, selectedVerse, selectedVerseSet, currentChapter, verseKey, nativeChecksByVerse, aiCheckReviewsByVerse, checkingProgress, languageQaFindingsByVerse, project, flagsByVerse, historyCountByVerse, paratextNoteCountsByVerse, activeLanguageQaFindingId, checkGroupsByVerse, targetLang, targetDir, reviewTabRequest } from "../stores";
+  import { verseNums, verseTexts, verseDisplay, headingsByVerse, findingsByVerse, checkStatusByVerse, alignmentStatusByVerse, selectedVerse, selectedVerseSet, currentChapter, verseKey, nativeChecksByVerse, aiCheckReviewsByVerse, checkingProgress, languageQaFindingsByVerse, project, flagsByVerse, historyCountByVerse, paratextNoteCountsByVerse, focusedFindingId, checkGroupsByVerse, targetLang, targetDir, reviewTabRequest } from "../stores";
   import { checksRunNote } from "../checkSelection";
   import { alignmentStatusLabel, isAlignmentComplete } from "../alignmentStatus";
   import { rangeBetween } from "../crossVerseRange";
@@ -21,7 +21,6 @@
   import VerseNotesPopup from "./VerseNotesPopup.svelte";
   import FindingContextMenu from "./FindingContextMenu.svelte";
   import { decideLanguageQaFindingOptimistically, decideLocalFinding } from "../findingActions";
-  import { codePointToUtf16 } from "../utils/codePoints";
   import LanguageQaHistoryPopup from "./LanguageQaHistoryPopup.svelte";
   import { IGNORE_SCOPES, houseStyleNotice, recordScopedIgnore, undoLearned } from "../houseStyleUi";
   import { forgetLearnedFix, isLearnedFinding, learnedPairOf } from "../learnedFixes";
@@ -36,8 +35,9 @@
   import type { LanguageQaFinding, LanguageQaSuggestion } from "../types/languageQa";
   import {
     applySuggestedFindingFix, applyLanguageQaSuggestedFix, editingChapter, editingVerse, editText, editSaving,
-    editError, editWarnings, saveVerseEdit, cancelVerseEdit, startVerseEdit, recheckingKey,
+    editError, editWarnings, saveVerseEdit, cancelVerseEdit, startVerseEdit, recheckingKey, editWithSelection,
   } from "../verseEditor";
+  import { findingSpan, pendingReveal, revealFinding } from "../findingFocus";
   import { openAlignment } from "../alignmentUi";
   import { requestAIReview, aiJobActive, type AIReviewScope } from "../aiReviewUi";
 
@@ -45,7 +45,7 @@
   // #357: Paratext note counts for the badge, a chapter at a time.
   $: if ($project?.path && $currentChapter) void loadParatextNoteCounts($currentChapter);
   /** Opens a verse anywhere in the book (an occurrence in another chapter). */
-  export let onNavigate: (book: string, chapter: string, verse: string) => void = () => {};
+  export let onNavigate: (book: string, chapter: string, verse: string) => void | Promise<void> = () => {};
   // The word whose occurrences are listed (verse menu), or null.
   let occurrencesOf: { word: string; source: "irv" | "ov"; match?: "word" | "text" } | null = null;
 
@@ -151,6 +151,10 @@
         { id: "search", label: "Search in this book", disabled: !$project,
           title: "Every place this text occurs in the book" },
       ] : []),
+      // #402: the same route the Language QA menu has had, so a Greek Room
+      // finding's words are selected when the verse opens.
+      { id: "edit", label: "Edit…", separatorBefore: true, disabled: busy,
+        title: "Open this verse for editing, with the flagged text selected." },
     ];
   }
 
@@ -681,7 +685,7 @@
         contextNoticeError = !result.ok;
       }).finally(() => { langQaContextBusy = false; });
     } else if (id === "edit") {
-      void editWithSelection(finding, verse);
+      editWithSelection(finding, $currentChapter, verse);
     } else if (id === "flag") {
       startFlagFromFinding(finding);
     } else if (id === "learned-forget") {
@@ -725,20 +729,6 @@
           }
         });
     }
-  }
-
-  /** Edit… opens the editor with the flagged span selected. Engine offsets
-   * are code points; a textarea selection is UTF-16, so they are converted
-   * over the raw text the editor holds. */
-  async function editWithSelection(finding: LanguageQaFinding, verse: string): Promise<void> {
-    if (!startVerseEdit($currentChapter, verse)) return;
-    await tick();
-    const area = scrollContainer?.querySelector<HTMLTextAreaElement>(
-      `[data-verse-key="${verseKey($currentChapter, verse)}"] textarea`);
-    if (!area) return;
-    const text = area.value;
-    area.focus();
-    area.setSelectionRange(codePointToUtf16(text, finding.start), codePointToUtf16(text, finding.end));
   }
 
   /**
@@ -846,6 +836,11 @@
       runWordAction(event.detail.id, word);
       return;
     }
+    if (event.detail.id === "edit") {
+      contextMenu = null;
+      editWithSelection(finding, $currentChapter, verse);
+      return;
+    }
     if (event.detail.id === "flag") {
       contextMenu = null;
       if (finding.start_offset !== null && finding.end_offset !== null && word) {
@@ -935,6 +930,13 @@
     await tick();
     const target = scrollContainer?.querySelector<HTMLElement>(`[data-verse-key="${key}"]`);
     if (!target) return;
+    // #402: a reveal is about to scroll one of this verse's marks to the
+    // middle of the reader; pulling the verse to the top first would fight it.
+    const revealing = pendingReveal();
+    if (revealing && target.querySelector(`[data-finding-ids~="${CSS.escape(revealing)}"]`)) {
+      lastScrolledKey = key;
+      return;
+    }
     const containerRect = scrollContainer.getBoundingClientRect();
     const targetRect = target.getBoundingClientRect();
     scrollContainer.scrollTo({
@@ -976,7 +978,7 @@
   }
 
   function selectFromList(verse: string): void {
-    activeLanguageQaFindingId.set(null);
+    focusedFindingId.set(null);
     lastScrolledKey = verseKey($currentChapter, verse);
     onSelect(verse);
   }
@@ -1017,10 +1019,28 @@
    *  synthetic click, and a double-click is not gated at all, so selecting
    *  first moved the reader's selection for an edit that never opened. Same
    *  ordering as openAlignmentFromList below, for the same reason. */
-  function beginEditFromList(verse: string): void {
+  function beginEditFromList(verse: string, findings: QaFinding[] = [], langFindings: LanguageQaFinding[] = []): void {
     if ($editingChapter === $currentChapter && $editingVerse === verse) return;
-    if (!startVerseEdit($currentChapter, verse)) return;
+    // #402: a double-click on the ringed mark opens the verse with that
+    // finding's words selected; anywhere else on the row opens it plain (the
+    // first click of the pair clears the ring).
+    const focused = $focusedFindingId;
+    const target = focused
+      ? findings.find((f) => f.id === focused) ?? langFindings.find((f) => f.id === focused)
+      : undefined;
+    if (!startVerseEdit($currentChapter, verse, target ? findingSpan(target) : null)) return;
     selectFromList(verse);
+  }
+
+  /** A left click on a mark (#402): the row is selected as any click selects
+   * it (modifiers keep their meaning), then the clicked segment's first
+   * finding is ringed instead of cleared. No scroll: the mark is under the
+   * pointer already (#179). */
+  function focusMarkFromClick(event: MouseEvent, findingIds: string[], verse: string): void {
+    if (!findingIds.length) return;
+    event.stopPropagation();
+    selectFromRow(verse, event);
+    void revealFinding(findingIds[0], { scroll: false });
   }
 
   /** The per-row alignment glyph (issue #70): open the same Align Words modal
@@ -1098,7 +1118,7 @@
       aria-haspopup="menu"
       aria-keyshortcuts="Shift+F10"
       on:click={(event) => selectFromRow(v, event)}
-      on:dblclick={() => beginEditFromList(v)}
+      on:dblclick={() => beginEditFromList(v, findings, langFindings)}
       on:keydown={(e) => onVerseKeydown(e, v, key, menuFindingIds, findings, langFindings)}
       on:contextmenu={(e) => openVerseMenu(e, v)}
     >
@@ -1163,14 +1183,19 @@
                   (openNotes = { kind: piece.note.kind, notes: [piece.note], reference: key })}
                 title={`${markerTitle(piece.note.kind)}${piece.note.reference ? ` ${piece.note.reference}` : ""}`}
                 aria-label={`Show ${markerTitle(piece.note.kind).toLowerCase()} at this point in verse ${key}`}
-              >{markerLabel(piece.note.kind)}</button>{:else if piece.seg.className}<mark
+              >{markerLabel(piece.note.kind)}</button>{:else if piece.seg.className}<!-- #402: a click rings
+                the mark. Its keyboard route is the row's, not its own: the row is the one tab stop, ←/→ walk
+                the marks and Shift+F10 opens theirs (onVerseKeydown), so the mark takes no listener of its own.
+                --><!-- svelte-ignore a11y-click-events-have-key-events a11y-no-noninteractive-element-interactions
+                --><mark
                 class={piece.seg.className}
-                class:active-finding={$activeLanguageQaFindingId
-                  ? piece.seg.findingIds.includes($activeLanguageQaFindingId)
+                class:active-finding={$focusedFindingId
+                  ? piece.seg.findingIds.includes($focusedFindingId)
                   : $selectedVerse === v && activeFindingId !== undefined && piece.seg.findingIds.includes(activeFindingId)}
-                class:panel-ring={!!$activeLanguageQaFindingId && piece.seg.findingIds.includes($activeLanguageQaFindingId)}
+                class:panel-ring={!!$focusedFindingId && piece.seg.findingIds.includes($focusedFindingId)}
                 data-finding-ids={piece.seg.findingIds.join(" ")}
                 title={piece.seg.title}
+                on:click={(event) => focusMarkFromClick(event, piece.seg.findingIds, v)}
                 on:contextmenu={(event) => onMarkContextMenu(event, piece.seg.findingIds, findings, langFindings, v)}
               >{piece.seg.text}</mark>{#if piece.seg.numbers.length}<sup class="finding-num">{piece.seg.numbers.join(",")}</sup>{/if}{:else}{piece.seg.text}{#if piece.seg.numbers.length}<sup class="finding-num">{piece.seg.numbers.join(",")}</sup>{/if}{/if}
           {/each}

@@ -7,7 +7,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { get } from "svelte/store";
 import type { LanguageQaFinding, LanguageQaStatus } from "../../types/languageQa";
 import {
-  activeLanguageQaFindingId, chapterVerseNums, currentChapter, languageQaFindingsByVerse, project, selectedVerse, verseKey,
+  focusedFindingId, chapterVerseNums, currentChapter, languageQaFindingsByVerse, project, selectedVerse, verseKey,
 } from "../../stores";
 import { lqaFinding } from "./languageQaFixture";
 
@@ -510,7 +510,7 @@ describe("Language QA", () => {
 describe("Language QA panel: kinds, scope and F8", () => {
   afterEach(() => {
     project.set(null);
-    activeLanguageQaFindingId.set(null);
+    focusedFindingId.set(null);
     languageQaFindingsByVerse.set({});
     chapterVerseNums.set({});
     selectedVerse.set(null);
@@ -583,22 +583,60 @@ describe("Language QA panel: kinds, scope and F8", () => {
     languageQaFindingsByVerse.set({ [verseKey("1", "1")]: [late, early], [verseKey("1", "2")]: [second] });
     const onNavigate = await openPanel();
     await fireEvent.keyDown(window, { key: "F8" });
-    expect(get(activeLanguageQaFindingId)).toBe("a");
+    expect(get(focusedFindingId)).toBe("a");
     expect(get(selectedVerse)).toBe("1");
     expect(screen.getByRole("status")).toHaveTextContent("Finding 1 of 3 in chapter 1: early");
     await fireEvent.keyDown(window, { key: "F8" });
     await fireEvent.keyDown(window, { key: "F8" });
-    expect(get(activeLanguageQaFindingId)).toBe("c");
+    expect(get(focusedFindingId)).toBe("c");
     await fireEvent.keyDown(window, { key: "F8", shiftKey: true });
-    expect(get(activeLanguageQaFindingId)).toBe("b");
+    expect(get(focusedFindingId)).toBe("b");
     const input = document.createElement("input");
     document.body.appendChild(input);
     await fireEvent.keyDown(input, { key: "F8" });
-    expect(get(activeLanguageQaFindingId)).toBe("b");
+    expect(get(focusedFindingId)).toBe("b");
     input.remove();
     await fireEvent.keyDown(window, { key: "F8" });
     await fireEvent.keyDown(window, { key: "F8" });
     expect(onNavigate).toHaveBeenCalledWith("php", "2", "");
+  });
+
+  /** A mark where VerseList would draw it, with a scroll spy. */
+  function plantMark(id: string): ReturnType<typeof vi.fn> {
+    const mark = document.createElement("mark");
+    mark.setAttribute("data-finding-ids", id);
+    const scrollIntoView = vi.fn();
+    (mark as unknown as { scrollIntoView: unknown }).scrollIntoView = scrollIntoView;
+    document.body.appendChild(mark);
+    return scrollIntoView;
+  }
+
+  it("a row's reference opens the verse, then rings and centres the finding's mark (#402)", async () => {
+    const scrollIntoView = plantMark("f1");
+    const onNavigate = vi.fn(async () => {
+      // The ring is set before the verse opens, so the verse list knows not
+      // to pull the verse to the top under the mark's own scroll.
+      expect(get(focusedFindingId)).toBe("f1");
+    });
+    await openPanel(onNavigate);
+    await fireEvent.click(screen.getByRole("button", { name: "PHP 2:3-4" }));
+    expect(onNavigate).toHaveBeenCalledWith("php", "2", "3-4");
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ block: "center" }));
+    expect(document.querySelector("mark.reveal-flash")).not.toBeNull();
+  });
+
+  it("a heading finding's reference only opens the verse (#402)", async () => {
+    statusCall.mockImplementation(async (_path, _offset, limit) => snapshot({ findings: limit ? [
+      lqaFinding({ id: "h1", chapter: "2", verse: "1", rule: "unicode.corruption", start: 0, end: 1, originalText: "�",
+        message: "Check source encoding.", suggestedReplacement: null, context: "heading", contextText: "A title" }),
+    ] : [] }));
+    const scrollIntoView = plantMark("h1");
+    const onNavigate = await openPanel();
+    await fireEvent.click(screen.getByRole("button", { name: "PHP 2:1" }));
+    expect(onNavigate).toHaveBeenCalledWith("php", "2", "1");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(get(focusedFindingId)).toBeNull();
+    expect(scrollIntoView).not.toHaveBeenCalled();
   });
 });
 

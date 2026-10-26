@@ -1,6 +1,7 @@
 <script lang="ts">
   import PanelHeader from "./PanelHeader.svelte";
-  import { onDestroy, tick } from "svelte";
+  import { onDestroy } from "svelte";
+  import { revealFinding } from "../findingFocus";
   import { bridge } from "../api/bridgeClient";
   import { languageQaChannel, nudgeLanguageQa } from "../languageQaInline";
   import { languageQaPanelToggle } from "../languageQaPanelUi";
@@ -14,14 +15,14 @@
   import { graphemeDiff } from "../utils/unicodeDiff";
   import { LANGUAGE_QA_CATEGORY_LABELS, LANGUAGE_QA_CATEGORY_MARKS } from "../utils/highlight";
   import {
-    activeLanguageQaFindingId, chapterVerseNums, currentChapter, languageQaFindingsByVerse, project, selectedVerse, targetLang,
+    focusedFindingId, chapterVerseNums, currentChapter, languageQaFindingsByVerse, project, selectedVerse, targetLang,
     verseKey,
   } from "../stores";
   import { editingChapter } from "../verseEditor";
   import type { LanguageQaCategory, LanguageQaFinding } from "../types/languageQa";
 
   export let projectPath: string;
-  export let onNavigate: (book: string, chapter: string, verse: string) => void;
+  export let onNavigate: (book: string, chapter: string, verse: string) => void | Promise<void>;
   /** The editor screen has a status-bar button that opens this panel, so
    * there the launcher may step aside: it hides itself a few seconds after
    * a pass completes, or at once from its close button, and comes back when
@@ -302,12 +303,22 @@
   }
 
   async function goToMark(finding: LanguageQaFinding, index: number, total: number): Promise<void> {
-    selectedVerse.set(finding.verse);
-    activeLanguageQaFindingId.set(finding.id);
     walkStatus = `Finding ${index + 1} of ${total} in chapter ${finding.chapter}: ${finding.originalText}`;
-    await tick();
-    const mark = document.querySelector<HTMLElement>(`[data-finding-ids~="${CSS.escape(finding.id)}"]`);
-    if (mark && typeof mark.scrollIntoView === "function") mark.scrollIntoView({ block: "nearest" });
+    // The one reveal route (#402): ring first, then select the verse, then
+    // scroll the mark to the middle of the reader and flash it.
+    await revealFinding(finding.id, { navigate: () => selectedVerse.set(finding.verse) });
+  }
+
+  /** A row's reference (#402): the verse opens, then the finding's mark is
+   * ringed and scrolled into view. A heading, introduction or footnote
+   * finding has no mark in the verse text, so the verse is simply opened. */
+  async function openFinding(finding: LanguageQaFinding): Promise<void> {
+    const navigate = () => onNavigate(finding.book, finding.chapter, finding.verse);
+    if (finding.context) {
+      await navigate();
+      return;
+    }
+    await revealFinding(finding.id, { navigate });
   }
 
   /** F8: the next mark in reading order; Shift+F8: the previous. Past the end
@@ -316,7 +327,7 @@
   function step(direction: 1 | -1): void {
     const chapter = $currentChapter;
     const marks = chapterMarks(chapter);
-    const at = marks.findIndex((f) => f.id === $activeLanguageQaFindingId);
+    const at = marks.findIndex((f) => f.id === $focusedFindingId);
     const next = at === -1 ? (direction === 1 ? 0 : marks.length - 1) : at + direction;
     if (next >= 0 && next < marks.length) {
       pendingStep = null;
@@ -329,7 +340,7 @@
       walkStatus = direction === 1 ? "No more findings: this is the end of the book." : "No earlier findings: this is the start of the book.";
       return;
     }
-    activeLanguageQaFindingId.set(null);
+    focusedFindingId.set(null);
     pendingStep = { chapter: target, step: direction };
     walkStatus = `Chapter ${target}…`;
     onNavigate(status?.book ?? $project?.bookId ?? "", target, "");
@@ -709,7 +720,7 @@
         <ol aria-label={view === "findings" ? "Language QA findings" : view === "recheck" ? "Findings to re-check" : "False positives"} start={listScope === "verse" ? 1 : status.offset + 1}>
           {#each listed as finding (finding.id)}
             <li>
-              <button on:click={() => onNavigate(finding.book, finding.chapter, finding.verse)}>
+              <button on:click={() => void openFinding(finding)}>
                 {finding.book.toUpperCase()} {finding.chapter}:{finding.verse}
               </button>
               <span class="severity">{finding.severity}</span>
