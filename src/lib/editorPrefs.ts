@@ -47,12 +47,17 @@ export const SIDE_PANEL_ORDER: readonly SidePanelId[] = ["source", "reference", 
 /** Panels a saved layout from before they existed lacks; they start closed
  * rather than throwing the reviewer's other widths away. */
 const ADDED_LATER: readonly SidePanelId[] = ["source", "paratext"];
+/** One minimum for every panel (#379 item 6, Benz 2026-10-26): `PANEL_MIN`,
+ * 260, which keeps the fold points of #324 (two panels still fit beside the
+ * text at 1366x768 under 150% scaling). Language QA keeps 320: its filter row
+ * and five tabs need it. */
+export const PANEL_MIN = 260;
 export const SIDE_PANEL_LIMITS: Record<SidePanelId, { min: number; max: number; initial: number }> = {
-  source: { min: 220, max: 640, initial: 320 },
-  reference: { min: 200, max: 640, initial: 300 },
+  source: { min: PANEL_MIN, max: 640, initial: 320 },
+  reference: { min: PANEL_MIN, max: 640, initial: 300 },
   languageQa: { min: 320, max: 760, initial: 440 },
-  paratext: { min: 260, max: 640, initial: 340 },
-  review: { min: 300, max: 720, initial: 400 },
+  paratext: { min: PANEL_MIN, max: 640, initial: 340 },
+  review: { min: PANEL_MIN, max: 720, initial: 400 },
 };
 
 export function clampPanelWidth(id: SidePanelId, px: number): number {

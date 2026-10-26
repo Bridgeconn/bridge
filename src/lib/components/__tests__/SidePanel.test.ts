@@ -10,7 +10,7 @@ import { resolve } from "node:path";
 import SidePanel from "../SidePanel.svelte";
 import SideRail from "../SideRail.svelte";
 import PanelHeader from "../PanelHeader.svelte";
-import { SIDE_PANEL_LIMITS, setSidePanel, sidePanels } from "../../editorPrefs";
+import { PANEL_MIN, SIDE_PANEL_LIMITS, SIDE_PANEL_ORDER, setSidePanel, sidePanels } from "../../editorPrefs";
 import { languageQaChannel } from "../../languageQaInline";
 
 /** jsdom has no PointerEvent: a MouseEvent carries the pointer event's name and fields. */
@@ -24,6 +24,16 @@ function reset(): void {
     setSidePanel(id, { open: id === "review", width: SIDE_PANEL_LIMITS[id].initial });
   }
 }
+
+describe("SIDE_PANEL_LIMITS (#379 item 6)", () => {
+  it("gives every panel one minimum width except Language QA, which keeps 320", () => {
+    for (const id of SIDE_PANEL_ORDER) {
+      expect(SIDE_PANEL_LIMITS[id].min, id).toBe(id === "languageQa" ? 320 : PANEL_MIN);
+      expect(SIDE_PANEL_LIMITS[id].initial, id).toBeGreaterThanOrEqual(SIDE_PANEL_LIMITS[id].min);
+    }
+    expect(PANEL_MIN).toBe(260);
+  });
+});
 
 describe("SidePanel (Benz, 2026-10-09)", () => {
   beforeEach(() => {
@@ -61,11 +71,11 @@ describe("SidePanel (Benz, 2026-10-09)", () => {
     setSidePanel("reference", { open: true, width: 360 });
     render(SidePanel, { props: { id: "reference", label: "Reference" } });
     const handle = screen.getByRole("separator", { name: /Resize the Reference panel/ });
-    // 360 wide; 120px to the right is 240, still above the minimum (200): stays open.
+    // 360 wide; 80px to the right is 280, still above the minimum (260): stays open.
     await pointer(handle, "pointerdown", 500);
-    await pointer(handle, "pointermove", 620);
+    await pointer(handle, "pointermove", 580);
     expect(screen.queryByText("Release to close")).toBeNull();
-    // Past min - 60 (140): the hint shows, and release closes it.
+    // Past min - 60 (200): the hint shows, and release closes it.
     await pointer(handle, "pointermove", 800);
     expect(screen.getByText("Release to close")).toBeInTheDocument();
     await pointer(handle, "pointerup");
@@ -104,6 +114,13 @@ describe("SideRail", () => {
     expect(get(sidePanels).review.open).toBe(false);
     await fireEvent.click(screen.getByRole("button", { name: /Settings/ }));
     expect(onOpenSettings).toHaveBeenCalled();
+  });
+
+  // #379 item 6: the buttons run top to bottom as the columns run left to right.
+  it("lists the panels in SIDE_PANEL_ORDER, Settings last", () => {
+    render(SideRail);
+    const names = screen.getAllByRole("button").map((button) => button.getAttribute("aria-controls"));
+    expect(names).toEqual([...SIDE_PANEL_ORDER.map((id) => `side-panel-${id}`), null]);
   });
 
   it("badges Language QA with its total, or ! when the channel failed", async () => {
