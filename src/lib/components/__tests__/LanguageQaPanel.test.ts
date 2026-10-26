@@ -640,6 +640,50 @@ describe("Language QA panel: kinds, scope and F8", () => {
   });
 });
 
+// #389 step 1: the floating box on the other screens closes by its left
+// edge exactly as a docked column does, through the one shared handle.
+describe("Language QA floating box closes by drag (#389)", () => {
+  afterEach(() => {
+    project.set(null);
+  });
+
+  /** jsdom has no PointerEvent: a MouseEvent carries the pointer event's name and fields. */
+  async function pointer(target: HTMLElement, type: string, clientX = 0): Promise<void> {
+    target.dispatchEvent(new MouseEvent(type, { bubbles: true, button: 0, clientX }));
+    await tick();
+  }
+
+  it("dims and says 'Release to close' past the threshold, and release closes the box; a short drag only narrows it", async () => {
+    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
+    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
+    const results = () => document.getElementById("language-qa-results") as HTMLElement | null;
+    expect(results()).not.toBeNull();
+    const handle = screen.getByRole("separator", { name: /Resize the Language QA panel/ });
+    // 560 wide; 100px to the right is 460, above the 320 minimum: still open, narrower.
+    await pointer(handle, "pointerdown", 500);
+    await pointer(handle, "pointermove", 600);
+    expect(results()?.style.width).toBe("460px");
+    expect(screen.queryByText("Release to close")).toBeNull();
+    await pointer(handle, "pointerup");
+    expect(results()?.style.width).toBe("460px");
+    // Past min - 60 (260): the hint shows and the frame dims; release closes.
+    await pointer(handle, "pointerdown", 500);
+    await pointer(handle, "pointermove", 800);
+    expect(screen.getByText("Release to close")).toBeInTheDocument();
+    expect(document.querySelector(".float-frame.closing")).not.toBeNull();
+    await pointer(handle, "pointerup");
+    expect(results()).toBeNull();
+    expect(screen.getByRole("button", { name: /Language QA · completed/ }).getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("the docked column has no handle of its own (SidePanel's is the one) and no ◂ ▸ in the floating bar", async () => {
+    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn(), docked: true });
+    await screen.findByRole("heading", { level: 2, name: /Language QA/ });
+    expect(screen.queryByRole("separator", { name: /Resize the Language QA panel/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Undock Language QA" })).toBeInTheDocument();
+  });
+});
+
 describe("Language QA launcher on the editor screen (#236)", () => {
   afterEach(() => vi.useRealTimers());
 

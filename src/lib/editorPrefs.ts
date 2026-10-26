@@ -37,7 +37,12 @@ const isBoolean = (value: unknown): value is boolean => typeof value === "boolea
  * (Benz, 2026-10-09). Several may be open side by side.
  */
 export type SidePanelId = "source" | "reference" | "languageQa" | "paratext" | "review";
-export interface SidePanelState { open: boolean; width: number }
+/** An undocked panel's box inside the window (#389), in CSS pixels. */
+export interface PanelFloat { x: number; y: number; width: number; height: number }
+/** `float` (#389): set while the panel is undocked into a box; absent or null
+ * in its column. Added to the saved shape, not a new shape: a layout saved
+ * before #389 is valid as it is, so nothing is migrated. */
+export interface SidePanelState { open: boolean; width: number; float?: PanelFloat | null }
 export type SidePanels = Record<SidePanelId, SidePanelState>;
 
 /** Left to right, as they stand between the text and the rail. The source text
@@ -92,9 +97,15 @@ function defaultSidePanels(): SidePanels {
   };
 }
 
+const isFinite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+const isPanelFloat = (value: unknown): value is PanelFloat => {
+  const box = value as Partial<PanelFloat> | null | undefined;
+  return !!box && isFinite(box.x) && isFinite(box.y) && isFinite(box.width) && isFinite(box.height);
+};
 const isPanelState = (entry: unknown): entry is SidePanelState => {
   const state = entry as Partial<SidePanelState> | undefined;
-  return !!state && typeof state.open === "boolean" && typeof state.width === "number" && Number.isFinite(state.width);
+  return !!state && typeof state.open === "boolean" && isFinite(state.width)
+    && (state.float === undefined || state.float === null || isPanelFloat(state.float));
 };
 
 /** Every panel valid, except that one added later may be missing (it is filled
@@ -133,6 +144,65 @@ export function setSidePanel(id: SidePanelId, patch: Partial<SidePanelState>): v
     ...all,
     [id]: { ...all[id], ...patch, ...(patch.width === undefined ? {} : { width: clampPanelWidth(id, patch.width) }) },
   }));
+}
+
+/**
+ * The columns' order, left to right (#389 step 2): the reviewer's, saved on
+ * its own key beside the panels; `SIDE_PANEL_ORDER` is the default and the
+ * rail follows this store. A saved order that lost a panel (one added later)
+ * gets it appended in the default place; an unknown id is dropped.
+ */
+const isPanelOrder = (value: unknown): value is SidePanelId[] =>
+  Array.isArray(value) && value.every((id) => (SIDE_PANEL_ORDER as readonly string[]).includes(id))
+  && new Set(value).size === value.length;
+
+export const sidePanelOrder = persisted<SidePanelId[]>("bridge.editor.sidePanelOrder.v1", [...SIDE_PANEL_ORDER], isPanelOrder);
+sidePanelOrder.update((order) => {
+  const missing = SIDE_PANEL_ORDER.filter((id) => !order.includes(id));
+  return missing.length ? [...order, ...missing] : order;
+});
+
+/** Move a column one place left (-1) or right (+1); at either end nothing changes. */
+export function movePanel(id: SidePanelId, direction: -1 | 1): void {
+  sidePanelOrder.update((order) => {
+    const at = order.indexOf(id);
+    const to = at + direction;
+    if (at < 0 || to < 0 || to >= order.length) return order;
+    const next = [...order];
+    next[at] = order[to];
+    next[to] = id;
+    return next;
+  });
+}
+
+/** An undocked box never goes below this, whatever was dragged or saved. */
+export const PANEL_FLOAT_MIN = { width: 260, height: 200 } as const;
+const FLOAT_DEFAULT = { width: 360, height: 480 } as const;
+
+/** The box kept inside a `width` x `height` window: never wider or taller
+ * than the window, its top edge always on screen, and at least its own
+ * minimum. A window that shrank since the box was saved still shows all of it. */
+export function clampPanelFloat(box: PanelFloat, width: number, height: number): PanelFloat {
+  const w = Math.round(Math.max(PANEL_FLOAT_MIN.width, Math.min(box.width, Math.max(PANEL_FLOAT_MIN.width, width - 16))));
+  const h = Math.round(Math.max(PANEL_FLOAT_MIN.height, Math.min(box.height, Math.max(PANEL_FLOAT_MIN.height, height - 16))));
+  const x = Math.round(Math.max(0, Math.min(box.x, width - w)));
+  const y = Math.round(Math.max(0, Math.min(box.y, height - h)));
+  return { x, y, width: w, height: h };
+}
+
+/** Undock a panel into a box (#389 step 3), where its column stood when `at`
+ * is given, else at a default place. The column's saved width is kept for
+ * when it is docked again. */
+export function undockSidePanel(id: SidePanelId, at?: PanelFloat): void {
+  const width = typeof window === "undefined" ? 1366 : window.innerWidth;
+  const height = typeof window === "undefined" ? 768 : window.innerHeight;
+  const box = at ?? { x: Math.max(0, width - 60 - FLOAT_DEFAULT.width), y: 80, ...FLOAT_DEFAULT };
+  setSidePanel(id, { open: true, float: clampPanelFloat(box, width, height) });
+}
+
+/** Back into its column, at the width it had there. */
+export function dockSidePanel(id: SidePanelId): void {
+  setSidePanel(id, { float: null });
 }
 
 /** Open a panel and make sure it is the one shown, even if it was already

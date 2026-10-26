@@ -31,6 +31,14 @@ function setWindowWidth(px: number): void {
 describe("foldedSidePanels (#324)", () => {
   const three = layout({ source: true, reference: true, review: true });
 
+  // #389: an undocked box takes no column, so it neither folds nor crowds the others.
+  it("ignores an undocked panel", () => {
+    const floating = layout({ source: true, reference: true, review: true });
+    floating.reference.float = { x: 10, y: 10, width: 300, height: 400 };
+    expect(foldedSidePanels(needed(["source", "review"]), floating, [], VERSE_MIN_WIDTH)).toEqual([]);
+    expect(foldedSidePanels(needed(["source", "reference", "review"]) - 1, three, [], VERSE_MIN_WIDTH)).toEqual(["reference"]);
+  });
+
   it("folds nothing while the verse list and every open panel's minimum fit", () => {
     expect(foldedSidePanels(1366, three, [], VERSE_MIN_WIDTH)).toEqual([]);
     expect(foldedSidePanels(needed(["source", "reference", "review"]), three, [], VERSE_MIN_WIDTH)).toEqual([]);

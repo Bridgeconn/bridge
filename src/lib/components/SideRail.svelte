@@ -2,7 +2,7 @@
   // The strip at the far right of the editor (Benz, 2026-10-09): one button
   // per side panel, each toggling its column, and Settings, which opens the
   // Settings dialog. Labels are text, not an icon font (CLAUDE.md gotcha 9).
-  import { SIDE_PANEL_ORDER, revealSidePanel, sidePanels, toggleSidePanel } from "../editorPrefs";
+  import { revealSidePanel, sidePanelOrder, sidePanels, toggleSidePanel } from "../editorPrefs";
   import { foldedPanels } from "../panelFit";
   import type { SidePanelId } from "../editorPrefs";
   import { languageQaChannel } from "../languageQaInline";
@@ -25,7 +25,8 @@
   $: ptBadge = $selectedVerse ? noteCountFor($paratextNoteCountsByVerse, $currentChapter, $selectedVerse).open : 0;
 
   // #379 item 6: the rail runs top to bottom in the order the columns run
-  // left to right (SIDE_PANEL_ORDER), so a button and its panel line up.
+  // left to right, so a button and its panel line up; since #389 that order
+  // is the reviewer's (sidePanelOrder), the same store App lays the columns by.
   const LABELS: Record<SidePanelId, { label: string; title: string }> = {
     source: { label: "Source", title: "The Hebrew, Aramaic or Greek source beside the text" },
     reference: { label: "Reference", title: "A reference Bible beside the text" },
@@ -33,8 +34,7 @@
     paratext: { label: "Paratext", title: "Paratext Project Notes on the selected verse" },
     review: { label: "Review", title: "Review the selected verse" },
   };
-  const PANELS: { id: SidePanelId; label: string; title: string }[] =
-    SIDE_PANEL_ORDER.map((id) => ({ id, ...LABELS[id] }));
+  $: PANELS = $sidePanelOrder.map((id) => ({ id, ...LABELS[id] }));
 </script>
 
 <nav class="rail" aria-label="Side panels">

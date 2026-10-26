@@ -21,7 +21,7 @@
   import SourceTextPanel from "./lib/components/SourceTextPanel.svelte";
   import ParatextNotesPanel from "./lib/components/ParatextNotesPanel.svelte";
   import FindingContextMenu from "./lib/components/FindingContextMenu.svelte";
-  import { TEXT_SCALES, bumpTextScale, rawView, sidePanels, textScale, toggleSidePanel } from "./lib/editorPrefs";
+  import { TEXT_SCALES, bumpTextScale, rawView, sidePanelOrder, sidePanels, textScale, toggleSidePanel } from "./lib/editorPrefs";
   import { verseMin } from "./lib/panelFit";
   import SidePanel from "./lib/components/SidePanel.svelte";
   import SideRail from "./lib/components/SideRail.svelte";
@@ -1609,27 +1609,38 @@
           <div class="editor-col" style:min-width="{$verseMin}px">
             <VerseList onSelect={selectVerse} onNavigate={navigateToReportRow} />
           </div>
-          {#if $project}
-            <SidePanel id="source" label="Source text">
-              {#key $project.path}<SourceTextPanel onSelectVerse={selectVerse} />{/key}
-            </SidePanel>
-            <SidePanel id="reference" label="Reference">
-              {#key $project.path}
-                <ReferencePanel onOpenSettings={() => openSettings("languageQa")} onSelectVerse={selectVerse} />
-              {/key}
-            </SidePanel>
-            <SidePanel id="languageQa" label="Language QA" keepMounted>
-              {#key $project.path}
-                <LanguageQaPanel projectPath={$project.path} onNavigate={navigateToReportRow} docked />
-              {/key}
-            </SidePanel>
-            <SidePanel id="paratext" label="Paratext notes">
-              {#key $project.path}<ParatextNotesPanel />{/key}
-            </SidePanel>
-          {/if}
-          <SidePanel id="review" label="Review" keepMounted>
-            <ReviewPanel onNavigate={navigateToReportRow} />
-          </SidePanel>
+          <!-- #389: the columns run in the reviewer's order (sidePanelOrder,
+               ◂ ▸ in each panel's bar); the rail lists them the same way.
+               Review stays mounted with no project, as before. -->
+          {#each $sidePanelOrder as panelId (panelId)}
+            {#if panelId === "review"}
+              <SidePanel id="review" label="Review" keepMounted>
+                <ReviewPanel onNavigate={navigateToReportRow} />
+              </SidePanel>
+            {:else if $project}
+              {#if panelId === "source"}
+                <SidePanel id="source" label="Source text">
+                  {#key $project.path}<SourceTextPanel onSelectVerse={selectVerse} />{/key}
+                </SidePanel>
+              {:else if panelId === "reference"}
+                <SidePanel id="reference" label="Reference">
+                  {#key $project.path}
+                    <ReferencePanel onOpenSettings={() => openSettings("languageQa")} onSelectVerse={selectVerse} />
+                  {/key}
+                </SidePanel>
+              {:else if panelId === "languageQa"}
+                <SidePanel id="languageQa" label="Language QA" keepMounted>
+                  {#key $project.path}
+                    <LanguageQaPanel projectPath={$project.path} onNavigate={navigateToReportRow} docked />
+                  {/key}
+                </SidePanel>
+              {:else if panelId === "paratext"}
+                <SidePanel id="paratext" label="Paratext notes">
+                  {#key $project.path}<ParatextNotesPanel />{/key}
+                </SidePanel>
+              {/if}
+            {/if}
+          {/each}
           <SideRail onOpenSettings={() => openSettings("ai")} />
         </div>
       </div>

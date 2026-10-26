@@ -5,7 +5,8 @@
   import { bridge } from "../api/bridgeClient";
   import { languageQaChannel, nudgeLanguageQa } from "../languageQaInline";
   import { languageQaPanelToggle } from "../languageQaPanelUi";
-  import { setSidePanel, toggleSidePanel } from "../editorPrefs";
+  import { SIDE_PANEL_LIMITS, setSidePanel, toggleSidePanel } from "../editorPrefs";
+  import PanelResizeHandle from "./PanelResizeHandle.svelte";
   import type { BookWordRow, LanguageQaFlag, LanguageQaStatus, LanguageQaView, LearnedFix } from "../types/languageQa";
   import type { HouseStyleEntry } from "../types/houseStyle";
   import { addProjectWords } from "../projectWords";
@@ -33,6 +34,17 @@
    * the column. Elsewhere (dashboard, report) it floats as before. */
   export let docked = false;
   $: if (docked) expanded = true;
+
+  // #389 step 1: the floating box (dashboard, report) closes by its left
+  // edge exactly as a docked column does, through the same handle. Its width
+  // is this session's; the column's saved width is the column's.
+  const FLOAT_LIMITS = SIDE_PANEL_LIMITS.languageQa;
+  let floatWidth = 560;
+  let floatPreview: number | null = null;
+  let floatClosing = false;
+  let floatWindowWidth = typeof window === "undefined" ? 1366 : window.innerWidth;
+  $: floatMax = Math.max(FLOAT_LIMITS.min, Math.min(FLOAT_LIMITS.max, floatWindowWidth - 32));
+  $: shownFloatWidth = Math.min(floatPreview ?? floatWidth, floatMax);
 
   let expanded = false;
   const LAUNCHER_HIDE_MS = 6000;
@@ -538,12 +550,19 @@
   });
 </script>
 
-<svelte:window on:keydown={onWindowKeydown} on:pointerdown={onWindowPointerdown} />
+<svelte:window on:keydown={onWindowKeydown} on:pointerdown={onWindowPointerdown} bind:innerWidth={floatWindowWidth} />
 
 <aside class="language-qa" class:docked aria-label="Language QA">
   <p class="walk-status" role="status" aria-live="polite">{walkStatus}</p>
   {#if expanded}
-    <section id="language-qa-results" aria-label="Language QA results" style:--head-h="{headHeight}px" style:--tabs-h="{tabsHeight}px">
+    <div class="float-frame" class:closing={floatClosing}>
+    {#if !docked}
+      <PanelResizeHandle label="Language QA" width={shownFloatWidth} min={FLOAT_LIMITS.min} max={floatMax} initial={560}
+        onPreview={(next, closing) => { floatPreview = next; floatClosing = closing; }}
+        onCommit={(next) => (floatWidth = next)} onClose={toggle} />
+    {/if}
+    <section id="language-qa-results" aria-label="Language QA results" style:--head-h="{headHeight}px" style:--tabs-h="{tabsHeight}px"
+      style:width={docked ? null : `${shownFloatWidth}px`}>
       <!-- The header stays put while the panel scrolls: title, the (i), Pause and
            Close, then one status line and, when a pass left text out, the warning. -->
       <div class="panel-head" bind:clientHeight={headHeight}>
@@ -553,7 +572,7 @@
              that used to be always visible is behind the (i), a popover that
              never changes the header's height. Errors and the one-line
              coverage warning stay in view. -->
-        <PanelHeader id="languageQa" title={`Language QA · ${stateWord}`} label="Language QA" onClose={toggle}>
+        <PanelHeader id="languageQa" title={`Language QA · ${stateWord}`} label="Language QA" onClose={toggle} layout={docked}>
           <button type="button" class="info-btn" bind:this={infoButton} aria-label="About these checks"
             aria-expanded={aboutOpen} aria-controls="language-qa-about"
             title="What Language QA checks, and what it does not" on:click={() => (aboutOpen = !aboutOpen)}>i</button>
@@ -912,6 +931,7 @@
         </div>
       {/if}
     </section>
+    </div>
   {/if}
   {#if !docked && (expanded || !launcherHidden)}
     <div class="launcher-row">
@@ -934,6 +954,12 @@
   .language-qa { position: fixed; bottom: 40px; right: 16px; z-index: var(--z-panel); font-size: var(--fs-xs); }
   /* Docked: the column is the box; the section fills it and scrolls. */
   .language-qa.docked { position: static; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  /* #389: the frame carries the floating box's left-edge handle (the section
+     scrolls, so the handle cannot sit inside it) and dims while a drag would
+     close it. Docked, the frame is the column's flex child and fills it. */
+  .float-frame { position: relative; }
+  .float-frame.closing { opacity: .55; }
+  .language-qa.docked .float-frame { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .language-qa.docked section { width: auto; max-height: none; flex: 1; min-height: 0; margin: 0; border: 0;
     border-radius: 0; box-shadow: none; }
   /* The section scrolls; its header and tab bar stay (sticky). Padding lives on
