@@ -21988,3 +21988,54 @@ with the installer and handoff tests, 26 passed.
 **Not verified.** Nothing ran inside Paratext: the plugin is not installed yet (Paratext must be closed
 for the reinstall). The live round trip on BRTST, and `IReadOnlyProject.ID` equalling the Settings.xml
 Guid, are for the end of #358.
+
+## 2026-10-26 — Paratext write-back: the outbox and its flusher (#358 c)
+
+**What.** `engine/tc_ai_bridge/paratext_outbox.py`: every write to Paratext is a `paratext_outbox` row
+(v11, device-local) before it is attempted; ops `create_thread`, `add_comment`, `resolve`. Every note
+and comment Bridge writes ends with `[Bridge ref <message_id>]` (decision 1). Before any send:
+- the book must be linked (its Guid is the destination, #347); otherwise the row waits, saying why
+  (not linked, or the linked folder not available);
+- the notes index must match the files on disk (`ParatextSession.index_ready`), so a footer cannot be
+  missed because the index is behind;
+- the index is searched for the footer (`find_bridge_ref`): a hit marks the row sent from the file,
+  thread and all, with no send (a crash after the send, or another device that sent it);
+- the connector must offer the op (0.8.0) and list the linked project; otherwise the row waits with
+  "update it to 0.8.0" or "Paratext has no project X on this computer".
+A sent `create_thread` gets its `paratext_links` row once the index shows the thread (the plugin's
+answer carries author and created, not a thread id). Replies and resolves name the thread by its first
+comment (`thread_key`).
+
+**Flusher.** `NavigationSyncCoordinator(after_paratext_probe=...)`: after each Paratext probe the
+engine's `_background_outbox_flush` runs on the probe's thread, at most every 5 s, only when there is
+something queued or a sent thread to find, and only if the project lock is free (it never makes a
+request wait); it releases its thread's database handles after. It runs only while Paratext
+navigation is on; otherwise a queued note goes on Retry, on a new queue, or on `paratext.flushOutbox`.
+
+**Found by the gate.** The full suite failed `test_opening_another_project_lets_the_previous_files_go`:
+`BridgeEngine()` there reads this PC's settings, where Paratext navigation is on, so the probe ran the
+flusher, which opened a workbench connection just to look for work. The probe now reads an in-memory
+flag (`_outbox_work`) that the request thread sets on open, queue and flush; an idle probe opens
+nothing. The test passes again. The same run's other two failures (a Logos helper round trip and the
+Language QA starvation test) passed on their own and match the timing flakes listed on #353.
+
+**Engine.** `issueResolution.queueParatext` enqueues and tries once; `includeProposal` (default
+false) is decision 2: the proposed correction and evidence go in only when ticked.
+`issueResolution.retryParatext` flushes that row. New: `paratext.outbox` (read), `paratext.flushOutbox`,
+`paratext.replyThread`, `paratext.resolveThread`, `paratext.linkThread` (write; any write role,
+decision 4). The old `project_state` "paratext_live_sync_state" (synced, so a second device could send
+the same note) is no longer read or written.
+
+**Change from #347, said here because it is one.** With 0.8.0 a note is addressed by project id, so
+the project Paratext has active no longer blocks a note: it goes to the linked project (M18 "by id").
+Navigation keeps #347's active-window refusal. `test_paratext_project_mismatch.py` now pins that a
+note never goes to another project and names the linked one while it waits.
+
+**Tests.** New `tests/service/test_paratext_outbox.py` (sends by id with another project active; once
+only; proposal only when included; waits for a missing project and for an older connector, then
+goes; footer found in the file means no send and the thread is linked from the file; nothing sent
+while the index is behind; the link appears once the index shows the thread; reply/resolve/link name
+the thread by its first comment; the probe's flusher sends a queued note and is throttled; unknown
+kind refused). Shared builders in `tests/support/paratext_writeback.py` (a book linked to a real
+synthetic Paratext folder, and a stand-in 0.8.0 connector).
+

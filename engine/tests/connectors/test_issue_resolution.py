@@ -127,78 +127,14 @@ def test_unavailable_connector_keeps_one_idempotent_note_safely_queued(
     assert first["success"] is True
     assert second["result"]["handoff"]["status"] == "queued"
     assert second["result"]["handoff"]["attempts"] == 2
-    assert "offline" in second["result"]["handoff"]["lastError"]
-    # The notes XML stays a file in Paratext's own format (TEAM_ARCHITECTURE
-    # ss3.4); only the small sync-state record moved into the database (#76),
-    # so that half is read through the project instead of off disk.
+    # The fixture's link points at a folder that does not exist: the note
+    # waits, and says why, before Paratext is ever asked (#358).
+    assert "folder for this book is not available" in second["result"]["handoff"]["lastError"]
     notes = resolution_project / ".apps" / "translationCoreAI" / "paratextNotes" / "Notes_AI_Suggestion.xml"
     assert len(ET.parse(notes).getroot().findall("thread")) == 1
-    assert len(engine.project.load_paratext_note_sync_state()["items"]) == 1
-
-
-def test_confirmed_matching_project_sends_once_and_preserves_message_identity(
-    resolution_project, tmp_path, monkeypatch,
-):
-    calls: list[dict] = []
-
-    class LiveConnector:
-        def get_state(self):
-            # The installed v0.7.4 Paratext companion advertises the feature
-            # family as project_notes while newer companions may use the wire
-            # action name create_note.
-            return SimpleNamespace(capabilities=["state", "project_notes"], project_id="ptx-titus")
-
-        def create_note(self, reference, selected_text, comment, **kwargs):
-            calls.append({
-                "reference": reference, "selectedText": selected_text,
-                "comment": comment, **kwargs,
-            })
-            return {"note_id": "remote-1"}
-
-    monkeypatch.setattr(bridge_service_module, "ParatextConnectorClient", LiveConnector)
-    engine = _engine(tmp_path, resolution_project)
-    saved = _save(engine, _check(engine))
-    params = {"chapter": "1", "verse": "1", "resolutionId": saved["resolutionId"]}
-
-    first = _call(engine, "issueResolution.queueParatext", params)
-    second = _call(engine, "issueResolution.queueParatext", params)
-
-    assert first["result"]["handoff"]["status"] == "sent"
-    assert first["result"]["record"]["paratext"]["remoteId"] == "remote-1"
-    assert second["result"]["handoff"]["status"] == "sent"
-    restored = _call(engine, "issueResolution.list", {"chapter": "1", "verse": "1"})
-    restored_record = next(
-        item for item in restored["result"]["items"]
-        if item["resolutionId"] == saved["resolutionId"]
-    )
-    assert restored_record["paratext"]["status"] == "sent"
-    assert restored_record["paratext"]["remoteId"] == "remote-1"
-    assert len(calls) == 1
-    assert calls[0]["message_id"].startswith(f"bridge-{saved['resolutionId']}-")
-    assert calls[0]["project_id"] == "ptx-titus"
-
-
-def test_active_project_mismatch_never_sends(resolution_project, tmp_path, monkeypatch):
-    class WrongProjectConnector:
-        def get_state(self):
-            return SimpleNamespace(capabilities=["create_note"], project_id="wrong-project")
-
-        def create_note(self, *args, **kwargs):
-            raise AssertionError("must not send to a different active project")
-
-    monkeypatch.setattr(bridge_service_module, "ParatextConnectorClient", WrongProjectConnector)
-    engine = _engine(tmp_path, resolution_project)
-    saved = _save(engine, _check(engine))
-    result = _call(engine, "issueResolution.queueParatext", {
-        "chapter": "1", "verse": "1", "resolutionId": saved["resolutionId"],
-    })
-
-    assert result["success"] is True
-    assert result["result"]["handoff"]["status"] == "queued"
-    assert "does not match" in result["result"]["handoff"]["lastError"]
-    # #347: the message names both projects; the destination is the link's.
-    assert "Titus PT (ptx-titu…)" in result["result"]["handoff"]["lastError"]
-    assert result["result"]["handoff"]["expectedProjectId"] == "ptx-titus"
+    # One message in this device's outbox (#358), however often it is queued.
+    outbox = _call(engine, "paratext.outbox")["result"]["items"]
+    assert [item["messageId"] for item in outbox] == [second["result"]["handoff"]["messageId"]]
 
 
 def test_scripture_edit_marks_resolution_stale_and_requests_automatic_recheck(

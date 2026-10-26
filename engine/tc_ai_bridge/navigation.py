@@ -261,12 +261,17 @@ class NavigationSyncCoordinator:
         poll_interval_seconds: float = 0.8,
         clock: Callable[[], float] = time.monotonic,
         paratext_expected: Callable[[], dict[str, Any]] | None = None,
+        after_paratext_probe: Callable[[], None] | None = None,
     ) -> None:
         self._clients = {'paratext': paratext_client, 'logos': logos_client}
         # #347: ``{'id', 'name'}`` of the Paratext project the open book was
         # imported from (its link Guid, #356), or {} when no linked book is
         # open. Read on every probe; never the project Paratext has active.
         self._paratext_expected = paratext_expected or (lambda: {})
+        # #358: the outbox flusher rides this probe's thread: Paratext just
+        # answered, so it is the moment a queued note can go. Called outside
+        # the lock; it must never raise into the probe.
+        self._after_paratext_probe = after_paratext_probe
         self._ownership = ownership or NavigationOwnership()
         self._poll_interval = max(0.1, float(poll_interval_seconds))
         self._clock = clock
@@ -467,6 +472,11 @@ class NavigationSyncCoordinator:
                             )
                             if event:
                                 self._pending = event
+                    if target == 'paratext' and self._after_paratext_probe is not None:
+                        try:
+                            self._after_paratext_probe()
+                        except Exception:  # noqa: BLE001 -- the flusher's failure is its own
+                            pass
                 except Exception as exc:
                     with self._lock:
                         if outbound and self._enabled[target] and not self._closed:
