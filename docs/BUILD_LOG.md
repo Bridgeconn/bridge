@@ -21773,8 +21773,8 @@ Done by the close. Still open in milestone 2: #379 item 6 (Benz), #389 (Joel), #
 and type scale for the five editor side panels, Language QA's tab bar on Review too, the rail in
 `SIDE_PANEL_ORDER`, `--surface` for every body with `--surface-2` on the bar alone, one minimum width
 for every panel but Language QA, and Review's second header row folded into the bar's actions slot so
-Review shows one line like the others. Five commits on `main` (c821912, 1fbdb73, 2c48f4b, 625112b,
-4ee60cc), frontend only; the walk #373 asks for was done on a build of `main` (`npm run tauri dev`,
+Review shows one line like the others. Five commits on `main` (04d8016, 225c9dc, 92ead53, 23d6347,
+4c3e83d), frontend only; the walk #373 asks for was done on a build of `main` (`npm run tauri dev`,
 the sidecars of 2026-10-23 16:07) at 1366x768 with the five panels open at every text-size step.
 The #403 part A commit (734c134) went first, on its own.
 
@@ -21814,10 +21814,10 @@ and that nothing sits between the bar and the tabs. The drag-close test's arithm
 Reference minimum.
 
 **Ran and watched work.**
-- Gate at 2c48f4b: `npm run check` 0 errors 0 warnings; `npm run test` 90 files, 953 passed;
-  `npm run build` ok. After 625112b and 4ee60cc the touched test files again (SidePanel, ReviewPanel*,
+- Gate at 92ead53: `npm run check` 0 errors 0 warnings; `npm run test` 90 files, 953 passed;
+  `npm run build` ok. After 23d6347 and 4c3e83d the touched test files again (SidePanel, ReviewPanel*,
   LanguageQaPanel: 57 and 11 passed). The engine suite was **skipped**: frontend-only change.
-- The walk, on `main` at 4ee60cc, IRVTam Joshua (the 2026-10-23 scratch profile cloned to
+- The walk, on `main` at 4c3e83d, IRVTam Joshua (the 2026-10-23 scratch profile cloned to
   `D:\Claude Lab\Claude outputs\qa-0.20.0\2026-10-26-379\la`; the registry still points at the
   2026-10-23 project folders, which the walk only opened), viewport 1350x729, driven over WebView2's
   CDP port with real clicks; shots and `walk-a11.out` (the raw measurements) in that folder.
@@ -21844,8 +21844,8 @@ Reference minimum.
   opened; the rail shows the folded ones dashed. A cut title (Language QA at 323px, Source at 260,
   Reference's "Built in: Old Version" beside Change and follow) ends in an ellipsis with the full text
   in its tooltip.
-- The first measurement (before 625112b) is what found the 41–47px bars and the vanished tab, and the
-  second (before 4ee60cc) the 40px Source bar; both are in `walk-a10.out` (that run was at 1280x860,
+- The first measurement (before 23d6347) is what found the 41–47px bars and the vanished tab, and the
+  second (before 4c3e83d) the 40px Source bar; both are in `walk-a10.out` (that run was at 1280x860,
   the resize having caught the splash).
 
 **Believed from code, not verified.** Dark surfaces and Windows 125/150% display scaling were not
@@ -21861,7 +21861,7 @@ QA box on the dashboard takes the same base size change and was not looked at.
   reported on #373.
 - `ParatextNotesPanel.svelte` had used `pt-body` for both the scroll box and every comment's text
   since #379 step 1, so the box's flex, overflow and padding applied to each comment; the box is
-  `pt-scroll` now (1fbdb73), named in the commit rather than left silent, since the padding decision
+  `pt-scroll` now (225c9dc), named in the commit rather than left silent, since the padding decision
   could not be applied without it.
 - `scripts/dev_desktop.mjs` builds and previews, no hot update: a frontend change needs the whole
   `npm run tauri dev` restarted, and vite's build fails from a Git Bash cwd whose drive letter is
