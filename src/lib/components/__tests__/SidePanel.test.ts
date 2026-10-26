@@ -198,8 +198,8 @@ describe("PanelHeader (#379)", () => {
       expect(text, name).toMatch(new RegExp(`\\.${rule} \\{[^}]*font-size: var\\(--fs-3xs\\)`));
       expect(text, name).toMatch(new RegExp(`\\.${rule} button \\{[^}]*padding: 8px 6px 6px`));
     }
-    // One bar height: 40px, every slotted control 24px like Close.
-    expect(source("PanelHeader")).toMatch(/\.panel-bar \{[^}]*min-height: 40px/);
+    // One bar height: 8 + 24 + 8 + the 1px line = 41px, every slotted control 24px like Close.
+    expect(source("PanelHeader")).toMatch(/\.panel-bar \{[^}]*min-height: 41px/);
     expect(source("PanelHeader")).toMatch(/\.panel-actions :global\(button:not\(\.info-btn\)\) \{[^}]*height: 24px/);
     // Review's four tabs never vanish: each label gives way with an ellipsis and keeps its name in its title.
     expect(source("ReviewPanel")).toMatch(/\.tab-label \{[^}]*text-overflow: ellipsis/);
