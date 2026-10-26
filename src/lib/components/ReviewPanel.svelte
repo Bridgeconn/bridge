@@ -685,10 +685,10 @@
     <div class="panel-scroll">
       <div class="tabs" role="tablist" aria-label="Verse report">
         <button
-          type="button" role="tab" aria-selected={activeTab === "greekroom"}
+          type="button" role="tab" aria-selected={activeTab === "greekroom"} title="Greek Room"
           class:active={activeTab === "greekroom"} on:click={() => (activeTab = "greekroom")}
         >
-          Greek Room
+          <span class="tab-label">Greek Room</span>
           {#if greekRoomChecking}<span class="tab-live" />{/if}
           {#if greekRoomOpenCount > 0}<span class="tab-count">{greekRoomOpenCount}</span>{/if}
         </button>
@@ -697,20 +697,20 @@
           class:active={activeTab === "tntw"} on:click={() => (activeTab = "tntw")}
           title="Translation Notes, Words alignment"
         >
-          Core check
+          <span class="tab-label">Core check</span>
           {#if tntwOpenCount > 0}<span class="tab-count">{tntwOpenCount}</span>{/if}
         </button>
         <button
-          type="button" role="tab" aria-selected={activeTab === "lqa"}
+          type="button" role="tab" aria-selected={activeTab === "lqa"} title="Language QA"
           class:active={activeTab === "lqa"} on:click={() => (activeTab = "lqa")}
         >
-          Language QA
+          <span class="tab-label">Language QA</span>
           {#if lqaFindings.length > 0}<span class="tab-count">{lqaFindings.length}</span>{/if}
         </button>
         <button
-          type="button" role="tab" aria-selected={activeTab === "ai"}
+          type="button" role="tab" aria-selected={activeTab === "ai"} title="AI review"
           class:active={activeTab === "ai"} on:click={() => (activeTab = "ai")}
-        >AI review</button>
+        ><span class="tab-label">AI review</span></button>
       </div>
 
       <div class="tab-content">
@@ -1119,19 +1119,22 @@
   .operation-status.saved { color: var(--success); background: var(--success-bg); }
   .operation-status.failed { color: var(--danger); background: var(--danger-bg); }
   /* #379 item 6: Language QA's tab bar (.panel-tabs there), right under the
-     bar. One line, every label whole; the count and the live dot stay out of
-     the flow (they sit in the corner), and the row scrolls rather than wraps
-     should a wider UI font ever overflow it. */
+     bar. One line; the count and the live dot stay out of the flow (they sit
+     in the corner). The four labels need ~330px whole; narrower than that
+     (the column squeezed by its neighbours at 1366) each label is cut with
+     an ellipsis and keeps its full name in its title, so every tab stays
+     visible -- the row used to scroll with its scrollbar hidden, and the
+     last tab simply vanished. */
   .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); flex-shrink: 0; padding: 0 12px;
-    background: var(--surface); overflow-x: auto; scrollbar-width: none; font-size: var(--fs-2xs); }
-  .tabs::-webkit-scrollbar { display: none; }
+    background: var(--surface); font-size: var(--fs-3xs); }
   .tab-content { flex: 1; overflow-y: auto; padding: 10px 12px; }
   .tabs button {
-    flex: 1 0 auto; position: relative; display: flex; align-items: center; justify-content: center;
+    flex: 1 1 auto; min-width: 0; position: relative; display: flex; align-items: center; justify-content: center;
     padding: 8px 6px 6px; font-size: inherit; font-weight: 700; color: var(--text-2); white-space: nowrap;
     background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0;
     cursor: pointer;
   }
+  .tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .tabs button:hover:not(.active) { color: var(--text); }
   .tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
   .tab-count {

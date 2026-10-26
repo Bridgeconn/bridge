@@ -983,7 +983,7 @@
   /* The tab bar sits under the header and stays with it. */
   .panel-tabs { position: sticky; top: var(--head-h, 0px); z-index: 2; display: flex; gap: 2px; padding: 0 12px;
     background: var(--surface); border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none;
-    font-size: var(--fs-2xs); }
+    font-size: var(--fs-3xs); }
   .panel-tabs button { flex: 1 0 auto; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none;
     padding: 8px 6px 6px; font-weight: 700; color: var(--text-2); white-space: nowrap; }
   /* #385: the book tab carries a name of any length and is the one that gives

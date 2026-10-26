@@ -191,13 +191,19 @@ describe("PanelHeader (#379)", () => {
     expect(source("ParatextNotesPanel")).toMatch(/\.pt-scroll \{[^}]*padding: 10px 12px/);
     expect(source("LanguageQaPanel")).toMatch(/\.panel-body \{[^}]*padding: 10px 12px/);
     expect(source("ReviewPanel")).toMatch(/\.tab-content \{[^}]*padding: 10px 12px/);
-    // Review's tab bar is Language QA's: the body gutter, the same button padding, --fs-2xs.
+    // Review's tab bar is Language QA's: the body gutter, the same button padding, --fs-3xs.
     for (const [name, rule] of [["LanguageQaPanel", "panel-tabs"], ["ReviewPanel", "tabs"]]) {
       const text = source(name);
       expect(text, name).toMatch(new RegExp(`\\.${rule} \\{[^}]*padding: 0 12px`));
-      expect(text, name).toMatch(new RegExp(`\\.${rule} \\{[^}]*font-size: var\\(--fs-2xs\\)`));
+      expect(text, name).toMatch(new RegExp(`\\.${rule} \\{[^}]*font-size: var\\(--fs-3xs\\)`));
       expect(text, name).toMatch(new RegExp(`\\.${rule} button \\{[^}]*padding: 8px 6px 6px`));
     }
+    // One bar height: 40px, every slotted control 24px like Close.
+    expect(source("PanelHeader")).toMatch(/\.panel-bar \{[^}]*min-height: 40px/);
+    expect(source("PanelHeader")).toMatch(/\.panel-actions :global\(button:not\(\.info-btn\)\) \{[^}]*height: 24px/);
+    // Review's four tabs never vanish: each label gives way with an ellipsis and keeps its name in its title.
+    expect(source("ReviewPanel")).toMatch(/\.tab-label \{[^}]*text-overflow: ellipsis/);
+    expect(source("ReviewPanel")).not.toMatch(/\.tabs \{[^}]*overflow-x: auto/);
     // The two verse lists: the list's 4px plus each row's 6px 8px is the same 10px / 12px.
     for (const name of ["SourceTextPanel", "ReferencePanel"]) {
       expect(source(name), name).toMatch(/\n\s*ol \{[^}]*padding: 4px;/);

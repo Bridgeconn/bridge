@@ -39,8 +39,14 @@
 </div>
 
 <style>
+  /* One bar height on every panel (item 6, seen in the 2026-10-26 walk: 41
+     to 47px, set by whichever button each panel put in the slot): the bar is
+     40px, and every control in the slot is 24px like Close. The (i) keeps
+     its 20px circle. */
   .panel-bar { flex-shrink: 0; display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px 12px;
+    box-sizing: border-box; min-height: 40px;
     border-bottom: 1px solid var(--border); background: var(--surface-2); color: var(--text-2); font-size: var(--fs-2xs); }
+  .panel-actions :global(button:not(.info-btn)) { box-sizing: border-box; height: 24px; padding-top: 0; padding-bottom: 0; }
   .panel-title { flex: 1; min-width: 0; margin: 0; font-size: var(--fs-xs); font-weight: 700; color: var(--text);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .panel-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; min-width: 0; }
