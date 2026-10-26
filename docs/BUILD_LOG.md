@@ -21869,3 +21869,56 @@ QA box on the dashboard takes the same base size change and was not looked at.
 
 **Not done.** Milestone 2 still holds #389 (Joel's, after the 2 Nov demo) besides #379 and #373, so
 it was left open for Benz to say where #389 goes before it is closed.
+
+## 2026-10-26 — Paratext mismatch refusal: the linked project is the expected one, navigation and notes held when Paratext has another active (#347)
+
+**Summary.** Revant's decision of 2026-10-24 on #347 is code: the expected Paratext project is the
+book's link Guid from `.bridge/collection.json` (#356), never whatever project Paratext has active.
+When the connector reports a different project, Bridge neither follows Paratext's verse nor pushes
+its own, and a note handoff stays queued; the message names both projects. One commit on `main`
+(b401f64), engine and frontend. Found in the 0.18.0 walk (QA 12 SET-011, P0) with a stand-in
+connector reporting `project_id: "qa"` while IRV Tamil PHP was open.
+
+**Change.**
+- `navigation.py`: `NavigationSyncCoordinator` takes `paratext_expected`, a callable giving
+  `{id, name}` of the linked project (or `{}`), read on every probe. With an outbound verse pending
+  and a linked book open, the probe reads `get_state` first and, on a mismatch, puts the destination
+  back (`_outbound.setdefault`) instead of calling `set_reference`; the held verse goes out the first
+  time the link matches. On every probe the target state gains `expectedProjectId`,
+  `expectedProjectName`, `projectMismatch` and `mismatchMessage`, and a mismatched state never
+  becomes an inbound candidate. Two module functions carry the rule: `project_mismatch` (a connector
+  that names no project cannot be checked, so an older companion fails open for navigation) and
+  `project_mismatch_message`, the one sentence both paths use.
+- `bridge_service.py`: `_expected_paratext_project()` reads the open book's `ParatextSession`
+  (`resolution.guid` and the settings or link name; no disk, so the 0.8 s probe may ask each time)
+  and is handed to the coordinator. `_attempt_issue_handoff` takes the destination from it on every
+  attempt (so an item queued before this change follows the link on retry), refuses a book with no
+  link ("Bridge cannot tell which project the note belongs to"), and refuses a different active
+  project with the shared message; `issueResolution.queueParatext` no longer takes
+  `expectedProjectId` and ignores one if sent. The old "Confirm the destination Paratext project"
+  path is gone with it.
+- Frontend: `NavigationTargetState` carries the four new fields; `TopBar`'s P mark reads as an error
+  on a mismatch with the message as the tooltip; `App.svelte` shows the message once as a navigation
+  notice each time it appears; `TranslationHelpsReview.svelte` stops passing the active project and
+  `bridgeClient.queueIssueResolutionForParatext` drops the parameter.
+- Tests: `tests/service/test_navigation.py` (+2, the coordinator holds both ways and names both, then
+  releases the held verse when the link matches; no linked book or no reported project means no
+  check), new `tests/service/test_paratext_project_mismatch.py` (+4: the coordinator is handed the
+  link of a real import, nothing when no project is open, a stand-in connector reporting DVT is
+  refused by name and the note goes out on retry once it reports the link's Guid, a caller-supplied
+  project id is ignored), `tests/connectors/test_issue_resolution.py` (fixture gains the link; the
+  mismatch test asserts the names), `TopBar.test.ts` (+1, the message and the error mark). The
+  one-verse tN project those tests share is `tn_review_project` in `tests/support/projects.py`.
+
+**Ran and watched work.** `pytest -n auto` 5615 passed, 3 xfailed (29 min 37 s). `npm run check` 0 errors 0 warnings; `npm run test`
+95 files, 984 passed; `npm run build` ok. Sidecars rebuilt (`build-sidecars.ps1`) and `scripts/smoke_sidecars.py engine/dist/bridge-engine.exe` passed (real Wildebeest, desktop connectors, hub --serve among the checks).
+
+**Believed from code, not verified.** The plugin's `project_id` is `IReadOnlyProject.ID` and is
+assumed to equal the `Settings.xml` Guid the link holds; #358's live round trip on BRTST verifies
+that before write-back trusts it. Not walked against real Paratext here: no Paratext session was run
+in this batch (the stand-in connector is the evidence, as it was for the finding).
+
+**Not done.** The 0.7.4 companion reports the active window's project only; with a project that
+reports no id the navigation check fails open while the note handoff refuses (it cannot confirm the
+destination). The refusal's wording in the Paratext notes panel itself is unchanged: that panel reads
+the notes files of the linked folder and never looked at the active window.
