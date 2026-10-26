@@ -7440,8 +7440,10 @@ class BridgeEngine:
         if scope not in language_qa_scope.SCOPES:
             raise ProjectError(f"scope must be one of {list(language_qa_scope.SCOPES)}")
         suggestion = params.get("suggestion")
-        if suggestion is not None and (not isinstance(suggestion, str) or not suggestion):
-            raise ProjectError("suggestion must be a non-empty string when given")
+        # "" is a real replacement: spacing.extra removes a space at the verse
+        # edge, note.space-before-caller removes one before a caller (#403).
+        if suggestion is not None and not isinstance(suggestion, str):
+            raise ProjectError("suggestion must be a string when given")
         try:
             origin, shown = self._language_qa.scope_findings(chapter, verse, finding_id)
             found = language_qa_scope.occurrences(shown, origin, scope, suggestion)
@@ -7588,6 +7590,15 @@ class BridgeEngine:
             if current != item["newText"]:
                 conflicts.append({"chapter": chapter, "verse": verse,
                                   "reason": "Changed after the batch; left as it is."})
+                continue
+            if str(item["oldText"]).strip() == current:
+                # The batch only removed a space at the verse edge (#403). The
+                # writer trims every ordinary edit, so that space cannot come
+                # back; the verse is already as it was, and there is nothing to
+                # write.
+                reverted.append({"chapter": chapter, "verse": verse, "newText": current,
+                                 "display": verse_display(current),
+                                 "note": "Only an edge space was removed; verse edges are always trimmed."})
                 continue
             context = {"reference": {"bookId": self.project.book_id, "chapter": chapter, "verse": verse},
                        "tool": "translationCoreAI", "groupId": "language-qa-scope-undo",

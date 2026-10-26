@@ -21657,3 +21657,31 @@ and 320px, and the Windows rendering of the #375 glyphs.
 **Shipped.** Pushed to Bridgeconn/bridge `main` (d272b86..c1c864d) on 2026-10-23. Issues #377, #384,
 #385, #374, #380, #383, #375, #376 and #378 closed with their comments; #379 closed out for step 1 and
 reopened for item 6. #402, #213, #389 and #373 in the milestone were out of scope and untouched.
+## 2026-10-23 — Scoped Language QA fix accepts an empty replacement; edge-space undo (#403)
+
+**What and why.** Robin (Hindi reviewer, 0.19.0) pressed the spacing fix with scope Book on a space at
+the end of a verse and got `Change “ ” to “”` · `suggestion must be a non-empty string when given` ·
+`Change 0 verses`. The `spacing.extra` rule's fix for an edge space is to remove it, an empty
+replacement (`language_qa.py`, revision 2, DECISIONS 2026-10-13), and `_scoped()` in
+`bridge_service.py` rejected every empty string. Verse scope never went through that check, so the
+same fix worked on one verse and failed on a chapter or book. Part A of #403; part B (a way to place
+a closing quotation mark) is not built.
+
+**Change.**
+- `bridge_service.py` `_scoped()`: `suggestion` may be `""`; only a non-string is refused. Nothing
+  below depends on a non-empty value: `language_qa_scope.occurrences` already uses each warning's own
+  first suggestion, `splice` writes an empty replacement, and learned-fix recording skips warnings.
+- `language_qa_batch_undo`: a verse whose batch item only removed an edge space is counted as
+  restored with a note instead of failing the whole undo. `apply_scripture_edit` trims every ordinary
+  edit, so the old text with its edge space can never be written back; before this the undo raised
+  "No Scripture text change detected." and reverted nothing.
+- `ScopeConfirmDialog.svelte`: a space shows as `␣` in the title and the rows, an empty replacement
+  reads "Remove “␣” in this book?", and the button says "Finding…" or "Nothing to change" until the
+  places have arrived (it read "Change 0 verses" next to the error).
+
+**Ran.** `pytest tests/service/test_language_qa_scope.py` 9 passed (new: book-scope find and accept on
+an edge-space finding, each place with its own fix, undo restores the double space and counts the edge
+verse as restored without writing). `npm run check` 0/0; `npm run test` 919 passed (2 new in
+`scopedApply.test.ts`); `npm run build` ok. Full engine suite: see the issue comment.
+
+**Not watched.** The installed app on Robin's Hindi project; the frozen pair was not rebuilt here.

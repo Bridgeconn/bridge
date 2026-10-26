@@ -11,7 +11,8 @@ from tc_ai_bridge.secret_store import AppSettings
 from tests.support.indic_qa import wait, write_project
 from tests.support.projects import call
 
-CHAPTERS = {"1": {"1": "उसकी आयु सताईस वर्ष की थी।", "2": "वे सताईस  दिन रहे।", "3": "वे आए;; फिर गए।"},
+CHAPTERS = {"1": {"1": "उसकी आयु सताईस वर्ष की थी।", "2": "वे सताईस  दिन रहे।", "3": "वे आए;; फिर गए।",
+                  "4": "वे गए। "},  # a space at the verse edge: spacing.extra's fix is to remove it (#403)
             "2": {"1": "और सताईस लोग थे।"}}
 OLD, NEW = "सताईस", "सत्ताईस"
 RULE = "hi.lex.known-misspelling"
@@ -145,10 +146,33 @@ def test_a_finding_without_a_replacement_cannot_be_accepted_but_can_be_ignored(e
     assert scoped(bridge, project, "languageQa.scopeApply", repeated, "book", action="ignore")["count"] == 1
 
 
+def test_a_spacing_fix_that_removes_an_edge_space_is_accepted_across_the_book(engine):
+    """Robin's refusal (#403): the fix for a space at the verse edge is an
+    empty replacement, which the scoped path rejected as "non-empty string"."""
+    bridge, project = engine
+    edge = finding(bridge, project, "1", "4", rule="spacing.extra")
+    assert edge["suggestions"][0]["text"] == "", "the rule offers removal for an edge space"
+    found = scoped(bridge, project, "languageQa.scopeFind", edge, "book", suggestion="")
+    assert [(o["chapter"], o["verse"], o["old"], o["new"]) for o in found["occurrences"]] == [
+        ("1", "2", "  ", " "), ("1", "4", " ", "")], "each spacing place keeps its own fix"
+    result = scoped(bridge, project, "languageQa.scopeApply", edge, "book", action="accept", suggestion="")
+    assert result["count"] == 2 and result["skipped"] == [] and "learned" not in result
+    assert text(bridge, "1", "4") == "वे गए।" and text(bridge, "1", "2") == "वे सताईस दिन रहे।"
+    undone = rpc(bridge, "languageQa.batchUndo", projectPath=str(project), batchId=result["batchId"])
+    assert sorted((r["chapter"], r["verse"]) for r in undone["reverted"]) == [("1", "2"), ("1", "4")]
+    assert undone["conflicts"] == []
+    assert text(bridge, "1", "2") == CHAPTERS["1"]["2"], "the double space is back"
+    # The writer trims every ordinary edit, so the edge space cannot return:
+    # the verse counts as restored, with a note, instead of failing the undo.
+    [edge_undo] = [r for r in undone["reverted"] if r["verse"] == "4"]
+    assert text(bridge, "1", "4") == "वे गए।" and "edge space" in edge_undo["note"]
+    assert len(bridge.project.verse_edit_history("1", "4")) == 1, "nothing was written for the no-op restore"
+
+
 def test_parameters_are_checked_and_a_stale_finding_is_refused(engine):
     bridge, project = engine
     origin = finding(bridge, project, "1", "1")
-    for bad in ({"scope": "testament"}, {"action": "delete"}, {"findingId": "nope"}, {"suggestion": ""}):
+    for bad in ({"scope": "testament"}, {"action": "delete"}, {"findingId": "nope"}, {"suggestion": 5}):
         params = {"projectPath": str(project), "chapter": "1", "verse": "1", "findingId": origin["id"],
                   "scope": "book", "action": "accept", **bad}
         assert not call(bridge, "languageQa.scopeApply", params)["success"], bad
