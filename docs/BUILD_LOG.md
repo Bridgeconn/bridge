@@ -22462,3 +22462,21 @@ script is not in the spec).
 Responsiveness line, the Home-screen strip); a real `word.select` click and a real long-task
 count in WebView2; a real Collection QA run cancelled from the editor; a real lazy book opened
 from Home. The installer itself was not installed or started here (Revant installs and walks it).
+
+## 2026-10-27 — #358 / #353 verification complete and closed
+
+The Paratext push at `c2bd236` passed [main CI](https://github.com/Bridgeconn/bridge/actions/runs/40480265616).
+The full serial Windows Python suite reported **5,655 passed, 2 skipped, 3 xfailed**
+(41m25s); the foreground latency gate and both human-label accuracy gates passed.
+Frontend CI passed. This is the final green gate for the Paratext code and the
+separate test-setup fixes, complementing the local frontend/build, frozen-pair,
+NTB and bundled-desktop evidence above.
+
+The network interruption after the successful push delayed GitHub writes only.
+After connectivity returned, verification comments were posted and **#132, #358
+and #353 closed as completed**; #358 and #353 are **Done** on board 40. The parent
+records all completed sub-issues, #347's retained navigation hold, and Benz's six
+decisions of 26 Oct; its deferred QA inputs are unchanged. Proposed follow-ups
+remain in the consolidated #353 comment for Benz to tick; none was filed. The
+intermittent progress-count failure and semantic-runtime trace are not claimed
+fixed, and M20's separate automatic-recheck recovery remains NOT RUN.

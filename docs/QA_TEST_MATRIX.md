@@ -848,3 +848,9 @@ Screenshots: `D:\Claude Lab\Claude outputs\qa-0.21.0\2026-10-27-codex-358`.
 `tauri dev` itself was not verified (blank webview/Vite timeout); the bundled build
 was used. M20's separate automatic-recheck recovery remains NOT RUN. Final gate
 results and the unrelated intermittent progress-count failure are recorded in BUILD_LOG.
+
+Final #358 gate: [CI on `c2bd236`](https://github.com/Bridgeconn/bridge/actions/runs/40480265616)
+passed the full Windows Python suite (5,655 passed, 2 skipped, 3 xfailed), frontend,
+foreground latency and both human-label accuracy gates. #132, #358 and #353 are
+closed; the #358 and #353 board items are Done. This does not change the NOT RUN
+status of M20's separate automatic-recheck recovery scenario.
