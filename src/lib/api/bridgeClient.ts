@@ -192,6 +192,28 @@ export interface EngineInfo {
   companionSchemaVersion: number;
   projectOpen: boolean;
   greekRoom: Record<string, unknown>;
+  /** #338: what the workspace database's recovery ladder did at this start;
+   *  null or absent after a healthy open. */
+  workspaceRecovery?: WorkspaceRecovery | null;
+}
+
+/** #338: a damaged workspace.sqlite3 was set aside at startup and the engine
+ *  started on what it could keep: the last-good backup, or a fresh file. */
+export interface WorkspaceRecovery {
+  at: string;
+  error: string;
+  quarantined: string;
+  outcome: "restored" | "rebuilt" | "";
+  backup: string;
+  backupWrittenAt: string;
+  backupError: string;
+  backupQuarantined?: string;
+  lost: string[];
+  rediscoveredManaged?: number;
+  registeredProjects?: number;
+  registryError?: string;
+  hubJoined?: boolean;
+  hubRepull?: { state: "pending" | "done" | "failed" | "not-joined"; users?: number; error?: string; detail?: string };
 }
 
 /** Live diagnostics entries as sidecar.rs records them (spawn/restart/

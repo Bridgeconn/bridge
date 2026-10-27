@@ -44,6 +44,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import sqlite3
 from typing import Any, Iterator
 import os
@@ -52,6 +53,18 @@ import uuid
 
 WORKSPACE_SCHEMA_VERSION = 5
 WORKSPACE_SCHEMA_ID = "bridge-workspace"
+
+# #338: the last-good copy of the workspace database, written beside it on
+# every healthy open (VACUUM INTO, one statement, milliseconds at this file's
+# size) -- at startup, not shutdown, because a crash on exit is one of the
+# ways the file gets damaged. It is the first thing recovery restores.
+LAST_GOOD_BACKUP_SUFFIX = ".last-good.sqlite3"
+QUARANTINE_INFIX = ".quarantined-"
+
+# What SQLite says about a file that is not, or no longer, a database. Any
+# other DatabaseError (locked, busy, read-only, cannot open) is a condition
+# to report, not damage to quarantine, and is re-raised as before.
+_DAMAGE_MARKERS = ("not a database", "malformed", "corrupt", "disk image")
 
 # v1: exactly the two tables the unversioned first cut of this module created.
 # IF NOT EXISTS is correct *here and only here*: the block has to adopt an
@@ -166,23 +179,138 @@ def project_path_key(path: str | Path) -> str:
     return os.path.normcase(os.path.normpath(str(resolved)))
 
 
+def _is_damage(exc: BaseException) -> bool:
+    message = str(exc).lower()
+    return isinstance(exc, sqlite3.DatabaseError) and any(marker in message for marker in _DAMAGE_MARKERS)
+
+
 class WorkspaceRepository:
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._migrate()
+        # #338: None after a healthy open; otherwise what recovery did
+        # (the quarantined file's name, restored / rebuilt, what was lost).
+        # BridgeEngine reports it on engine.info and project.open; it is
+        # never an error.
+        self.recovery: dict[str, Any] | None = None
+        self.backup_error: str = ""
+        self._open_with_recovery()
+        self._write_last_good_backup()
+
+    # -- #338: the recovery ladder -------------------------------------------
+
+    @property
+    def last_good_backup_path(self) -> Path:
+        return self.path.with_name(self.path.stem + LAST_GOOD_BACKUP_SUFFIX)
+
+    def _open_with_recovery(self) -> None:
+        """Decided 2026-10-24 (#338, docs/DECISIONS.md), each step only when
+        the one before fails: 1. the engine always starts -- a damaged file
+        and its -wal/-shm are renamed to a timestamped quarantine name beside
+        it, nothing is deleted; 2. the last-good backup is restored if it
+        exists and opens cleanly; 4. (the registry rediscovers data\\projects
+        on its first list, always); 5. the outcome is reported. Tier 3,
+        salvage from the quarantined copy table by table, is not built."""
+        try:
+            self._migrate()
+            return
+        except sqlite3.DatabaseError as exc:
+            if not _is_damage(exc):
+                raise
+            damage = str(exc)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        quarantined = self._quarantine(stamp, "")
+        recovery: dict[str, Any] = {
+            "at": self._now(), "error": damage, "quarantined": quarantined,
+            "outcome": "", "backup": "", "backupWrittenAt": "", "backupError": "", "lost": [],
+        }
+        backup = self.last_good_backup_path
+        if backup.is_file():
+            recovery["backup"] = backup.name
+            try:
+                recovery["backupWrittenAt"] = datetime.fromtimestamp(
+                    backup.stat().st_mtime, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+            except OSError:
+                pass
+            shutil.copyfile(backup, self.path)
+            try:
+                self._migrate()
+                recovery["outcome"] = "restored"
+                recovery["lost"] = [
+                    "changes made since the backup was written: bookmarks and recent chapters, "
+                    "projects added or renamed, settings changed in that session",
+                ]
+                self.recovery = recovery
+                return
+            except sqlite3.DatabaseError as exc:
+                if not _is_damage(exc):
+                    raise
+                recovery["backupError"] = str(exc)
+                recovery["backupQuarantined"] = self._quarantine(stamp, "-backup")
+        self._migrate()  # a fresh database, built by running the ladder
+        recovery["outcome"] = "rebuilt"
+        recovery["lost"] = [
+            "users and their roles (the local user is created again)",
+            "the device id (a new one is minted)",
+            "non-secret settings: bookmarks, recent chapters, the reference Bible choice, "
+            "the hub address and links",
+            "external project paths (projects outside data\\projects must be located again)",
+            "the dashboard's progress cache (rebuilt as books are opened)",
+        ]
+        self.recovery = recovery
+
+    def _quarantine(self, stamp: str, tag: str) -> str:
+        """Rename the database and its -wal / -shm beside themselves under a
+        quarantine name. Nothing is deleted. Returns the database's new name."""
+        target = self.path.with_name(f"{self.path.stem}{QUARANTINE_INFIX}{stamp}{tag}{self.path.suffix}")
+        for suffix in ("", "-wal", "-shm"):
+            source = Path(str(self.path) + suffix)
+            if source.exists():
+                try:
+                    os.replace(source, Path(str(target) + suffix))
+                except OSError:
+                    # A file something else holds open cannot be moved; the
+                    # fresh database is still built under the ordinary name
+                    # once the lock clears, and the next open reports again.
+                    pass
+        return target.name
+
+    def _write_last_good_backup(self) -> None:
+        """VACUUM INTO a sibling file, then replace the previous last-good copy
+        atomically. A failure here never fails the open; it is recorded."""
+        self.backup_error = ""
+        temp = self.last_good_backup_path.with_name(self.last_good_backup_path.name + ".tmp")
+        try:
+            if temp.exists():
+                temp.unlink()
+            with self._connect() as conn:
+                conn.execute("VACUUM INTO ?", (str(temp),))
+            os.replace(temp, self.last_good_backup_path)
+        except (sqlite3.DatabaseError, OSError) as exc:
+            self.backup_error = str(exc)
+            try:
+                if temp.exists():
+                    temp.unlink()
+            except OSError:
+                pass
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(str(self.path), timeout=5.0)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA busy_timeout = 5000")
-        conn.execute("PRAGMA synchronous = FULL")
-        conn.execute("PRAGMA journal_mode = WAL")
-        if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA busy_timeout = 5000")
+            conn.execute("PRAGMA synchronous = FULL")
+            conn.execute("PRAGMA journal_mode = WAL")
+            if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+                raise WorkspaceError("SQLite foreign-key enforcement could not be enabled")
+        except Exception:
+            # #338: a file that is not a database fails on the first PRAGMA.
+            # The handle must close here, or Windows keeps the damaged file
+            # open and recovery cannot rename it aside.
             conn.close()
-            raise WorkspaceError("SQLite foreign-key enforcement could not be enabled")
+            raise
         try:
             yield conn
         finally:
@@ -409,6 +537,22 @@ class WorkspaceRepository:
         if not changed:
             raise WorkspaceError("Unknown user.")
         return self.get_user(user_id) or {}
+
+    def upsert_user(self, user_id: str, display_name: str, role: str) -> None:
+        """A user the hub knows, written under the hub's own id (#338: after a
+        recovery the hub is the source for who the users are and what role
+        each holds). An existing row keeps its created_at and active flag."""
+        now = self._now()
+        name = str(display_name or "").strip() or "Unnamed Reviewer"
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "INSERT INTO users(user_id, display_name, created_at, updated_at, active, role) "
+                "VALUES(?,?,?,?,1,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name, "
+                "role=excluded.role, updated_at=excluded.updated_at",
+                (str(user_id), name, now, now, str(role)),
+            )
+            conn.commit()
 
     def set_user_role(self, user_id: str, role: str) -> None:
         """#236: give a user one of the three roles. The caller has checked

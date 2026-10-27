@@ -133,6 +133,14 @@ class HubClient:
         """`GET /health`, the one route that needs no token."""
         return self._request("GET", "/health")
 
+    def users(self) -> list[dict[str, Any]]:
+        """`GET /hub/users`: every person on the hub with their role (#338,
+        the re-pull after a workspace recovery). The hub answers a project
+        admin; anyone else gets a HubError to report."""
+        data = self._request("GET", "/hub/users")
+        users = data.get("users") if isinstance(data, dict) else None
+        return [u for u in users if isinstance(u, dict)] if isinstance(users, list) else []
+
 
 def probe_hub(url: str, *, timeout: float = HUB_PROBE_TIMEOUT_SECONDS,
               transport: Transport | None = None) -> dict[str, Any]:

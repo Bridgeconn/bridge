@@ -887,6 +887,68 @@ class BridgeEngine:
         self.project_registry = ProjectRegistry(
             settings_root / "project-registry.json", self.project_root, workspace=self.workspace,
         )
+        # #338: what the workspace database's recovery ladder did at this
+        # start, or None. Reported on engine.info and project.open, never
+        # fatal (the progressCache pattern). The registry's first list
+        # rediscovers data\projects whatever survived; a hub-joined install
+        # re-pulls users and roles in start_background_warmup.
+        self._workspace_recovery: dict[str, Any] | None = self._settle_workspace_recovery()
+
+    # -- #338: workspace recovery ---------------------------------------------
+
+    def _settle_workspace_recovery(self) -> dict[str, Any] | None:
+        recovery = getattr(self.workspace, "recovery", None)
+        if not recovery:
+            return None
+        report = dict(recovery)
+        try:
+            # Tier 4, always: the managed projects on disk are the truth for
+            # the registry. Whatever the backup gave back only adds the
+            # external paths and the other stores.
+            listed = self.project_registry.list_projects(refresh_managed=True)
+            report["rediscoveredManaged"] = sum(1 for e in listed if e.get("managed"))
+            report["registeredProjects"] = len(listed)
+        except Exception as exc:  # noqa: BLE001 -- the report must never fail the start
+            report["registryError"] = str(exc)
+        joined = bool(self.settings.hub_url and self.settings.get_hub_token())
+        report["hubJoined"] = joined
+        report["hubRepull"] = {"state": "pending"} if joined else {
+            "state": "not-joined",
+            "detail": ("Rejoin the hub from Settings > Team: the hub address was in the rebuilt database."
+                       if report.get("outcome") == "rebuilt" and self.settings.get_hub_token() else ""),
+        }
+        _trace(f"workspace recovery: {report.get('outcome')} quarantined={report.get('quarantined')}")
+        return report
+
+    def _hub_repull_users(self) -> None:
+        """After a recovery on a hub-joined install, the hub is the source for
+        who the users are and what role each holds (#338): every hub user is
+        written under its hub id, and this device's own role follows."""
+        from tc_ai_bridge.hub_sync import HubError
+
+        report = self._workspace_recovery
+        if not report or report.get("hubRepull", {}).get("state") != "pending":
+            return
+        try:
+            users = self._hub_client().users()
+        except (HubError, ProjectError) as exc:
+            report["hubRepull"] = {"state": "failed", "error": str(exc)}
+            _trace(f"workspace recovery: hub re-pull failed: {exc}")
+            return
+        written = 0
+        for user in users:
+            user_id = str(user.get("userId") or "")
+            if not user_id:
+                continue
+            self.workspace.upsert_user(user_id, str(user.get("displayName") or ""), str(user.get("role") or "reviewer"))
+            written += 1
+        identity = self.settings.hub_identity
+        mine = next((u for u in users if str(u.get("userId") or "") == str(identity.get("userId") or "")), None)
+        if mine is not None and str(mine.get("role") or "") != str(identity.get("role") or ""):
+            identity["role"] = mine.get("role")
+            self.settings.set_hub(self.settings.hub_url, self.settings.get_hub_token(), identity)
+        report["hubRepull"] = {"state": "done", "users": written}
+        self._local_user = None
 
     # -- identity -------------------------------------------------------
 
@@ -1499,9 +1561,15 @@ class BridgeEngine:
             "companionSchemaVersion": DATABASE_SCHEMA_VERSION,
             "projectOpen": self.project is not None,
             "greekRoom": self.greek_room.info(),
+            # #338: None after a healthy open of workspace.sqlite3.
+            "workspaceRecovery": self._workspace_recovery,
         }
 
     def start_background_warmup(self) -> None:
+        # #338: a hub-joined install re-pulls users and roles after a
+        # recovery, off the dispatcher: the desktop never waits on the hub.
+        if self._workspace_recovery and self._workspace_recovery.get("hubRepull", {}).get("state") == "pending":
+            threading.Thread(target=self._hub_repull_users, name="bridge-recovery-repull", daemon=True).start()
         # #80: resume the hub poll on a device that had joined one.
         try:
             self._start_hub_thread()
@@ -1683,6 +1751,7 @@ class BridgeEngine:
             "managed": registered.get("managed", False),
             "passageSemantic": dict(self._passage_semantic_status),
             "progressCache": progress_cache,
+            "workspaceRecovery": self._workspace_recovery,
         })
         timer.mark("project_info")
         _trace(f"project.open {candidate.book_id} {timer.summary()}")

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { bridge } from "./lib/api/bridgeClient";
+  import { workspaceRecoveryNotice } from "./lib/workspaceRecovery";
   import { bridgeReference } from "./lib/navigationReference";
   import {
     formatPerfLine, perfAbort, perfBegin, perfEnd, perfInFlight, perfResponded, registerPerfRunner, setPerfSink,
@@ -118,6 +119,10 @@
   let triagePollGeneration = 0;
   let engineNotice = "";
   let engineNoticeTimer: ReturnType<typeof setTimeout> | undefined;
+  // #338: the one-time notice that workspace.sqlite3 was damaged at startup
+  // and what recovery did. Read once from engine.info after the first ping;
+  // dismissed for the session with the button.
+  let workspaceRecoveryNoticeText = "";
   let settingsInitialPane: "ai" | "quality" | "connections" | "resources" | "terminology" | "languageQa" | "security" = "ai";
   let navigationPollInFlight = false;
   let handlingNavigationRequest = "";
@@ -467,6 +472,12 @@
       if (startupTimer) clearTimeout(startupTimer);
       engineStatus = "ready";
       startupDone = true;
+      try {
+        const info = await bridge.engineInfo();
+        workspaceRecoveryNoticeText = workspaceRecoveryNotice(info.workspaceRecovery);
+      } catch (error) {
+        console.error("Could not read engine info", error);
+      }
       await refreshNavigationStatus();
       try {
         const settings = await bridge.getSettings();
@@ -1452,6 +1463,13 @@
     bookSwitching={Boolean(openingBook)}
   />
 
+  {#if workspaceRecoveryNoticeText}
+    <div class="progress-row check-notice recovery-notice" role="status" aria-label="Workspace database recovered">
+      <span class="check-message">{workspaceRecoveryNoticeText}</span>
+      <span class="grow" />
+      <button class="progress-action" on:click={() => (workspaceRecoveryNoticeText = "")}>Dismiss</button>
+    </div>
+  {/if}
   {#if openingBook}
     <div class="progress-row checking-row">
       <div class="spin" />
@@ -1747,6 +1765,8 @@
   .cancel-action { width: 84px; }
   .progress-action:disabled { opacity: 0.55; cursor: wait; }
   .check-notice { color: var(--danger); height: auto; min-height: 32px; max-height: 96px; align-items: flex-start; padding-top: 7px; padding-bottom: 7px; }
+  /* #338: a recovery is a report, not a failure: warning colour, room for its paragraph. */
+  .recovery-notice { color: var(--warning); max-height: 160px; overflow-y: auto; }
   .check-message { flex: 1; min-width: 0; max-height: 78px; overflow: auto; white-space: normal; overflow-wrap: anywhere; line-height: 1.35; }
   .body { flex: 1; display: flex; overflow: hidden; }
   /* A 66-book table must not push the dashboard off screen: it scrolls. */

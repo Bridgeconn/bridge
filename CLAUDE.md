@@ -298,6 +298,15 @@ A raw Scripture import becomes a translationCore-compatible book project:
                                                 project registry, non-secret settings (bookmarks and
                                                 recent chapters among them), and one cached
                                                 progress rollup per project for the dashboard
+%LOCALAPPDATA%\Bridge\data\workspace.last-good.sqlite3
+                                                #338: a VACUUM INTO copy of workspace.sqlite3 written on
+                                                every healthy engine start (not shutdown). If the
+                                                database fails to open as a database, it and its
+                                                -wal/-shm are renamed workspace.quarantined-<stamp>.sqlite3
+                                                beside it (nothing deleted), this copy is restored, else
+                                                a fresh database is built; data\projects is rediscovered
+                                                either way and the outcome is reported on engine.info /
+                                                project.open as `workspaceRecovery`, never as an error
 %LOCALAPPDATA%\Bridge\data\settings.json       DPAPI-wrapped secrets only
 %LOCALAPPDATA%\Bridge\data\reference-cache\    plain text of each reference Bible folder chosen in
                                                 Settings > Language QA, `<fingerprint>.json.gz`;
