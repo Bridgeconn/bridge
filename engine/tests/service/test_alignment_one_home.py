@@ -197,3 +197,78 @@ def test_ai_auto_origin_and_run_id_ride_on_the_events(engine):
     # The row itself carries no origin: the fact is the same however it was reached (#146).
     row = engine.project.cross_verse_links.get(response["group"]["linkIds"][0])
     assert "origin" not in row and row["groupId"] == response["group"]["groupId"]
+
+
+def test_restore_and_undo_refuse_to_give_a_linked_word_a_second_home(engine):
+    """#391: alignment.restore / alignment.undo go through the same identity
+    and one-home checks as a forward save. A backup that would put a word back
+    into a tC group while it is at the end of an active cross-verse link is
+    refused, naming the partner verse, and nothing is written; after the
+    unlink the same restore succeeds."""
+    v3 = _get(engine, "3")
+    grouped = call(engine, "alignment.realign", {
+        "chapter": "1", "verse": "3", "topIds": [context_id(v3, top_word="ἐπὶ")],
+        "bottomIds": [context_id(v3, bottom_word="நாள்")], "expectedOriginal": v3["alignment"],
+    })
+    assert grouped["success"] is True, grouped
+    grouped_alignment = grouped["result"]["alignment"]
+    v3 = _get(engine, "3")
+    emptied = call(engine, "alignment.unalign", {
+        "chapter": "1", "verse": "3", "bottomIds": [context_id(v3, bottom_word="நாள்")],
+        "expectedOriginal": v3["alignment"],
+    })
+    assert emptied["success"] is True, emptied
+    # The newest history row is the unalign; its backup holds the grouped state.
+    history_id = emptied["result"]["history"][0]["id"]
+    assert emptied["result"]["history"][0]["operation"] == "unalign"
+
+    # The freed word is now realized by a source word of verse 6.
+    linked = call(engine, "alignment.crossVerse.link", {
+        "source": _src(engine, "6", "ἄχρι"), "target": _tgt(engine, "3", "நாள்"),
+    })
+    assert linked["success"] is True, linked
+    before = _get(engine, "3")
+
+    for method, params in (
+        ("alignment.restore", {"historyId": history_id}),
+        ("alignment.undo", {}),
+    ):
+        refused = call(engine, method, {
+            "chapter": "1", "verse": "3", "expectedOriginal": before["alignment"], **params,
+        })
+        assert refused["success"] is False, refused
+        assert "நாள் in 1:3 is linked to ἄχρι in 1:6" in refused["error"]["message"]
+        assert "remove that link before aligning it here" in refused["error"]["message"]
+        after = _get(engine, "3")
+        assert after["alignment"] == before["alignment"]
+        assert after["history"][0]["id"] == history_id  # nothing was written
+
+    # Unlink, and the same restore is an ordinary write again.
+    assert call(engine, "alignment.crossVerse.unlink", {"linkId": linked["result"]["link"]["id"]})["success"]
+    restored = call(engine, "alignment.restore", {
+        "chapter": "1", "verse": "3", "historyId": history_id, "expectedOriginal": _get(engine, "3")["alignment"],
+    })
+    assert restored["success"] is True, restored
+    assert restored["result"]["alignment"] == grouped_alignment
+    assert restored["result"]["history"][0]["operation"] == "restore"
+
+
+def test_restore_refuses_a_backup_whose_tokens_are_not_the_verse_s_current_tokens(engine, project):
+    """#391, the identity half: a backup written before the target text changed
+    names tokens the verse no longer has, and a restore may not reintroduce them."""
+    v3 = _get(engine, "3")
+    changed = call(engine, "alignment.realign", {
+        "chapter": "1", "verse": "3", "topIds": [context_id(v3, top_word="ἐπὶ")],
+        "bottomIds": [context_id(v3, bottom_word="நாள்")], "expectedOriginal": v3["alignment"],
+    })
+    assert changed["success"] is True, changed
+    history_id = changed["result"]["history"][0]["id"]
+    edited = call(engine, "verse.edit", {"chapter": "1", "verse": "3", "newText": "நற்செய்தி இரவு"})
+    assert edited["success"] is True, edited
+    now = _get(engine, "3")
+    refused = call(engine, "alignment.restore", {
+        "chapter": "1", "verse": "3", "historyId": history_id, "expectedOriginal": now["alignment"],
+    })
+    assert refused["success"] is False, refused
+    assert "may not add, remove, or duplicate" in refused["error"]["message"]
+    assert _get(engine, "3")["alignment"] == now["alignment"]

@@ -4573,10 +4573,15 @@ class BridgeEngine:
         expected_original: dict[str, Any],
         history_id: str = "",
     ) -> dict[str, Any]:
-        self.project.restore_verse_alignment_history(
-            chapter, verse, history_id=history_id, expected_original=expected_original,
-        )
-        return self._finish_alignment_mutation(chapter, verse)
+        """alignment.undo / alignment.restore (#391): the restored alignment
+        goes through `_save_alignment`, the one write path, so it gets the same
+        identity check (the backup must hold this verse's current tokens) and
+        the same one-home check (a word since linked across verses or marked
+        null is refused, naming the partner verse) as a manual save. A restore
+        that would violate either is refused with that message and nothing is
+        written; the reviewer unlinks or clears first and restores again."""
+        restored = self.project.load_verse_alignment_history(chapter, verse, history_id=history_id)
+        return self._save_alignment(chapter, verse, restored, expected_original, "restore")
 
     def _ai_client(self) -> OpenAIResponsesClient:
         api_key = self.settings.get_api_key()

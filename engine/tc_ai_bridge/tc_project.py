@@ -1589,13 +1589,18 @@ class TranslationCoreProject:
             for value in self._alignment_history_entries(chapter, verse)
         ]
 
-    def restore_verse_alignment_history(
+    def load_verse_alignment_history(
         self,
         chapter: str | int,
         verse: str | int,
         history_id: str = '',
-        expected_original: dict[str, Any] | None = None,
-    ) -> Path:
+    ) -> VerseAlignment:
+        """The verse alignment a history entry would restore (#391): the
+        newest entry, or the one named by ``history_id``, read from its backup
+        file and shape-checked. Nothing is written; the caller decides whether
+        the restored alignment may be saved -- `BridgeEngine.undo_alignment`
+        runs it through the same identity and one-home checks as every other
+        alignment write, so a restore can no longer give a word two homes."""
         candidates = self._alignment_history_entries(chapter, verse)
         if history_id:
             candidates = [value for value in candidates if str(value.get('id') or '') == history_id]
@@ -1615,10 +1620,22 @@ class TranslationCoreProject:
         backup_chapter = _read_json(backup)
         restored = backup_chapter.get(str(verse)) if isinstance(backup_chapter, dict) else None
         self._validate_verse_raw(restored)
+        return VerseAlignment.from_dict(restored)
+
+    def restore_verse_alignment_history(
+        self,
+        chapter: str | int,
+        verse: str | int,
+        history_id: str = '',
+        expected_original: dict[str, Any] | None = None,
+    ) -> Path:
+        """Write a history entry's alignment back, unvalidated. Kept for
+        callers that have already validated; the engine's undo/restore path
+        does not use it (#391)."""
         return self.save_verse_alignment(
             chapter,
             verse,
-            VerseAlignment.from_dict(restored),
+            self.load_verse_alignment_history(chapter, verse, history_id=history_id),
             expected_original=expected_original,
             operation='restore',
         )
