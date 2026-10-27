@@ -49,7 +49,10 @@ def test_the_list_carries_summed_progress_and_the_latest_open_with_its_user(tmp_
     assert row["lastOpenedAt"] and row["lastOpenedBy"] == engine.current_actor_id()
     assert row["lastOpenedByName"] == engine.local_user()["displayName"]
 
-    started = call(engine, "checks.start", {"scope": "chapter", "chapters": ["1"], "checks": ["local"]})
+    # A real alignment job exercises the progress cache without materializing
+    # tN/tW resources or starting whole-book USFM/names checks. Those preflights
+    # made this registry test exceed its wait budget under xdist.
+    started = call(engine, "checks.start", {"scope": "chapter", "chapters": ["1"], "checks": ["alignment"]})
     assert started["success"] is True, started
     assert wait_for_job(engine, started["result"]["jobId"])["state"] == "succeeded"
     row = _row(engine)
