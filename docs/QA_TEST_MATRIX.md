@@ -818,3 +818,33 @@ Requirement 6 figures to record with their measured numbers: M81 (500 decisions,
 P0/P1 failures in A, I, D, or E block the stabilization release. Manual-only
 and unavailable-platform rows may remain blocked only when recorded explicitly
 in the release notes with an owner and follow-up milestone.
+
+### 2026-10-27 — #358 NTB outbox supplement (source engine, connector 0.8.1)
+
+A26 supplement: the full connector compiled/installed with Paratext closed; Paratext 9.5.110.1
+loaded 0.8.1 and `get_state` listed NTB by its linked Guid. M17 outbox retry and the #358 restart
+scenario passed against real NTB: queue create/reply/resolve offline, restart the engine with
+statuses/errors intact, reopen Paratext, normal navigation polls flush, retry the same ids with
+no extra send or duplicate file comments. This is source-engine/plugin evidence, not a desktop
+card acceptance or a pass for M20's separate automatic-recheck lifecycle scenario.
+
+File evidence: `Notes_Yesu Selva Benz.xml`, create `178180fa` (PSA 1:1,
+`2026-10-27T13:06:54.5157134+05:30`); reply on `dff9683d` (PSA 1:2,
+`2026-10-27T13:06:48.1712332+05:30`); native resolve on `17f9f8bb` (PSA 1:3,
+`2026-10-27T13:06:56.5637349+05:30`, Status `deleted`). Each create/reply footer occurs once;
+exactly one resolve comment. The create exercised the footnote-repeat context fix.
+
+Held: desktop walk/screenshots (stale Windows automation state); user cleanup of the above
+threads and prior `565d540e` before Send/Receive; full engine gate (three failures outside the
+Paratext paths, details in BUILD_LOG). No issue closure or release-readiness claim.
+
+Follow-up on 2026-10-27: Benz confirmed all four test threads removed through
+Paratext before Send/Receive. Desktop acceptance now passed on an isolated synthetic
+Titus/Notes fixture, comparing installed 0.21.0 with the newly compiled bundled debug
+app (1282x824): open-thread actions present, resolved Paratext state displayed,
+explicit Mark resolved in Bridge updates the card, exactly one persisted
+`resolved_from_paratext` event, no send/outbox row, and a repeated request refused.
+Screenshots: `D:\Claude Lab\Claude outputs\qa-0.21.0\2026-10-27-codex-358`.
+`tauri dev` itself was not verified (blank webview/Vite timeout); the bundled build
+was used. M20's separate automatic-recheck recovery remains NOT RUN. Final gate
+results and the unrelated intermittent progress-count failure are recorded in BUILD_LOG.
