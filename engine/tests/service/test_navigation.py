@@ -192,21 +192,30 @@ def test_owner_conflict_prevents_connector_calls():
 
 def test_slow_connector_probe_does_not_block_snapshot():
     release = threading.Event()
+    returned = threading.Event()
+    states = []
 
     class SlowConnector(FakeConnector):
         def get_state(self):
-            release.wait(1.0)
+            release.wait()
             return super().get_state()
 
     sync = make_coordinator(SlowConnector(), FakeConnector())
-    started = time.monotonic()
-    state = sync.configure(paratext=True, logos=False)
-    elapsed = time.monotonic() - started
+    def configure():
+        states.append(sync.configure(paratext=True, logos=False))
+        returned.set()
+
+    caller = threading.Thread(target=configure, daemon=True)
+    caller.start()
     try:
-        assert elapsed < 0.1
-        assert state["paratext"]["checking"] is True
+        # Completion while get_state is still held proves non-blocking behavior
+        # without treating scheduler latency as connector latency.
+        assert returned.wait(10), "configure waited for the connector probe"
+        assert states[0]["paratext"]["checking"] is True
     finally:
         release.set()
+        caller.join(10)
+        sync.close()
 
 
 def test_latest_bridge_reference_retries_when_connector_starts_late():
