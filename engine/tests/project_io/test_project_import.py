@@ -448,10 +448,13 @@ def test_forget_removes_registry_entry_without_deleting_project(tmp_path):
     assert [item["projectId"] for item in listed] == [imported["projectId"]]
 
 
-def test_locate_rejects_a_different_book_for_missing_project(tmp_path):
+def test_locate_rejects_a_different_book_for_missing_project(tmp_path, monkeypatch):
     source = tmp_path / "TIT.usfm"
     source.write_text(SIMPLE_USFM, encoding="utf-8")
     engine = BridgeEngine(settings=AppSettings(path=tmp_path / "settings.json"))
+    # Simulate a project moved while the app was closed. An incidental live
+    # Language QA scan can hold the folder on Windows; it is not under test.
+    monkeypatch.setattr(engine._language_qa, "_schedule", lambda: None)
     imported = _call(engine, "project.import", {"path": str(source), "metadata": _metadata()})["result"]
     moved = tmp_path / "moved-titus"
     Path(imported["path"]).rename(moved)
