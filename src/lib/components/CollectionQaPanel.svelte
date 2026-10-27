@@ -6,7 +6,8 @@
   // meant to run unattended. While it runs the app is read-only.
   import { onMount } from "svelte";
   import {
-    cancelCollectionQa, collectionQa, pauseCollectionQa, refreshCollectionQa, startCollectionQa,
+    cancelCollectionQa, collectionQa, formatDuration as duration, pauseCollectionQa, refreshCollectionQa,
+    startCollectionQa,
   } from "../collectionQa";
   import type { CollectionQaBook } from "../types/collectionQa";
   import { collectionChecks, collectionQaCollapsed } from "../editorPrefs";
@@ -54,13 +55,6 @@
     } finally {
       busy = false;
     }
-  }
-
-  function duration(seconds: number | null | undefined): string {
-    if (seconds === null || seconds === undefined) return "—";
-    if (seconds < 60) return `${Math.round(seconds)} s`;
-    const minutes = Math.floor(seconds / 60);
-    return minutes < 60 ? `${minutes} min ${Math.round(seconds % 60)} s` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
   }
 
   function openFindings(book: CollectionQaBook): string {

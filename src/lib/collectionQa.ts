@@ -66,6 +66,15 @@ export async function cancelCollectionQa(): Promise<void> {
   publish(await bridge.collectionCancelChecks());
 }
 
+/** "40 s", "3 min 20 s", "1 h 05 min": the panel's and the strip's one
+ *  wording for a run's elapsed and remaining time. */
+export function formatDuration(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined) return "—";
+  if (seconds < 60) return `${Math.round(seconds)} s`;
+  const minutes = Math.floor(seconds / 60);
+  return minutes < 60 ? `${minutes} min ${Math.round(seconds % 60)} s` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+}
+
 /** Stop polling (project closed); the next refresh starts afresh. */
 export function stopCollectionQa(): void {
   ++sequence;

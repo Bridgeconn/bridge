@@ -72,6 +72,7 @@
   import { languageQaChannel, nudgeLanguageQa, startLanguageQaInline } from "./lib/languageQaInline";
   import { toggleLanguageQaPanel } from "./lib/languageQaPanelUi";
   import { collectionQaRunning, stopCollectionQa } from "./lib/collectionQa";
+  import { bindCollectionStrip, cancelStripJob } from "./lib/collectionStrip";
   import CollectionQaPanel from "./lib/components/CollectionQaPanel.svelte";
 
   let opened = false;
@@ -405,14 +406,10 @@
   // Collection QA (layered-rules 4.4): while a run checks every book, the app
   // is read-only. checkingProgress.running is what already holds editing,
   // alignment and AI review; the book switcher checks collectionQaRunning.
-  let collectionHeldProgress = false;
-  $: if ($collectionQaRunning && !collectionHeldProgress) {
-    collectionHeldProgress = true;
-    checkingProgress.update((p) => ({ ...p, running: true, label: "Collection QA running", state: "running" }));
-  } else if (!$collectionQaRunning && collectionHeldProgress) {
-    collectionHeldProgress = false;
-    checkingProgress.update((p) => ({ ...p, running: false, label: "Collection QA finished", state: "succeeded" }));
-  }
+  // #399: the strip shows the run's own books, percent and time left, and
+  // its Cancel (cancelChecks below) reaches the collection job.
+  const unbindCollectionStrip = bindCollectionStrip();
+  onDestroy(unbindCollectionStrip);
   $: if (!$project || !opened) stopCollectionQa();
   // #279: the signed-in user's role on the open project, re-read when the
   // project or the user changes (a role set in Settings > Users refreshes it too).
@@ -1248,8 +1245,8 @@
   }
 
   async function cancelChecks(): Promise<void> {
-    if (!activeJobId) return;
-    applyJobSnapshot(await bridge.cancelChecks(activeJobId));
+    // #399: during Collection QA the strip's Cancel stops that run.
+    await cancelStripJob(activeJobId, async (jobId) => applyJobSnapshot(await bridge.cancelChecks(jobId)));
   }
 
   async function stopActiveJob(): Promise<void> {
