@@ -1245,3 +1245,50 @@ The hub is the source for membership; the local copy is a cache of it.
 project paths when a backup exists; a startup that fails because the workspace store does.
 **Revisit when:** the hub protocol carries membership in `hub.pull` (then the re-pull is free), or
 when a workspace store schema bump makes a backup from an older version unreadable.
+
+## 2026-10-26 — Paratext write-back: plugin API only; no direct Notes_*.xml writes; ParatextData.dll not adopted (Benz, #358)
+**Decision:** Bridge writes to Paratext only through its companion plugin (connector 0.8.0), and
+only Project Notes: create a thread, add a comment, resolve. It never writes a `Notes_*.xml` file
+or any other file in a Paratext project folder, and does not load `ParatextData.dll`. Every write
+is queued first in the workbench's device-local `paratext_outbox` (v11, never synced) and goes to
+the project the book was imported from, named by its Guid, never to the window Paratext has active.
+The six questions on #358, as answered (Revant's reference answers of 2026-10-24, taken by Benz):
+1. **Author:** the PC's logged-in Paratext user; every Bridge note or comment ends with
+   `[Bridge ref <message_id>]`. No dedicated project member.
+2. **Content:** the reviewer's own note by default; AI-derived text (the proposed correction and
+   evidence) goes in only when the reviewer ticks to include it.
+3. **Paratext → Bridge:** a reply or `done` in Paratext is shown on the finding and offered as one
+   click, never applied.
+4. **Who may post:** any Bridge write role.
+5. **The companion Notes 1.1 file** (`paratextNotes/Notes_AI_Suggestion.xml`), `record_paratext_note`,
+   `paratext_notes_path` and the 1.1 writer and converters are deleted under the pre-release
+   amendment; `validate_comment_list` and `COMMENT_CHILD_ORDER` stay. No migration; files on disk
+   are left alone.
+6. **Workbench v11 is Benz's:** `paratext_links` (synced) and `paratext_outbox` (not synced) as
+   shaped in the #358 body.
+**Because:** Paratext desktop reads its own `<CommentList>` notes files and owns them: a direct
+write races Paratext's in-memory notes and its Send/Receive merge, and the Notes 1.1 file was the
+Data Access web API's format, which desktop Paratext never read and which could not hold a reply or
+a resolve. The plugin API writes through Paratext's own write lock and records the real author.
+`ParatextData.dll` would tie Bridge to Paratext's internal assembly and its licence, version by
+version. A Paratext note has no id in the plugin API, so the footer is the idempotency key, checked
+against the notes index before every send; an outbox that synced would let a second device send the
+same note again.
+**Rules out:** writing any file in a Paratext project folder; Scripture writes from any Paratext
+path (`PutUSFM`/`PutUSX`); deleting or reopening a Paratext note; applying a Paratext reply or
+`done` to a Bridge record automatically; posting to the active project instead of the linked one.
+**Revisit when:** Paratext's plugin API gains note ids or tags (the footer becomes redundant), or a
+team needs notes written while Paratext is closed (that would need Paratext's own data layer and is
+a fresh question).
+
+## 2026-10-26 — #358 decision 3's one click: "Mark resolved in Bridge" (Benz, #358)
+**Decision:** when a Paratext thread linked to an issue resolution is resolved in Paratext, the card
+offers "Mark resolved in Bridge". The click sets the resolution's status to `resolved` and records a
+`resolved_from_paratext` event naming the reviewer, the thread and the Paratext resolve comment
+(user and date) it followed. (Paratext 9.5 writes a resolve as Status `deleted`, not `done`; Bridge reads both
+as resolved, #358 g.) The engine refuses unless the thread is linked to that resolution and
+the notes index shows it resolved. Nothing is sent to Paratext, and no new status is introduced.
+**Because:** the six answers said "offered as one click" without saying what the click does; the
+existing `resolved` status is what the reviewer means, and the event keeps the reason auditable.
+**Rules out:** applying it without a click; offering it on a thread that is still open in Paratext.
+**Revisit when:** findings (not only issue resolutions) carry Paratext links.

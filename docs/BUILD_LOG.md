@@ -21657,3 +21657,487 @@ and 320px, and the Windows rendering of the #375 glyphs.
 **Shipped.** Pushed to Bridgeconn/bridge `main` (d272b86..c1c864d) on 2026-10-23. Issues #377, #384,
 #385, #374, #380, #383, #375, #376 and #378 closed with their comments; #379 closed out for step 1 and
 reopened for item 6. #402, #213, #389 and #373 in the milestone were out of scope and untouched.
+
+## 2026-10-23 — Scoped Language QA fix accepts an empty replacement; edge-space undo (#403)
+
+**What and why.** Robin (Hindi reviewer, 0.19.0) pressed the spacing fix with scope Book on a space at
+the end of a verse and got `Change “ ” to “”` · `suggestion must be a non-empty string when given` ·
+`Change 0 verses`. The `spacing.extra` rule's fix for an edge space is to remove it, an empty
+replacement (`language_qa.py`, revision 2, DECISIONS 2026-10-13), and `_scoped()` in
+`bridge_service.py` rejected every empty string. Verse scope never went through that check, so the
+same fix worked on one verse and failed on a chapter or book. Part A of #403; part B (a way to place
+a closing quotation mark) is not built.
+
+**Change.**
+- `bridge_service.py` `_scoped()`: `suggestion` may be `""`; only a non-string is refused. Nothing
+  below depends on a non-empty value: `language_qa_scope.occurrences` already uses each warning's own
+  first suggestion, `splice` writes an empty replacement, and learned-fix recording skips warnings.
+- `language_qa_batch_undo`: a verse whose batch item only removed an edge space is counted as
+  restored with a note instead of failing the whole undo. `apply_scripture_edit` trims every ordinary
+  edit, so the old text with its edge space can never be written back; before this the undo raised
+  "No Scripture text change detected." and reverted nothing.
+- `ScopeConfirmDialog.svelte`: a space shows as `␣` in the title and the rows, an empty replacement
+  reads "Remove “␣” in this book?", and the button says "Finding…" or "Nothing to change" until the
+  places have arrived (it read "Change 0 verses" next to the error).
+
+**Ran.** `pytest tests/service/test_language_qa_scope.py` 9 passed (new: book-scope find and accept on
+an edge-space finding, each place with its own fix, undo restores the double space and counts the edge
+verse as restored without writing). `npm run check` 0/0; `npm run test` 919 passed (2 new in
+`scopedApply.test.ts`); `npm run build` ok. Full engine suite: see the issue comment.
+
+**Not watched.** The installed app on Robin's Hindi project; the frozen pair was not rebuilt here.
+
+## 2026-10-26 — Milestone 2 close-out (#402, #213) and the confirmation that never asked (#372)
+
+**What and why.** The last two frontend issues of milestone 2 "UI fixes / cosmetics" (due today) and
+the one P1 from milestone 3, as one session, frontend only, three commits on `main`
+(cc299b4, 82e5048, b8b6567; batch A rebased over Benz's #403, 734c134, which shares no file).
+#379 item 6 (Benz), #389 (Joel) and #373 (the parent walk) were left alone.
+
+**#402 — clicking a finding lands on its exact span.** One route, `findingFocus.ts`'s
+`revealFinding(id, {navigate, scroll})`: it sets the ring first (`focusedFindingId`, the renamed and
+widened `activeLanguageQaFindingId`; the ring CSS never was Language-QA-specific), runs the
+navigation, then looks for `[data-finding-ids~=id]` (retrying for ~400 ms, since a chapter's findings
+hydrate after its verses), scrolls it to `block: "center"` and adds a one-shot `reveal-flash` class
+(index.css, 1.2 s). `VerseList.scrollSelectedToTop` consults `pendingReveal()` after its tick and, when
+the verse it is about to pull to the top holds the mark being revealed, marks the key scrolled and
+stands down: that is the race between the verse-level scroll and the mark's `scrollIntoView` the issue
+named, resolved by making the verse scroll yield rather than by ordering. Entry points: the Language
+QA row (ring, `onNavigate`, reveal; a `context` finding only navigates), F8 (`goToMark` now goes
+through the same helper, centre instead of nearest), the Review panel cards (click on the card body;
+keyboard through the number badge, now a `<button>`, and a "Show in text" pill on Language QA cards),
+and a left click on an inline mark (`focusMarkFromClick`: `selectFromRow` with the modifiers, then
+reveal with `scroll: false`, because moving text under the pointer is what #179 forbids). Edit mode:
+`startVerseEdit(chapter, verse, caret?)` places the caret after a tick (`placeCaret`, code points →
+UTF-16 over the textarea's own value); `editWithSelection` moved from VerseList into `verseEditor.ts`
+and takes either finding type through `findingSpan()` (null offsets, or a heading / introduction /
+footnote Language QA finding → null → plain edit). Used by "Accept and edit", the ignored card's "Edit
+verse", a double-click on the ringed mark (only there: the first click of a double-click anywhere else
+clears the ring, the #236 behaviour kept and tested) and a new "Edit…" on the Greek Room mark menu.
+The `<mark on:click>` carries a `svelte-ignore` for the two a11y rules with the reason beside it: the
+row is the one tab stop and ←/→ + Shift+F10 are the marks' keyboard route. A whitespace check against
+HEAD's render confirmed the comment adds no text node inside the verse. `openSemanticSpan` untouched.
+
+**#213 — character styles, not poetry.** `utils/verseStyles.ts` `withStyleSpans(segments, ranges)`
+splits the finding segments once more at every style boundary and records the covering markers outer
+first (`styles` is a new optional field on `TextSegment`, carried through `withNoteMarkers`'s spread);
+`VerseList` converts `display.styles` bounds with `plainToUtf16` exactly as note positions, wraps a
+plain piece in `<span class="st-wj st-it">` and adds the same classes to a `<mark>` that underlines a
+styled word. CSS in VerseList, scoped under `.vbody`: italic family (`it em bk tl sls add qs bdit`),
+bold (`bd k bdit`), small caps (`nd sc`; a no-op in Indic scripts, deliberately), red letters (`wj` on
+a new `--wj: #9F1D1D`, browner than `--gr` so it is never read as a Greek Room mark), `sup`, `no`.
+Raw view draws nothing. **Poetry stopped:** `chapter.verseData` (bridge_service.py ~2515) sends
+`text`, `display`, `alignment`, `alignmentStatus`, plus `headings` and `editCounts`; no paragraph or
+poetry marker per verse exists in the payload or on disk, and `lift_verse("Line one \q2 line two")`
+yields only a removed range. A `\q2` indent needs one new engine field — the issue's own guess — and
+this frontend-only change did not add it; proposed issue text is in the #213 comment. The issue's
+claim that the display payload carries "the parser's paragraph/poetry structure" was wrong.
+
+**#372 — the confirmation that never asked.** `confirmAction.ts`: `askConfirmation(request)` resolves
+a boolean through a one-at-a-time store; `answerConfirmation(ok)`; a replacing question resolves the
+first as false. `ConfirmDialog.svelte` (`role="alertdialog"`, Cancel focused, Escape = Cancel, red
+confirm for `danger`, `--z-dialog-over-dialog`) is mounted once in App.svelte **outside** the project
+block, because Settings can ask with no project open. `ReviewPanel.startAIReview` awaits it for
+chapter/book (and re-checks `aiJobBusy` after the wait); `SettingsModal.removeApiKey` awaits it. No
+caller of `window.confirm`, `alert` or `prompt` is left in `src/`; no capability or ACL change
+(decision on the issue, Revant, 2026-10-24). The tests stub `window.confirm` as a Promise-returning
+function, the installed app's shape, and assert it is never consulted and that nothing starts before
+the answer.
+
+**Ran.** Batch A (after both commits): `npm run check` 0 errors / 0 warnings; `npm run test` 93 files,
+970 tests passed (22 new: `findingFocus.test.ts` 4, `ReviewPanelFindingFocus.test.ts` 4,
+`VerseList.test.ts` +8, `LanguageQaPanel.test.ts` +2, `verseStyles.test.ts` 4); `npm run build` ok.
+Batch B: `npm run check` 0/0; `npm run test` 95 files, 980 tests passed (10 new: `confirmAction.test.ts`
+5, `ReviewPanelConfirm.test.ts` 3, `SettingsModal.test.ts` 2 rewritten, `stackingLayers.test.ts` lists
+`ConfirmDialog`); `npm run build` ok. Both batches pushed after their gates.
+
+**Not run.** Engine pytest (no engine change), cargo (no src-tauri change), `npm run tauri dev`, the
+installed-app look at 1366x768 at text sizes 0.85–1.7 for the ring, the flash, the "Show in text"
+pill, the red letters and small caps, and the confirmation dialog over Settings; the macOS/Linux
+behaviour of #372. The #372 ACL finding was taken from `src-tauri/capabilities/default.json`, not a
+CDP session.
+
+**Found, not fixed** (proposed in the issue comments, no issues filed).
+- Poetry layout needs a per-verse paragraph marker from the engine (#213 comment has the issue text).
+- Every ReviewPanel test file logs "Could not restore issue resolutions TypeError" from
+  `TranslationHelpsReview.svelte:107` under the Proxy mock (already noted 2026-10-23). Noise.
+- Nothing stops a future `window.confirm` / `alert` / `prompt` caller: a lint rule or a file-scan test
+  pointing at `confirmAction.ts` (#372 comment).
+
+**Shipped.** #402, #213 and #372 closed with their comments; board items moved through In progress to
+Done by the close. Still open in milestone 2: #379 item 6 (Benz), #389 (Joel), #373 (the walk).
+
+## 2026-10-26 — Side panels regulated: item 6 of #379 decided and shipped, walked on main at 1366x768 (#379, #373)
+
+**Summary.** Benz decided the item 6 list on 2026-10-26 and the decisions are code: one body padding
+and type scale for the five editor side panels, Language QA's tab bar on Review too, the rail in
+`SIDE_PANEL_ORDER`, `--surface` for every body with `--surface-2` on the bar alone, one minimum width
+for every panel but Language QA, and Review's second header row folded into the bar's actions slot so
+Review shows one line like the others. Five commits on `main` (04d8016, 225c9dc, 92ead53, 23d6347,
+4c3e83d), frontend only; the walk #373 asks for was done on a build of `main` (`npm run tauri dev`,
+the sidecars of 2026-10-23 16:07) at 1366x768 with the five panels open at every text-size step.
+The #403 part A commit (734c134) went first, on its own.
+
+**Decisions (Benz, 2026-10-26; the two numbers below are mine, recorded here).**
+- Body: content 12px from the edge and 10px under the bar, base `--fs-xs`, no raw px. The three
+  panels with one scroll box pad it `10px 12px` (`.pt-scroll`, `.panel-body`, `.tab-content`); the two
+  verse lists reach the same gutter as the list's 4px plus each row's 6px 8px, so the row highlight
+  keeps a 4px inset. Chrome inside a body — the tab bars, Language QA's filter row, the bar's own
+  actions — sits one or two steps under the body: `--fs-2xs` for the filter row and the bar, `--fs-3xs`
+  for both tab bars (the size each tab bar had before).
+- Surface: every body `--surface`; the bar alone `--surface-2`. Source and Reference lose their
+  `--surface-2` body, and their row hover becomes `--surface-2`.
+- Rail: `SideRail.svelte` derives its buttons from `SIDE_PANEL_ORDER`, top to bottom as the columns
+  run left to right (source, reference, languageQa, paratext, review).
+- Minimum width: `PANEL_MIN = 260` for Source, Reference, Paratext and Review; Language QA keeps 320.
+  260 (Paratext's old value) is the one of the four old minimums that keeps every fold point of #324:
+  with 300 (Review's), three open panels at 1366x768 under 150% scaling (911px) would fold two instead
+  of one, and `panelFit.test.ts` pins that case.
+- Review's bar: the open count ("6 open") and the two per-verse actions as 24px glyph buttons (⇄, ✎)
+  with the action as accessible name and tooltip, the shape #375 set for the project rows. The
+  `.panel-header` row and its styles are gone.
+- One bar height, found in the walk rather than decided beforehand: the first measurement gave 41 to
+  47px across the panels, each set by whatever button it put in the slot (Language QA's Pause,
+  Reference's Change, Review's glyphs). `PanelHeader` now gives every slotted control 24px like Close
+  (the (i) keeps its 20px circle) and the bar a 41px minimum (8 + 24 + 8 + the 1px line), so it is
+  41px with or without a button in the slot.
+- Review's tabs: with three columns open at 1366 the Review column is 331px and the four tabs needed
+  359px at `--fs-2xs`; the row scrolled with its scrollbar hidden and "AI review" simply vanished.
+  Each label is now a `.tab-label` that shrinks with an ellipsis and carries its full name in a
+  `title`; `overflow-x: auto` is gone, so every tab is always on screen.
+
+**Tests.** `SidePanel.test.ts`: `SIDE_PANEL_LIMITS` (one minimum, Language QA 320, initial ≥ min),
+the rail order, and a source-reading test that pins every rule above (root `font-size`, no
+`--surface-2` on a root, no raw px, the paddings, both tab bars, the 41px bar, the ellipsis).
+`ReviewPanelLanguageQa.test.ts` asserts the count and both actions inside the bar's `.panel-actions`
+and that nothing sits between the bar and the tabs. The drag-close test's arithmetic follows the new
+Reference minimum.
+
+**Ran and watched work.**
+- Gate at 92ead53: `npm run check` 0 errors 0 warnings; `npm run test` 90 files, 953 passed;
+  `npm run build` ok. After 23d6347 and 4c3e83d the touched test files again (SidePanel, ReviewPanel*,
+  LanguageQaPanel: 57 and 11 passed). The engine suite was **skipped**: frontend-only change.
+- The walk, on `main` at 4c3e83d, IRVTam Joshua (the 2026-10-23 scratch profile cloned to
+  `D:\Claude Lab\Claude outputs\qa-0.20.0\2026-10-26-379\la`; the registry still points at the
+  2026-10-23 project folders, which the walk only opened), viewport 1350x729, driven over WebView2's
+  CDP port with real clicks; shots and `walk-a11.out` (the raw measurements) in that folder.
+  Five panels open at once, 3:4 selected, at each text-size step:
+
+  | shot | scale | verse col | panels shown (px) | folded | bar heights | Paratext scroll sh/ch | Review tabs sw/cw |
+  |---|---|---|---|---|---|---|---|
+  | 30 | 1 | 340 | LQA 364 · Paratext 281 · Review 331 | Source, Reference | 41 41 41 | 1589/568 | 330/330 |
+  | 31 | 0.85 | 340 | LQA 364 · Paratext 281 · Review 331 | Source, Reference | 41 41 41 | 1589/568 | 330/330 |
+  | 32 | 1.15 | 370 | LQA 353 · Paratext 273 · Review 321 | Source, Reference | 41 41 41 | 1631/568 | 320/320 |
+  | 33 | 1.3 | 400 | LQA 342 · Paratext 264 · Review 311 | Source, Reference | 41 41 41 | 1694/568 | 310/310 |
+  | 34 | 1.5 | 440 | LQA 323 · Paratext 260 · Review 293 | Source, Reference | 41 41 41 | 1736/568 | 292/292 |
+  | 35 | 1.7 | 480 | LQA 438 · Review 398 | Source, Reference, Paratext | 41 41 | – | 397/397 |
+  | 36 | 1.7 | 480 | Source 260 · Paratext 265 · Review 311 (1:1, 9 threads) | Reference | 41 41 41 | 5843/568 | 310/310 |
+  | 37 | 1 | 340 | Source 295 · Paratext 313 · Review 368 (1:1) | Reference | 41 41 41 | 4974/568 | 367/367 |
+  | 38 | 1 | 340 | Source 306 · Reference 287 · Review 383 | – | 41 41 41 | – | 382/382 |
+
+  At no step did the document or the panes row overflow (scrollWidth 1350 throughout); the Paratext
+  body scrolls inside its column (scrollHeight far above its 568px client height, the column itself
+  609px like the others); every bar is 41px and `--surface-2` over a white body at 14px; both tab
+  bars fit (scrollWidth equals clientWidth) at every width down to 293px; Language QA's filter row
+  stays two lines (74px) from 323 to 438px. Five panels at 1366 means three on screen: the verse list
+  keeps 340 (480 at 1.7), the rail 35, and #324 folds the rest, Review last when it was the last one
+  opened; the rail shows the folded ones dashed. A cut title (Language QA at 323px, Source at 260,
+  Reference's "Built in: Old Version" beside Change and follow) ends in an ellipsis with the full text
+  in its tooltip.
+- The first measurement (before 23d6347) is what found the 41–47px bars and the vanished tab, and the
+  second (before 4c3e83d) the 40px Source bar; both are in `walk-a10.out` (that run was at 1280x860,
+  the resize having caught the splash).
+
+**Believed from code, not verified.** Dark surfaces and Windows 125/150% display scaling were not
+walked (the folding at 911px is covered by `panelFit.test.ts`, not by a run). The floating Language
+QA box on the dashboard takes the same base size change and was not looked at.
+
+**Found, not fixed.**
+- Reference panel: a long Tamil word in Joshua 1 (`.text`, 250px) is wider than the 271px list, which
+  then shows a horizontal scrollbar; Source's `.text` has `overflow-wrap: anywhere` and Reference's
+  does not. One line in `ReferencePanel.svelte`; proposed on #379, not folded into these commits.
+- Verse list: at its 340px minimum on Joshua 1 the `.editor-scroll` is 422px wide (a long word in
+  `.vtext`) and shows a horizontal scrollbar; Joshua 3 does not. `VerseList.svelte`, not touched here;
+  reported on #373.
+- `ParatextNotesPanel.svelte` had used `pt-body` for both the scroll box and every comment's text
+  since #379 step 1, so the box's flex, overflow and padding applied to each comment; the box is
+  `pt-scroll` now (225c9dc), named in the commit rather than left silent, since the padding decision
+  could not be applied without it.
+- `scripts/dev_desktop.mjs` builds and previews, no hot update: a frontend change needs the whole
+  `npm run tauri dev` restarted, and vite's build fails from a Git Bash cwd whose drive letter is
+  lower-case (`c:/…`, "No matching HTML proxy module"); `cd "C:/…"` first.
+
+**Not done.** Milestone 2 still holds #389 (Joel's, after the 2 Nov demo) besides #379 and #373, so
+it was left open for Benz to say where #389 goes before it is closed.
+
+## 2026-10-26 — Paratext mismatch refusal: the linked project is the expected one, navigation and notes held when Paratext has another active (#347)
+
+**Summary.** Revant's decision of 2026-10-24 on #347 is code: the expected Paratext project is the
+book's link Guid from `.bridge/collection.json` (#356), never whatever project Paratext has active.
+When the connector reports a different project, Bridge neither follows Paratext's verse nor pushes
+its own, and a note handoff stays queued; the message names both projects. One commit on `main`
+(b401f64), engine and frontend. Found in the 0.18.0 walk (QA 12 SET-011, P0) with a stand-in
+connector reporting `project_id: "qa"` while IRV Tamil PHP was open.
+
+**Change.**
+- `navigation.py`: `NavigationSyncCoordinator` takes `paratext_expected`, a callable giving
+  `{id, name}` of the linked project (or `{}`), read on every probe. With an outbound verse pending
+  and a linked book open, the probe reads `get_state` first and, on a mismatch, puts the destination
+  back (`_outbound.setdefault`) instead of calling `set_reference`; the held verse goes out the first
+  time the link matches. On every probe the target state gains `expectedProjectId`,
+  `expectedProjectName`, `projectMismatch` and `mismatchMessage`, and a mismatched state never
+  becomes an inbound candidate. Two module functions carry the rule: `project_mismatch` (a connector
+  that names no project cannot be checked, so an older companion fails open for navigation) and
+  `project_mismatch_message`, the one sentence both paths use.
+- `bridge_service.py`: `_expected_paratext_project()` reads the open book's `ParatextSession`
+  (`resolution.guid` and the settings or link name; no disk, so the 0.8 s probe may ask each time)
+  and is handed to the coordinator. `_attempt_issue_handoff` takes the destination from it on every
+  attempt (so an item queued before this change follows the link on retry), refuses a book with no
+  link ("Bridge cannot tell which project the note belongs to"), and refuses a different active
+  project with the shared message; `issueResolution.queueParatext` no longer takes
+  `expectedProjectId` and ignores one if sent. The old "Confirm the destination Paratext project"
+  path is gone with it.
+- Frontend: `NavigationTargetState` carries the four new fields; `TopBar`'s P mark reads as an error
+  on a mismatch with the message as the tooltip; `App.svelte` shows the message once as a navigation
+  notice each time it appears; `TranslationHelpsReview.svelte` stops passing the active project and
+  `bridgeClient.queueIssueResolutionForParatext` drops the parameter.
+- Tests: `tests/service/test_navigation.py` (+2, the coordinator holds both ways and names both, then
+  releases the held verse when the link matches; no linked book or no reported project means no
+  check), new `tests/service/test_paratext_project_mismatch.py` (+4: the coordinator is handed the
+  link of a real import, nothing when no project is open, a stand-in connector reporting DVT is
+  refused by name and the note goes out on retry once it reports the link's Guid, a caller-supplied
+  project id is ignored), `tests/connectors/test_issue_resolution.py` (fixture gains the link; the
+  mismatch test asserts the names), `TopBar.test.ts` (+1, the message and the error mark). The
+  one-verse tN project those tests share is `tn_review_project` in `tests/support/projects.py`.
+
+**Ran and watched work.** `pytest -n auto` 5615 passed, 3 xfailed (29 min 37 s). `npm run check` 0 errors 0 warnings; `npm run test`
+95 files, 984 passed; `npm run build` ok. Sidecars rebuilt (`build-sidecars.ps1`) and `scripts/smoke_sidecars.py engine/dist/bridge-engine.exe` passed (real Wildebeest, desktop connectors, hub --serve among the checks).
+
+**Believed from code, not verified.** The plugin's `project_id` is `IReadOnlyProject.ID` and is
+assumed to equal the `Settings.xml` Guid the link holds; #358's live round trip on BRTST verifies
+that before write-back trusts it. Not walked against real Paratext here: no Paratext session was run
+in this batch (the stand-in connector is the evidence, as it was for the finding).
+
+**Not done.** The 0.7.4 companion reports the active window's project only; with a project that
+reports no id the navigation check fails open while the note handoff refuses (it cannot confirm the
+destination). The refusal's wording in the Paratext notes panel itself is unchanged: that panel reads
+the notes files of the linked folder and never looked at the active window.
+
+## 2026-10-26 — Workbench v11: `paratext_links` (synced) and `paratext_outbox` (device-local) for Paratext write-back (#358 a)
+
+**What and why.** Step (a) of #358, the migration Revant handed back on 24 Oct. `WORKBENCH_SCHEMA_VERSION`
+10 → 11, one forward block, nothing rebuilt, no earlier block touched. The two tables are shaped exactly
+as the #358 body proposed:
+
+- `paratext_links` — human-owned and in `hub_sync.SYNCED_TABLES`: one row says a Bridge record
+  (`kind` ∈ issue_resolution / finding / correction_proposal, `local_id`) and a Paratext note thread
+  (`thread_id`) point at each other, with the `message_id` of the Bridge message that made the link and
+  its `direction`. Unique per `(project_id, book_id, kind, local_id, thread_id)`; indexed by thread.
+- `paratext_outbox` — this device's queue of plugin calls, in `MUTABLE_TABLES` (so it rides the
+  change_log like every store) but deliberately in `NOT_SYNCED_TABLES`: a hub carrying it to another PC
+  would send the same note twice. Row id = the `message_id` that goes into the note's "[Bridge ref …]"
+  footer, the idempotency key against the notes index; `op` (create_thread / add_comment / resolve),
+  `thread_id`, `status`, `attempts`, `last_error`, `sent_at`, `result_key` (the author+created pair
+  Paratext answers with, the only identity a Paratext note has). Thread content stays in the read-side
+  notes index; there is no `paratext_threads` table.
+
+Lifted columns are nullable (v3/v7's pattern, so the generic per-table tests write rows without them);
+`op` and `status` are validated in Python, not by a CHECK (v5's lesson). The pre-release amendment
+applies, so no data-preservation test was required; one was written anyway because it was cheap and
+pins the shape: `test_workbench_v10_to_v11_adds_the_paratext_link_and_outbox_tables_and_keeps_v10_data`.
+
+**Also.** `CLAUDE.md`: the on-disk shape block and the schema paragraph name v11 and the two tables.
+Version pins in five test files moved from 10 to 11; `test_every_workbench_table_is_classified_for_sync`
+now expects 13 synced tables and asserts the outbox is not one.
+
+**Ran.** `pytest tests/persistence tests/service/test_hub_sync.py`: 247 passed. The full engine suite
+and the frozen-pair smoke run once for the #358 batch when (c) lands; this commit is additive schema
+and lists only.
+
+**Next.** (b) connector 0.8.0; (c) the outbox and its flusher on the navigation poll thread, which is
+the first code to write these tables.
+
+## 2026-10-26 — Paratext connector 0.8.0: projects list, notes by project id, list / reply / resolve (#358 b)
+
+**What.** Step (b) of #358. `PluginVersion` 0.7.4 → 0.8.0, so `paratext_install.py` offers Update.
+- `get_state` adds `projects` (every project on the PC from `IPluginHost.GetAllProjects()`: `id`,
+  `short_name`, `long_name`, `language`, `type`, `editable` = not a resource) and four capabilities.
+- `create_note` resolves the project by the required `project_id` among all projects; the active
+  window is used only for a live-selection anchor when it shows that project. It answers with `author`,
+  `created` (ISO "o", seven fractional digits) and `anchor`, taken from the `IProjectNote` that
+  `AddNote` returns. The plugin no longer prefixes `[AI Suggestion]`: the body is written as given, and
+  the Bridge footer is the engine's to add (decision 1).
+- New `list_notes {project_id, book, chapter, unresolved_only}` (`IProject.GetNotes`, each note's
+  anchor, resolved flag, assignee and comments with author/created/text), `add_comment` and
+  `resolve_note {project_id, book, chapter, key, text, assignee}`. A thread is found by `key`: verse,
+  anchor offset and selected text, plus first comment author and created; exactly one match or a
+  refusal. Write lock `WriteLockScope.ProjectNotes` for every write; still no `PutUSFM`, no delete.
+- `paratext_connector.py`: `ConnectorState.projects` and `project_named()`, `create_note(...,
+  external_author="")`, and `list_notes` / `add_comment` / `resolve_note`.
+
+API checked by reflecting `CorePluginInterfaces.dll` 2.0.100 on this PC (`IProjectNote.AddNewComment`,
+`Resolve`, `IComment.Created` is a `DateTimeOffset`, `IComment.Contents` is `CommentParagraph`s of
+`FormattedString` spans). `build.ps1` compiles the three files with csc against the installed Paratext 9.
+
+**Ran.** `build.ps1` built `translationCoreAIBridge.dll` (34 KB). New
+`tests/connectors/test_paratext_connector_client.py` (4: the project list and lookup, `create_note`
+addressed by id with the body as given, the three thread calls' payloads, the bundled source is 0.8.0
+with the six actions, the notes write lock, `GetAllProjects` and no Scripture write or delete call);
+with the installer and handoff tests, 26 passed.
+
+**Not verified.** Nothing ran inside Paratext: the plugin is not installed yet (Paratext must be closed
+for the reinstall). The live round trip on BRTST, and `IReadOnlyProject.ID` equalling the Settings.xml
+Guid, are for the end of #358.
+
+## 2026-10-26 — Paratext write-back: the outbox and its flusher (#358 c)
+
+**What.** `engine/tc_ai_bridge/paratext_outbox.py`: every write to Paratext is a `paratext_outbox` row
+(v11, device-local) before it is attempted; ops `create_thread`, `add_comment`, `resolve`. Every note
+and comment Bridge writes ends with `[Bridge ref <message_id>]` (decision 1). Before any send:
+- the book must be linked (its Guid is the destination, #347); otherwise the row waits, saying why
+  (not linked, or the linked folder not available);
+- the notes index must match the files on disk (`ParatextSession.index_ready`), so a footer cannot be
+  missed because the index is behind;
+- the index is searched for the footer (`find_bridge_ref`): a hit marks the row sent from the file,
+  thread and all, with no send (a crash after the send, or another device that sent it);
+- the connector must offer the op (0.8.0) and list the linked project; otherwise the row waits with
+  "update it to 0.8.0" or "Paratext has no project X on this computer".
+A sent `create_thread` gets its `paratext_links` row once the index shows the thread (the plugin's
+answer carries author and created, not a thread id). Replies and resolves name the thread by its first
+comment (`thread_key`).
+
+**Flusher.** `NavigationSyncCoordinator(after_paratext_probe=...)`: after each Paratext probe the
+engine's `_background_outbox_flush` runs on the probe's thread, at most every 5 s, only when there is
+something queued or a sent thread to find, and only if the project lock is free (it never makes a
+request wait); it releases its thread's database handles after. It runs only while Paratext
+navigation is on; otherwise a queued note goes on Retry, on a new queue, or on `paratext.flushOutbox`.
+
+**Found by the gate.** The full suite failed `test_opening_another_project_lets_the_previous_files_go`:
+`BridgeEngine()` there reads this PC's settings, where Paratext navigation is on, so the probe ran the
+flusher, which opened a workbench connection just to look for work. The probe now reads an in-memory
+flag (`_outbox_work`) that the request thread sets on open, queue and flush; an idle probe opens
+nothing. The test passes again. The same run's other two failures (a Logos helper round trip and the
+Language QA starvation test) passed on their own and match the timing flakes listed on #353.
+
+**Engine.** `issueResolution.queueParatext` enqueues and tries once; `includeProposal` (default
+false) is decision 2: the proposed correction and evidence go in only when ticked.
+`issueResolution.retryParatext` flushes that row. New: `paratext.outbox` (read), `paratext.flushOutbox`,
+`paratext.replyThread`, `paratext.resolveThread`, `paratext.linkThread` (write; any write role,
+decision 4). The old `project_state` "paratext_live_sync_state" (synced, so a second device could send
+the same note) is no longer read or written.
+
+**Change from #347, said here because it is one.** With 0.8.0 a note is addressed by project id, so
+the project Paratext has active no longer blocks a note: it goes to the linked project (M18 "by id").
+Navigation keeps #347's active-window refusal. `test_paratext_project_mismatch.py` now pins that a
+note never goes to another project and names the linked one while it waits.
+
+**Tests.** New `tests/service/test_paratext_outbox.py` (sends by id with another project active; once
+only; proposal only when included; waits for a missing project and for an older connector, then
+goes; footer found in the file means no send and the thread is linked from the file; nothing sent
+while the index is behind; the link appears once the index shows the thread; reply/resolve/link name
+the thread by its first comment; the probe's flusher sends a queued note and is throttled; unknown
+kind refused). Shared builders in `tests/support/paratext_writeback.py` (a book linked to a real
+synthetic Paratext folder, and a stand-in 0.8.0 connector).
+
+
+## 2026-10-26 — Companion "Notes 1.1" file retired; TEAM_ARCHITECTURE §3.4 corrected (#358 d)
+
+Decision 5: `record_paratext_note`, `paratext_notes_path`, `paratext_note_sync_state_path`,
+`load/save_paratext_note_sync_state`, the two legacy-upgrade paths and `_target_language_code` are gone
+from `tc_project.py`; `paratext_notes.py` keeps `COMMENT_CHILD_ORDER` and `validate_comment_list`
+(the tests' synthetic Paratext folders are built against them) and loses the Notes 1.1 writer,
+reader and converters. Nothing on disk is deleted or migrated (pre-release amendment):
+`paratextNotes/Notes_AI_Suggestion.xml` in an older project is simply no longer written.
+`docs/TEAM_ARCHITECTURE.md` §3.4 said `paratextNotes/*.xml` was "Paratext's own format"; it was the
+Data Access web API's, which desktop Paratext never read — corrected in place, with what replaces it.
+`docs/ARCHITECTURE.md` and the manual checklist (SET-011, SET-012) follow. DECISIONS entry
+"plugin API only; no direct Notes_*.xml writes; ParatextData.dll not adopted", with the six answers.
+
+
+## 2026-10-26 — Finding and resolution cards show the Paratext thread; Reply / Resolve in Paratext / Link existing thread (#358 e)
+
+`ParatextThreadPanel.svelte` under an issue resolution's actions: each linked thread with its
+comments as Paratext has them (the Bridge footer hidden from the reader), "Open in Paratext" or
+"Resolved in Paratext" (a tooltip says the Bridge status is unchanged; nothing is applied, decision 3),
+Reply and Resolve in Paratext through the outbox (a write that cannot go shows as queued with its
+reason), and Link existing thread from the verse's other threads. A sent note whose thread is not in
+the index yet says so. Engine read `paratext.threadsFor`. The resolution editor gains the
+"Include the proposed correction and evidence" tick (decision 2) and names the destination as the
+linked project, not the active window; its old "Notes 1.1 copy" line is gone.
+Tests: `ParatextThreadPanel.test.ts` (4), and `test_a_card_shows_its_threads_with_paratext_replies_and_a_done_and_changes_nothing`.
+
+**Not built: decision 3's "offered as one click".** A Paratext reply or `done` is shown, never
+applied; what the one click should do on the Bridge side (mark the resolution resolved? a status that
+does not exist today) is not covered by the six answers, so it is a question on #358, not a guess here.
+
+**Batch gates (a)-(e), 2026-10-26.** Engine `pytest -n auto`: 5632 passed, 3 xfailed, 1 failed
+(`test_the_list_carries_summed_progress_and_the_latest_open_with_its_user`, the projects list, not
+touched here; it passed on its own rerun: a timing flake under load, as listed on #353). Frontend:
+`npm run check` 0/0, `npm run test` 96 files 988 passed, `npm run build` ok. Connector 0.8.0
+installed into Paratext 9.5.110.1 by `paratext_install.install()` with Paratext closed (one UAC prompt);
+`installed_version` now reads 0.8.0. The frozen-pair smoke and the live BRTST round trip are recorded
+below when run.
+
+
+## 2026-10-26 — #358 decision 3's one click: "Mark resolved in Bridge" (#358 f)
+
+**What.** The item (e) left unbuilt. Benz decided today (DECISIONS, same date) that the click marks
+the issue resolution `resolved`. New write RPC `issueResolution.resolveFromParatext {chapter, verse,
+resolutionId, threadId}` (any write role, `authorization.py`): refused unless the thread is linked to
+that resolution in `paratext_links` and the notes index shows it resolved; refused again once the
+resolution is already resolved. `TranslationCoreProject.resolve_issue_resolution_from_paratext` writes
+the status and a `resolved_from_paratext` history event (reviewer, `previousStatus`, thread id, the
+Paratext `done` comment's user and date) and the same event to `change_log` through the existing
+lifecycle audit. Nothing is sent to Paratext. `ParatextThreadPanel` gains `onResolveHere` /
+`bridgeResolved`: a thread resolved in Paratext shows "Mark resolved in Bridge" while the Bridge
+record is not resolved; the card's lifecycle label reads "Resolved, following Paratext" while that
+event is the latest status change. Also: CLAUDE.md's workbench paragraph said "currently v10"
+(found by Revant's verification on #358); now v11.
+
+**Tests.** `test_one_click_after_a_paratext_done_resolves_the_issue_and_records_who_and_which_done`,
+`test_one_click_is_refused_while_paratext_has_not_resolved_the_thread_or_it_is_not_linked`
+(`tests/service/test_paratext_outbox.py`); `ParatextThreadPanel.test.ts` one new case, one title
+assertion updated.
+
+**Gates, 2026-10-26.** Engine `pytest -n auto`: 5634 passed, 3 xfailed, 1 failed
+(`test_the_list_carries_summed_progress_and_the_latest_open_with_its_user`, "check job did not finish",
+the projects-list timing flake listed on #353; 1 passed on its own rerun, 21 s). Frontend: `npm run check`
+0/0 (after adding the method to `EngineMethod`), `npm run test` 96 files 998 passed, `npm run build` ok.
+`scripts/smoke_sidecars.py` not run for this change yet.
+
+
+## 2026-10-26 — Paratext writes a resolve as Status `deleted`: the notes reader read every resolved thread as gone (#358 g)
+
+**Found by the live run.** #358 part 3 ran on NTB (Benz chose it over a new BRTST, 2026-10-26; NTB is a
+Send/Receive project, so the test thread reaches the team on the next Send/Receive unless removed in
+Paratext). Connector 0.8.0 on Paratext 9.5.110.1, IRVTam the active window: `get_state` listed NTB with
+`id` equal to `Settings.xml` `<Guid>`; a made-up id was refused; `create_note` by id made thread
+`565d540e` at PSA 1:1 on "பாவிகளுடைய" in `Notes_Yesu Selva Benz.xml`, `Date` equal to the answer's
+`created`; `list_notes` matched the file; `add_comment` appended the reply. `resolve_note`
+(`IProjectNote.Resolve`) appended a comment with **Status `deleted`**, and Paratext then reported the
+thread `is_resolved: true` (it was gone from `unresolved_only`). No real project here has a `done`:
+IRVTam 3,072 `deleted` comments, BHDNT 10,381, NTB 1 (the test).
+
+**The bug (#357's reader).** `NoteThread.resolved` was `status == "done"` and a separate `deleted`
+(`status == "deleted"`) dropped the thread from the counts and from `threads_for`. So every thread
+resolved in Paratext vanished from Bridge's notes panel, VerseList badge and thread cards, and #358's
+"Resolved in Paratext" and today's "Mark resolved in Bridge" could never appear on a real project.
+
+**Fix.** `resolved` is `status in ("done", "deleted")`; the `deleted` property, its filter and
+`threads_for(include_deleted=)` are gone (a resolved thread is listed, shown resolved, and hidden only
+where resolved ones already are). The one click names the last `done`/`deleted` comment; both panels
+label either as "resolved". The notes cache holds comments, not folded threads, so no rebuild is
+needed. Real projects after the fix: IRVTam 3,044 of 19,743 threads resolved, BHDNT 10,362 of 10,479,
+NTB 1 of 5 (`565d540e`). Tests: the reader, notes-RPC and outbox tests now use `deleted`, as Paratext
+writes it.
+
+**Also found, not fixed (proposed as an issue on #358).** The outbox calls `create_note` with no
+`before_context`/`after_context` (`paratext_outbox.py:279`). When the selected text occurs twice in
+the verse (in NTB PSA 1:1 the first word repeats in the footnote) the plugin refuses, so such a note
+stays queued with "occurs more than once" for ever.
+
+**Not run yet:** the second half of part 3 (Paratext closed, queue from Bridge, restart, one send with
+no duplicate; M17/M20). QA matrix A26 and M18 updated.
+
+**Gates.** `pytest -n auto -k "paratext or notes"`: 157 passed. Vitest Paratext components 17 passed;
+`npm run check` 0/0.

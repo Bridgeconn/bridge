@@ -178,6 +178,8 @@ _READ = (
     "paratext.linkStatus", "paratext.refresh", "paratext.bookNames",
     # #357: the linked project's Project Notes, read-only.
     "paratext.notesForChapter", "paratext.notesForVerse", "paratext.noteThread",
+    # #358: this device's outbox and the book's thread links, read-only.
+    "paratext.outbox", "paratext.threadsFor",
     "navigation.status", "navigation.poll", "navigation.bridgeChanged", "navigation.resolve",
     "users.list", "users.setCurrent",
     "assignments.list",
@@ -217,9 +219,13 @@ _WRITE = (
     "correction.verifyApplication", "correction.acknowledgeCorrected",
     "semanticReview.decideLocation", "semanticReview.decideMeaning",
     "issueResolution.save", "issueResolution.queueParatext", "issueResolution.retryParatext",
+    "issueResolution.resolveFromParatext",
     "paratext.setReference", "paratext.installConnector", "logos.setReference", "settings.set",
     # #356: rewrites the link in every sibling's collection.json.
     "paratext.relink",
+    # #358: Paratext write-back. Any Bridge write role may post (decision 4):
+    # a note, a reply, a resolve, a link to an existing thread, a send now.
+    "paratext.flushOutbox", "paratext.replyThread", "paratext.resolveThread", "paratext.linkThread",
 )
 
 _MANAGE_PROJECTS = (

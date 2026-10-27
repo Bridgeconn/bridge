@@ -118,20 +118,22 @@
 </aside>
 
 <style>
-  .reference-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--surface-2); }
+  /* #379 item 6: the body is --surface at --fs-xs, its content 12px from the
+     edge and 10px under the bar (the list's 4px plus each row's 6px 8px). */
+  .reference-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--surface); font-size: var(--fs-xs); }
   .follow { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
-  .note { margin: 10px; font-size: var(--fs-xs); color: var(--text-3); }
+  .note { margin: 10px 12px; font-size: var(--fs-xs); color: var(--text-3); }
   .error { color: var(--danger); }
-  .settings { margin: 0 10px; font: inherit; font-size: var(--fs-xs); color: var(--accent); background: none;
+  .settings { margin: 0 12px; font: inherit; font-size: var(--fs-xs); color: var(--accent); background: none;
     border: 0; padding: 0; text-decoration: underline; cursor: pointer; text-align: left; }
   .settings.secondary { margin-top: 6px; color: var(--text-3); }
   .change { font: inherit; font-size: var(--fs-2xs); padding: 2px 8px; border: 1px solid var(--border-strong);
     border-radius: 6px; background: var(--surface); color: var(--text-2); cursor: pointer; white-space: nowrap; }
   .change:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
-  ol { list-style: none; margin: 0; padding: 6px; overflow-y: auto; flex: 1; }
+  ol { list-style: none; margin: 0; padding: 4px; overflow-y: auto; flex: 1; }
   li button { display: flex; gap: 8px; width: 100%; text-align: left; padding: 6px 8px; border: 0; border-radius: 6px;
     background: transparent; color: var(--text); cursor: pointer; font: inherit; }
-  li button:hover { background: var(--surface); }
+  li button:hover { background: var(--surface-2); }
   li.current button { background: var(--accent-bg); box-shadow: inset 3px 0 0 var(--accent); }
   .num { font-size: var(--fs-2xs); font-weight: 700; color: var(--text-3); min-width: 20px; padding-top: 2px; }
   .text { font-family: var(--font-target); font-size: calc(var(--fs-md) * var(--verse-scale, 1)); line-height: 1.7; }

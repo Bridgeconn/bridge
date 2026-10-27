@@ -91,8 +91,11 @@ export const historyCountByVerse = writable<Record<string, number>>({});
  *  by verseKey() on Paratext's verse number; loaded a chapter at a time by
  *  paratextNotes.ts. */
 export const paratextNoteCountsByVerse = writable<Record<string, { open: number; resolved: number }>>({});
-// The Language QA mark F8 / Shift+F8 moved to (the panel), ringed in the text.
-export const activeLanguageQaFindingId = writable<string | null>(null);
+// The finding ringed in the verse text (#402): where F8 / Shift+F8 moved to,
+// the Language QA row or Review panel card last clicked, or the mark itself.
+// Any finding id the text draws (`data-finding-ids`), not only Language QA's.
+// A plain row click clears it. Set through findingFocus.ts's revealFinding.
+export const focusedFindingId = writable<string | null>(null);
 
 /** #383: a tab the Review panel should show next, asked for from outside it
  * (the verse row's open-issue pill). The panel reads it once and clears it. */
@@ -168,7 +171,7 @@ export function resetBookState(): void {
   flagsByVerse.set({});
   historyCountByVerse.set({});
   paratextNoteCountsByVerse.set({});
-  activeLanguageQaFindingId.set(null);
+  focusedFindingId.set(null);
   loadedChapters.set({});
   selectedVerse.set(null);
   selectedVerseSet.set([]);

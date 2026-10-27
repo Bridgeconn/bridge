@@ -43,6 +43,10 @@ SYNCED_TABLES: tuple[str, ...] = (
     "language_qa_learned_fixes",
     "project_state",
     "ai_review_results",
+    # #358: a record's link to its Paratext thread is the team's; the outbox
+    # that made it is this device's and stays out (a hub carrying it would
+    # send the note again from another PC).
+    "paratext_links",
 )
 
 NOT_SYNCED_TABLES: tuple[str, ...] = tuple(t for t in MUTABLE_TABLES if t not in SYNCED_TABLES)

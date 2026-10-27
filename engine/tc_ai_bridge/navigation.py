@@ -21,6 +21,30 @@ def normalize_reference(reference: str) -> str:
     return f'{book} {int(chapter)}:{verse.lower() if verse[-1:].isalpha() else int(verse)}'
 
 
+def project_mismatch_message(expected: dict[str, Any], active: dict[str, Any]) -> str:
+    """#347: the one sentence that names both projects when the Paratext project
+    the connector reports is not the one the open book was imported from."""
+    def label(name: str, project_id: str) -> str:
+        name = str(name or '').strip()
+        short = str(project_id or '').strip()[:8]
+        if name and short:
+            return f'{name} ({short}…)'
+        return name or short or 'an unknown project'
+    active_label = label(str(active.get('project_name') or ''), str(active.get('project_id') or ''))
+    expected_label = label(str(expected.get('name') or ''), str(expected.get('id') or ''))
+    return (f'The active Paratext project, {active_label}, does not match {expected_label}, the project '
+            'this book was imported from. Bridge neither follows nor sends navigation, and keeps notes '
+            'queued, until that project is active in Paratext.')
+
+
+def project_mismatch(expected_id: str, state: dict[str, Any]) -> bool:
+    """True when the connector names a project and it is not ``expected_id``.
+    A connector that reports no project id cannot be checked (fail open)."""
+    active = str(state.get('project_id') or '').strip()
+    wanted = str(expected_id or '').strip()
+    return bool(active and wanted and active.casefold() != wanted.casefold())
+
+
 @dataclass(frozen=True)
 class NavigationEvent:
     reference: str
@@ -236,8 +260,18 @@ class NavigationSyncCoordinator:
         ownership: NavigationOwnership | None = None,
         poll_interval_seconds: float = 0.8,
         clock: Callable[[], float] = time.monotonic,
+        paratext_expected: Callable[[], dict[str, Any]] | None = None,
+        after_paratext_probe: Callable[[], None] | None = None,
     ) -> None:
         self._clients = {'paratext': paratext_client, 'logos': logos_client}
+        # #347: ``{'id', 'name'}`` of the Paratext project the open book was
+        # imported from (its link Guid, #356), or {} when no linked book is
+        # open. Read on every probe; never the project Paratext has active.
+        self._paratext_expected = paratext_expected or (lambda: {})
+        # #358: the outbox flusher rides this probe's thread: Paratext just
+        # answered, so it is the moment a queued note can go. Called outside
+        # the lock; it must never raise into the probe.
+        self._after_paratext_probe = after_paratext_probe
         self._ownership = ownership or NavigationOwnership()
         self._poll_interval = max(0.1, float(poll_interval_seconds))
         self._clock = clock
@@ -391,6 +425,21 @@ class NavigationSyncCoordinator:
                     outbound = self._outbound.pop(target, None)
                 try:
                     client = self._clients[target]()
+                    expected = dict(self._paratext_expected() or {}) if target == 'paratext' else {}
+                    expected_id = str(expected.get('id') or '')
+                    raw_state: dict[str, Any] | None = None
+                    if outbound and expected_id:
+                        # #347: never push Bridge's verse into a different Paratext
+                        # project. One extra get_state, only when there is something
+                        # to send; a held destination is sent once the link matches.
+                        raw_state = self._state_dict(client.get_state())
+                        if project_mismatch(expected_id, raw_state):
+                            with self._lock:
+                                if self._enabled[target] and not self._closed:
+                                    self._outbound.setdefault(target, outbound)
+                            outbound = None
+                        else:
+                            raw_state = None
                     if outbound:
                         reference, request_id = outbound
                         with self._lock:
@@ -399,23 +448,35 @@ class NavigationSyncCoordinator:
                             client.set_reference(reference, request_id)
                         else:
                             client.set_reference(reference, origin_id=request_id)
-                    raw_state = self._state_dict(client.get_state())
+                    if raw_state is None:
+                        raw_state = self._state_dict(client.get_state())
+                    mismatch = project_mismatch(expected_id, raw_state)
                     raw_state.update({
                         'enabled': True,
                         'checking': False,
                         'error': '',
                         'checkedAt': time.time(),
+                        'expectedProjectId': expected_id,
+                        'expectedProjectName': str(expected.get('name') or ''),
+                        'projectMismatch': mismatch,
+                        'mismatchMessage': project_mismatch_message(expected, raw_state) if mismatch else '',
                     })
                     with self._lock:
                         if self._closed or not self._enabled[target] or not self._ownership.owned:
                             continue
                         self._target_state[target] = raw_state
-                        if self._pending is None:
+                        # A verse shown in the wrong project is not navigation to follow (#347).
+                        if self._pending is None and not mismatch:
                             event = self._broker.new_event(
                                 str(raw_state.get('reference') or ''), target, context=context,
                             )
                             if event:
                                 self._pending = event
+                    if target == 'paratext' and self._after_paratext_probe is not None:
+                        try:
+                            self._after_paratext_probe()
+                        except Exception:  # noqa: BLE001 -- the flusher's failure is its own
+                            pass
                 except Exception as exc:
                     with self._lock:
                         if outbound and self._enabled[target] and not self._closed:

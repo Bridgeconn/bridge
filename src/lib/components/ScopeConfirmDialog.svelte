@@ -14,6 +14,18 @@
   $: writable = state?.found?.occurrences.filter((o) => o.new !== null) ?? [];
   $: verses = new Set(writable.map((o) => `${o.chapter}:${o.verse}`)).size;
   $: scopeWord = state?.scope === "book" ? "this book" : "this chapter";
+  $: title = state
+    ? state.suggestion === ""
+      ? `Remove “${visible(state.finding.originalText)}” in ${scopeWord}?`
+      : `Change “${visible(state.finding.originalText)}” to “${visible(state.suggestion)}” in ${scopeWord}?`
+    : "";
+
+  /** A space is invisible between quotes, and so is an empty replacement
+   * (spacing.extra removes a space at the verse edge, #403): show ␣ for each
+   * space so the reviewer can see what the change is. */
+  function visible(value: string | null): string {
+    return (value ?? "").replace(/ /g, "␣");
+  }
 
   onMount(() => {
     previouslyFocused = document.activeElement;
@@ -41,7 +53,7 @@
 {#if state}
   <div class="overlay" role="presentation">
     <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="scope-title" aria-describedby="scope-summary">
-      <h2 id="scope-title">Change “{state.finding.originalText}” to “{state.suggestion}” in {scopeWord}?</h2>
+      <h2 id="scope-title">{title}</h2>
       {#if !state.found && !state.error}
         <p id="scope-summary" class="muted">Finding every place…</p>
       {:else if state.found}
@@ -54,7 +66,7 @@
             {@const around = snippet(o)}
             <li>
               <span class="ref">{state.finding.book.toUpperCase()} {o.chapter}:{o.verse}</span>
-              <span class="text">…{around.before}<del>{o.old}</del><ins>{o.new}</ins>{around.after}…</span>
+              <span class="text">…{around.before}<del>{visible(o.old)}</del>{#if o.new}<ins>{visible(o.new)}</ins>{/if}{around.after}…</span>
             </li>
           {/each}
         </ol>
@@ -65,7 +77,8 @@
         <button bind:this={cancelButton} on:click={cancelScopeDialog} disabled={state.busy && Boolean(state.found)}>Cancel</button>
         <button class="primary" on:click={confirmScopeDialog}
           disabled={state.busy || !state.found || writable.length === 0}>
-          {state.busy && state.found ? "Changing…" : `Change ${verses} verse${verses === 1 ? "" : "s"}`}
+          {#if !state.found}{state.error ? "Nothing to change" : "Finding…"}
+          {:else}{state.busy ? "Changing…" : `Change ${verses} verse${verses === 1 ? "" : "s"}`}{/if}
         </button>
       </div>
     </div>

@@ -11,6 +11,7 @@
     NativeCheckListResponse, NativeCheckReview,
   } from "../types/finding";
   import { exactTextRanges } from "../utils/highlight";
+  import ParatextThreadPanel from "./ParatextThreadPanel.svelte";
 
   export let chapter: string;
   export let verse: string;
@@ -40,6 +41,9 @@
   let resolutionCorrection = "";
   let resolutionBusy = false;
   let resolutionError = "";
+  // #358 decision 2: AI-derived text goes into Paratext only when ticked.
+  let resolutionIncludeProposal = false;
+  let threadsRefresh = 0;
   let connectorState: DesktopConnectorState | null = null;
   let connectorMessage = "";
 
@@ -91,8 +95,12 @@
     return aiReviews.find((item) => item.tool === check.tool && item.check_id === check.checkId);
   }
 
-  function resolutionFor(check: NativeCheckReview): IssueResolutionRecord | undefined {
-    return resolutions.find((item) => (
+  // The template passes `resolutions` so a change to it alone re-renders the
+  // card: a dependency read only inside the function is invisible to Svelte.
+  function resolutionFor(
+    check: NativeCheckReview, records: IssueResolutionRecord[] = resolutions,
+  ): IssueResolutionRecord | undefined {
+    return records.find((item) => (
       item.check.tool === check.tool
       && item.check.groupId === check.groupId
       && item.check.checkId === check.checkId
@@ -134,21 +142,36 @@
     resolutionReviewerNote = existing?.reviewerNote || "";
     resolutionCorrection = existing?.proposedCorrection || aiReview?.suggested_correction || "";
     resolutionError = "";
+    resolutionIncludeProposal = false;
     connectorState = null;
     connectorMessage = "Checking the local Paratext connection…";
+    // #347/#358: the destination is the project this book was imported from,
+    // whatever Paratext has active; the connector only has to be running.
+    let destination = "";
+    try {
+      const link = await bridge.paratextLinkStatus();
+      destination = link.state === "notParatext" ? "" : `${link.name || "the linked Paratext project"}${link.guid ? ` · ${link.guid.slice(0, 8)}…` : ""}`;
+    } catch {
+      destination = "";
+    }
+    if (resolutionKey !== identity(check)) return;
+    if (!destination) {
+      connectorMessage = "This book was not imported from a Paratext project, so the note will wait in the outbox: Bridge cannot tell which project it belongs to.";
+      return;
+    }
     try {
       const state = await bridge.paratextGetState();
       if (resolutionKey !== identity(check)) return;
       connectorState = state;
-      const hasProjectIdentity = Boolean(state.connected && state.project_id?.trim());
-      connectorMessage = hasProjectIdentity
-        ? `Destination: ${state.project_name || "Paratext project"} · ${state.project_id}`
-        : state.connected
-          ? "Connected to Paratext, but no active Scripture project was detected. Open and focus the destination project in Paratext; this handoff will remain safely queued."
-          : "Paratext is not connected; this handoff will remain safely queued.";
+      const writes = (state.capabilities ?? []).includes("create_note");
+      connectorMessage = !state.connected
+        ? `Goes to ${destination}. Paratext is not connected; the note waits in the outbox until it is.`
+        : writes
+          ? `Goes to ${destination}, as the logged-in Paratext user.`
+          : `Goes to ${destination}. The Paratext connector ${state.plugin_version || ""} is older than 0.8.0; update it in Settings › Connections (Paratext closed). The note waits until then.`;
     } catch (error) {
       if (resolutionKey !== identity(check)) return;
-      connectorMessage = `Paratext is unavailable; this handoff will remain safely queued. ${error instanceof Error ? error.message : String(error)}`;
+      connectorMessage = `Goes to ${destination}. Paratext is unavailable; the note waits in the outbox. ${error instanceof Error ? error.message : String(error)}`;
     }
   }
 
@@ -173,9 +196,12 @@
         proposedCorrection: resolutionCorrection.trim(),
         evidence: aiReview?.evidence_used ?? [],
       });
+      // #347: the destination is the project this book was imported from (the
+      // engine reads its link); the project Paratext has active is not sent.
       const result = await bridge.queueIssueResolutionForParatext(
-        chapter, verse, record.resolutionId, String(connectorState?.project_id ?? ""),
+        chapter, verse, record.resolutionId, resolutionIncludeProposal,
       );
+      threadsRefresh += 1;
       // The queue call returns the record after the live handoff attempt. Use
       // that authoritative snapshot so a slower list request cannot repaint a
       // successfully sent item as queued.
@@ -191,6 +217,15 @@
     }
   }
 
+  /** #358 decision 3: Paratext resolved the thread; the reviewer's click
+   *  resolves the issue in Bridge too. Errors surface in the thread panel. */
+  async function resolveFromParatext(record: IssueResolutionRecord, threadId: string): Promise<void> {
+    const result = await bridge.resolveIssueResolutionFromParatext(chapter, verse, record.resolutionId, threadId);
+    replaceResolution(result.record);
+    mutationNotice = "Issue marked resolved, following Paratext.";
+    onStateChanged();
+  }
+
   async function retryResolution(record: IssueResolutionRecord): Promise<void> {
     if (resolutionBusy) return;
     resolutionBusy = true;
@@ -198,6 +233,7 @@
     try {
       const result = await bridge.retryIssueResolutionParatext(chapter, verse, record.resolutionId);
       replaceResolution(result.record);
+      threadsRefresh += 1;
       mutationNotice = result.handoff.status === "sent"
         ? "Queued issue was sent to Paratext."
         : `Paratext handoff remains queued. ${result.handoff.lastError}`;
@@ -239,6 +275,11 @@
   }
 
   function resolutionLifecycleLabel(record: IssueResolutionRecord): string {
+    // The latest status change wins: a recheck after the click relabels it.
+    const lastStatusEvent = [...record.history].reverse().find((event) => "status" in event);
+    if (record.status === "resolved" && lastStatusEvent?.event === "resolved_from_paratext") {
+      return "Resolved, following Paratext";
+    }
     switch (record.recheck.status) {
       case "stale": return "Correction needs recheck";
       case "running": return "Rechecking correction";
@@ -548,7 +589,7 @@
 
   {#each checks as check (identity(check))}
     {@const aiReview = aiReviewFor(check)}
-    {@const resolution = resolutionFor(check)}
+    {@const resolution = resolutionFor(check, resolutions)}
     <article class="native-check" class:tn={check.tool === "translationNotes"} class:tw={check.tool === "translationWords"} class:invalid={check.invalidated}>
       <div class="check-heading">
         <span class="tool-dot" />
@@ -687,8 +728,12 @@
             <span>Reviewer note</span>
             <textarea bind:value={resolutionReviewerNote} rows="3" placeholder="Message for the Paratext reviewer" />
           </label>
-          <div class="connector-state" class:connected={Boolean(connectorState?.connected && connectorState?.project_id?.trim())}>{connectorMessage}</div>
-          <p class="resolution-safety">Nothing is sent silently. This explicit action saves an audit record and a Notes 1.1 copy first; unsupported or offline delivery remains retryable.</p>
+          <label class="include-proposal">
+            <input type="checkbox" bind:checked={resolutionIncludeProposal} />
+            <span>Include the proposed correction and evidence in the Paratext note</span>
+          </label>
+          <div class="connector-state" class:connected={Boolean(connectorState?.connected && (connectorState?.capabilities ?? []).includes("create_note"))}>{connectorMessage}</div>
+          <p class="resolution-safety">Nothing is sent silently. This explicit action saves the resolution and queues the note first; a note that cannot go now waits and is never sent twice.</p>
           {#if resolutionError}<p class="mutation-error">{resolutionError}</p>{/if}
           <div class="editor-actions">
             <button
@@ -717,6 +762,16 @@
             {#if ["stale", "failed", "cancelled", "reflagged", "needs_review"].includes(resolution.recheck.status)}
               <button class="small-btn" on:click={onRerunAIReview} disabled={aiReviewBusy}>Run AI recheck</button>
             {/if}
+          {/if}
+        </div>
+        <div class="resolution-threads">
+          {#if resolution}
+            <!-- #358: the linked Paratext thread(s), Paratext's replies, and Reply /
+                 Resolve in Paratext / Link existing thread. -->
+            <ParatextThreadPanel kind="issue_resolution" localId={resolution.resolutionId}
+              {chapter} {verse} refreshKey={threadsRefresh}
+              bridgeResolved={resolution.status === "resolved"}
+              onResolveHere={(threadId) => resolveFromParatext(resolution, threadId)} />
           {/if}
         </div>
         {#if resolution && resolution.recheck.status !== "not_run"}
@@ -821,6 +876,8 @@
   .connector-state { font-size: var(--fs-3xs); line-height: 1.4; padding: 6px 7px; border-radius: 5px; color: var(--warning); background: var(--warning-bg); overflow-wrap: anywhere; }
   .connector-state.connected { color: var(--success); background: var(--success-bg); }
   .resolution-safety { margin: 0; font-size: var(--fs-3xs); line-height: 1.4; color: var(--text-3); }
+  .resolution-editor .include-proposal { display: flex; align-items: center; gap: 6px; font-weight: 400; }
+  .resolution-editor .include-proposal input { width: auto; }
   .resolution-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
   .small-btn.resolution-btn { color: var(--accent); border-color: var(--accent); }
   .handoff-status { font-size: var(--fs-3xs); padding: 3px 6px; border-radius: 999px; color: var(--text-2); background: var(--surface-2); }

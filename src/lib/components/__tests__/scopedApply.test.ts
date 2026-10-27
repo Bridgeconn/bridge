@@ -104,6 +104,46 @@ describe("scoped Language QA corrections", () => {
     await waitFor(() => expect(get(scopeNotice)?.text).toMatch(/1 verse was changed after the check and left as it is/));
   });
 
+  it("shows a space as ␣ and an empty replacement as Remove, so a spacing fix is readable (#403)", async () => {
+    const edge = lqaFinding({ id: "s4", book: "gen", chapter: "1", verse: "4", originalText: " ", start: 6, end: 7,
+      ruleId: "common/spacing.extra", category: "spacing", severity: "low",
+      suggestions: [{ text: "", rank: 1, source: "rule", rationale: "Remove the space at the verse edge" }] });
+    verseTexts.update((texts) => ({ ...texts, [verseKey("1", "4")]: "वे गए। ", [verseKey("1", "2")]: "वे सताईस  दिन रहे।" }));
+    languageQaScopeFind.mockResolvedValue({
+      chapter: "1", verse: "4", findingId: "s4", scope: "book" as const, count: 2, verses: 2,
+      key: { ruleId: "common/spacing.extra", detailRule: "", originalText: " ", kind: "warning" as const },
+      occurrences: [
+        { chapter: "1", verse: "2", findingId: "s2", start: 8, end: 10, old: "  ", new: " " },
+        { chapter: "1", verse: "4", findingId: "s4", start: 6, end: 7, old: " ", new: "" },
+      ],
+    });
+    await openScopeDialog(edge, "", "book");
+    render(ScopeConfirmDialog);
+    expect(languageQaScopeFind).toHaveBeenCalledWith("/p", "1", "4", "s4", "book", "");
+    expect(screen.getByRole("dialog", { name: "Remove “␣” in this book?" })).toBeTruthy();
+    const dels = Array.from(document.querySelectorAll("del")).map((el) => el.textContent);
+    expect(dels).toEqual(["␣␣", "␣"]);
+    expect(Array.from(document.querySelectorAll("ins")).map((el) => el.textContent)).toEqual(["␣"]);
+    expect(screen.getByRole("button", { name: "Change 2 verses" })).toBeTruthy();
+  });
+
+  it("names the button for what it can do: Finding… before the places arrive, Nothing to change after a refusal", async () => {
+    let settle: (value: typeof found) => void = () => {};
+    languageQaScopeFind.mockReturnValue(new Promise((resolve) => { settle = resolve; }));
+    const opening = openScopeDialog(finding, NEW, "chapter");
+    render(ScopeConfirmDialog);
+    expect(await screen.findByRole("button", { name: "Finding…" })).toHaveProperty("disabled", true);
+    settle(found);
+    await opening;
+    expect(await screen.findByRole("button", { name: "Change 2 verses" })).toBeTruthy();
+
+    resetScopedApply();
+    languageQaScopeFind.mockRejectedValue(new Error("suggestion must be a string when given"));
+    await openScopeDialog(finding, NEW, "chapter");
+    expect(await screen.findByRole("alert")).toHaveTextContent(/must be a string/);
+    expect(screen.getByRole("button", { name: "Nothing to change" })).toHaveProperty("disabled", true);
+  });
+
   it("keeps the dialog open with the error when the engine refuses", async () => {
     languageQaScopeAccept.mockRejectedValue(new Error("That finding is not in the last Language QA pass."));
     await openScopeDialog(finding, NEW, "chapter");

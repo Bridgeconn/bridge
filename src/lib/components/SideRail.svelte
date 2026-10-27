@@ -2,7 +2,7 @@
   // The strip at the far right of the editor (Benz, 2026-10-09): one button
   // per side panel, each toggling its column, and Settings, which opens the
   // Settings dialog. Labels are text, not an icon font (CLAUDE.md gotcha 9).
-  import { revealSidePanel, sidePanels, toggleSidePanel } from "../editorPrefs";
+  import { revealSidePanel, sidePanelOrder, sidePanels, toggleSidePanel } from "../editorPrefs";
   import { foldedPanels } from "../panelFit";
   import type { SidePanelId } from "../editorPrefs";
   import { languageQaChannel } from "../languageQaInline";
@@ -24,13 +24,17 @@
   // #357: open Paratext note threads on the selected verse.
   $: ptBadge = $selectedVerse ? noteCountFor($paratextNoteCountsByVerse, $currentChapter, $selectedVerse).open : 0;
 
-  const PANELS: { id: SidePanelId; label: string; title: string }[] = [
-    { id: "review", label: "Review", title: "Review the selected verse" },
-    { id: "languageQa", label: "Language QA", title: "Language QA for the book" },
-    { id: "paratext", label: "Paratext", title: "Paratext Project Notes on the selected verse" },
-    { id: "reference", label: "Reference", title: "A reference Bible beside the text" },
-    { id: "source", label: "Source", title: "The Hebrew, Aramaic or Greek source beside the text" },
-  ];
+  // #379 item 6: the rail runs top to bottom in the order the columns run
+  // left to right, so a button and its panel line up; since #389 that order
+  // is the reviewer's (sidePanelOrder), the same store App lays the columns by.
+  const LABELS: Record<SidePanelId, { label: string; title: string }> = {
+    source: { label: "Source", title: "The Hebrew, Aramaic or Greek source beside the text" },
+    reference: { label: "Reference", title: "A reference Bible beside the text" },
+    languageQa: { label: "Language QA", title: "Language QA for the book" },
+    paratext: { label: "Paratext", title: "Paratext Project Notes on the selected verse" },
+    review: { label: "Review", title: "Review the selected verse" },
+  };
+  $: PANELS = $sidePanelOrder.map((id) => ({ id, ...LABELS[id] }));
 </script>
 
 <nav class="rail" aria-label="Side panels">

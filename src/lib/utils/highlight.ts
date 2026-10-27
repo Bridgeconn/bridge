@@ -88,6 +88,8 @@ export interface TextSegment {
   className: string | null;
   title: string;
   numbers: number[];
+  /** Character-style markers covering this piece, outer first (utils/verseStyles.ts, #213). */
+  styles?: string[];
 }
 
 /**

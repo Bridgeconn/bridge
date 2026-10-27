@@ -82,7 +82,7 @@
       <button type="button" class="refresh" on:click={refresh} disabled={refreshing} title="Read the Paratext notes files again">Refresh</button>
     {/if}
   </PanelHeader>
-  <div class="pt-body">
+  <div class="pt-scroll">
   {#if error}
     <p class="pt-msg pt-error" role="alert">{error}</p>
   {:else if !$selectedVerse}
@@ -117,7 +117,7 @@
         <ol class="pt-comments">
           {#each thread.comments as comment, i (i)}
             <li>
-              <div class="pt-meta"><strong>{comment.user}</strong> · {when(comment.date)}{comment.status === "done" ? " · resolved" : ""}</div>
+              <div class="pt-meta"><strong>{comment.user}</strong> · {when(comment.date)}{comment.status === "done" || comment.status === "deleted" ? " · resolved" : ""}</div>
               {#if comment.contents}<div class="pt-body">{comment.contents}</div>{/if}
             </li>
           {/each}
@@ -129,8 +129,9 @@
 </div>
 
 <style>
-  .pt-notes { flex: 1; min-height: 0; display: flex; flex-direction: column; font-size: var(--fs-xs); color: var(--text); }
-  .pt-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 8px 10px; }
+  /* #379 item 6: the body is --surface at --fs-xs, padded 10px 12px. */
+  .pt-notes { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--surface); font-size: var(--fs-xs); color: var(--text); }
+  .pt-scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; }
   .refresh { border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); color: var(--text);
     padding: 2px 8px; font: inherit; font-size: var(--fs-2xs); cursor: pointer; }
   .pt-msg { margin: 0; color: var(--text-2); font-size: var(--fs-2xs); line-height: 1.45; }

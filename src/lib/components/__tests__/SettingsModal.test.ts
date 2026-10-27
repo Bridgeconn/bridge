@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { get } from "svelte/store";
+import { answerConfirmation, confirmRequest } from "../../confirmAction";
 
 const { getSettings, getNavigationStatus, setSettings, engineInfo, terminologyList, terminologyRecord, housestyleList, housestyleRecord, housestyleSetState, housestyleNameSuggestions, languageQaStatus, languageQaSetPack, pickFolder, setReference, checkerGet, checkerSet, wordsList, usersList, connectorStatus, installConnector } = vi.hoisted(() => ({
   setReference: vi.fn(),
@@ -291,7 +293,7 @@ describe("SettingsModal API key removal (#319)", () => {
     setSettings.mockResolvedValue({ hasApiKey: false, reviewerMode: "basic" });
   });
 
-  afterEach(() => { vi.mocked(window.confirm).mockRestore?.(); });
+  afterEach(() => { answerConfirmation(false); });
 
   function stored(hasApiKey: boolean) {
     getSettings.mockResolvedValue({
@@ -309,12 +311,16 @@ describe("SettingsModal API key removal (#319)", () => {
 
   it("asks first, then sends only an empty apiKey and shows the no-key state", async () => {
     stored(true);
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const onClose = vi.fn();
     render(SettingsModal, { props: { initialPane: "ai", onClose } });
     await fireEvent.click(await screen.findByRole("button", { name: "Remove key" }));
 
-    expect(confirm).toHaveBeenCalledOnce();
+    // #372: an in-app question, and nothing is sent until it is answered.
+    expect(get(confirmRequest)?.title).toBe("Remove the saved API key?");
+    expect(get(confirmRequest)?.confirmLabel).toBe("Remove key");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(setSettings).not.toHaveBeenCalled();
+    answerConfirmation(true);
     await waitFor(() => expect(setSettings).toHaveBeenCalledWith({ apiKey: "" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Remove key" })).toBeNull());
     expect(screen.getByLabelText("API key")).toHaveAttribute("placeholder", "Enter your API key");
@@ -322,13 +328,25 @@ describe("SettingsModal API key removal (#319)", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("sends nothing when the confirm is declined", async () => {
+  it("sends nothing when the confirmation is declined (#372)", async () => {
     stored(true);
-    vi.spyOn(window, "confirm").mockReturnValue(false);
-    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
-    await fireEvent.click(await screen.findByRole("button", { name: "Remove key" }));
-    expect(setSettings).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Remove key" })).toBeInTheDocument();
+    // The old caller read window.confirm's return as a boolean; in the app it
+    // is a Promise, truthy, so a stub like this one went straight on. The
+    // action must never consult it now.
+    const stale = vi.spyOn(window, "confirm").mockImplementation((() => Promise.resolve(false)) as never);
+    try {
+      render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+      await fireEvent.click(await screen.findByRole("button", { name: "Remove key" }));
+      expect(get(confirmRequest)).not.toBeNull();
+      answerConfirmation(false);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(setSettings).not.toHaveBeenCalled();
+      expect(stale).not.toHaveBeenCalled();
+      expect(get(confirmRequest)).toBeNull();
+      expect(screen.getByRole("button", { name: "Remove key" })).toBeInTheDocument();
+    } finally {
+      stale.mockRestore();
+    }
   });
 });
 

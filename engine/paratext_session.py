@@ -342,6 +342,49 @@ class ParatextSession:
         thread = index.threads.get(thread_id) if index is not None else None
         return {"state": state, "thread": self._full(thread) if thread is not None else None}
 
+    # -- #358: what write-back needs from the index ------------------------------
+
+    def index_ready(self) -> bool:
+        """True only when the index matches the notes files on disk now: the
+        outbox sends nothing while a footer could be missed."""
+        if not self.linked:
+            return False
+        self.ensure_notes_index()
+        return self.notes_index_status()["state"] == INDEX_READY
+
+    def find_bridge_ref(self, message_id: str) -> dict[str, Any] | None:
+        """The thread and comment carrying ``[Bridge ref <message_id>]``, from
+        the index as it stands; None when absent or there is no index."""
+        if not message_id:
+            return None
+        with self._lock:
+            index = self._index
+        if index is None or not self.linked:
+            return None
+        needle = f"[Bridge ref {message_id}]"
+        for thread in index.threads.values():
+            for comment in thread.comments:
+                if needle in (comment.contents or ""):
+                    return {"threadId": thread.id, "user": comment.user, "date": comment.date,
+                            "resolved": thread.resolved, "verseRef": thread.verse_ref}
+        return None
+
+    def thread_key(self, thread_id: str) -> dict[str, Any] | None:
+        """What connector 0.8.0 finds a thread by -- its verse, selected text and
+        first comment -- with the book and chapter it is in. None when the
+        index has no such thread."""
+        with self._lock:
+            index = self._index
+        thread = index.threads.get(thread_id) if index is not None else None
+        if thread is None or thread.ref is None or not thread.comments:
+            return None
+        first = thread.comments[0]
+        return {
+            "book": thread.ref.book, "chapter": str(thread.ref.chapter),
+            "key": {"verse_ref": thread.verse_ref, "offset": -1, "selected_text": thread.selected_text,
+                    "first_author": first.user, "first_created": first.date},
+        }
+
     # -- linkStatus -----------------------------------------------------------
 
     def link_status(self) -> dict[str, Any]:

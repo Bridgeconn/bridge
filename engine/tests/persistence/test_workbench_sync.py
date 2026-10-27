@@ -189,7 +189,7 @@ def test_workbench_v1_to_v2_keeps_v1_rows_readable_and_the_log_immutable(tmp_pat
         conn.close()
 
     repo = WorkbenchRepository(path)
-    assert repo.schema_version() == WORKBENCH_SCHEMA_VERSION == 10
+    assert repo.schema_version() == WORKBENCH_SCHEMA_VERSION == 11
     assert json.loads(repo.get("check_cache", "c1")["payload_json"]) == {"v": 1}
     [event] = _events(repo)
     assert event["columns_json"] is None and event["event_id"] == "e1"
@@ -245,7 +245,7 @@ def test_workbench_v2_to_v3_adds_the_cross_verse_link_table_and_keeps_v2_data(tm
         conn.close()
 
     repo = WorkbenchRepository(path)
-    assert repo.schema_version() == WORKBENCH_SCHEMA_VERSION == 10
+    assert repo.schema_version() == WORKBENCH_SCHEMA_VERSION == 11
     assert json.loads(repo.get("alignment_history", "a1")["payload_json"]) == {"operation": "realign"}
     [event] = _events(repo)
     assert event["event_id"] == "e1" and json.loads(event["columns_json"]) == {"chapter": "1"}
@@ -285,7 +285,7 @@ def test_workbench_v3_to_v4_adds_the_language_qa_cache_one_row_per_chapter(tmp_p
     finally:
         conn.close()
     repo = WorkbenchRepository(path)
-    assert repo.schema_version() == WORKBENCH_SCHEMA_VERSION == 10
+    assert repo.schema_version() == WORKBENCH_SCHEMA_VERSION == 11
     assert list((tmp_path / "backups").glob("pre-workbench-v4-*"))
     _write(repo, "language_qa_cache", "c1", payload={"verses": {}}, extra_columns={"chapter": "1"})
     assert repo.get("language_qa_cache", "c1")["chapter"] == "1"
@@ -319,7 +319,7 @@ def test_workbench_v4_to_v5_rebuilds_human_decisions_keeping_every_row_and_allow
     finally:
         conn.close()
     repo = WorkbenchRepository(path)
-    assert repo.schema_version() == WORKBENCH_SCHEMA_VERSION == 10
+    assert repo.schema_version() == WORKBENCH_SCHEMA_VERSION == 11
     assert list((tmp_path / "backups").glob("pre-workbench-v5-*"))
     row = repo.get("human_decisions", "d1")
     assert (row["revision"], row["kind"], row["chapter"], row["verse"], row["key"], row["decision"],
@@ -358,7 +358,7 @@ def test_workbench_v5_to_v6_adds_the_three_editor_stores_and_keeps_v5_data(tmp_p
     finally:
         conn.close()
     repo = WorkbenchRepository(path)
-    assert repo.schema_version() == WORKBENCH_SCHEMA_VERSION == 10
+    assert repo.schema_version() == WORKBENCH_SCHEMA_VERSION == 11
     assert list((tmp_path / "backups").glob("pre-workbench-v6-*"))
     row = repo.get("human_decisions", "d1")
     assert (row["revision"], row["kind"], row["key"], row["decision"]) == (2, "housestyle", "word-in-book|r|w", "active")
@@ -373,3 +373,51 @@ def test_workbench_v5_to_v6_adds_the_three_editor_stores_and_keeps_v5_data(tmp_p
     assert repo.get("language_qa_flags", "f1")["status"] == "open"
     with pytest.raises(sqlite3.IntegrityError):
         _write(repo, "language_qa_learned_fixes", "l2", payload={"count": 1}, extra_columns=pair)
+
+
+def test_workbench_v10_to_v11_adds_the_paratext_link_and_outbox_tables_and_keeps_v10_data(tmp_path):
+    """v11 (#358) only adds tables: a v10 database comes up at v11 with a
+    backup and its rows untouched; the two new tables are ordinary mutable
+    tables (a record's link to a thread is unique per book), and the outbox
+    row's id is the message id that becomes the note's Bridge footer."""
+    from tc_ai_bridge.workbench_repository import (
+        _MIGRATION_V4, _MIGRATION_V5, _MIGRATION_V6, _MIGRATION_V7, _MIGRATION_V8, _MIGRATION_V9, _MIGRATION_V10,
+    )
+    path = tmp_path / "bridge-workbench.sqlite3"
+    conn = sqlite3.connect(str(path))
+    try:
+        conn.execute("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, schema_id TEXT NOT NULL, applied_at TEXT NOT NULL)")
+        script = "BEGIN;\n"
+        blocks = (_MIGRATION_V1, _MIGRATION_V2, _MIGRATION_V3, _MIGRATION_V4, _MIGRATION_V5, _MIGRATION_V6,
+                  _MIGRATION_V7, _MIGRATION_V8, _MIGRATION_V9, _MIGRATION_V10)
+        for version, block in enumerate(blocks, start=1):
+            script += block + f"\nINSERT INTO schema_migrations(version,schema_id,applied_at) VALUES({version},'bridge-workbench-v1','t');\n"
+        conn.executescript(script + "COMMIT;")
+        conn.execute(
+            "INSERT INTO issue_resolutions(id,project_id,book_id,revision,actor_id,device_id,created_at,updated_at,"
+            "payload_json) VALUES('r1','proj-1','tit',1,'human','dev-1','c','u','{\"status\":\"open\"}')")
+        conn.commit()
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert "paratext_links" not in tables and "paratext_outbox" not in tables
+    finally:
+        conn.close()
+    repo = WorkbenchRepository(path)
+    assert repo.schema_version() == WORKBENCH_SCHEMA_VERSION == 11
+    assert list((tmp_path / "backups").glob("pre-workbench-v11-*"))
+    assert json.loads(repo.get("issue_resolutions", "r1")["payload_json"]) == {"status": "open"}
+
+    link = {"kind": "issue_resolution", "local_id": "r1", "thread_id": "t-9", "message_id": "bridge-r1-abc",
+            "direction": "bridge_to_paratext"}
+    _write(repo, "paratext_links", "pl1", payload={"threadId": "t-9"}, extra_columns=link)
+    row = repo.get("paratext_links", "pl1")
+    assert (row["kind"], row["local_id"], row["thread_id"], row["direction"]) == (
+        "issue_resolution", "r1", "t-9", "bridge_to_paratext")
+    assert json.loads(_events(repo)[-1]["columns_json"]) == link
+    with pytest.raises(sqlite3.IntegrityError):
+        _write(repo, "paratext_links", "pl2", payload={"threadId": "t-9"}, extra_columns=link)
+
+    _write(repo, "paratext_outbox", "bridge-r1-abc", payload={"text": "Please look at this."},
+           extra_columns={"op": "create_thread", "status": "queued", "attempts": 0})
+    out = repo.get("paratext_outbox", "bridge-r1-abc")
+    assert (out["op"], out["status"], out["attempts"], out["sent_at"], out["result_key"]) == (
+        "create_thread", "queued", 0, None, None)

@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { tick } from "svelte";
 
 const { engineInfo, desktop, minimize, toggleMaximize, closeWindow, isMaximized, onResized, stopResize } = vi.hoisted(() => ({
   engineInfo: vi.fn(), desktop: vi.fn(() => false), minimize: vi.fn(), toggleMaximize: vi.fn(),
@@ -15,7 +16,7 @@ vi.mock("../../api/bridgeClient", () => ({
 }));
 
 import TopBar from "../TopBar.svelte";
-import { project, currentChapter } from "../../stores";
+import { project, currentChapter, navigationStatus } from "../../stores";
 import type { ProjectInfo } from "../../types/finding";
 
 function openBook(chapters: string[]): void {
@@ -51,6 +52,41 @@ function mount(overrides: Record<string, unknown> = {}) {
 
 const prev = () => screen.getByLabelText("Previous chapter") as HTMLButtonElement;
 const next = () => screen.getByLabelText("Next chapter") as HTMLButtonElement;
+
+// #347: a different Paratext project active shows as an error on the Sync icon,
+// with the engine's sentence naming both projects as the tooltip.
+describe("TopBar Paratext project mismatch (#347)", () => {
+  beforeEach(() => {
+    engineInfo.mockResolvedValue({ bridgeVersion: "0.9.7", companionSchemaVersion: 15 });
+    openBook(["1"]);
+    currentChapter.set("1");
+  });
+
+  it("marks the Sync icon as an error and shows the mismatch message in its instant tooltip", async () => {
+    const message = "The active Paratext project, DVT (4ae31b0d…), does not match IRVTam (c2d042a9…), the project this book was imported from. Bridge neither follows nor sends navigation, and keeps notes queued, until that project is active in Paratext.";
+    const target = { enabled: true, checking: false, connected: true, reference: "PHP 1:1", error: "", checkedAt: 1 };
+    navigationStatus.set({
+      enabled: true, ownsNavigation: true, ownerConflict: false, currentReference: "PHP 1:1", currentOrigin: "bridge",
+      candidate: null,
+      paratext: { ...target, projectMismatch: true, expectedProjectId: "c2d042a9-linked", expectedProjectName: "IRVTam", mismatchMessage: message } as never,
+      logos: { ...target, enabled: false, connected: false } as never,
+    });
+    mount();
+    const button = screen.getByRole("button", { name: /Sync/ });
+    await fireEvent.mouseEnter(button);
+    expect(screen.getByRole("tooltip")).toHaveTextContent(message);
+    expect(button).toHaveClass("sync-error");
+    expect(button).toHaveAccessibleName(/Paratext project mismatch/);
+    expect(button.querySelector(".sync-dot")).toHaveClass("connected");
+
+    // The same project again: an ordinary connected mark and the plain tooltip.
+    navigationStatus.update((state) => ({ ...state, paratext: { ...target, projectMismatch: false, mismatchMessage: "" } as never }));
+    await tick();
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Sync on · Paratext connected · Logos disconnected");
+    expect(button).not.toHaveClass("sync-error");
+    await fireEvent.mouseLeave(button);
+  });
+});
 
 describe("TopBar chapter navigation (issue #53)", () => {
   beforeEach(() => {

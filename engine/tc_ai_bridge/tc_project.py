@@ -25,7 +25,6 @@ from .workbench_repository import WorkbenchIdentity, WorkbenchRepository, natura
 from .workspace_repository import WorkspaceRepository
 import sqlite3
 from urllib.parse import quote as _url_quote
-from .paratext_notes import append_paratext_note, validate_notes_11, convert_comment_list_to_notes_11, convert_legacy_notes_11, EXTERNAL_NOTE_SOURCE
 from .alignment_reliability import structural_issues, alignment_fingerprint
 
 
@@ -138,7 +137,6 @@ class ProjectSummary:
         return f'{self.book_name} ({self.book_id}) — {self.target_language}'
 
 
-_PARATEXT_SYNC_STATE_KEY = 'paratext_live_sync_state'
 # #277: a Language QA pack's overrides file, mirrored as a project_state row
 # per pack so it travels through the hub like any other review state.
 _LANGUAGE_QA_OVERRIDES_KEY = 'languageQaOverrides:'
@@ -975,100 +973,6 @@ class TranslationCoreProject:
         return path
 
 
-    def _target_language_code(self) -> str:
-        target = self.manifest.get('target_language') if isinstance(self.manifest, dict) else None
-        if isinstance(target, dict):
-            value = target.get('id') or target.get('language_id') or target.get('identifier')
-            if value:
-                return str(value).strip()
-        for key in ('target_language_id', 'language_id', 'languageId'):
-            value = self.manifest.get(key) if isinstance(self.manifest, dict) else None
-            if value:
-                return str(value).strip()
-        return 'und'
-
-    def _legacy_paratext_notes_path(self) -> Path:
-        return self.companion_dir() / 'paratextNotes' / f'{self.book_id}.notes.xml'
-
-    def _legacy_paratext_commentlist_path(self) -> Path:
-        return self.companion_dir() / 'paratextNotes' / f'{self.book_id}.comments.xml'
-
-    def record_paratext_note(self, chapter: str | int, verse: str | int, text: str, username: str = 'AI Bridge Reviewer', selected_text: str = '', note_type: str = '', metadata: dict[str, Any] | None = None, assigned_user: str = '', reply_to_user: str = '', ext_user: str = EXTERNAL_NOTE_SOURCE, thread_id: str = '') -> Path:
-        """Record an API-ready Paratext Notes 1.1 project note.
-
-        ``username`` is stored as the best-known Paratext author hint in the companion XML. Live
-        Plugin API synchronization does not impersonate that value: Paratext itself records the
-        current logged-in Paratext user as the real Project Note author. API-ready XML export also
-        normalizes ``comment@user`` to a real detected/configured Paratext member. ``ext_user``
-        identifies the external AI origin. The target Scripture text is never modified by note
-        creation.
-        """
-        path = self.paratext_notes_path()
-        old_commentlist = self._legacy_paratext_commentlist_path()
-        old_notes = self._legacy_paratext_notes_path()
-
-        # Upgrade existing companion data once. v0.7.1 wrote CommentList exports; v0.7.0 wrote
-        # Notes 1.1. Preserve the old files and create the corrected primary Notes file.
-        if not path.exists():
-            if old_commentlist.exists():
-                convert_comment_list_to_notes_11(old_commentlist, path, ext_user=ext_user)
-            elif old_notes.exists():
-                convert_legacy_notes_11(old_notes, path, language=self._target_language_code())
-
-        tx = self.journal.begin('paratextNote', [path]); self.journal.mark_writing(tx)
-        try:
-            out, thread_id = append_paratext_note(
-                path, book_id=self.book_id, chapter=chapter, verse=verse,
-                verse_text=self.target_verse_text(chapter, verse), comment_text=text, reviewer=username,
-                selected_text=selected_text, language=self._target_language_code(), note_type=str((metadata or {}).get('paratextThreadType') or ''),
-                assigned_user=assigned_user, reply_to_user=reply_to_user, metadata=metadata, ext_user=ext_user,
-                thread_id=thread_id or None,
-            )
-            check = validate_notes_11(out)
-            self.journal.commit(tx, {'operation': 'paratextNotes11', 'threadId': thread_id, 'threads': check['threads'], 'comments': check['comments']})
-            return out
-        except Exception as e:
-            self.journal.rollback(tx, str(e)); raise
-
-    def paratext_notes_path(self) -> Path:
-        # This is a Bridge companion/export filename only. Direct Paratext synchronization uses
-        # the project GUID + Notes 1.1 API and does not depend on a guessed Paratext project file.
-        return self.companion_dir() / 'paratextNotes' / 'Notes_AI_Suggestion.xml'
-
-    def paratext_note_sync_state_path(self) -> Path:
-        return self.companion_dir() / 'paratextNotes' / 'live_sync_state.json'
-
-    def load_paratext_note_sync_state(self) -> dict[str, Any]:
-        # `paratext_note_sync_state_path()` is kept: the *notes XML* beside it
-        # stays on disk in Paratext's own format (TEAM_ARCHITECTURE ss3.4), and
-        # callers still use that directory. Only this small state record moved.
-        found = self.workbench.payloads(
-            'project_state', project_id=self.workbench_identity.project_id,
-            book_id=self.book_id, equals={'key': _PARATEXT_SYNC_STATE_KEY},
-        )
-        data = found[0] if found else None
-        if not isinstance(data, dict):
-            return {'version': 1, 'items': {}}
-        items = data.get('items')
-        if not isinstance(items, dict):
-            items = {}
-        return {'version': 1, 'items': dict(items)}
-
-    def save_paratext_note_sync_state(self, data: dict[str, Any]) -> str:
-        payload = {'version': 1, 'items': dict((data or {}).get('items') or {})}
-        identity = self.workbench_identity
-        row_id = natural_row_id(
-            identity.project_id, self.book_id, _PARATEXT_SYNC_STATE_KEY,
-        )
-        self.workbench._write(
-            'project_state', row_id,
-            project_id=identity.project_id, book_id=self.book_id, payload=payload,
-            actor_id=identity.actor_id, device_id=identity.device_id,
-            expected_revision=None,
-            extra_columns={'key': _PARATEXT_SYNC_STATE_KEY},
-        )
-        return row_id
-
     def language_qa_overrides_states(self) -> dict[str, dict[str, Any] | None]:
         """#277: each pack's overrides document as last written on any device,
         {pack: document}; None is a pack whose overrides were cleared."""
@@ -1271,6 +1175,33 @@ class TranslationCoreProject:
         history.append(copy.deepcopy(lifecycle))
         record['history'] = history[-100:]
         self._save_issue_resolution_row(record, op=str(event))
+        self._record_issue_resolution_lifecycle_audit(record, lifecycle)
+        return record
+
+    def resolve_issue_resolution_from_paratext(
+        self, chapter: str | int, verse: str | int, resolution_id: str, *,
+        thread_id: str, done_by: str, done_at: str, username: str = 'Bridge Reviewer',
+    ) -> dict[str, Any]:
+        """The reviewer's one click after a linked Paratext thread was resolved
+        there (decision 3 on #358): the resolution becomes `resolved`, and the
+        event names who clicked and which Paratext `done` it followed. The caller
+        checks the thread; nothing calls this without a human click."""
+        record = self.load_issue_resolution(chapter, verse, resolution_id)
+        previous_status = str(record.get('status') or 'open')
+        if previous_status == 'resolved':
+            raise ProjectError('This issue is already resolved in Bridge.')
+        now, _ = self._timestamp()
+        record['status'] = 'resolved'
+        record['updatedAt'] = now
+        lifecycle = {
+            'event': 'resolved_from_paratext', 'at': now, 'by': str(username or 'Bridge Reviewer'),
+            'previousStatus': previous_status, 'status': 'resolved',
+            'threadId': str(thread_id), 'paratextDoneBy': str(done_by), 'paratextDoneAt': str(done_at),
+        }
+        history = list(record.get('history') or [])
+        history.append(copy.deepcopy(lifecycle))
+        record['history'] = history[-100:]
+        self._save_issue_resolution_row(record, op='resolved_from_paratext')
         self._record_issue_resolution_lifecycle_audit(record, lifecycle)
         return record
 

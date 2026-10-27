@@ -191,9 +191,9 @@
     class="sync-status"
     class:enabled={$navigationStatus.enabled}
     on:click={onOpenConnections}
-    aria-label={$navigationStatus.enabled ? "Sync on" : "Sync off"}
-    use:tooltip={$navigationStatus.ownerConflict ? "Sync: another Bridge window owns navigation" : `Sync ${$navigationStatus.enabled ? "on" : "off"} · Paratext ${$navigationStatus.paratext.error ? "error" : $navigationStatus.paratext.connected ? "connected" : "disconnected"} · Logos ${$navigationStatus.logos.error ? "error" : $navigationStatus.logos.connected ? "connected" : "disconnected"}`}
-    class:sync-error={Boolean($navigationStatus.paratext.error || $navigationStatus.logos.error || $navigationStatus.ownerConflict)}
+    aria-label={`${$navigationStatus.enabled ? "Sync on" : "Sync off"}${$navigationStatus.paratext.projectMismatch ? " · Paratext project mismatch" : ""}`}
+    use:tooltip={$navigationStatus.ownerConflict ? "Sync: another Bridge window owns navigation" : $navigationStatus.paratext.mismatchMessage || `Sync ${$navigationStatus.enabled ? "on" : "off"} · Paratext ${$navigationStatus.paratext.error ? "error" : $navigationStatus.paratext.connected ? "connected" : "disconnected"} · Logos ${$navigationStatus.logos.error ? "error" : $navigationStatus.logos.connected ? "connected" : "disconnected"}`}
+    class:sync-error={Boolean($navigationStatus.paratext.error || $navigationStatus.paratext.projectMismatch || $navigationStatus.logos.error || $navigationStatus.ownerConflict)}
   >
     <UiIcon name="sync" />
     <span class="sync-dot" class:connected={$navigationStatus.enabled} aria-hidden="true"></span>

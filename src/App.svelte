@@ -12,6 +12,8 @@
   import ReviewPanel from "./lib/components/ReviewPanel.svelte";
   import LanguageQaPanel from "./lib/components/LanguageQaPanel.svelte";
   import ScopeConfirmDialog from "./lib/components/ScopeConfirmDialog.svelte";
+  import ConfirmDialog from "./lib/components/ConfirmDialog.svelte";
+  import { confirmRequest } from "./lib/confirmAction";
   import ScopeNotice from "./lib/components/ScopeNotice.svelte";
   import { resetScopedApply, scopeDialog } from "./lib/scopedApply";
   import { startFlagLoader } from "./lib/flags";
@@ -19,7 +21,7 @@
   import SourceTextPanel from "./lib/components/SourceTextPanel.svelte";
   import ParatextNotesPanel from "./lib/components/ParatextNotesPanel.svelte";
   import FindingContextMenu from "./lib/components/FindingContextMenu.svelte";
-  import { TEXT_SCALES, bumpTextScale, rawView, sidePanels, textScale, toggleSidePanel } from "./lib/editorPrefs";
+  import { TEXT_SCALES, bumpTextScale, rawView, sidePanelOrder, sidePanels, textScale, toggleSidePanel } from "./lib/editorPrefs";
   import { verseMin } from "./lib/panelFit";
   import SidePanel from "./lib/components/SidePanel.svelte";
   import SideRail from "./lib/components/SideRail.svelte";
@@ -1315,6 +1317,17 @@
   // `$:` statement only for the names written in it, and the old
   // `currentBridgeReference()` call never re-ran, so Bridge never published a
   // verse change to Paratext or Logos (#110).
+  // #347: when Paratext has a different project active, the engine stops
+  // following and sending navigation and says so in the status; show that
+  // sentence once each time it appears (the top bar keeps it as a tooltip).
+  let lastMismatchMessage = "";
+  $: {
+    const message = $navigationStatus.paratext.mismatchMessage ?? "";
+    if (message !== lastMismatchMessage) {
+      lastMismatchMessage = message;
+      if (message) showNavigationNotice(message);
+    }
+  }
   $: navigationReference = bridgeReference($project, $currentChapter, $selectedVerse);
   $: if (!navigationReference) {
     lastNavigationReference = "";
@@ -1596,27 +1609,38 @@
           <div class="editor-col" style:min-width="{$verseMin}px">
             <VerseList onSelect={selectVerse} onNavigate={navigateToReportRow} />
           </div>
-          {#if $project}
-            <SidePanel id="source" label="Source text">
-              {#key $project.path}<SourceTextPanel onSelectVerse={selectVerse} />{/key}
-            </SidePanel>
-            <SidePanel id="reference" label="Reference">
-              {#key $project.path}
-                <ReferencePanel onOpenSettings={() => openSettings("languageQa")} onSelectVerse={selectVerse} />
-              {/key}
-            </SidePanel>
-            <SidePanel id="languageQa" label="Language QA" keepMounted>
-              {#key $project.path}
-                <LanguageQaPanel projectPath={$project.path} onNavigate={navigateToReportRow} docked />
-              {/key}
-            </SidePanel>
-            <SidePanel id="paratext" label="Paratext notes">
-              {#key $project.path}<ParatextNotesPanel />{/key}
-            </SidePanel>
-          {/if}
-          <SidePanel id="review" label="Review" keepMounted>
-            <ReviewPanel onNavigate={navigateToReportRow} />
-          </SidePanel>
+          <!-- #389: the columns run in the reviewer's order (sidePanelOrder,
+               ◂ ▸ in each panel's bar); the rail lists them the same way.
+               Review stays mounted with no project, as before. -->
+          {#each $sidePanelOrder as panelId (panelId)}
+            {#if panelId === "review"}
+              <SidePanel id="review" label="Review" keepMounted>
+                <ReviewPanel onNavigate={navigateToReportRow} />
+              </SidePanel>
+            {:else if $project}
+              {#if panelId === "source"}
+                <SidePanel id="source" label="Source text">
+                  {#key $project.path}<SourceTextPanel onSelectVerse={selectVerse} />{/key}
+                </SidePanel>
+              {:else if panelId === "reference"}
+                <SidePanel id="reference" label="Reference">
+                  {#key $project.path}
+                    <ReferencePanel onOpenSettings={() => openSettings("languageQa")} onSelectVerse={selectVerse} />
+                  {/key}
+                </SidePanel>
+              {:else if panelId === "languageQa"}
+                <SidePanel id="languageQa" label="Language QA" keepMounted>
+                  {#key $project.path}
+                    <LanguageQaPanel projectPath={$project.path} onNavigate={navigateToReportRow} docked />
+                  {/key}
+                </SidePanel>
+              {:else if panelId === "paratext"}
+                <SidePanel id="paratext" label="Paratext notes">
+                  {#key $project.path}<ParatextNotesPanel />{/key}
+                </SidePanel>
+              {/if}
+            {/if}
+          {/each}
           <SideRail onOpenSettings={() => openSettings("ai")} />
         </div>
       </div>
@@ -1687,6 +1711,10 @@
   {#if $settingsOpen}
     <SettingsModal initialPane={settingsInitialPane} onClose={() => settingsOpen.set(false)} />
   {/if}
+
+  <!-- #372: the in-app confirmation (chapter/book AI review, Remove key).
+       Outside the project block: Settings can ask with no project open. -->
+  {#if $confirmRequest}<ConfirmDialog />{/if}
 
   {#if $diagnosticsOpen}
     <DiagnosticsPanel onClose={() => diagnosticsOpen.set(false)} />

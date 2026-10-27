@@ -8,7 +8,8 @@ import type {
 import type { CollectionQaSnapshot } from "../types/collectionQa";
 import type {
   ParatextBookNames, ParatextLinkStatus, ParatextNoteKind, ParatextNoteThread, ParatextNotesForChapter,
-  ParatextNotesForVerse, ParatextNotesIndexState,
+  ParatextNotesForVerse, ParatextNotesIndexState, ParatextOutboxItem, ParatextThreadLink, ParatextThreadsFor,
+  ParatextWriteKind,
 } from "../types/paratext";
 import type {
   HouseStyleEntry, HouseStyleEntryInput, HouseStyleListResponse,
@@ -369,6 +370,7 @@ export type EngineMethod =
   | "issueResolution.list"
   | "issueResolution.queueParatext"
   | "issueResolution.retryParatext"
+  | "issueResolution.resolveFromParatext"
   | "issueResolution.save"
   | "lexicon.getEntry"
   | "navigation.bridgeChanged"
@@ -385,6 +387,12 @@ export type EngineMethod =
   | "paratext.notesForChapter"
   | "paratext.notesForVerse"
   | "paratext.noteThread"
+  | "paratext.threadsFor"
+  | "paratext.replyThread"
+  | "paratext.resolveThread"
+  | "paratext.linkThread"
+  | "paratext.outbox"
+  | "paratext.flushOutbox"
   | "ping"
   | "project.delete"
   | "project.forget"
@@ -1086,18 +1094,27 @@ export const bridge = {
     });
   },
 
+  /** The engine sends the note to the Paratext project the book was imported
+   *  from (#347); the caller names no project. The proposed correction and
+   *  evidence go in only with `includeProposal` (#358, decision 2). */
   queueIssueResolutionForParatext(
-    chapter: string, verse: string, resolutionId: string, expectedProjectId = "",
+    chapter: string, verse: string, resolutionId: string, includeProposal = false,
   ): Promise<IssueResolutionHandoffResult> {
-    return call("issueResolution.queueParatext", {
-      chapter, verse, resolutionId, expectedProjectId,
-    });
+    return call("issueResolution.queueParatext", { chapter, verse, resolutionId, includeProposal });
   },
 
   retryIssueResolutionParatext(
     chapter: string, verse: string, resolutionId: string,
   ): Promise<IssueResolutionHandoffResult> {
     return call("issueResolution.retryParatext", { chapter, verse, resolutionId });
+  },
+
+  /** #358 decision 3: the reviewer's one click after a linked thread was
+   *  resolved in Paratext. The engine refuses unless Paratext shows it done. */
+  resolveIssueResolutionFromParatext(
+    chapter: string, verse: string, resolutionId: string, threadId: string,
+  ): Promise<{ record: IssueResolutionRecord }> {
+    return call("issueResolution.resolveFromParatext", { chapter, verse, resolutionId, threadId });
   },
 
   getAlignment(chapter: string, verse: string): Promise<AlignmentContext> {
@@ -1366,6 +1383,26 @@ export const bridge = {
 
   paratextNoteThread(threadId: string): Promise<{ state: ParatextNotesIndexState; thread: ParatextNoteThread | null }> {
     return call("paratext.noteThread", { threadId });
+  },
+
+  // #358: Paratext write-back through the outbox (connector 0.8.0).
+  paratextThreadsFor(kind: ParatextWriteKind, localId: string): Promise<ParatextThreadsFor> {
+    return call("paratext.threadsFor", { kind, localId });
+  },
+
+  paratextReplyThread(threadId: string, text: string, kind: ParatextWriteKind, localId: string):
+    Promise<{ item: ParatextOutboxItem | null }> {
+    return call("paratext.replyThread", { threadId, text, kind, localId });
+  },
+
+  paratextResolveThread(threadId: string, kind: ParatextWriteKind, localId: string):
+    Promise<{ item: ParatextOutboxItem | null }> {
+    return call("paratext.resolveThread", { threadId, kind, localId });
+  },
+
+  paratextLinkThread(threadId: string, kind: ParatextWriteKind, localId: string):
+    Promise<{ link: Omit<ParatextThreadLink, "thread"> }> {
+    return call("paratext.linkThread", { threadId, kind, localId });
   },
 
   navigationStatus(context?: string): Promise<NavigationSyncState> {

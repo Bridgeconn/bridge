@@ -7,7 +7,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { get } from "svelte/store";
 import type { LanguageQaFinding, LanguageQaStatus } from "../../types/languageQa";
 import {
-  activeLanguageQaFindingId, chapterVerseNums, currentChapter, languageQaFindingsByVerse, project, selectedVerse, verseKey,
+  focusedFindingId, chapterVerseNums, currentChapter, languageQaFindingsByVerse, project, selectedVerse, verseKey,
 } from "../../stores";
 import { lqaFinding } from "./languageQaFixture";
 
@@ -510,7 +510,7 @@ describe("Language QA", () => {
 describe("Language QA panel: kinds, scope and F8", () => {
   afterEach(() => {
     project.set(null);
-    activeLanguageQaFindingId.set(null);
+    focusedFindingId.set(null);
     languageQaFindingsByVerse.set({});
     chapterVerseNums.set({});
     selectedVerse.set(null);
@@ -583,22 +583,104 @@ describe("Language QA panel: kinds, scope and F8", () => {
     languageQaFindingsByVerse.set({ [verseKey("1", "1")]: [late, early], [verseKey("1", "2")]: [second] });
     const onNavigate = await openPanel();
     await fireEvent.keyDown(window, { key: "F8" });
-    expect(get(activeLanguageQaFindingId)).toBe("a");
+    expect(get(focusedFindingId)).toBe("a");
     expect(get(selectedVerse)).toBe("1");
     expect(screen.getByRole("status")).toHaveTextContent("Finding 1 of 3 in chapter 1: early");
     await fireEvent.keyDown(window, { key: "F8" });
     await fireEvent.keyDown(window, { key: "F8" });
-    expect(get(activeLanguageQaFindingId)).toBe("c");
+    expect(get(focusedFindingId)).toBe("c");
     await fireEvent.keyDown(window, { key: "F8", shiftKey: true });
-    expect(get(activeLanguageQaFindingId)).toBe("b");
+    expect(get(focusedFindingId)).toBe("b");
     const input = document.createElement("input");
     document.body.appendChild(input);
     await fireEvent.keyDown(input, { key: "F8" });
-    expect(get(activeLanguageQaFindingId)).toBe("b");
+    expect(get(focusedFindingId)).toBe("b");
     input.remove();
     await fireEvent.keyDown(window, { key: "F8" });
     await fireEvent.keyDown(window, { key: "F8" });
     expect(onNavigate).toHaveBeenCalledWith("php", "2", "");
+  });
+
+  /** A mark where VerseList would draw it, with a scroll spy. */
+  function plantMark(id: string): ReturnType<typeof vi.fn> {
+    const mark = document.createElement("mark");
+    mark.setAttribute("data-finding-ids", id);
+    const scrollIntoView = vi.fn();
+    (mark as unknown as { scrollIntoView: unknown }).scrollIntoView = scrollIntoView;
+    document.body.appendChild(mark);
+    return scrollIntoView;
+  }
+
+  it("a row's reference opens the verse, then rings and centres the finding's mark (#402)", async () => {
+    const scrollIntoView = plantMark("f1");
+    const onNavigate = vi.fn(async () => {
+      // The ring is set before the verse opens, so the verse list knows not
+      // to pull the verse to the top under the mark's own scroll.
+      expect(get(focusedFindingId)).toBe("f1");
+    });
+    await openPanel(onNavigate);
+    await fireEvent.click(screen.getByRole("button", { name: "PHP 2:3-4" }));
+    expect(onNavigate).toHaveBeenCalledWith("php", "2", "3-4");
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ block: "center" }));
+    expect(document.querySelector("mark.reveal-flash")).not.toBeNull();
+  });
+
+  it("a heading finding's reference only opens the verse (#402)", async () => {
+    statusCall.mockImplementation(async (_path, _offset, limit) => snapshot({ findings: limit ? [
+      lqaFinding({ id: "h1", chapter: "2", verse: "1", rule: "unicode.corruption", start: 0, end: 1, originalText: "�",
+        message: "Check source encoding.", suggestedReplacement: null, context: "heading", contextText: "A title" }),
+    ] : [] }));
+    const scrollIntoView = plantMark("h1");
+    const onNavigate = await openPanel();
+    await fireEvent.click(screen.getByRole("button", { name: "PHP 2:1" }));
+    expect(onNavigate).toHaveBeenCalledWith("php", "2", "1");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(get(focusedFindingId)).toBeNull();
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+});
+
+// #389 step 1: the floating box on the other screens closes by its left
+// edge exactly as a docked column does, through the one shared handle.
+describe("Language QA floating box closes by drag (#389)", () => {
+  afterEach(() => {
+    project.set(null);
+  });
+
+  /** jsdom has no PointerEvent: a MouseEvent carries the pointer event's name and fields. */
+  async function pointer(target: HTMLElement, type: string, clientX = 0): Promise<void> {
+    target.dispatchEvent(new MouseEvent(type, { bubbles: true, button: 0, clientX }));
+    await tick();
+  }
+
+  it("dims and says 'Release to close' past the threshold, and release closes the box; a short drag only narrows it", async () => {
+    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
+    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
+    const results = () => document.getElementById("language-qa-results") as HTMLElement | null;
+    expect(results()).not.toBeNull();
+    const handle = screen.getByRole("separator", { name: /Resize the Language QA panel/ });
+    // 560 wide; 100px to the right is 460, above the 320 minimum: still open, narrower.
+    await pointer(handle, "pointerdown", 500);
+    await pointer(handle, "pointermove", 600);
+    expect(results()?.style.width).toBe("460px");
+    expect(screen.queryByText("Release to close")).toBeNull();
+    await pointer(handle, "pointerup");
+    expect(results()?.style.width).toBe("460px");
+    // Past min - 60 (260): the hint shows and the frame dims; release closes.
+    await pointer(handle, "pointerdown", 500);
+    await pointer(handle, "pointermove", 800);
+    expect(screen.getByText("Release to close")).toBeInTheDocument();
+    expect(document.querySelector(".float-frame.closing")).not.toBeNull();
+    await pointer(handle, "pointerup");
+    expect(results()).toBeNull();
+    expect(screen.getByRole("button", { name: /Language QA · completed/ }).getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("the docked column has no handle of its own (SidePanel's is the one) and no ◂ ▸ in the floating bar", async () => {
+    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn(), docked: true });
+    await screen.findByRole("heading", { level: 2, name: /Language QA/ });
+    expect(screen.queryByRole("separator", { name: /Resize the Language QA panel/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Undock Language QA" })).toBeInTheDocument();
   });
 });
 

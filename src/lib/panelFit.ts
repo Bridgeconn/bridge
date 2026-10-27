@@ -42,7 +42,9 @@ export function foldedSidePanels(
   recency: readonly SidePanelId[],
   verseMin: number,
 ): SidePanelId[] {
-  const open = SIDE_PANEL_ORDER.filter((id) => panels[id].open);
+  // An undocked box (#389) takes no column width, so it never folds and
+  // never makes another panel fold.
+  const open = SIDE_PANEL_ORDER.filter((id) => panels[id].open && !panels[id].float);
   const rank = (id: SidePanelId): number => {
     const at = recency.indexOf(id);
     return at >= 0 ? DEFAULT_FOLD_ORDER.length + at : DEFAULT_FOLD_ORDER.indexOf(id);

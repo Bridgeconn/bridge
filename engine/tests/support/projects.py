@@ -42,6 +42,40 @@ def _write_minimal_book(root: Path, book_id: str, verse_text: str, lang_id: str 
     )
 
 
+def tn_review_project(root: Path, *, paratext_guid: str = "", paratext_name: str = "",
+                      paratext_folder: str = "") -> Path:
+    """A one-verse Titus with one translationNotes entry on 1:1: the smallest
+    project the review panel's issue-resolution RPCs (issueResolution.save,
+    queueParatext, retryParatext) accept. With ``paratext_guid`` the book is
+    linked to a Paratext project the way an import links it (#356); the folder
+    need not exist, the Guid alone names the project a note goes to (#347)."""
+    _write_json = lambda path, value: (path.parent.mkdir(parents=True, exist_ok=True),  # noqa: E731
+                                       path.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8"))
+    _write_json(root / "manifest.json", {
+        "project": {"id": "tit", "name": "Titus"},
+        "target_language": {"id": "en", "name": "English"},
+        "tc_version": "8", "tc_edit_version": "3.7.0",
+    })
+    _write_json(root / ".apps" / "translationCore" / "alignmentData" / "tit" / "1.json",
+                {"1": {"alignments": [], "wordBank": [
+                    {"word": word, "occurrence": 1, "occurrences": 1} for word in ("alpha", "beta", "gamma")]}})
+    _write_json(root / "tit" / "1.json", {"1": "alpha beta gamma"})
+    _write_json(root / ".apps" / "translationCore" / "index" / "translationNotes" / "tit" / "figs-metaphor.json", [{
+        "contextId": {
+            "reference": {"bookId": "tit", "chapter": "1", "verse": "1"},
+            "tool": "translationNotes", "groupId": "figs-metaphor", "checkId": "tn-1",
+            "quoteString": "λόγος", "occurrence": 1,
+        },
+        "selections": False, "nothingToSelect": False, "invalidated": False,
+    }])
+    if paratext_guid:
+        _write_json(root / ".bridge" / "collection.json", {"paratext": {
+            "guid": paratext_guid, "name": paratext_name,
+            "folder": paratext_folder or str(root.parent / "pt-missing" / (paratext_name or "PT")),
+        }})
+    return root
+
+
 @pytest.fixture
 def fixture_project(tmp_path):
     root = tmp_path / "rut"

@@ -45,12 +45,13 @@ import {
   project,
   historyCountByVerse,
   paratextNoteCountsByVerse,
-  activeLanguageQaFindingId,
+  focusedFindingId,
   resetBookState, reviewTabRequest
 } from "../../stores";
 import { rawView, setSidePanel, sidePanels } from "../../editorPrefs";
 import { alignmentOpen, alignmentKey } from "../../alignmentUi";
 import { cancelVerseEdit, editingChapter, editingVerse, editSaving, recheckingKey } from "../../verseEditor";
+import { revealFinding } from "../../findingFocus";
 import { aiReviewRequest, aiJobActive } from "../../aiReviewUi";
 import type { QaFinding } from "../../types/finding";
 
@@ -529,7 +530,7 @@ describe("VerseList footnote handling", () => {
     expect(screen.getByRole("menu", { name: /Actions for Possible spelling issue/i }))
       .toBeInTheDocument();
     expect(screen.getAllByRole("menuitem").map((item) => item.textContent))
-      .toEqual(["Accept finding", "Ignore", "Flag for review…", "Copy word", "Search in this book"]);
+      .toEqual(["Accept finding", "Ignore", "Flag for review…", "Copy word", "Search in this book", "Edit…"]);
     // Both stay usable whether or not the check proposed a correction — the
     // menu never changes height between findings.
     for (const name of ["Accept finding", "Ignore"]) expect(screen.getByRole("menuitem", { name })).toBeEnabled();
@@ -1106,10 +1107,170 @@ describe("VerseList change history and Raw view", () => {
   });
 });
 
+describe("landing on a finding's span (#402)", () => {
+  afterEach(() => {
+    cancelVerseEdit();
+    focusedFindingId.set(null);
+    languageQaFindingsByVerse.set({});
+  });
+
+  const twoFindings = () => [
+    finding({ id: "f1", start_offset: 0, end_offset: 5, original_text: "alpha" }),
+    finding({ id: "f2", start_offset: 6, end_offset: 10, original_text: "beta" }),
+  ];
+
+  function textarea(): HTMLTextAreaElement {
+    return document.querySelector('[data-verse-key="1:6"] textarea') as HTMLTextAreaElement;
+  }
+
+  it("a left click on a mark rings that finding instead of clearing the ring, and scrolls nothing", async () => {
+    seed("alpha beta", twoFindings());
+    focusedFindingId.set("f1");
+    const scrollTo = vi.spyOn(Element.prototype, "scrollTo");
+    try {
+      render(VerseList, { props: { onSelect: (verse: string) => selectedVerse.set(verse) } });
+      expect(document.querySelector("mark.panel-ring")?.textContent).toBe("alpha");
+      await fireEvent.click(document.querySelector('[data-finding-ids~="f2"]') as HTMLElement);
+      expect(get(selectedVerse)).toBe("6");
+      expect(get(focusedFindingId)).toBe("f2");
+      await waitFor(() => expect(document.querySelector("mark.panel-ring")?.textContent).toBe("beta"));
+      await waitFor(() => expect(document.querySelector("mark.reveal-flash")?.textContent).toBe("beta"));
+      await tick();
+      expect(scrollTo).not.toHaveBeenCalled();
+    } finally {
+      scrollTo.mockRestore();
+    }
+  });
+
+  it("a reveal into a verse skips the verse-to-top scroll and centres the mark", async () => {
+    seed("alpha beta", twoFindings());
+    chapterVerseNums.set({ "1": ["6", "7"] });
+    verseTexts.update((texts) => ({ ...texts, [verseKey("1", "7")]: "gamma delta" }));
+    verseDisplay.update((display) => ({ ...display, [verseKey("1", "7")]: displayFor("gamma delta") }));
+    findingsByVerse.update((map) => ({ ...map, [verseKey("1", "7")]: [
+      finding({ id: "f7", verse: 7, start_offset: 0, end_offset: 5, original_text: "gamma" })] }));
+    const scrollTo = vi.spyOn(Element.prototype, "scrollTo");
+    const scrollIntoView = vi.fn();
+    (Element.prototype as unknown as { scrollIntoView: unknown }).scrollIntoView = scrollIntoView;
+    try {
+      render(VerseList, { props: { onSelect: (verse: string) => selectedVerse.set(verse) } });
+      selectedVerse.set("6");
+      await waitFor(() => expect(scrollTo).toHaveBeenCalled());
+      scrollTo.mockClear();
+      expect(await revealFinding("f7", { navigate: () => selectedVerse.set("7") })).toBe(true);
+      expect(get(selectedVerse)).toBe("7");
+      expect(scrollTo).not.toHaveBeenCalled();
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: "center" });
+      const mark = document.querySelector('[data-finding-ids~="f7"]') as HTMLElement;
+      expect(mark.classList.contains("panel-ring")).toBe(true);
+      expect(mark.classList.contains("reveal-flash")).toBe(true);
+    } finally {
+      scrollTo.mockRestore();
+      delete (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView;
+    }
+  });
+
+  it("Edit… on a Greek Room mark opens the verse with the finding's words selected", async () => {
+    seed("alpha beta", twoFindings());
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    await fireEvent.contextMenu(document.querySelector('[data-finding-ids~="f2"]') as HTMLElement);
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Edit…" }));
+    const area = await waitFor(() => {
+      expect(textarea()).not.toBeNull();
+      return textarea();
+    });
+    await waitFor(() => expect(area.selectionStart).toBe(6));
+    expect(area.value.slice(area.selectionStart, area.selectionEnd)).toBe("beta");
+  });
+
+  it("a double-click on the ringed mark opens the verse with the caret on it; elsewhere on the row, plain", async () => {
+    seed("alpha beta", twoFindings());
+    render(VerseList, { props: { onSelect: (verse: string) => selectedVerse.set(verse) } });
+    const mark = document.querySelector('[data-finding-ids~="f2"]') as HTMLElement;
+    await fireEvent.click(mark);
+    expect(get(focusedFindingId)).toBe("f2");
+    await fireEvent.dblClick(mark);
+    const area = await waitFor(() => {
+      expect(textarea()).not.toBeNull();
+      return textarea();
+    });
+    await waitFor(() => expect(area.selectionStart).toBe(6));
+    expect(area.selectionEnd).toBe(10);
+
+    cancelVerseEdit();
+    await tick();
+    focusedFindingId.set("f2");
+    const row = verseRow();
+    await fireEvent.click(row);
+    expect(get(focusedFindingId)).toBeNull();
+    await fireEvent.dblClick(row);
+    const plain = await waitFor(() => {
+      expect(textarea()).not.toBeNull();
+      return textarea();
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(plain.selectionStart === 6 && plain.selectionEnd === 10).toBe(false);
+  });
+});
+
+describe("character styles from the display payload (#213)", () => {
+  // The engine's own display for this string (verseDisplayFixtures.ts):
+  // \nd over "Lord", \wj over "said so to him" with a nested \+it over "so".
+  const RED_LETTERS = "the \\nd Lord\\nd*, \\wj said \\+it so\\+it* to him\\wj*.";
+
+  it("wraps the styled words in their classes, nested styles stacked, and shows no marker", () => {
+    seed(RED_LETTERS);
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    const body = document.querySelector(".vbody") as HTMLElement;
+    expect(body.textContent?.trim()).toBe("the Lord, said so to him.");
+    expect(body.textContent).not.toContain("\\");
+    expect(body.querySelector(".st-nd")?.textContent).toBe("Lord");
+    expect(Array.from(body.querySelectorAll(".st-wj")).map((el) => el.textContent)).toEqual(["said ", "so", " to him"]);
+    const nested = body.querySelector(".st-it") as HTMLElement;
+    expect(nested.textContent).toBe("so");
+    expect(nested.classList.contains("st-wj")).toBe(true);
+  });
+
+  it("keeps a finding's underline on a styled word, and the style on the underlined word", () => {
+    // Finding offsets index the stored string, where the markers before
+    // "said" push it well past its place in the plain text.
+    const start = Array.from(RED_LETTERS.slice(0, RED_LETTERS.indexOf("said"))).length;
+    seed(RED_LETTERS, [finding({ id: "f1", start_offset: start, end_offset: start + 4, original_text: "said" })]);
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    const mark = document.querySelector('[data-finding-ids~="f1"]') as HTMLElement;
+    expect(mark.textContent).toBe("said");
+    expect(mark.classList.contains("m-gr")).toBe(true);
+    expect(mark.classList.contains("st-wj")).toBe(true);
+    expect(document.querySelector(".st-nd")?.textContent).toBe("Lord");
+  });
+
+  it("converts style bounds past an astral character to UTF-16, like note positions", () => {
+    // Not in the fixtures: a hand-built display with one italic span after a
+    // two-unit character. Code points 2-5 of "𝔸 abc d" are "abc".
+    const text = "𝔸 abc d";
+    seed(text);
+    verseDisplay.set({ [verseKey("1", "6")]: { plain: text, notes: [], removed: [], styles: [{ marker: "it", start: 2, end: 5 }], warnings: [] } });
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    expect(document.querySelector(".st-it")?.textContent).toBe("abc");
+  });
+
+  it("draws nothing in Raw view, where the markers themselves are shown", () => {
+    seed(RED_LETTERS);
+    rawView.set(true);
+    try {
+      render(VerseList, { props: { onSelect: vi.fn() } });
+      expect(document.querySelector(".st-wj")).toBeNull();
+      expect(document.querySelector(".vtext")?.textContent).toContain("\\wj");
+    } finally {
+      rawView.set(false);
+    }
+  });
+});
+
 describe("VerseList ring from the panel's F8", () => {
   beforeEach(() => seed("मसीह यीशु के दास पौलुस"));
   afterEach(() => {
-    activeLanguageQaFindingId.set(null);
+    focusedFindingId.set(null);
     languageQaFindingsByVerse.set({});
   });
 
@@ -1117,7 +1278,7 @@ describe("VerseList ring from the panel's F8", () => {
     languageQaFindingsByVerse.set({ [verseKey("1", "6")]: [
       lqaFinding({ id: "q1", chapter: "1", verse: "6", start: 0, end: 4, originalText: "मसीह" }),
       lqaFinding({ id: "q2", chapter: "1", verse: "6", start: 5, end: 9, originalText: "यीशु" })] });
-    activeLanguageQaFindingId.set("q2");
+    focusedFindingId.set("q2");
     render(VerseList, { props: { onSelect: vi.fn() } });
     const ringed = await waitFor(() => {
       const mark = document.querySelector("mark.active-finding");
@@ -1127,7 +1288,7 @@ describe("VerseList ring from the panel's F8", () => {
     expect(ringed.textContent).toBe("यीशु");
     expect(ringed.classList.contains("panel-ring")).toBe(true);
     await fireEvent.click(document.querySelector('[data-verse-key="1:6"]') as HTMLElement);
-    expect(get(activeLanguageQaFindingId)).toBeNull();
+    expect(get(focusedFindingId)).toBeNull();
   });
 });
 
@@ -1206,7 +1367,7 @@ describe("VerseList word actions, as the indic-qa editor offers them", () => {
 describe("VerseList right-click, ring and notices (#236)", () => {
   afterEach(() => {
     vi.useRealTimers();
-    activeLanguageQaFindingId.set(null);
+    focusedFindingId.set(null);
   });
 
   /** seed() plus a second verse, 7, carrying one underlined finding. */
@@ -1245,11 +1406,11 @@ describe("VerseList right-click, ring and notices (#236)", () => {
       finding({ id: "f1", start_offset: 0, end_offset: 5, original_text: "alpha" }),
       finding({ id: "f2", start_offset: 6, end_offset: 10, original_text: "beta" }),
     ]);
-    activeLanguageQaFindingId.set("f1");
+    focusedFindingId.set("f1");
     render(VerseList, { props: { onSelect: (verse: string) => selectedVerse.set(verse) } });
     expect(document.querySelector("mark.panel-ring")?.textContent).toBe("alpha");
     await fireEvent.contextMenu(document.querySelector('[data-finding-ids~="f2"]') as HTMLElement);
-    expect(get(activeLanguageQaFindingId)).toBeNull();
+    expect(get(focusedFindingId)).toBeNull();
     expect(document.querySelector("mark.panel-ring")).toBeNull();
   });
 

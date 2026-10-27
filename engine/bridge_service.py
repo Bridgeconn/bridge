@@ -123,6 +123,8 @@ from tc_ai_bridge import paratext_install
 from tc_ai_bridge import paratext_link
 from paratext_session import ParatextSession
 from tc_ai_bridge.navigation import NavigationSyncCoordinator
+from tc_ai_bridge import paratext_outbox as outbox_module
+from tc_ai_bridge.paratext_outbox import OutboxError, ParatextOutbox
 from tc_ai_bridge.models import QAIssue, TokenRef, VerseAlignment
 from tc_ai_bridge.secret_store import AppSettings
 from tc_ai_bridge.workspace_repository import WorkspaceRepository, project_path_key, WorkspaceError
@@ -706,6 +708,15 @@ class Methods:
     ISSUE_RESOLUTION_SAVE = "issueResolution.save"
     ISSUE_RESOLUTION_QUEUE_PARATEXT = "issueResolution.queueParatext"
     ISSUE_RESOLUTION_RETRY_PARATEXT = "issueResolution.retryParatext"
+    # #358 decision 3: the reviewer's one click after a Paratext `done`.
+    ISSUE_RESOLUTION_RESOLVE_FROM_PARATEXT = "issueResolution.resolveFromParatext"
+    # #358: Paratext write-back through connector 0.8.0.
+    PARATEXT_OUTBOX = "paratext.outbox"
+    PARATEXT_THREADS_FOR = "paratext.threadsFor"
+    PARATEXT_FLUSH_OUTBOX = "paratext.flushOutbox"
+    PARATEXT_REPLY_THREAD = "paratext.replyThread"
+    PARATEXT_RESOLVE_THREAD = "paratext.resolveThread"
+    PARATEXT_LINK_THREAD = "paratext.linkThread"
 
     LOGOS_GET_STATE = "logos.getState"
     LOGOS_SET_REFERENCE = "logos.setReference"
@@ -850,7 +861,14 @@ class BridgeEngine:
         self._navigation = NavigationSyncCoordinator(
             paratext_client=lambda: ParatextConnectorClient(),
             logos_client=self._logos_client_instance,
+            paratext_expected=self._expected_paratext_project,
+            after_paratext_probe=self._background_outbox_flush,
         )
+        self._outbox_flushed_at = 0.0
+        # Whether the open book's outbox has anything for the probe's flusher:
+        # set on the request thread (open, queue, flush), read on the probe's,
+        # so an idle probe never opens a database connection.
+        self._outbox_work = False
         self._navigation.configure(
             paratext=self.settings.paratext_navigation,
             logos=self.settings.logos_navigation,
@@ -1588,6 +1606,7 @@ class BridgeEngine:
             self._close_project_db_handles()
         self.project = candidate
         self._attach_paratext(candidate.path)
+        self._note_outbox_work()
         self.passage_semantic_runtime = None
         self._correction_application_service = None
         self._correction_affected_analysis_service = None
@@ -5290,6 +5309,20 @@ class BridgeEngine:
         # #357: the notes index builds on its own daemon thread, never here.
         self._paratext.ensure_notes_index()
 
+    def _expected_paratext_project(self) -> dict[str, str]:
+        """#347 (Revant's decision, 2026-10-24): the Paratext project the open
+        book was imported from -- its link Guid in ``.bridge/collection.json``
+        (#356) -- never the project Paratext has active. {} when no linked
+        book is open. Cheap: read from the session, no disk, so the navigation
+        probe can ask on every poll."""
+        session = self._paratext
+        if self.project is None or session is None or not session.guid:
+            return {}
+        resolution = session.resolution
+        settings = resolution.settings
+        name = settings.name if settings is not None else str((resolution.link or {}).get("name") or "")
+        return {"id": session.guid, "name": name}
+
     def _paratext_session(self) -> ParatextSession:
         if self._paratext is None:
             return ParatextSession(paratext_link.LinkResolution(paratext_link.NOT_PARATEXT, None),
@@ -5367,121 +5400,154 @@ class BridgeEngine:
             )
 
     @staticmethod
-    def _issue_handoff_comment(record: dict[str, Any]) -> str:
+    def _issue_handoff_comment(record: dict[str, Any], include_proposal: bool = False) -> str:
+        """The note Bridge writes into Paratext for an issue resolution: the
+        issue and the reviewer's own note. The proposed correction and the
+        evidence (AI-derived) go in only when the reviewer ticks to include
+        them (decision 2 on #358). The "[Bridge ref ...]" footer is added by
+        the outbox."""
         check = record.get("check") if isinstance(record.get("check"), dict) else {}
         tool = "Translation Note" if check.get("tool") == "translationNotes" else "Translation Word"
         parts = [
             f"Bridge {tool} review for {record.get('reference', '')}",
             f"Issue: {record.get('issueSummary', '')}",
         ]
-        correction = str(record.get("proposedCorrection") or "").strip()
-        if correction:
-            parts.append(f"Proposed correction: {correction}")
-        evidence = list(record.get("evidence") or [])
-        if evidence:
-            labels = []
-            for item in evidence[:10]:
-                if isinstance(item, dict):
-                    labels.append(str(item.get("title") or item.get("identifier") or item.get("kind") or "Evidence"))
-                else:
-                    labels.append(str(item))
-            parts.append("Evidence: " + "; ".join(x for x in labels if x))
+        if include_proposal:
+            correction = str(record.get("proposedCorrection") or "").strip()
+            if correction:
+                parts.append(f"Proposed correction: {correction}")
+            evidence = list(record.get("evidence") or [])
+            if evidence:
+                labels = []
+                for item in evidence[:10]:
+                    if isinstance(item, dict):
+                        labels.append(str(item.get("title") or item.get("identifier") or item.get("kind") or "Evidence"))
+                    else:
+                        labels.append(str(item))
+                parts.append("Evidence: " + "; ".join(x for x in labels if x))
         parts.append(f"Reviewer note: {record.get('reviewerNote', '')}")
         return "\n\n".join(parts)
 
-    def _save_handoff_item(
-        self, chapter: str, verse: str, resolution_id: str,
-        item: dict[str, Any], event: str,
-    ) -> dict[str, Any]:
-        state = self.project.load_paratext_note_sync_state()
-        items = dict(state.get("items") or {})
-        items[str(item["messageId"])] = item
-        state["items"] = items
-        self.project.save_paratext_note_sync_state(state)
-        return self.project.update_issue_resolution_paratext(
-            chapter, verse, resolution_id,
-            {
-                "status": item["status"], "messageId": item["messageId"],
-                "attempts": item["attempts"], "lastError": item.get("lastError", ""),
-                "sentAt": item.get("sentAt", ""), "remoteId": item.get("remoteId", ""),
-                "contentSignature": item["contentSignature"],
-                "expectedProjectId": item.get("expectedProjectId", ""),
-            },
-            event,
+    # -- #358: the outbox ------------------------------------------------------
+
+    def _outbox(self) -> ParatextOutbox:
+        self._require_project()
+        return ParatextOutbox(self.project.workbench, self.project.workbench_identity, self.project.book_id)
+
+    @staticmethod
+    def _handoff_from(item: dict[str, Any], record: dict[str, Any] | None = None) -> dict[str, Any]:
+        signature = str(((record or {}).get("paratext") or {}).get("contentSignature")
+                        or (item.get("record") or {}).get("contentSignature") or "")
+        return {
+            "status": item["status"], "messageId": item["messageId"], "attempts": item["attempts"],
+            "lastError": item.get("lastError", ""), "sentAt": item.get("sentAt", ""),
+            "remoteId": item.get("threadId", ""), "contentSignature": signature,
+            "expectedProjectId": str(item.get("expectedProjectId") or ""),
+        }
+
+    def _outbox_changed(self, item: dict[str, Any]) -> None:
+        """Mirror a create_thread item for an issue resolution onto the record,
+        which is what the review panel shows (status, error, thread)."""
+        record = item.get("record") or {}
+        if item.get("kind") != "issue_resolution" or item.get("op") != outbox_module.OP_CREATE or not record:
+            return
+        handoff = self._handoff_from(item)
+        handoff["expectedProjectId"] = str(self._expected_paratext_project().get("id") or "")
+        try:
+            self.project.update_issue_resolution_paratext(
+                record["chapter"], record["verse"], record["resolutionId"], handoff,
+                "paratext_sent" if item["status"] == outbox_module.SENT else "paratext_queued",
+            )
+        except (ProjectError, KeyError) as exc:
+            _trace(f"paratext outbox: could not mirror {item['messageId']} onto its record: {exc}")
+
+    def _note_outbox_work(self) -> None:
+        """Whether a queued write or a sent thread still to find is waiting."""
+        try:
+            outbox = self._outbox()
+            self._outbox_work = bool(outbox.items(outbox_module.QUEUED)) or any(
+                i["op"] == outbox_module.OP_CREATE and not i["threadId"] for i in outbox.items(outbox_module.SENT))
+        except Exception:  # noqa: BLE001 -- no project, or a store that cannot be read: nothing to flush
+            self._outbox_work = False
+
+    def _flush_outbox(self, only: list[str] | None = None) -> list[dict[str, Any]]:
+        try:
+            return self._flush_outbox_now(only)
+        finally:
+            self._note_outbox_work()
+
+    def _flush_outbox_now(self, only: list[str] | None = None) -> list[dict[str, Any]]:
+        session = self._paratext_session()
+        return self._outbox().flush(
+            client_factory=ParatextConnectorClient,
+            expected=self._expected_paratext_project(),
+            find_ref=session.find_bridge_ref,
+            index_ready=session.index_ready,
+            waiting_reason=lambda: "" if session.linked else (
+                f"The Paratext project folder for this book is not available ({session.resolution.state}); "
+                "relink it on Project Home. The note stays queued."),
+            only=only,
+            on_change=self._outbox_changed,
         )
 
-    def _attempt_issue_handoff(
-        self, chapter: str, verse: str, resolution_id: str, item: dict[str, Any],
-    ) -> dict[str, Any]:
-        item = dict(item)
-        item["attempts"] = int(item.get("attempts") or 0) + 1
-        expected_project_id = str(item.get("expectedProjectId") or "").strip()
+    def _background_outbox_flush(self) -> None:
+        """Called on the navigation probe's thread after Paratext answered
+        (and is showing the linked project, or no check applies). Throttled,
+        never blocks a request: if the dispatcher holds the project lock the
+        flush waits for the next probe."""
+        now = time.monotonic()
+        if not self._outbox_work or now - self._outbox_flushed_at < 5.0 or self.project is None:
+            return
+        self._outbox_flushed_at = now
+        if not self._checker_lock.acquire(blocking=False):
+            return
+        project = self.project
         try:
-            state = ParatextConnectorClient().get_state()
-            capabilities = {str(capability).strip().casefold() for capability in state.capabilities}
-            if not capabilities.intersection({"create_note", "project_notes"}):
-                raise ParatextConnectorError(
-                    "The connected Paratext companion does not support live note creation yet; the Notes 1.1 handoff remains safely queued."
-                )
-            if not expected_project_id:
-                raise ParatextConnectorError(
-                    "Confirm the destination Paratext project before sending this note."
-                )
-            if state.project_id.casefold() != expected_project_id.casefold():
-                raise ParatextConnectorError(
-                    "The active Paratext project does not match the project confirmed for this handoff."
-                )
-            payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
-            response = ParatextConnectorClient().create_note(
-                str(payload.get("reference") or ""), str(payload.get("selectedText") or ""),
-                str(payload.get("comment") or ""), project_id=expected_project_id,
-                message_id=str(item.get("messageId") or ""),
-            )
-            item["status"] = "sent"
-            item["lastError"] = ""
-            item["sentAt"] = datetime.now(timezone.utc).isoformat()
-            item["remoteId"] = str(response.get("note_id") or response.get("thread_id") or "")
-            record = self._save_handoff_item(chapter, verse, resolution_id, item, "paratext_sent")
-        except ParatextConnectorError as exc:
-            item["status"] = "queued"
-            item["lastError"] = str(exc)
-            record = self._save_handoff_item(chapter, verse, resolution_id, item, "paratext_queued")
-        return {"record": record, "handoff": item}
+            self._flush_outbox()
+        except Exception as exc:  # noqa: BLE001 -- a background pass never takes the probe down
+            _trace(f"paratext outbox background flush failed: {exc}")
+        finally:
+            self._checker_lock.release()
+            try:
+                if project is not None:
+                    project.release_thread_db_handles()
+            except Exception:  # noqa: BLE001
+                pass
 
     def queue_issue_resolution_for_paratext(
-        self, chapter: str, verse: str, resolution_id: str, expected_project_id: str = "",
+        self, chapter: str, verse: str, resolution_id: str, include_proposal: bool = False,
     ) -> dict[str, Any]:
+        """Queue the resolution's note for the linked Paratext project and try
+        to send it now. The destination is the book's link (#347), the author
+        is whoever is logged in to Paratext, and the note ends with its
+        "[Bridge ref ...]" footer (decisions 1 and 2 on #358)."""
         self._require_project()
         record = self.project.load_issue_resolution(chapter, verse, resolution_id)
-        comment = self._issue_handoff_comment(record)
+        comment = self._issue_handoff_comment(record, include_proposal)
         signature = str((record.get("paratext") or {}).get("contentSignature") or "")
         message_id = f"bridge-{resolution_id}-{signature[:12]}"
-        sync = self.project.load_paratext_note_sync_state()
-        existing = (sync.get("items") or {}).get(message_id)
-        if isinstance(existing, dict) and existing.get("status") == "sent":
-            return {"record": record, "handoff": existing}
-        note_path = self.project.record_paratext_note(
-            chapter, verse, comment,
-            username=self.settings.reviewer_name or "Bridge Reviewer",
+        outbox = self._outbox()
+        existing = outbox.get(message_id)
+        if existing is not None and existing["status"] == outbox_module.SENT:
+            return {"record": record, "handoff": self._handoff_from(existing, record)}
+        item = outbox.enqueue(
+            outbox_module.OP_CREATE, message_id=message_id, kind="issue_resolution", local_id=resolution_id,
+            text=comment, reference=str(record.get("reference") or ""),
             selected_text=str(record.get("selectedText") or ""),
-            metadata={"resolutionId": resolution_id, "paratextThreadType": "BridgeTranslationIssue"},
-            thread_id=message_id,
+            book=str(self.project.book_id or ""), chapter=str(chapter),
+            record={"chapter": str(chapter), "verse": str(verse), "resolutionId": resolution_id,
+                    "contentSignature": signature},
         )
-        item = dict(existing) if isinstance(existing, dict) else {
-            "messageId": message_id, "resolutionId": resolution_id,
-            "createdAt": datetime.now(timezone.utc).isoformat(), "attempts": 0,
-        }
-        item.update({
-            "status": "queued", "contentSignature": signature,
-            "expectedProjectId": str(expected_project_id or item.get("expectedProjectId") or ""),
-            "notePath": str(note_path),
-            "payload": {
-                "reference": record["reference"], "selectedText": record.get("selectedText", ""),
-                "comment": comment,
-            },
-        })
-        self._save_handoff_item(chapter, verse, resolution_id, item, "paratext_queued")
-        return self._attempt_issue_handoff(chapter, verse, resolution_id, item)
+        self._outbox_changed(item)
+        self._flush_outbox(only=[message_id])
+        return self._issue_handoff_result(chapter, verse, resolution_id, message_id)
+
+    def _issue_handoff_result(self, chapter: str, verse: str, resolution_id: str, message_id: str) -> dict[str, Any]:
+        record = self.project.load_issue_resolution(chapter, verse, resolution_id)
+        item = self._outbox().get(message_id)
+        handoff = self._handoff_from(item, record) if item else dict(record.get("paratext") or {})
+        handoff["expectedProjectId"] = str(self._expected_paratext_project().get("id") or "")
+        return {"record": record, "handoff": handoff}
 
     def retry_issue_resolution_paratext(
         self, chapter: str, verse: str, resolution_id: str,
@@ -5489,12 +5555,112 @@ class BridgeEngine:
         self._require_project()
         record = self.project.load_issue_resolution(chapter, verse, resolution_id)
         message_id = str((record.get("paratext") or {}).get("messageId") or "")
-        item = (self.project.load_paratext_note_sync_state().get("items") or {}).get(message_id)
-        if not message_id or not isinstance(item, dict):
+        item = self._outbox().get(message_id) if message_id else None
+        if item is None:
             raise ProjectError('This issue has not been queued for Paratext yet.')
-        if item.get("status") == "sent":
-            return {"record": record, "handoff": item}
-        return self._attempt_issue_handoff(chapter, verse, resolution_id, item)
+        if item["status"] != outbox_module.SENT:
+            self._flush_outbox(only=[message_id])
+        return self._issue_handoff_result(chapter, verse, resolution_id, message_id)
+
+    def resolve_issue_resolution_from_paratext(
+        self, chapter: str, verse: str, resolution_id: str, thread_id: str,
+    ) -> dict[str, Any]:
+        """Decision 3's one click: the thread must be linked to this resolution
+        and resolved in Paratext as Bridge last read it. Never called by the
+        engine itself; the card offers it and the reviewer clicks."""
+        self._require_project()
+        thread_id = str(thread_id or "")
+        linked = {link["threadId"] for link in self._outbox().links_for("issue_resolution", resolution_id)}
+        if thread_id not in linked:
+            raise ProjectError("That Paratext thread is not linked to this issue.")
+        thread = self._paratext_session().note_thread(thread_id).get("thread")
+        if not thread or not thread.get("resolved"):
+            raise ProjectError("Paratext does not show that thread as resolved; refresh the Paratext notes and try again.")
+        done = next((c for c in reversed(thread.get("comments") or []) if c.get("status") in ("done", "deleted")), {})
+        with self._checker_lock:
+            record = self.project.resolve_issue_resolution_from_paratext(
+                chapter, verse, resolution_id, thread_id=thread_id,
+                done_by=str(done.get("user") or ""), done_at=str(done.get("date") or ""),
+                username=self.settings.reviewer_name or "Bridge Reviewer",
+            )
+        return {"record": record}
+
+    # -- #358: reply, resolve, link, and the outbox itself -----------------------
+
+    def paratext_outbox(self) -> dict[str, Any]:
+        outbox = self._outbox()
+        return {"items": outbox.items(), "links": outbox.links(),
+                "expectedProjectId": str(self._expected_paratext_project().get("id") or "")}
+
+    def paratext_threads_for(self, kind: str, local_id: str) -> dict[str, Any]:
+        """What a finding or resolution card shows (#358 e): each Paratext thread
+        linked to the record, as the notes index has it (replies, `done`), and
+        the record's writes still in the outbox. Read-only: a Paratext reply or
+        `done` is shown here and never applied to the record (decision 3)."""
+        outbox = self._outbox()
+        session = self._paratext_session()
+        status = session.notes_index_status()
+        links = []
+        for link in outbox.links_for(kind, local_id):
+            found = session.note_thread(link["threadId"]).get("thread")
+            links.append({**{k: v for k, v in link.items() if k != "createdAt"}, "thread": found})
+        pending = [item for item in outbox.items(outbox_module.QUEUED)
+                   if item.get("kind") == kind and item.get("localId") == local_id]
+        # A create_thread already sent but whose thread the index has not shown
+        # yet is a link-to-be: show it as one, with no thread.
+        known = {link["messageId"] for link in links}
+        for item in outbox.items(outbox_module.SENT):
+            if (item.get("kind") == kind and item.get("localId") == local_id and item["op"] == outbox_module.OP_CREATE
+                    and not item["threadId"] and item["messageId"] not in known):
+                links.append({"kind": kind, "localId": local_id, "threadId": "", "messageId": item["messageId"],
+                              "direction": outbox_module.TO_PARATEXT, "thread": None})
+        return {"state": status["state"], "links": links, "pending": pending}
+
+    def paratext_flush_outbox(self) -> dict[str, Any]:
+        touched = self._flush_outbox()
+        return {"touched": touched, **self.paratext_outbox()}
+
+    def _thread_key(self, thread_id: str) -> dict[str, Any]:
+        found = self._paratext_session().thread_key(str(thread_id or ""))
+        if found is None:
+            raise ProjectError("Bridge has not read that Paratext thread; refresh the Paratext notes and try again.")
+        return found
+
+    def paratext_reply_thread(self, thread_id: str, text: str, kind: str, local_id: str) -> dict[str, Any]:
+        where = self._thread_key(thread_id)
+        message_id = outbox_module.new_message_id()
+        try:
+            self._outbox().enqueue(
+                outbox_module.OP_COMMENT, message_id=message_id, kind=kind, local_id=local_id, text=text,
+                thread_id=thread_id, key=where["key"], book=where["book"], chapter=where["chapter"],
+            )
+        except OutboxError as exc:
+            raise ProjectError(str(exc)) from exc
+        self._flush_outbox(only=[message_id])
+        return {"item": self._outbox().get(message_id)}
+
+    def paratext_resolve_thread(self, thread_id: str, kind: str, local_id: str) -> dict[str, Any]:
+        where = self._thread_key(thread_id)
+        message_id = outbox_module.new_message_id()
+        try:
+            self._outbox().enqueue(
+                outbox_module.OP_RESOLVE, message_id=message_id, kind=kind, local_id=local_id,
+                thread_id=thread_id, key=where["key"], book=where["book"], chapter=where["chapter"],
+            )
+        except OutboxError as exc:
+            raise ProjectError(str(exc)) from exc
+        self._flush_outbox(only=[message_id])
+        return {"item": self._outbox().get(message_id)}
+
+    def paratext_link_thread(self, thread_id: str, kind: str, local_id: str) -> dict[str, Any]:
+        """Link an existing Paratext thread to a Bridge record ("Link existing
+        thread"). Writes only the Bridge-side link; Paratext is not touched."""
+        self._thread_key(thread_id)
+        try:
+            link = self._outbox().link(kind, local_id, thread_id, direction=outbox_module.FROM_PARATEXT)
+        except OutboxError as exc:
+            raise ProjectError(str(exc)) from exc
+        return {"link": link}
 
     def _logos_client_instance(self) -> LogosConnectorClient:
         if self._logos_client is None:
@@ -7447,8 +7613,10 @@ class BridgeEngine:
         if scope not in language_qa_scope.SCOPES:
             raise ProjectError(f"scope must be one of {list(language_qa_scope.SCOPES)}")
         suggestion = params.get("suggestion")
-        if suggestion is not None and (not isinstance(suggestion, str) or not suggestion):
-            raise ProjectError("suggestion must be a non-empty string when given")
+        # "" is a real replacement: spacing.extra removes a space at the verse
+        # edge, note.space-before-caller removes one before a caller (#403).
+        if suggestion is not None and not isinstance(suggestion, str):
+            raise ProjectError("suggestion must be a string when given")
         try:
             origin, shown = self._language_qa.scope_findings(chapter, verse, finding_id)
             found = language_qa_scope.occurrences(shown, origin, scope, suggestion)
@@ -7595,6 +7763,15 @@ class BridgeEngine:
             if current != item["newText"]:
                 conflicts.append({"chapter": chapter, "verse": verse,
                                   "reason": "Changed after the batch; left as it is."})
+                continue
+            if str(item["oldText"]).strip() == current:
+                # The batch only removed a space at the verse edge (#403). The
+                # writer trims every ordinary edit, so that space cannot come
+                # back; the verse is already as it was, and there is nothing to
+                # write.
+                reverted.append({"chapter": chapter, "verse": verse, "newText": current,
+                                 "display": verse_display(current),
+                                 "note": "Only an edge space was removed; verse edges are always trimmed."})
                 continue
             context = {"reference": {"bookId": self.project.book_id, "chapter": chapter, "verse": verse},
                        "tool": "translationCoreAI", "groupId": "language-qa-scope-undo",
@@ -8990,11 +9167,36 @@ class BridgeEngine:
                 ))
             if m == Methods.ISSUE_RESOLUTION_QUEUE_PARATEXT:
                 return EngineResponse.ok(request.id, result=self.queue_issue_resolution_for_paratext(
-                    p["chapter"], p["verse"], p["resolutionId"], p.get("expectedProjectId", ""),
+                    p["chapter"], p["verse"], p["resolutionId"], bool(p.get("includeProposal", False)),
                 ))
             if m == Methods.ISSUE_RESOLUTION_RETRY_PARATEXT:
                 return EngineResponse.ok(request.id, result=self.retry_issue_resolution_paratext(
                     p["chapter"], p["verse"], p["resolutionId"],
+                ))
+            if m == Methods.ISSUE_RESOLUTION_RESOLVE_FROM_PARATEXT:
+                return EngineResponse.ok(request.id, result=self.resolve_issue_resolution_from_paratext(
+                    p["chapter"], p["verse"], p["resolutionId"], str(p.get("threadId") or ""),
+                ))
+            if m == Methods.PARATEXT_OUTBOX:
+                return EngineResponse.ok(request.id, result=self.paratext_outbox())
+            if m == Methods.PARATEXT_THREADS_FOR:
+                return EngineResponse.ok(request.id, result=self.paratext_threads_for(
+                    str(p.get("kind") or ""), str(p.get("localId") or ""),
+                ))
+            if m == Methods.PARATEXT_FLUSH_OUTBOX:
+                return EngineResponse.ok(request.id, result=self.paratext_flush_outbox())
+            if m == Methods.PARATEXT_REPLY_THREAD:
+                return EngineResponse.ok(request.id, result=self.paratext_reply_thread(
+                    str(p.get("threadId") or ""), str(p.get("text") or ""),
+                    str(p.get("kind") or ""), str(p.get("localId") or ""),
+                ))
+            if m == Methods.PARATEXT_RESOLVE_THREAD:
+                return EngineResponse.ok(request.id, result=self.paratext_resolve_thread(
+                    str(p.get("threadId") or ""), str(p.get("kind") or ""), str(p.get("localId") or ""),
+                ))
+            if m == Methods.PARATEXT_LINK_THREAD:
+                return EngineResponse.ok(request.id, result=self.paratext_link_thread(
+                    str(p.get("threadId") or ""), str(p.get("kind") or ""), str(p.get("localId") or ""),
                 ))
             if m == Methods.PARATEXT_GET_STATE:
                 return EngineResponse.ok(request.id, result=self.paratext_get_state())

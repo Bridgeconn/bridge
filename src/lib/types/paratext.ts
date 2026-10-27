@@ -139,3 +139,38 @@ export interface ParatextNotesForVerse {
   verse: string;
   threads: ParatextNoteThread[];
 }
+
+// #358: Paratext write-back (engine: tc_ai_bridge/paratext_outbox.py).
+export type ParatextWriteKind = "issue_resolution" | "finding" | "correction_proposal";
+export type ParatextOutboxOp = "create_thread" | "add_comment" | "resolve";
+
+export interface ParatextOutboxItem {
+  messageId: string;
+  op: ParatextOutboxOp;
+  threadId: string;
+  status: "queued" | "sent";
+  attempts: number;
+  lastError: string;
+  sentAt: string;
+  resultKey: string;
+  createdAt: string;
+  kind?: ParatextWriteKind;
+  localId?: string;
+}
+
+export interface ParatextThreadLink {
+  kind: ParatextWriteKind;
+  localId: string;
+  threadId: string;
+  messageId: string;
+  direction: "bridge_to_paratext" | "paratext_to_bridge";
+  /** The thread as the notes index has it; null until Bridge has read it. */
+  thread: ParatextNoteThread | null;
+}
+
+export interface ParatextThreadsFor {
+  state: ParatextNotesIndexState;
+  links: ParatextThreadLink[];
+  /** This record's writes still waiting in the outbox. */
+  pending: ParatextOutboxItem[];
+}

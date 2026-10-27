@@ -51,6 +51,9 @@
   --tw:#0F766E; --tw-bg:#E3F2F0;
   --align:#B45309; --align-bg:#FEF3E1;
   --gr:#DC2626; --gr-bg:#FCEBEB;
+  /* Words of Jesus (\wj, #213): a red that reads as print's red letters,
+     darker and browner than --gr so it is never taken for a Greek Room mark. */
+  --wj:#9F1D1D;
   /* Termbase-authority findings (terminology.deprecated-form) get their own
      colour and a double underline -- distinct from the four Greek Room/tN/tW/
      alignment sources above, since this is a different confidence class
@@ -218,6 +221,14 @@ mark.m-lqa-unicode {
   background-image: repeating-linear-gradient(135deg, var(--lqa-hatch) 0 2px, transparent 2px 5px);
 }
 mark.m-tn.m-tw { border-bottom-color: var(--tn); box-shadow: inset 0 -1px 0 var(--tw); }
+/* #402: the mark a click (a panel row, a card, F8) landed on, lit once so the
+   eye finds it in a long verse; the ring (VerseList's panel-ring) stays. The
+   class is added by findingFocus.ts outside any component's scope. */
+mark.reveal-flash { animation: reveal-flash 1.2s ease-out; }
+@keyframes reveal-flash {
+  0%, 35% { background: var(--accent-bg); box-shadow: 0 0 0 4px var(--accent-bg); }
+  100% { background: transparent; box-shadow: none; }
+}
 
 /* Printing the QA report (ProjectReportScreen → Export → PDF): only the
    .print-root subtree prints, and every scroll container between it and

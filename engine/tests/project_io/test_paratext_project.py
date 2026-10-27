@@ -298,7 +298,7 @@ NOTES = {
          "selected_text": "word", "status": "todo", "contents": ["First **bold** para", "Second para"],
          "assigned_user": "User B", "tags_added": ["1"]},
         {"thread": "t2", "verse_ref": "TIT 1:2", "date": "2026-01-02T10:00:00+05:30",
-         "status": "deleted", "contents": "gone"},
+         "status": "deleted", "contents": "resolved in Paratext"},
         {"thread": "BT_λόγος", "verse_ref": "TIT 1:1", "date": "2026-01-03T10:00:00+05:30",
          "status": "todo", "contents": "term note", "hidden": True},
         {"thread": "t4", "verse_ref": "PHM 1:1-3", "date": "2026-01-04T10:00:00+05:30",
@@ -370,7 +370,7 @@ def test_build_notes_index_merges_users_and_folds_status(tmp_path):
     assert t1.users == ("User A", "User B")
     assert t1.kind == "note"
     assert t1.selected_text == "word"
-    assert index.threads["t2"].deleted
+    assert index.threads["t2"].resolved             # Paratext writes a resolve as "deleted"
     assert index.threads["BT_λόγος"].kind == "biblicalTerm"
     assert index.threads["BT_λόγος"].hidden
     assert index.threads["t4"].kind == "conflict"
@@ -379,11 +379,11 @@ def test_build_notes_index_merges_users_and_folds_status(tmp_path):
 
     assert index.by_ref["TIT"]["1"]["2"] == ["t1", "t2", "t5"]
     assert index.counts == {
-        "TIT": {"1": {"1": {"open": 1, "total": 1}, "2": {"open": 1, "total": 2}}},
+        "TIT": {"1": {"1": {"open": 1, "total": 1}, "2": {"open": 1, "total": 3}}},
         "PHM": {"1": {"1": {"open": 1, "total": 1}}},
     }
-    assert [t.id for t in index.threads_for("TIT", 1, "2")] == ["t1", "t5"]
-    assert [t.id for t in index.threads_for("tit", "1", include_deleted=True)] == ["BT_λόγος", "t1", "t2", "t5"]
+    assert [t.id for t in index.threads_for("TIT", 1, "2")] == ["t1", "t2", "t5"]
+    assert [t.id for t in index.threads_for("tit", "1")] == ["BT_λόγος", "t1", "t2", "t5"]
     assert index.unanchored == []
     summary = t1.summary_json()
     assert summary["commentCount"] == 2 and summary["lastUser"] == "User B"

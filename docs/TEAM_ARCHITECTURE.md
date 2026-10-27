@@ -145,7 +145,14 @@ change_log(seq INTEGER PRIMARY KEY AUTOINCREMENT,
 ### 3.4 Stays on disk, deliberately
 
 - `backups/` and `transactions/` (crash recovery must not depend on the database opening).
-- `paratextNotes/*.xml` (Paratext's own format).
+- ~~`paratextNotes/*.xml` (Paratext's own format).~~ **Corrected 2026-10-26 (#358).** That
+  directory held Bridge's companion `Notes_AI_Suggestion.xml` in the Paratext Data Access
+  web API's "Notes 1.1" schema, not Paratext's own format: Paratext desktop never read it.
+  It is no longer written (the writer was removed; files already on disk are left alone).
+  Paratext's own notes files (`Notes_<User>.xml`, a `<CommentList>`) live in the Paratext
+  project folder and are only read (#357). Bridge's writes to Paratext go through the
+  companion plugin (connector 0.8.0) from the workbench's device-local `paratext_outbox`
+  (v11), and the record-to-thread links are the synced `paratext_links` (v11).
 - `.bridge/source.<ext>`, `original-manifest.json` (verbatim copies of user input).
 - `.bridge/collection.json`, `.bridge/lazy-import.json` (read before any project object,
   and therefore any per-project DB, exists; the workspace DB caches them).

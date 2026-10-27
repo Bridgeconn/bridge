@@ -753,6 +753,14 @@ export interface NavigationTargetState extends DesktopConnectorState {
   checking: boolean;
   error: string;
   checkedAt: number;
+  /** #347 (Paratext only): the project the open book was imported from (its
+   *  link Guid), and whether the project Paratext has active differs; the
+   *  message names both. While it differs the engine neither follows nor
+   *  sends navigation and keeps notes queued. */
+  expectedProjectId?: string;
+  expectedProjectName?: string;
+  projectMismatch?: boolean;
+  mismatchMessage?: string;
 }
 
 export interface NavigationSyncState {

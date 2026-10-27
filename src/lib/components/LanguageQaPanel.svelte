@@ -1,10 +1,12 @@
 <script lang="ts">
   import PanelHeader from "./PanelHeader.svelte";
-  import { onDestroy, tick } from "svelte";
+  import { onDestroy } from "svelte";
+  import { revealFinding } from "../findingFocus";
   import { bridge } from "../api/bridgeClient";
   import { languageQaChannel, nudgeLanguageQa } from "../languageQaInline";
   import { languageQaPanelToggle } from "../languageQaPanelUi";
-  import { setSidePanel, toggleSidePanel } from "../editorPrefs";
+  import { SIDE_PANEL_LIMITS, setSidePanel, toggleSidePanel } from "../editorPrefs";
+  import PanelResizeHandle from "./PanelResizeHandle.svelte";
   import type { BookWordRow, LanguageQaFlag, LanguageQaStatus, LanguageQaView, LearnedFix } from "../types/languageQa";
   import type { HouseStyleEntry } from "../types/houseStyle";
   import { addProjectWords } from "../projectWords";
@@ -14,14 +16,14 @@
   import { graphemeDiff } from "../utils/unicodeDiff";
   import { LANGUAGE_QA_CATEGORY_LABELS, LANGUAGE_QA_CATEGORY_MARKS } from "../utils/highlight";
   import {
-    activeLanguageQaFindingId, chapterVerseNums, currentChapter, languageQaFindingsByVerse, project, selectedVerse, targetLang,
+    focusedFindingId, chapterVerseNums, currentChapter, languageQaFindingsByVerse, project, selectedVerse, targetLang,
     verseKey,
   } from "../stores";
   import { editingChapter } from "../verseEditor";
   import type { LanguageQaCategory, LanguageQaFinding } from "../types/languageQa";
 
   export let projectPath: string;
-  export let onNavigate: (book: string, chapter: string, verse: string) => void;
+  export let onNavigate: (book: string, chapter: string, verse: string) => void | Promise<void>;
   /** The editor screen has a status-bar button that opens this panel, so
    * there the launcher may step aside: it hides itself a few seconds after
    * a pass completes, or at once from its close button, and comes back when
@@ -32,6 +34,17 @@
    * the column. Elsewhere (dashboard, report) it floats as before. */
   export let docked = false;
   $: if (docked) expanded = true;
+
+  // #389 step 1: the floating box (dashboard, report) closes by its left
+  // edge exactly as a docked column does, through the same handle. Its width
+  // is this session's; the column's saved width is the column's.
+  const FLOAT_LIMITS = SIDE_PANEL_LIMITS.languageQa;
+  let floatWidth = 560;
+  let floatPreview: number | null = null;
+  let floatClosing = false;
+  let floatWindowWidth = typeof window === "undefined" ? 1366 : window.innerWidth;
+  $: floatMax = Math.max(FLOAT_LIMITS.min, Math.min(FLOAT_LIMITS.max, floatWindowWidth - 32));
+  $: shownFloatWidth = Math.min(floatPreview ?? floatWidth, floatMax);
 
   let expanded = false;
   const LAUNCHER_HIDE_MS = 6000;
@@ -302,12 +315,22 @@
   }
 
   async function goToMark(finding: LanguageQaFinding, index: number, total: number): Promise<void> {
-    selectedVerse.set(finding.verse);
-    activeLanguageQaFindingId.set(finding.id);
     walkStatus = `Finding ${index + 1} of ${total} in chapter ${finding.chapter}: ${finding.originalText}`;
-    await tick();
-    const mark = document.querySelector<HTMLElement>(`[data-finding-ids~="${CSS.escape(finding.id)}"]`);
-    if (mark && typeof mark.scrollIntoView === "function") mark.scrollIntoView({ block: "nearest" });
+    // The one reveal route (#402): ring first, then select the verse, then
+    // scroll the mark to the middle of the reader and flash it.
+    await revealFinding(finding.id, { navigate: () => selectedVerse.set(finding.verse) });
+  }
+
+  /** A row's reference (#402): the verse opens, then the finding's mark is
+   * ringed and scrolled into view. A heading, introduction or footnote
+   * finding has no mark in the verse text, so the verse is simply opened. */
+  async function openFinding(finding: LanguageQaFinding): Promise<void> {
+    const navigate = () => onNavigate(finding.book, finding.chapter, finding.verse);
+    if (finding.context) {
+      await navigate();
+      return;
+    }
+    await revealFinding(finding.id, { navigate });
   }
 
   /** F8: the next mark in reading order; Shift+F8: the previous. Past the end
@@ -316,7 +339,7 @@
   function step(direction: 1 | -1): void {
     const chapter = $currentChapter;
     const marks = chapterMarks(chapter);
-    const at = marks.findIndex((f) => f.id === $activeLanguageQaFindingId);
+    const at = marks.findIndex((f) => f.id === $focusedFindingId);
     const next = at === -1 ? (direction === 1 ? 0 : marks.length - 1) : at + direction;
     if (next >= 0 && next < marks.length) {
       pendingStep = null;
@@ -329,7 +352,7 @@
       walkStatus = direction === 1 ? "No more findings: this is the end of the book." : "No earlier findings: this is the start of the book.";
       return;
     }
-    activeLanguageQaFindingId.set(null);
+    focusedFindingId.set(null);
     pendingStep = { chapter: target, step: direction };
     walkStatus = `Chapter ${target}…`;
     onNavigate(status?.book ?? $project?.bookId ?? "", target, "");
@@ -527,12 +550,19 @@
   });
 </script>
 
-<svelte:window on:keydown={onWindowKeydown} on:pointerdown={onWindowPointerdown} />
+<svelte:window on:keydown={onWindowKeydown} on:pointerdown={onWindowPointerdown} bind:innerWidth={floatWindowWidth} />
 
 <aside class="language-qa" class:docked aria-label="Language QA">
   <p class="walk-status" role="status" aria-live="polite">{walkStatus}</p>
   {#if expanded}
-    <section id="language-qa-results" aria-label="Language QA results" style:--head-h="{headHeight}px" style:--tabs-h="{tabsHeight}px">
+    <div class="float-frame" class:closing={floatClosing}>
+    {#if !docked}
+      <PanelResizeHandle label="Language QA" width={shownFloatWidth} min={FLOAT_LIMITS.min} max={floatMax} initial={560}
+        onPreview={(next, closing) => { floatPreview = next; floatClosing = closing; }}
+        onCommit={(next) => (floatWidth = next)} onClose={toggle} />
+    {/if}
+    <section id="language-qa-results" aria-label="Language QA results" style:--head-h="{headHeight}px" style:--tabs-h="{tabsHeight}px"
+      style:width={docked ? null : `${shownFloatWidth}px`}>
       <!-- The header stays put while the panel scrolls: title, the (i), Pause and
            Close, then one status line and, when a pass left text out, the warning. -->
       <div class="panel-head" bind:clientHeight={headHeight}>
@@ -542,7 +572,7 @@
              that used to be always visible is behind the (i), a popover that
              never changes the header's height. Errors and the one-line
              coverage warning stay in view. -->
-        <PanelHeader id="languageQa" title={`Language QA · ${stateWord}`} label="Language QA" onClose={toggle}>
+        <PanelHeader id="languageQa" title={`Language QA · ${stateWord}`} label="Language QA" onClose={toggle} layout={docked}>
           <button type="button" class="info-btn" bind:this={infoButton} aria-label="About these checks"
             aria-expanded={aboutOpen} aria-controls="language-qa-about"
             title="What Language QA checks, and what it does not" on:click={() => (aboutOpen = !aboutOpen)}>i</button>
@@ -709,7 +739,7 @@
         <ol aria-label={view === "findings" ? "Language QA findings" : view === "recheck" ? "Findings to re-check" : "False positives"} start={listScope === "verse" ? 1 : status.offset + 1}>
           {#each listed as finding (finding.id)}
             <li>
-              <button on:click={() => onNavigate(finding.book, finding.chapter, finding.verse)}>
+              <button on:click={() => void openFinding(finding)}>
                 {finding.book.toUpperCase()} {finding.chapter}:{finding.verse}
               </button>
               <span class="severity">{finding.severity}</span>
@@ -901,6 +931,7 @@
         </div>
       {/if}
     </section>
+    </div>
   {/if}
   {#if !docked && (expanded || !launcherHidden)}
     <div class="launcher-row">
@@ -918,9 +949,17 @@
 
 <style>
   /* --z-panel (#288): a floating panel sits below every dialog. */
-  .language-qa { position: fixed; bottom: 40px; right: 16px; z-index: var(--z-panel); font-size: var(--fs-3xs); }
+  /* #379 item 6: the body reads at --fs-xs like every panel; the tab bar and
+     the filter row, chrome, at --fs-2xs like the bar's own actions. */
+  .language-qa { position: fixed; bottom: 40px; right: 16px; z-index: var(--z-panel); font-size: var(--fs-xs); }
   /* Docked: the column is the box; the section fills it and scrolls. */
   .language-qa.docked { position: static; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  /* #389: the frame carries the floating box's left-edge handle (the section
+     scrolls, so the handle cannot sit inside it) and dims while a drag would
+     close it. Docked, the frame is the column's flex child and fills it. */
+  .float-frame { position: relative; }
+  .float-frame.closing { opacity: .55; }
+  .language-qa.docked .float-frame { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .language-qa.docked section { width: auto; max-height: none; flex: 1; min-height: 0; margin: 0; border: 0;
     border-radius: 0; box-shadow: none; }
   /* The section scrolls; its header and tab bar stay (sticky). Padding lives on
@@ -930,7 +969,7 @@
   .panel-head { position: sticky; top: 0; z-index: 3; background: var(--surface); }
   /* Errors and the one-line coverage warning under the bar; nothing is
      drawn (no second line) when there is none of them. */
-  .head-meta { padding: 4px 14px 6px; border-bottom: 1px solid var(--border); }
+  .head-meta { padding: 4px 12px 6px; border-bottom: 1px solid var(--border); }
   .head-meta:not(:has(*)) { display: none; }
   .info-btn { width: 20px; height: 20px; padding: 0; border-radius: 50%; font: italic 700 var(--fs-3xs)/1 Georgia, "Times New Roman", serif; color: var(--accent); border-color: var(--accent); }
   .info-btn[aria-expanded="true"] { background: var(--accent); color: white; }
@@ -939,7 +978,7 @@
   .coverage-warn { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; margin: 2px 0; color: var(--warning); }
   /* #376: the (i) is a popover anchored under the bar (the sticky header is
      its containing block). It scrolls inside itself; the header never grows. */
-  .about { position: absolute; top: 100%; left: 8px; right: 8px; z-index: 4; margin: 0; padding: 10px 14px;
+  .about { position: absolute; top: 100%; left: 8px; right: 8px; z-index: 4; margin: 0; padding: 10px 12px;
     background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); border-radius: 8px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, .14); max-height: min(420px, 50vh); overflow: auto; outline: none; }
   .about p { margin: 4px 0; }
@@ -951,7 +990,7 @@
   .about-head h3 { flex: 1; margin: 0; font-size: var(--fs-xs); }
   .about-close { width: 22px; height: 22px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--text-3); font-size: var(--fs-3xs); line-height: 1; }
   .about-close:hover, .about-close:focus-visible { background: var(--accent-bg); color: var(--accent); outline: none; }
-  .panel-body { padding: 8px 14px 14px; }
+  .panel-body { padding: 10px 12px; }
   button { cursor: pointer; border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; background: var(--surface); color: inherit; }
   button:disabled { opacity: .5; cursor: default; }
   .launcher-row { display: flex; justify-content: flex-end; align-items: center; gap: 4px; }
@@ -968,8 +1007,9 @@
   .where { margin-left: 8px; font-style: italic; }
   .reference { font-size: var(--fs-3xs); opacity: .85; border-left: 2px solid var(--border); padding-left: 6px; }
   /* The tab bar sits under the header and stays with it. */
-  .panel-tabs { position: sticky; top: var(--head-h, 0px); z-index: 2; display: flex; gap: 2px; padding: 0 10px;
-    background: var(--surface); border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; }
+  .panel-tabs { position: sticky; top: var(--head-h, 0px); z-index: 2; display: flex; gap: 2px; padding: 0 12px;
+    background: var(--surface); border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none;
+    font-size: var(--fs-3xs); }
   .panel-tabs button { flex: 1 0 auto; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none;
     padding: 8px 6px 6px; font-weight: 700; color: var(--text-2); white-space: nowrap; }
   /* #385: the book tab carries a name of any length and is the one that gives
@@ -980,7 +1020,7 @@
   .panel-tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
   /* #376: the one filter row, pinned under the tab bar (#178). */
   .list-row { position: sticky; top: calc(var(--head-h, 0px) + var(--tabs-h, 0px)); z-index: 2; margin: 0;
-    padding: 6px 10px; background: var(--surface); border-bottom: 1px solid var(--border); }
+    padding: 6px 12px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: var(--fs-2xs); }
   .filter-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
   .segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
   .segmented button { border: 0; border-radius: 0; border-right: 1px solid var(--border); background: var(--surface); padding: 3px 8px; white-space: nowrap; }

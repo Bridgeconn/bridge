@@ -29,6 +29,8 @@
     setPendingAcceptFinding, applyLanguageQaSuggestedFix,
   } from "../verseEditor";
   import { alignmentOpen, alignmentKey, openAlignment } from "../alignmentUi";
+  import { findingSpan, revealFinding } from "../findingFocus";
+  import { askConfirmation } from "../confirmAction";
   import { greekRoomChapterSummary, greekRoomVerseRunning, runVerseGreekRoom } from "../verseChecks";
   import { aiReviewRequest, aiJobActive } from "../aiReviewUi";
   import { setSidePanel } from "../editorPrefs";
@@ -410,9 +412,15 @@
   ) {
     if (!verse || aiJobBusy) return;
     const requestedReference = `${$project?.path ?? ""}::${verseKey(chapter, verse)}`;
-    if (scope !== "verse" && !window.confirm(
-      `Run AI review for this ${scope}? Each verse may use one or two model requests and incur API charges.`,
-    )) return;
+    // #372: an in-app question, awaited. window.confirm never asked in the
+    // installed app (the dialog plugin's async stand-in rejects, and a Promise
+    // is truthy), so a paid run over the whole chapter or book started at once.
+    if (scope !== "verse" && !(await askConfirmation({
+      title: `Run AI review for this ${scope}?`,
+      body: "Each verse may use one or two model requests and incur API charges.",
+      confirmLabel: `Run for the ${scope}`,
+    }))) return;
+    if (aiJobBusy) return;
     aiExplainError = "";
     aiPollFailed = false;
     aiExplainErrorJobId = "";
@@ -505,14 +513,46 @@
     startVerseEdit($currentChapter, $selectedVerse ?? "");
   }
 
+  /** Edit from a finding's card (#402): the verse opens with the finding's
+   * words selected, or plain when the finding has no span. */
+  function editFinding(finding: QaFinding) {
+    startVerseEdit($currentChapter, $selectedVerse ?? "", findingSpan(finding));
+  }
+
   // "Accept and edit" on a specific Greek Room finding: same edit session
   // as startEdit, but remembers which finding this was so a successful
   // save can record it as "accepted" (see setVerseEditSavedHook below)
   // rather than leaving it open for the next recheck to silently re-decide.
-  function acceptAndEdit(findingId: string) {
-    if (startVerseEdit($currentChapter, $selectedVerse ?? "")) {
-      setPendingAcceptFinding(findingId);
+  // The caret lands on the finding's span (#402).
+  function acceptAndEdit(finding: QaFinding) {
+    if (startVerseEdit($currentChapter, $selectedVerse ?? "", findingSpan(finding))) {
+      setPendingAcceptFinding(finding.id);
     }
+  }
+
+  /**
+   * A card is clickable (#402): the finding's mark is ringed and scrolled
+   * into view in the verse text. A click on one of the card's own controls
+   * is that control's, not the card's. Keyboard: the number badge (Greek
+   * Room, local checks) and the "Show in text" button (Language QA) are the
+   * reachable controls; Enter on the card itself does the same when it has
+   * focus. A finding with no drawn mark (no span, a heading or footnote
+   * finding) changes nothing: the verse is selected already.
+   */
+  function showInText(findingId: string): void {
+    void revealFinding(findingId);
+  }
+
+  function cardClick(event: MouseEvent, findingId: string): void {
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest("button, a, input, textarea, select, summary, details")) return;
+    showInText(findingId);
+  }
+
+  function cardKeydown(event: KeyboardEvent, findingId: string): void {
+    if (event.key !== "Enter" || event.target !== event.currentTarget) return;
+    event.preventDefault();
+    showInText(findingId);
   }
 
   onMount(() => {
@@ -603,33 +643,28 @@
      unmounted: a running check, an open tab or a draft carries on. -->
 <div class="panel">
   {#if $selectedVerse}
-    <!-- The reference and Close are the shared header bar (#379); under it
-         one short row that never wraps: the open count with the two per-verse
-         actions. At the panel's 400px the title and both buttons do not fit
-         on one row, and a wrapped row cost a third line of height. The AI run
-         is not here -- it lives in the AI review tab with its progress and
-         errors, so a run can be started and watched in one place. -->
+    <!-- The shared header bar (#379): the reference, then in its actions
+         slot the open count and the two per-verse actions as glyph buttons
+         with the action as tooltip (item 6: one line, like every panel; the
+         glyph-with-tooltip shape is #375's). The AI run is not here -- it
+         lives in the AI review tab with its progress and errors, so a run can
+         be started and watched in one place. -->
     <PanelHeader id="review" label="the review panel"
-      title={`Review ${($project?.bookId ?? "").toUpperCase()} ${$currentChapter}:${$selectedVerse}`} />
-    <div class="panel-header">
-      <div class="header-row">
-        <div class="sub">{openFindingCount} open finding(s)</div>
-        <div class="verse-actions">
-        <button
-          class="align-btn"
-          on:click={() => openAlignment($currentChapter, $selectedVerse ?? "")}
-          disabled={$checkingProgress.running || Boolean($editingChapter) || $editSaving || Boolean($recheckingKey)}
-          title={$checkingProgress.running ? "Wait for background checking to finish before aligning" : "Review word alignment"}
-        >⇄ Align words</button>
-        <button
-          class="edit-btn"
-          on:click={startEdit}
-          disabled={$checkingProgress.running || Boolean($editingChapter) || $editSaving || Boolean($recheckingKey)}
-          title={$checkingProgress.running ? "Wait for background checking to finish before editing" : "Edit this verse"}
-        >✎ Edit verse</button>
-        </div>
-      </div>
-    </div>
+      title={`Review ${($project?.bookId ?? "").toUpperCase()} ${$currentChapter}:${$selectedVerse}`}>
+      <span class="open-count" title={`${openFindingCount} open finding(s) on this verse`}>{openFindingCount} open</span>
+      <button
+        class="align-btn" aria-label="Align words"
+        on:click={() => openAlignment($currentChapter, $selectedVerse ?? "")}
+        disabled={$checkingProgress.running || Boolean($editingChapter) || $editSaving || Boolean($recheckingKey)}
+        title={$checkingProgress.running ? "Align words: wait for background checking to finish" : "Align words: review the word alignment of this verse"}
+      >⇄</button>
+      <button
+        class="edit-btn" aria-label="Edit verse"
+        on:click={startEdit}
+        disabled={$checkingProgress.running || Boolean($editingChapter) || $editSaving || Boolean($recheckingKey)}
+        title={$checkingProgress.running ? "Edit verse: wait for background checking to finish" : "Edit verse: change the text of this verse"}
+      >✎</button>
+    </PanelHeader>
 
     {#if hasPinnedStatus}
     <div class="panel-pinned">
@@ -650,10 +685,10 @@
     <div class="panel-scroll">
       <div class="tabs" role="tablist" aria-label="Verse report">
         <button
-          type="button" role="tab" aria-selected={activeTab === "greekroom"}
+          type="button" role="tab" aria-selected={activeTab === "greekroom"} title="Greek Room"
           class:active={activeTab === "greekroom"} on:click={() => (activeTab = "greekroom")}
         >
-          Greek Room
+          <span class="tab-label">Greek Room</span>
           {#if greekRoomChecking}<span class="tab-live" />{/if}
           {#if greekRoomOpenCount > 0}<span class="tab-count">{greekRoomOpenCount}</span>{/if}
         </button>
@@ -662,20 +697,20 @@
           class:active={activeTab === "tntw"} on:click={() => (activeTab = "tntw")}
           title="Translation Notes, Words alignment"
         >
-          Core check
+          <span class="tab-label">Core check</span>
           {#if tntwOpenCount > 0}<span class="tab-count">{tntwOpenCount}</span>{/if}
         </button>
         <button
-          type="button" role="tab" aria-selected={activeTab === "lqa"}
+          type="button" role="tab" aria-selected={activeTab === "lqa"} title="Language QA"
           class:active={activeTab === "lqa"} on:click={() => (activeTab = "lqa")}
         >
-          Language QA
+          <span class="tab-label">Language QA</span>
           {#if lqaFindings.length > 0}<span class="tab-count">{lqaFindings.length}</span>{/if}
         </button>
         <button
-          type="button" role="tab" aria-selected={activeTab === "ai"}
+          type="button" role="tab" aria-selected={activeTab === "ai"} title="AI review"
           class:active={activeTab === "ai"} on:click={() => (activeTab = "ai")}
-        >AI review</button>
+        ><span class="tab-label">AI review</span></button>
       </div>
 
       <div class="tab-content">
@@ -692,9 +727,12 @@
         <div class="section">
           <div class="section-title">Already computed in background pass</div>
           {#each $selectedFindings.filter((f) => !isGreekRoom(f.engine)) as f}
-            <div class="finding source-{categoryClass(f.category)}">
+            <div class="finding source-{categoryClass(f.category)}" role="presentation"
+              on:click={(event) => cardClick(event, f.id)} on:keydown={(event) => cardKeydown(event, f.id)}>
               <div class="verdict">
-                {#if findingNumberMap.has(f.id)}<span class="finding-num-badge" title="Marked in the verse text">{findingNumberMap.get(f.id)}</span>{/if}
+                {#if findingNumberMap.has(f.id)}<button type="button" class="finding-num-badge" title="Show in the verse text"
+                  aria-label={`Show finding ${findingNumberMap.get(f.id)} in the verse text`}
+                  on:click={() => showInText(f.id)}>{findingNumberMap.get(f.id)}</button>{/if}
                 <span class="badge {severityBadge[f.severity]}">{f.severity}</span>
                 <span class="check-id">{f.category}</span>
                 {#if f.status !== "open"}<span class="badge badge-decided">{f.status}</span>{/if}
@@ -748,9 +786,12 @@
             </p>
             {#if greekRoomError}<p class="none failed">Greek Room could not run: {greekRoomError}</p>{/if}
             {#each grOpenFindings as f}
-              <div class="finding source-{categoryClass(f.category)}">
+              <div class="finding source-{categoryClass(f.category)}" role="presentation"
+                on:click={(event) => cardClick(event, f.id)} on:keydown={(event) => cardKeydown(event, f.id)}>
                 <div class="verdict">
-                  {#if findingNumberMap.has(f.id)}<span class="finding-num-badge" title="Marked in the verse text">{findingNumberMap.get(f.id)}</span>{/if}
+                  {#if findingNumberMap.has(f.id)}<button type="button" class="finding-num-badge" title="Show in the verse text"
+                    aria-label={`Show finding ${findingNumberMap.get(f.id)} in the verse text`}
+                    on:click={() => showInText(f.id)}>{findingNumberMap.get(f.id)}</button>{/if}
                   <span class="badge {severityBadge[f.severity]}">{f.severity}</span>
                   <span class="engine-badge">{f.engine}</span>
                   <span class="check-id">{f.check_type}</span>
@@ -773,7 +814,7 @@
                 <div class="decision-row two-up">
                   <button
                     class="edit-inline"
-                    on:click={() => acceptAndEdit(f.id)}
+                    on:click={() => acceptAndEdit(f)}
                     disabled={$checkingProgress.running || Boolean($editingChapter) || $editSaving || Boolean($recheckingKey)}
                     title={$checkingProgress.running ? "Wait for background checking to finish before editing" : "Edit this verse and mark this finding accepted"}
                   >✎ Accept and edit</button>
@@ -834,7 +875,7 @@
                   <div class="decision-row two-up">
                     <button
                       class="edit-inline"
-                      on:click={startEdit}
+                      on:click={() => editFinding(f)}
                       disabled={$checkingProgress.running || Boolean($editingChapter) || $editSaving || Boolean($recheckingKey)}
                       title={$checkingProgress.running ? "Wait for background checking to finish before editing" : "Edit this verse"}
                     >✎ Edit verse</button>
@@ -851,8 +892,11 @@
             <div class="section-title">Language QA</div>
             {#if lqaNotice}<p class="lqa-notice" class:failed={lqaNoticeError} role="status">{lqaNotice}</p>{/if}
             {#each lqaFindings as f (f.id)}
-              <div class="finding lqa-finding" data-lqa-id={f.id}>
+              <div class="finding lqa-finding" data-lqa-id={f.id} role="presentation"
+                on:click={(event) => cardClick(event, f.id)} on:keydown={(event) => cardKeydown(event, f.id)}>
                 <div class="verdict">
+                  {#if !f.context}<button type="button" class="finding-num-badge locate" title="Show in the verse text"
+                    aria-label={`Show “${f.originalText}” in the verse text`} on:click={() => showInText(f.id)}>Show in text</button>{/if}
                   <span class="badge {severityBadge[f.severity] ?? 'badge-review'}">{f.severity}</span>
                   <span class="engine-badge">{isLearnedFinding(f) ? "learned fix" : f.category}</span>
                   <span class="check-id">{f.ruleId}</span>
@@ -1065,28 +1109,32 @@
 
 <style>
   /* Its column (SidePanel) sets the width and the left border. */
-  .panel { flex: 1; min-height: 0; background: var(--surface); display: flex; flex-direction: column; overflow: hidden; }
-  .panel-header { padding: 8px 16px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
-  .header-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
-  .panel-pinned { flex-shrink: 0; padding: 14px 16px; border-bottom: 1px solid var(--border); overflow-y: auto; max-height: 60vh; }
-  .sub { flex: 1; min-width: 0; font-size: var(--fs-2xs); color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* #379 item 6: the body is --surface at --fs-xs, padded 10px 12px. */
+  .panel { flex: 1; min-height: 0; background: var(--surface); display: flex; flex-direction: column; overflow: hidden;
+    font-size: var(--fs-xs); }
+  .panel-pinned { flex-shrink: 0; padding: 10px 12px; border-bottom: 1px solid var(--border); overflow-y: auto; max-height: 60vh; }
   .panel-scroll { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
   .operation-status { display: flex; align-items: center; gap: 7px; border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; font-size: var(--fs-xs); line-height: 1.4; }
   .operation-status.checking { color: var(--accent); background: var(--accent-bg); }
   .operation-status.saved { color: var(--success); background: var(--success-bg); }
   .operation-status.failed { color: var(--danger); background: var(--danger-bg); }
-  /* One line, every label whole. At 400px the four labels fit only if the
-     count and the live dot stay out of the flow (they sit in the corner), and
-     the row scrolls rather than wraps should a wider UI font ever overflow it. */
-  .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); flex-shrink: 0; padding: 10px 10px 0; background: var(--surface); overflow-x: auto; scrollbar-width: none; }
-  .tabs::-webkit-scrollbar { display: none; }
-  .tab-content { flex: 1; overflow-y: auto; padding: 14px 16px; }
+  /* #379 item 6: Language QA's tab bar (.panel-tabs there), right under the
+     bar. One line; the count and the live dot stay out of the flow (they sit
+     in the corner). The four labels need ~330px whole; narrower than that
+     (the column squeezed by its neighbours at 1366) each label is cut with
+     an ellipsis and keeps its full name in its title, so every tab stays
+     visible -- the row used to scroll with its scrollbar hidden, and the
+     last tab simply vanished. */
+  .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); flex-shrink: 0; padding: 0 12px;
+    background: var(--surface); font-size: var(--fs-3xs); }
+  .tab-content { flex: 1; overflow-y: auto; padding: 10px 12px; }
   .tabs button {
-    flex: 1 1 auto; position: relative; display: flex; align-items: center; justify-content: center;
-    padding: 9px 4px 7px; font-size: var(--fs-3xs); font-weight: 700; color: var(--text-2); white-space: nowrap;
+    flex: 1 1 auto; min-width: 0; position: relative; display: flex; align-items: center; justify-content: center;
+    padding: 8px 6px 6px; font-size: inherit; font-weight: 700; color: var(--text-2); white-space: nowrap;
     background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0;
     cursor: pointer;
   }
+  .tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .tabs button:hover:not(.active) { color: var(--text); }
   .tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
   .tab-count {
@@ -1129,6 +1177,13 @@
     font-size: var(--fs-3xs); font-weight: 800; color: white; background: var(--accent); border-radius: 50%;
     flex-shrink: 0;
   }
+  /* #402: the badge is the card's keyboard route to its mark in the text. A
+     button keeps the badge's look; the Language QA one carries a text label
+     (there is no number to show) in the same pill. */
+  button.finding-num-badge { font-family: var(--font-ui); border: none; padding: 0; cursor: pointer; line-height: 1; }
+  button.finding-num-badge.locate { width: auto; height: 18px; padding: 0 7px; border-radius: 999px; font-weight: 700; white-space: nowrap; }
+  button.finding-num-badge:hover, button.finding-num-badge:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .finding[role="presentation"] { cursor: pointer; }
   .save-state { margin-left: auto; font-size: var(--fs-2xs); color: var(--text-3); white-space: nowrap; }
   .save-state.saved { color: var(--success); }
   .save-state.failed { color: var(--danger); }
@@ -1164,15 +1219,19 @@
   /* #202: the chapter's Greek Room result, under the run button. */
   .chapter-summary { margin: 4px 0 8px; font-size: var(--fs-xs); color: var(--text-2); }
   .decision-row button:disabled { opacity: .55; cursor: not-allowed; }
-  .verse-actions { display: flex; gap: 6px; flex: 0 0 auto; }
-  .edit-btn { padding: 5px 9px; font-size: var(--fs-2xs); font-weight: 700; border-radius: 6px; border: none; background: var(--accent-bg); color: var(--accent); cursor: pointer; white-space: nowrap; }
-  .align-btn { padding: 5px 9px; font-size: var(--fs-2xs); font-weight: 700; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); cursor: pointer; white-space: nowrap; }
+  /* The bar's actions: the count as text, the two actions as 24px glyph
+     buttons, the same size as the bar's Close. */
+  .open-count { font-size: var(--fs-2xs); color: var(--text-2); white-space: nowrap; }
+  .edit-btn, .align-btn { width: 24px; height: 24px; padding: 0; font-size: var(--fs-xs); font-weight: 700; line-height: 1;
+    border-radius: 6px; cursor: pointer; white-space: nowrap; }
+  .edit-btn { border: none; background: var(--accent-bg); color: var(--accent); }
+  .align-btn { border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); }
   .ai-run-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
   .ai-run-label { font-size: var(--fs-sm); font-weight: 700; color: var(--text); white-space: nowrap; }
   .ai-run-buttons { display: flex; gap: 6px; margin-left: auto; }
   .ai-scope-btn { padding: 7px 12px; font-size: var(--fs-xs); font-weight: 700; border-radius: 7px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--accent); cursor: pointer; white-space: nowrap; }
   .edit-btn:disabled, .align-btn:disabled, .ai-scope-btn:disabled { opacity: .55; cursor: not-allowed; }
-  .empty-panel { padding: 24px 16px; font-size: var(--fs-sm); color: var(--text-3); display: flex; align-items: flex-start; gap: 10px; }
+  .empty-panel { padding: 10px 12px; font-size: var(--fs-sm); color: var(--text-3); display: flex; align-items: flex-start; gap: 10px; }
   .empty-panel span { flex: 1; }
   .ai-explain-section { border-color: var(--accent); }
   .ai-cost { margin-left: auto; font-size: var(--fs-2xs); font-weight: 400; color: var(--text-3); }

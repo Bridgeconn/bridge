@@ -119,15 +119,18 @@
 </aside>
 
 <style>
-  .source-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--surface-2); }
+  /* #379 item 6: every panel body is --surface at --fs-xs (the bar alone is
+     --surface-2), and its content starts 12px from the edge and 10px under
+     the bar: here the list's 4px plus each row's 6px 8px. */
+  .source-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--surface); font-size: var(--fs-xs); }
   .follow { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
-  .note { margin: 10px; font-size: var(--fs-xs); color: var(--text-3); }
+  .note { margin: 10px 12px; font-size: var(--fs-xs); color: var(--text-3); }
   .error { color: var(--danger); }
-  ol { list-style: none; margin: 0; padding: 6px; overflow-y: auto; flex: 1; min-width: 0; }
+  ol { list-style: none; margin: 0; padding: 4px; overflow-y: auto; flex: 1; min-width: 0; }
   /* The verse number stays at the left edge whichever way the words run. */
   li button { display: flex; gap: 8px; width: 100%; min-width: 0; text-align: left; padding: 6px 8px; border: 0;
     border-radius: 6px; background: transparent; color: var(--text); cursor: pointer; font: inherit; }
-  li button:hover { background: var(--surface); }
+  li button:hover { background: var(--surface-2); }
   li.current button { background: var(--accent-bg); box-shadow: inset 3px 0 0 var(--accent); }
   .num { flex-shrink: 0; font-size: var(--fs-2xs); font-weight: 700; color: var(--text-3); min-width: 20px; padding-top: 2px; }
   /* The source face and size follow the verse text's A−/A+ (--verse-scale);

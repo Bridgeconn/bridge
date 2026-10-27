@@ -4,16 +4,21 @@ This directory contains the source for the connector verified with Paratext
 9.5.110.1. It serves protocol-1 newline-delimited JSON on the local-only named
 pipe `\\.\pipe\translationCoreAIBridge`.
 
-The connector supports:
+The connector (0.8.0, #358) supports:
 
-- active user, project, reference, selection, and sync-group state;
-- two-way Scripture navigation; and
-- safe Project Note creation through Paratext's own write-lock and `AddNote`
-  APIs.
+- active user, project, reference, selection, and sync-group state, plus
+  `projects`, every project on this PC (`id`, `short_name`, `editable`);
+- two-way Scripture navigation;
+- Project Notes through Paratext's own write lock: `create_note` in the project
+  named by `project_id` (the Guid the book was imported from, never the active
+  window; `IReadOnlyProject.ID`), answering with the note's `author`, `created`
+  and `anchor`; `list_notes` for a chapter; `add_comment` and `resolve_note` on
+  a thread found by its anchor and first comment (`key`). A Paratext note has no
+  id, so author + created is its identity.
 
-It deliberately contains no Scripture-writing (`PutUSFM`/`PutUSX`) operation.
-Bridge verifies the active Paratext project ID before sending, uses the logged-in
-Paratext user as author, and refuses ambiguous repeated-text anchors.
+It deliberately contains no Scripture-writing (`PutUSFM`/`PutUSX`) operation and
+never deletes a note. The logged-in Paratext user is the author of every note
+and comment; ambiguous repeated-text anchors are refused.
 
 ## Live verification
 
@@ -64,9 +69,9 @@ destination is `C:\Program Files\Paratext 9\plugins\translationCoreAIBridge`.
 The script refuses deployment while Paratext is running.
 
 After deployment, restart Paratext, open the intended Scripture project, and
-verify connector state before testing a disposable Project Note. Bridge keeps a
-Notes 1.1 outbox copy and retries failed live handoffs without duplicating the
-resolution or message identity.
+verify connector state before testing a disposable Project Note. Bridge queues a
+note it could not send and retries it without duplicating the message identity
+(the `[Bridge ref ...]` footer is checked against the notes index first).
 
 ## Remaining integration boundary
 
