@@ -51,11 +51,20 @@
 
   // A verse with no original-language source tokens (a lettered segment such
   // as 5a) is written without alignment rather than refusing the book (#307).
-  function unalignedLine(verses: { reference: string }[]): string {
+  // #307 / #339: verses written without alignment, by reason. "no-source-tokens"
+  // is a lettered segment or a verse the source lacks; "alignment-not-serializable"
+  // is alignment data the exporter could not write (its tokens no longer match
+  // the verse, a word in two groups). One verse never blocks the book.
+  function unalignedLine(verses: { reference: string; reason?: string }[]): string {
     if (verses.length === 0) return "";
-    const refs = verses.slice(0, 6).map((v) => v.reference).join(", ")
-      + (verses.length > 6 ? `, and ${verses.length - 6} more` : "");
-    return `${verses.length} verse(s) written without alignment (no original-language source): ${refs}`;
+    const refs = (list: { reference: string }[]) =>
+      list.slice(0, 6).map((v) => v.reference).join(", ") + (list.length > 6 ? `, and ${list.length - 6} more` : "");
+    const noSource = verses.filter((v) => (v.reason ?? "no-source-tokens") === "no-source-tokens");
+    const unserializable = verses.filter((v) => v.reason === "alignment-not-serializable");
+    const lines: string[] = [];
+    if (noSource.length) lines.push(`${noSource.length} verse(s) written without alignment (no original-language source): ${refs(noSource)}`);
+    if (unserializable.length) lines.push(`${unserializable.length} verse(s) written without alignment (alignment data could not be written; recheck the verse in Align Words): ${refs(unserializable)}`);
+    return lines.join(" ");
   }
 
   async function doExport(kind: "aligned" | "nonAligned") {

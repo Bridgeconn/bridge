@@ -1,7 +1,7 @@
 import pytest
 
 from tc_ai_bridge.aligned_usfm import (
-    NO_SOURCE_TOKENS, AlignedUsfmError, render_aligned_verse, unaligned_reason,
+    NO_SOURCE_TOKENS, AlignedUsfmError, render_aligned_verse, render_unaligned_verse, unaligned_reason,
 )
 from tc_ai_bridge.models import AlignmentGroup, TokenRef, VerseAlignment
 
@@ -45,14 +45,33 @@ def test_inline_markers_and_footnotes_are_preserved_without_aligning_note_text()
     assert "\\w note" not in rendered
 
 
-def test_discontinuous_target_group_is_rejected_instead_of_changing_meaning():
+def test_discontinuous_target_group_is_one_milestone_nest_per_contiguous_run():
+    """#339: the shape translationCore's exporter writes (word-aligner
+    `merge`): each contiguous run of the group's target words gets its own
+    `\\zaln-s ... \\zaln-e` nest carrying the same source milestones."""
     alignment = VerseAlignment([
-        AlignmentGroup([_top("א")], [_bottom("one"), _bottom("three")]),
-        AlignmentGroup([_top("ב")], [_bottom("two")]),
+        AlignmentGroup([_top("א"), _top("ב")], [_bottom("one"), _bottom("three")]),
+        AlignmentGroup([_top("ג")], [_bottom("two")]),
     ], [])
 
-    with pytest.raises(AlignedUsfmError, match="discontinuous"):
-        render_aligned_verse("one two three", alignment)
+    rendered = render_aligned_verse("one two three", alignment)
+
+    a = '\\zaln-s |x-strong="H1" x-lemma="א" x-morph="He,Ncmsa" x-occurrence="1" x-occurrences="1" x-content="א"\\*'
+    b = '\\zaln-s |x-strong="H1" x-lemma="ב" x-morph="He,Ncmsa" x-occurrence="1" x-occurrences="1" x-content="ב"\\*'
+    g = '\\zaln-s |x-strong="H1" x-lemma="ג" x-morph="He,Ncmsa" x-occurrence="1" x-occurrences="1" x-content="ג"\\*'
+    assert rendered == (
+        f'{a}{b}\\w one|x-occurrence="1" x-occurrences="1"\\w*\\zaln-e\\*\\zaln-e\\* '
+        f'{g}\\w two|x-occurrence="1" x-occurrences="1"\\w*\\zaln-e\\* '
+        f'{a}{b}\\w three|x-occurrence="1" x-occurrences="1"\\w*\\zaln-e\\*\\zaln-e\\*'
+    )
+    assert rendered.count(a) == 2 and rendered.count(b) == 2 and rendered.count(g) == 1
+    assert rendered.count("\\zaln-e\\*") == 5
+
+
+def test_render_unaligned_verse_matches_an_empty_alignment():
+    assert render_unaligned_verse("target words.") == render_aligned_verse(
+        "target words.", VerseAlignment([], [_bottom("target"), _bottom("words")]),
+    )
 
 
 def test_a_verse_with_no_source_tokens_is_written_unaligned_not_refused():

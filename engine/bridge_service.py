@@ -103,7 +103,8 @@ from tc_ai_bridge.alignment_engine import (
     validate_preparation_proposal,
 )
 from tc_ai_bridge.aligned_usfm import (
-    NO_SOURCE_TOKENS_DETAIL, AlignedUsfmError, render_aligned_verse, unaligned_reason,
+    ALIGNMENT_NOT_SERIALIZABLE, NO_SOURCE_TOKENS_DETAIL, AlignedUsfmError, render_aligned_verse,
+    render_unaligned_verse, unaligned_reason,
 )
 from tc_ai_bridge.alignment_reliability import (
     alignment_fingerprint, compile_link_proposal, structural_issues, target_token_fingerprint,
@@ -2894,23 +2895,10 @@ class BridgeEngine:
         # groups (or wordBank) holding it; the bare count is only a fallback (#149).
         if duplicate_bottom and not any(issue.startswith("target token ") for issue in issues):
             issues.append(f"{len(duplicate_bottom)} target token(s) occur more than once in alignment data.")
-        target_positions = {
-            token.signature: position for position, token in enumerate(expected_bottom)
-        }
-        discontinuous_groups = 0
-        for group in alignment.alignments:
-            positions = sorted(
-                target_positions[token.signature]
-                for token in group.bottom_words
-                if token.signature in target_positions
-            )
-            if len(positions) > 1 and positions[-1] - positions[0] + 1 != len(positions):
-                discontinuous_groups += 1
-        if discontinuous_groups:
-            issues.append(
-                f"{discontinuous_groups} alignment group(s) contain non-adjacent target words; "
-                "aligned USFM requires each target span to be contiguous."
-            )
+        # A group with non-adjacent target words is no longer an issue here
+        # (#339): aligned USFM writes one milestone nest per contiguous run,
+        # as translationCore's own exporter does, so it neither blocks
+        # completion nor the export.
 
         top_tokens = [
             {"id": token_id, **token.to_dict()}
@@ -7960,7 +7948,9 @@ class BridgeEngine:
         summary = self.project.summary
         book = summary.book_id
         # Verses written with no alignment because they have no source tokens
-        # (a lettered segment, #307): reported, not refused.
+        # (a lettered segment, #307), or because their alignment data cannot
+        # be serialized (#339 point 3): reported by reference, never refused.
+        # One verse never blocks the book.
         unaligned: list[dict[str, str]] = []
 
         def render(chapter: str, verse: str) -> str:
@@ -7969,9 +7959,12 @@ class BridgeEngine:
             try:
                 rendered = render_aligned_verse(text, alignment)
             except AlignedUsfmError as exc:
-                raise ProjectError(
-                    f"Cannot export aligned USFM at {book.upper()} {chapter}:{verse}: {exc}"
-                ) from exc
+                unaligned.append({
+                    "reference": f"{chapter}:{verse}", "chapter": chapter, "verse": verse,
+                    "reason": ALIGNMENT_NOT_SERIALIZABLE,
+                    "detail": f"{exc} The verse was written without alignment.",
+                })
+                return render_unaligned_verse(text)
             reason = unaligned_reason(text, alignment)
             if reason is not None:
                 unaligned.append({

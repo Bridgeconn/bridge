@@ -70,6 +70,20 @@ describe("ExportModal aligned export with lettered segments (#307)", () => {
       .toBeInTheDocument();
   });
 
+  it("names a verse whose alignment data could not be written apart from the no-source ones (#339)", async () => {
+    exportAligned.mockResolvedValueOnce({ written: true, path: "/out/jon-aligned.usfm", chapters: 1,
+      unalignedVerses: [
+        { reference: "1:5a", chapter: "1", verse: "5a", reason: "no-source-tokens", detail: "No source tokens" },
+        { reference: "1:2", chapter: "1", verse: "2", reason: "alignment-not-serializable",
+          detail: "Alignment target tokens do not exactly match the current verse text." },
+      ] });
+    render(ExportModal, { props: { onClose: vi.fn() } });
+    await fireEvent.click(screen.getByText("Aligned USFM 3"));
+    expect(await screen.findByText(/Wrote 1 chapter\(s\)/)).toBeInTheDocument();
+    expect(screen.getByText(/1 verse\(s\) written without alignment \(no original-language source\): 1:5a/)).toBeInTheDocument();
+    expect(screen.getByText(/1 verse\(s\) written without alignment \(alignment data could not be written; recheck the verse in Align Words\): 1:2/)).toBeInTheDocument();
+  });
+
   it("adds no line when every verse could carry alignment", async () => {
     exportAligned.mockResolvedValueOnce({ written: true, path: "/out/jon-aligned.usfm", chapters: 1, unalignedVerses: [] });
     render(ExportModal, { props: { onClose: vi.fn() } });

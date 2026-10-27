@@ -453,7 +453,10 @@ def test_alignment_context_respects_rtl_target_metadata(fixture_project):
     assert context["targetDirection"] == "rtl"
 
 
-def test_alignment_flags_non_adjacent_target_group_before_completion(fixture_project):
+def test_alignment_with_non_adjacent_target_group_is_not_an_issue(fixture_project):
+    """#339: a group whose target words are not adjacent is ordinary (a
+    reordering language) and aligned USFM can carry it, so it is no longer
+    reported as an issue and does not by itself stop completion."""
     _write_alignment_work_fixture(fixture_project)
     engine = BridgeEngine()
     call(engine, "project.open", {"path": str(fixture_project)})
@@ -466,8 +469,8 @@ def test_alignment_flags_non_adjacent_target_group_before_completion(fixture_pro
         "expectedOriginal": original["alignment"],
     })["result"]
 
-    assert changed["canComplete"] is False
-    assert any("non-adjacent target words" in issue for issue in changed["issues"])
+    assert not any("non-adjacent" in issue for issue in changed["issues"]), changed["issues"]
+    assert changed["canComplete"] is False  # other words of the verse are still unaligned
 
 
 def test_clean_verse_has_no_findings(fixture_project):

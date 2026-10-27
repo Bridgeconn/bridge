@@ -104,6 +104,17 @@ NO_SOURCE_TOKENS_DETAIL = (
     "(a lettered segment such as 5a, or a verse the source text does not have), "
     "so it was written without alignment."
 )
+# #339 point 3: a verse whose alignment data cannot be serialized (its tokens
+# no longer match the verse text, a target word sits in two groups, ...) is
+# written without alignment and reported by reference; it never blocks the book.
+ALIGNMENT_NOT_SERIALIZABLE = "alignment-not-serializable"
+
+
+def render_unaligned_verse(text: str) -> str:
+    """The verse with every target word as a `\\w` word carrying its occurrence
+    attributes and no `\\zaln-s`: what `render_aligned_verse` writes for a verse
+    with no groups, built from the text alone so it can never fail to match."""
+    return render_aligned_verse(text, VerseAlignment([], _target_tokens(text)))
 
 
 def unaligned_reason(text: str, alignment: VerseAlignment) -> str | None:
@@ -116,14 +127,35 @@ def unaligned_reason(text: str, alignment: VerseAlignment) -> str | None:
     return NO_SOURCE_TOKENS
 
 
+def _contiguous_runs(positions: list[int]) -> list[list[int]]:
+    """Sorted target positions split into maximal runs of adjacent positions:
+    [0, 1, 4, 6, 7] -> [[0, 1], [4], [6, 7]]."""
+    runs: list[list[int]] = []
+    for position in positions:
+        if runs and position == runs[-1][-1] + 1:
+            runs[-1].append(position)
+        else:
+            runs.append([position])
+    return runs
+
+
 def render_aligned_verse(text: str, alignment: VerseAlignment) -> str:
     """Render translationCore alignment data in unfoldingWord's USFM 3
     `zaln`/`w` extension convention while preserving target punctuation and
     inline USFM surrounding each target token.
 
     Multiple source tokens sharing a target span are represented by nested
-    milestones. A target span must be contiguous because a single USFM
-    milestone cannot represent a discontinuous set without changing meaning.
+    milestones. A group whose target words are not adjacent (ordinary in a
+    reordering language such as Tamil) is written as one `\\zaln-s ... \\zaln-e`
+    nest per contiguous run of its target words, each nest repeating the same
+    source milestones (#339, Benz's decision 2026-10-26). That is what
+    translationCore's own exporter writes: `word-aligner` 1.1.1
+    `lib/js/aligner.js` `merge` groups a group's target positions with
+    `groupConsecutiveNumbers` and nests the full milestone chain around each
+    run, and its reader merges them back through `sameMilestone`, "needed when
+    milestones are not contiguous" (`utils/verseObjects.js`). Bridge's own
+    import does the same: milestones with one source signature collect every
+    target word they enclose into one group.
 
     A verse with no original-language source tokens -- every lettered segment
     (5a, 5b), whose source is the whole verse 5 -- has nothing to align to, so
@@ -160,18 +192,15 @@ def render_aligned_verse(text: str, alignment: VerseAlignment) -> str:
             raise AlignedUsfmError(
                 f"Alignment group {group_index} contains a target token absent from the verse."
             ) from exc
-        if positions != list(range(positions[0], positions[-1] + 1)):
-            raise AlignedUsfmError(
-                f"Alignment group {group_index} uses discontinuous target words and cannot be serialized safely."
-            )
         for token in group.bottom_words:
             if token.signature in represented_bottom:
                 raise AlignedUsfmError(
                     f"Target token {token.word!r} occurs in more than one alignment group."
                 )
             represented_bottom.add(token.signature)
-        opens.setdefault(positions[0], []).extend(group.top_words)
-        closes[positions[-1]] = closes.get(positions[-1], 0) + len(group.top_words)
+        for run in _contiguous_runs(positions):
+            opens.setdefault(run[0], []).extend(group.top_words)
+            closes[run[-1]] = closes.get(run[-1], 0) + len(group.top_words)
 
     pieces: list[str] = []
     cursor = 0

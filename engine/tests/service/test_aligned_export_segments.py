@@ -104,3 +104,94 @@ def test_a_book_with_no_segments_reports_none(tmp_path):
 
     assert exported["success"], exported
     assert exported["result"]["unalignedVerses"] == []
+
+
+def _ids(context, words):
+    return [next(t["id"] for t in context["bottomTokens"] if t["word"] == w) for w in words]
+
+
+def test_a_discontinuous_group_round_trips_as_one_milestone_nest_per_run(tmp_path):
+    """#339: 1:1 "Now the word ..." with one source token aligned to "Now" and
+    "word" (positions 0 and 2). The export writes two `\\zaln-s` nests with
+    identical source milestones, one around each run, the book exports whole,
+    and a re-import rebuilds the one group with both target words."""
+    source = tmp_path / "32-JON.usfm"
+    source.write_text(JONAH, encoding="utf-8")
+    root = _import(source, tmp_path / "projects")
+    engine = BridgeEngine()
+    assert call(engine, "project.open", {"path": str(root)})["success"]
+    context = call(engine, "alignment.get", {"chapter": "1", "verse": "1"})["result"]
+    top = context["topTokens"][0]
+    realigned = call(engine, "alignment.realign", {
+        "chapter": "1", "verse": "1", "topIds": [top["id"]], "bottomIds": _ids(context, ["Now", "word"]),
+        "expectedOriginal": context["alignment"],
+    })
+    assert realigned["success"], realigned
+    assert not any("non-adjacent" in issue for issue in realigned["result"]["issues"])
+
+    output = tmp_path / "jon-aligned.usfm"
+    exported = call(engine, "export.aligned", {"outputPath": str(output)})
+    assert exported["success"], exported
+    result = exported["result"]
+    assert result["written"] is True
+    # Only the lettered segments are reported; the discontinuous verse is not.
+    assert [v["reference"] for v in result["unalignedVerses"]] == ["1:5a", "1:5b"]
+
+    content = output.read_text(encoding="utf-8")
+    line = next(l for l in content.splitlines() if l.startswith("\\v 1 "))
+    starts = [m for m in line.split("\\zaln-s ")[1:]]
+    assert len(starts) == 2 and line.count("\\zaln-e\\*") == 2
+    first_attrs, second_attrs = (part.split("\\*", 1)[0] for part in starts)
+    assert first_attrs == second_attrs and f'x-content="{top["word"]}"' in first_attrs
+    assert line.index('\\w Now|') < line.index('\\w the|') < line.index('\\w word|')
+    assert '\\w the|x-occurrence="1" x-occurrences="2"\\w*' in line  # "the" between the runs is unaligned
+
+    reimported = TranslationCoreProject(_import(output, tmp_path / "reimported"))
+    assert reimported.target_verse_text("1", "1") == TEXT["1"]
+    round_trip = reimported.load_verse_alignment("1", "1")
+    [group] = [g for g in round_trip.alignments if g.bottom_words]
+    assert [t.word for t in group.top_words] == [top["word"]]
+    assert [w.word for w in group.bottom_words] == ["Now", "word"]
+
+
+def test_a_verse_whose_alignment_cannot_be_serialized_is_written_unaligned_and_reported(tmp_path):
+    """#339 point 3: one verse never blocks the book. Alignment data naming a
+    target word the verse no longer has (planted on disk, as a hand edit or an
+    older build could leave it) is written without alignment and reported by
+    reference; every other verse exports as usual."""
+    import json
+    source = tmp_path / "32-JON.usfm"
+    source.write_text(JONAH, encoding="utf-8")
+    root = _import(source, tmp_path / "projects")
+    chapter_path = root / ".apps" / "translationCore" / "alignmentData" / "jon" / "1.json"
+    chapter = json.loads(chapter_path.read_text(encoding="utf-8"))
+    verse2 = chapter["2"]
+    bank = verse2["wordBank"]
+    stale = next(t for t in bank if t["word"].startswith("Nineveh"))
+    stale["word"] = "Ninevah"  # not in the text any more
+    verse2["alignments"][0]["bottomWords"] = [stale]
+    verse2["wordBank"] = [t for t in bank if t is not stale]
+    chapter_path.write_text(json.dumps(chapter, ensure_ascii=False), encoding="utf-8")
+
+    engine = BridgeEngine()
+    assert call(engine, "project.open", {"path": str(root)})["success"]
+    context = call(engine, "alignment.get", {"chapter": "1", "verse": "1"})["result"]
+    realigned = call(engine, "alignment.realign", {
+        "chapter": "1", "verse": "1", "topIds": [context["topTokens"][0]["id"]],
+        "bottomIds": _ids(context, ["Now"]), "expectedOriginal": context["alignment"],
+    })
+    assert realigned["success"], realigned
+
+    output = tmp_path / "jon-aligned.usfm"
+    exported = call(engine, "export.aligned", {"outputPath": str(output)})
+    assert exported["success"], exported
+    result = exported["result"]
+    assert result["written"] is True and output.exists()
+    reported = {v["reference"]: v for v in result["unalignedVerses"]}
+    assert set(reported) == {"1:2", "1:5a", "1:5b"}
+    assert reported["1:2"]["reason"] == "alignment-not-serializable"
+    assert "do not exactly match" in reported["1:2"]["detail"]
+    content = output.read_text(encoding="utf-8")
+    line_2 = next(l for l in content.splitlines() if l.startswith("\\v 2 "))
+    assert "\\zaln-s" not in line_2 and '\\w Arise|x-occurrence="1" x-occurrences="1"\\w*' in line_2
+    assert content.count("\\zaln-s") == 1  # 1:1's one group

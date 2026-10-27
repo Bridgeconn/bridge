@@ -393,9 +393,19 @@ a real-key run is done and recorded.
 
 Aligned export writes USFM 3 and uses unfoldingWord's occurrence-aware `zaln`
 and `w` user-extension convention. Nested source milestones represent
-many-to-many relationships. The serializer preserves punctuation, inline
-markers, footnotes, cross-references, headings, poetry, and custom markers by
-using the retained imported USFM as its structural template.
+many-to-many relationships. A group whose target words are not adjacent
+(ordinary in a reordering language such as Tamil) is written as one
+`\zaln-s … \zaln-e` nest per contiguous run of its target words, each nest
+repeating the same source milestones (#339, decision 2026-10-26) — the shape
+translationCore's own exporter writes (`word-aligner` `merge`,
+`groupConsecutiveNumbers`), and the one its reader and Bridge's import merge
+back into a single group. A verse whose alignment data cannot be serialized
+at all is written without alignment and reported on the export result
+(`unalignedVerses`, reason `alignment-not-serializable`), beside the
+`no-source-tokens` verses of #307; one verse never blocks the book. The
+serializer preserves punctuation, inline markers, footnotes, cross-references,
+headings, poetry, and custom markers by using the retained imported USFM as
+its structural template.
 
 USFM permits user-defined `z` markers and attributes; see the official
 [USFM character attributes documentation](https://docs.usfm.bible/usfm/3.1.2/char/attributes.html).
