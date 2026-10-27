@@ -9,9 +9,11 @@ from bridge_service import BridgeEngine
 from tests.support.projects import call, fixture_project  # noqa: F401  (pytest fixture)
 
 
-def test_the_dispatcher_releases_its_handles_after_every_request(fixture_project):
+def test_the_dispatcher_releases_its_handles_after_every_request(fixture_project, monkeypatch):
     engine = BridgeEngine()
-    assert call(engine, "project.open", {"path": str(fixture_project)})["success"] is True
+    # Count dispatcher handles, not a live Language QA worker's connection.
+    monkeypatch.setattr(engine._language_qa, "_schedule", lambda: None)
+    assert call(engine, "project.open", {"path": str(fixture_project), "awaitSemantic": True})["success"] is True
     project = engine.project
     # project.open itself used the workbench many times and released at the end.
     assert project.workbench._pool.open_connections() == 0
@@ -24,10 +26,11 @@ def test_the_dispatcher_releases_its_handles_after_every_request(fixture_project
     assert project.workbench._pool.open_connections() == 0
 
 
-def test_opening_another_project_lets_the_previous_files_go(fixture_project, tmp_path):
+def test_opening_another_project_lets_the_previous_files_go(fixture_project, tmp_path, monkeypatch):
     second = tmp_path / "rut-second"
     shutil.copytree(fixture_project, second)
     engine = BridgeEngine()
+    monkeypatch.setattr(engine._language_qa, "_schedule", lambda: None)
     # awaitSemantic: the runtime build runs on a worker since #112 step two and
     # holds its own workbench connection until it ends; this test counts the
     # dispatcher's.
