@@ -129,6 +129,34 @@ def usfm_checks(project: TranslationCoreProject, chapter: str, verse: str) -> li
     return issues
 
 
+def versification_checks(project: TranslationCoreProject, chapter: str, verse: str) -> list[QAIssue]:
+    """#352: a source verse that lands in no target verse under the book's
+    recorded versification (UGNT 3JN 1:15 against a 14-verse 3 John) is
+    raised on the nearest target verse as "source verse not in target
+    versification", with the source words, so it is visible from there and
+    the reviewer decides. Never merged into a neighbour by guess; the target
+    text is not changed. Severity medium: a thing to look at, not an error in
+    the text, so it does not block the advisory gate (#337)."""
+    from .source_verse_map import UNPLACED_CHECK_ID, UNPLACED_CODE, schema_from_manifest, unplaced_for_project
+    issues: list[QAIssue] = []
+    schema = schema_from_manifest(getattr(project, 'manifest', None))
+    for item in unplaced_for_project(project):
+        if (str(item.get('nearestChapter')), str(item.get('nearestVerse'))) != (str(chapter), str(verse)):
+            continue
+        source_ref = f"{item['sourceChapter']}:{item['sourceVerse']}"
+        words = list(item.get('words') or [])
+        shown = ' '.join(words[:8]) + (' …' if len(words) > 8 else '')
+        issues.append(QAIssue(
+            code=UNPLACED_CODE, severity='medium',
+            title=f'Source verse {source_ref} is not in the target versification',
+            detail=(f'The original-language text has {source_ref} ({len(words)} words: {shown}), but under the '
+                    f'"{schema}" versification no verse of this book receives it, so its words cannot be aligned or '
+                    f'checked here. {chapter}:{verse} is the nearest target verse. The target text was not changed.'),
+            source='versification', check_id=UNPLACED_CHECK_ID, group_id=source_ref,
+        ))
+    return issues
+
+
 LOCAL_QA_GROUPS = frozenset({'tN', 'tW', 'alignment', 'text'})
 
 
@@ -149,6 +177,8 @@ def run_local_qa(project: TranslationCoreProject, chapter: str, verse: str, alig
     if 'alignment' in groups:
         with timings.step("local.alignment_integrity"):
             issues += alignment_integrity_checks(alignment, text, language.target_name, language.source_name)
+        with timings.step("local.versification"):
+            issues += versification_checks(project, chapter, verse)
     if groups & {'tN', 'tW', 'alignment'}:
         with timings.step("local.tc_checks"):
             issues += translationcore_check_issues(project, chapter, verse, groups)

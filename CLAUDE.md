@@ -232,8 +232,18 @@ A raw Scripture import becomes a translationCore-compatible book project:
 
 ```
 <project>/manifest.json                         `language_qa.pack` ("auto" | "off" | a pack name) is
-                                                Bridge's only key here: Settings > Language QA, written
-                                                through the journal (languageQa.setPack, 2026-10-07)
+                                                Bridge's only settings key here: Settings > Language QA,
+                                                written through the journal (languageQa.setPack, 2026-10-07).
+                                                `bridge_versification` (#352, 2026-10-27) records the
+                                                versification detected at import from the book's
+                                                chapter/verse shape (`schema`, `detected`, `reason`,
+                                                `costBySchema`; `org` when every schema fits equally or
+                                                the library is unavailable). The source verse map is
+                                                derived from it (`source_verse_map.py`); a source verse no
+                                                target verse receives is never merged by guess -- it is
+                                                listed in `.bridge/import.json` `unplacedSourceVerses` and
+                                                raised as a finding on the nearest target verse
+                                                (`alignment.source_verse_unplaced`, severity medium).
 <project>/<book>.usfm                          original source, preserved verbatim
 <project>/<book>/<chapter>.json                 verse-keyed target Scripture
 <project>/<book>/<chapter>.headings.json        section headings (\s, \ms, \r ...), keyed by the

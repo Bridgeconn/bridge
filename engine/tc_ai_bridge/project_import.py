@@ -22,6 +22,10 @@ from .paratext_project import (
     read_settings,
     scripture_candidates,
 )
+from .source_verse_map import (
+    MANIFEST_KEY as VERSIFICATION_KEY, detect_versification, schema_from_manifest,
+    source_tokens_for_target_verse, unplaced_source_verses,
+)
 from .original_language_resources import (
     blank_source_alignments,
     resource_for_book,
@@ -658,6 +662,12 @@ def _write_imported_book(project_root: Path, book: ParsedBook, metadata: dict[st
 
     original_resource = resource_for_book(book.book_id)
     original_resource_info = resource_inventory(book.book_id)
+    # #352: the versification the book's chapter/verse shape implies, recorded
+    # so the source verse map is derived from it rather than assumed.
+    versification = detect_versification(
+        book.book_id, {f"{chapter}:{verse}": "x" for chapter, verses in book.chapters.items() for verse in verses},
+    )
+    schema = str(versification.get("schema") or "org")
     manifest = {
         "generator": {"name": "Bridge", "build": BRIDGE_VERSION},
         "target_language": {
@@ -680,6 +690,7 @@ def _write_imported_book(project_root: Path, book: ParsedBook, metadata: dict[st
             "resourceIndexStatus": "required",
         },
         "bridge_project": {"name": metadata["projectName"], "schemaVersion": 1},
+        VERSIFICATION_KEY: versification,
     }
     if original_resource is not None and not book.has_alignment_markers:
         manifest["tc_orig_lang_check_version_wordAlignment"] = original_resource.version
@@ -712,7 +723,7 @@ def _write_imported_book(project_root: Path, book: ParsedBook, metadata: dict[st
             # groups, so imported or human-created source data is never
             # replaced by a bundled resource.
             if not book.has_alignment_markers:
-                source_tokens = source_tokens_for_verse(book.book_id, chapter, verse)
+                source_tokens = source_tokens_for_target_verse(book.book_id, chapter, verse, schema)
                 if source_tokens:
                     alignment["alignments"] = blank_source_alignments(source_tokens)
                     generated_source_tokens += len(source_tokens)
@@ -733,6 +744,21 @@ def _write_imported_book(project_root: Path, book: ParsedBook, metadata: dict[st
                 project_root / book.book_id / f"{chapter}.headings.json", chapter_headings,
             )
 
+    # #352: source verses no target verse receives under the recorded
+    # versification. Recorded here as provenance; the check path raises the
+    # finding on the nearest target verse. Never merged by guess.
+    unplaced: list[dict[str, Any]] = []
+    if original_resource is not None and not book.has_alignment_markers:
+        try:
+            unplaced = [
+                {"source": f"{u['sourceChapter']}:{u['sourceVerse']}",
+                 "nearestTarget": f"{u['nearestChapter']}:{u['nearestVerse']}", "wordCount": u["wordCount"]}
+                for u in unplaced_source_verses(
+                    book.book_id, schema, {chapter: list(verses) for chapter, verses in book.chapters.items()},
+                )
+            ]
+        except Exception:  # noqa: BLE001 -- provenance only; an import never fails on it
+            unplaced = []
     # translationCore creates the tN/tW contents later from installed resources.
     # These roots declare compatibility without inventing checks that do not exist.
     for tool in ("translationNotes", "translationWords"):
@@ -757,6 +783,8 @@ def _write_imported_book(project_root: Path, book: ParsedBook, metadata: dict[st
             "bundledSourceApplied": not book.has_alignment_markers and generated_source_tokens > 0,
             "generatedSourceTokens": generated_source_tokens,
             "missingSourceVerses": missing_source_verses,
+            "unplacedSourceVerses": unplaced,
+            "versification": schema,
             "originalLanguageResource": original_resource_info,
         },
         "capabilities": {
@@ -833,9 +861,18 @@ def ensure_bridge_original_language(project_root: str | Path) -> dict[str, Any]:
     changed_verses = 0
     available_source_tokens = 0
     missing: list[str] = []
-    for chapter_path in sorted(alignment_root.glob("*.json")):
-        if not chapter_path.stem.isdigit():
-            continue
+    chapter_files = [path for path in sorted(alignment_root.glob("*.json")) if path.stem.isdigit()]
+    if VERSIFICATION_KEY not in manifest:
+        # #352: a project imported before the key existed gets it here, from
+        # the chapter/verse shape its alignment data already has.
+        shape: dict[str, str] = {}
+        for chapter_path in chapter_files:
+            value = _read_json(chapter_path)
+            if isinstance(value, dict):
+                shape.update({f"{chapter_path.stem}:{verse}": "x" for verse in value})
+        manifest[VERSIFICATION_KEY] = detect_versification(book_id, shape)
+    schema = schema_from_manifest(manifest)
+    for chapter_path in chapter_files:
         chapter = _read_json(chapter_path)
         if not isinstance(chapter, dict):
             continue
@@ -843,7 +880,7 @@ def ensure_bridge_original_language(project_root: str | Path) -> dict[str, Any]:
         for verse, raw in chapter.items():
             if not isinstance(raw, dict):
                 continue
-            tokens = source_tokens_for_verse(book_id, chapter_path.stem, str(verse))
+            tokens = source_tokens_for_target_verse(book_id, chapter_path.stem, str(verse), schema)
             if not tokens:
                 missing.append(f"{chapter_path.stem}:{verse}")
                 continue
