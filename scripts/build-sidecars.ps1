@@ -37,12 +37,18 @@ if (-not $TargetTriple) {
 
 $extension = if ($IsWindows -or $env:OS -eq "Windows_NT") { ".exe" } else { "" }
 
+# PyInstaller's --clean removes its work directories. In synced checkouts
+# (e.g. OneDrive), Windows may refuse that removal while sync owns the folder.
+# Use a fresh local work path per run; keep the published dist/binaries paths.
+$workRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("bridge-sidecars-" + [guid]::NewGuid().ToString("N"))
+Write-Host "PyInstaller work directory: $workRoot"
+
 Push-Location $engineDir
 try {
-    & $PythonCommand -m PyInstaller --clean --noconfirm bridge-engine.spec
+    & $PythonCommand -m PyInstaller --clean --noconfirm --workpath $workRoot bridge-engine.spec
     if ($LASTEXITCODE -ne 0) { throw "bridge-engine PyInstaller build failed" }
 
-    & $PythonCommand -m PyInstaller --clean --noconfirm bridge-usfm-checker.spec
+    & $PythonCommand -m PyInstaller --clean --noconfirm --workpath $workRoot bridge-usfm-checker.spec
     if ($LASTEXITCODE -ne 0) { throw "bridge-usfm-checker PyInstaller build failed" }
 
     New-Item -ItemType Directory -Force -Path $binaryDir | Out-Null
@@ -79,6 +85,10 @@ try {
 }
 finally {
     Pop-Location
+    # Best-effort: a locked file here must not fail a build that succeeded.
+    if (Test-Path -LiteralPath $workRoot) {
+        Remove-Item -LiteralPath $workRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 Write-Host "Built and copied Bridge sidecars for $TargetTriple"
