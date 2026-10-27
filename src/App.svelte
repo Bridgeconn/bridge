@@ -4,7 +4,8 @@
   import { workspaceRecoveryNotice } from "./lib/workspaceRecovery";
   import { bridgeReference } from "./lib/navigationReference";
   import {
-    formatPerfLine, perfAbort, perfBegin, perfEnd, perfInFlight, perfResponded, registerPerfRunner, setPerfSink,
+    formatPerfLine, observeLongTasks, perfAbort, perfBegin, perfEnd, perfInFlight, perfResponded, registerPerfRunner,
+    setPerfSink,
   } from "./lib/perf";
   import { BUSY_LABEL, MAX_BUSY_TIMEOUTS, checkFailureMessage, isBusyTimeout } from "./lib/checkMonitor";
   import ImportScreen from "./lib/components/ImportScreen.svelte";
@@ -161,7 +162,12 @@
   // #232: every finished responsiveness sample goes to the diagnostics log
   // through the shell, where scripts/perf_table.py reads it; a logging
   // failure is nobody's problem but the log's.
-  setPerfSink((sample) => { void bridge.logFrontend("info", formatPerfLine(sample)).catch(() => {}); });
+  const logPerfLine = (line: string) => { void bridge.logFrontend("info", line).catch(() => {}); };
+  setPerfSink((sample) => logPerfLine(formatPerfLine(sample)));
+  // #260: every task over 250 ms is counted (Engine diagnostics) and written
+  // to the same log, so the field laptop's 30-minute recording needs no
+  // DevTools. A no-op where WebView2 does not expose the longtask timeline.
+  const stopLongTasks = observeLongTasks(logPerfLine);
   // A side-panel toggle (#232, Tier A) is timed at the store: the rail and the
   // toolbar both go through toggleSidePanel, whose update notifies here
   // synchronously inside the click, and the paint after it is the response.
@@ -171,7 +177,7 @@
     perfBegin("panel.toggle");
     void perfEnd("panel.toggle");
   });
-  onDestroy(() => { unsubscribeSidePanels(); registerPerfRunner(null); setPerfSink(null); });
+  onDestroy(() => { unsubscribeSidePanels(); registerPerfRunner(null); setPerfSink(null); stopLongTasks(); });
   // The in-app runner for the measurement day (#232): the actions App.svelte
   // can drive without a mouse, each already instrumented. Registered while a
   // book is open in the editor, cleared otherwise.

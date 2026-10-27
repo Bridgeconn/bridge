@@ -41,6 +41,7 @@
   import { findingSpan, pendingReveal, revealFinding } from "../findingFocus";
   import { openAlignment } from "../alignmentUi";
   import { requestAIReview, aiJobActive, type AIReviewScope } from "../aiReviewUi";
+  import { perfAbort, perfBegin, perfEnd, perfInFlight } from "../perf";
 
   export let onSelect: (verse: string) => void;
   // #357: Paratext note counts for the badge, a chapter at a time.
@@ -417,6 +418,26 @@
     selectFromList(verse);
     verseMenu = { verse, x: event.clientX, y: event.clientY, selection,
       word: selection ? selectedWord(verse, selection) : text ? wordAtPoint(text, event.clientX, event.clientY) : null };
+    // A right-click that names a word is a word selection too (#260): the
+    // mousedown began the mark, the menu naming the word ends it.
+    if (verseMenu.word && perfInFlight("word.select")) void perfEnd("word.select");
+  }
+
+  /** #260 (requirement 1, Tier A "select a word"): the mark begins at the
+   *  mousedown in a verse's text and ends at the mouseup that leaves a word
+   *  under the pointer or a selection inside the verse -- the point at which
+   *  the browser has drawn the selection. A mouseup on nothing drops it. */
+  function beginWordSelect(verse: string): void {
+    perfBegin("word.select", verse);
+  }
+
+  function endWordSelect(event: MouseEvent, verse: string): void {
+    if (!perfInFlight("word.select")) return;
+    const text = event.currentTarget as HTMLElement | null;
+    const selection = text ? selectionInVerse(text) : null;
+    const word = selection ? selectedWord(verse, selection) : text ? wordAtPoint(text, event.clientX, event.clientY) : null;
+    if (word) void perfEnd("word.select");
+    else perfAbort("word.select");
   }
 
   /** The text a selection covers, in the verse as shown. */
@@ -1172,8 +1193,13 @@
         </div>
       {:else}
         <!-- #323: the project's direction on the text block too, so an RTL
-             verse's lines start at the right, not only its runs reordered. -->
-        <div class="vtext" class:raw={$rawView} dir={$targetDir}>
+             verse's lines start at the right, not only its runs reordered.
+             The mouse handlers only time a word selection (#260); the row
+             above owns the click. -->
+        <!-- svelte-ignore a11y-no-static-element-interactions -->
+        <div class="vtext" class:raw={$rawView} dir={$targetDir}
+          on:mousedown={() => beginWordSelect(v)}
+          on:mouseup={(event) => endWordSelect(event, v)}>
           <span class="vbody" dir={$targetDir} lang={$targetLang}>
           {#each withNoteMarkers(segments, notesForLayout(display), flagMarkers($flagsByVerse[key] ?? [], display)) as piece}
             {#if piece.kind === "flag"}<button

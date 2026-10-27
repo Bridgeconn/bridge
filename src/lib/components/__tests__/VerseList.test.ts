@@ -54,6 +54,7 @@ import { cancelVerseEdit, editingChapter, editingVerse, editSaving, recheckingKe
 import { revealFinding } from "../../findingFocus";
 import { aiReviewRequest, aiJobActive } from "../../aiReviewUi";
 import type { QaFinding } from "../../types/finding";
+import { perfInFlight, perfSamples } from "../../perf";
 
 /** The store holds full QaFindings; fixtures.ts only builds summaries/details. */
 function finding(overrides: Partial<QaFinding> = {}): QaFinding {
@@ -1635,5 +1636,54 @@ describe("VerseList Paratext note badge (#357)", () => {
     expect(await screen.findByTestId("paratext-note-badge")).toHaveTextContent("PT 1");
     resetBookState();
     expect(get(paratextNoteCountsByVerse)).toEqual({});
+  });
+});
+
+describe("VerseList word.select mark (#260)", () => {
+  const PLAIN = "மசீ யீசு கிறிஸ்து அடியான்";
+
+  function selectInside(vtext: HTMLElement, from: number, to: number): () => void {
+    // jsdom has no layout, so the browser selection is stood in for: a range
+    // over the verse's own text node, as a drag across a word leaves it.
+    const node = (vtext.querySelector(".vbody") as HTMLElement).firstChild as Text;
+    const range = { startContainer: node, endContainer: node, startOffset: from, endOffset: to };
+    const selection = { rangeCount: 1, isCollapsed: from === to, getRangeAt: () => range };
+    const original = window.getSelection;
+    window.getSelection = (() => selection) as unknown as typeof window.getSelection;
+    return () => { window.getSelection = original; };
+  }
+
+  beforeEach(() => {
+    seed(PLAIN);
+    perfSamples.set([]);
+  });
+
+  it("records a word.select sample from the mousedown to the mouseup that leaves a selection in the verse", async () => {
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    const vtext = verseRow().querySelector(".vtext") as HTMLElement;
+    const restore = selectInside(vtext, 4, 8);
+    try {
+      await fireEvent.mouseDown(vtext);
+      expect(perfInFlight("word.select")).toBe(true);
+      await fireEvent.mouseUp(vtext);
+      // Earlier tests' samples can still land at their paint: only this action counts.
+      await waitFor(() => expect(get(perfSamples).filter((s) => s.action === "word.select")).toHaveLength(1));
+      const sample = get(perfSamples).find((s) => s.action === "word.select")!;
+      expect(sample.tier).toBe("A");
+      expect(sample.detail).toBe("6");
+      expect(sample.completeMs).toBeGreaterThanOrEqual(0);
+    } finally {
+      restore();
+    }
+  });
+
+  it("drops the mark when the mouseup leaves no word and no selection", async () => {
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    const vtext = verseRow().querySelector(".vtext") as HTMLElement;
+    await fireEvent.mouseDown(vtext);
+    await fireEvent.mouseUp(vtext);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(perfInFlight("word.select")).toBe(false);
+    expect(get(perfSamples).filter((s) => s.action === "word.select")).toEqual([]);
   });
 });

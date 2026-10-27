@@ -12,6 +12,14 @@ tier's budget and the result. The percentile is the same nearest-rank one
 as benchmark_language_qa.py and perf.ts, so the in-app table and this one
 agree to the sample.
 
+The frontend also writes one line per task over 250 ms (NFR-PERF-005's
+"any frame over 250 ms", #260):
+
+    <ts_ms> [info] perf longtask=312.5
+
+Those are summarised under the table (count, longest, total) and carried
+as "longTasks" in --json; they never enter the action rows.
+
     python scripts/perf_table.py                       # the installed app's log
     python scripts/perf_table.py --log path/to/engine-events.log --since 2026-10-15T09:00
     python scripts/perf_table.py --hardware "Field laptop, i3-1115G4 (2 cores), 8 GB, 1366x768" --json
@@ -50,6 +58,9 @@ LINE = re.compile(
     r"^(?P<ts>\d+) \[(?P<level>\w+)\] perf action=(?P<action>\S+) tier=(?P<tier>[AB]) "
     r"responded=(?P<responded>[\d.]+) complete=(?P<complete>[\d.]+)(?: detail=(?P<detail>\S+))?\s*$"
 )
+# Mirrors formatLongTaskLine in src/lib/perf.ts.
+LONG_TASK_LINE = re.compile(r"^(?P<ts>\d+) \[(?P<level>\w+)\] perf longtask=(?P<ms>[\d.]+)\s*$")
+LONG_TASK_MS = 250.0
 
 
 def default_log_path() -> Path:
@@ -80,6 +91,34 @@ def parse_lines(lines, since_ms: int = 0) -> dict[str, list[tuple[float, float]]
             samples[action] = []
         samples[action].append((float(match["responded"]), float(match["complete"])))
     return samples
+
+
+def parse_long_tasks(lines, since_ms: int = 0) -> list[float]:
+    """Every `perf longtask=<ms>` duration at or after since_ms, in log order."""
+    durations: list[float] = []
+    for line in lines:
+        match = LONG_TASK_LINE.match(line.strip())
+        if match and int(match["ts"]) >= since_ms:
+            durations.append(float(match["ms"]))
+    return durations
+
+
+def summarize_long_tasks(durations: list[float]) -> dict:
+    return {
+        "thresholdMs": LONG_TASK_MS,
+        "count": len(durations),
+        "longestMs": max(durations) if durations else None,
+        "totalMs": round(sum(durations), 1) if durations else 0.0,
+    }
+
+
+def long_tasks_markdown(summary: dict) -> str:
+    if not summary["count"]:
+        return f"Long tasks over {int(summary['thresholdMs'])} ms: none recorded"
+    return (
+        f"Long tasks over {int(summary['thresholdMs'])} ms: {summary['count']} "
+        f"(longest {_fmt(summary['longestMs'])} ms, {_fmt(summary['totalMs'])} ms in all)"
+    )
 
 
 def percentile(values: list[float], fraction: float) -> float:
@@ -146,13 +185,18 @@ def main(argv: list[str] | None = None) -> int:
     if not args.log.is_file():
         print(f"No log at {args.log}", file=sys.stderr)
         return 2
+    since_ms = parse_since(args.since)
     with args.log.open(encoding="utf-8", errors="replace") as handle:
-        samples = parse_lines(handle, parse_since(args.since))
+        lines = handle.readlines()
+    samples = parse_lines(lines, since_ms)
+    long_tasks = summarize_long_tasks(parse_long_tasks(lines, since_ms))
     rows = summarize(samples, args.min_samples)
     if args.json:
-        print(json.dumps({"log": str(args.log), "hardware": args.hardware, "rows": rows}, indent=2))
+        print(json.dumps({"log": str(args.log), "hardware": args.hardware, "rows": rows, "longTasks": long_tasks}, indent=2))
     else:
         print(markdown(rows, args.hardware))
+        print()
+        print(long_tasks_markdown(long_tasks))
     if args.gate and any(row["result"] == "FAIL" for row in rows):
         return 1
     return 0

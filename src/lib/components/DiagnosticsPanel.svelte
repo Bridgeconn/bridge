@@ -3,7 +3,8 @@
   import { engineLog } from "../stores";
   import type { EngineLogEntry } from "../api/bridgeClient";
   import {
-    perfRunnerAvailable, perfSamples, perfSummary, perfTableMarkdown, runPerfSample, type PerfRunProgress,
+    LONG_TASK_MS, longTasks, perfRunnerAvailable, perfSamples, perfSummary, perfTableMarkdown, runPerfSample,
+    type PerfRunProgress,
   } from "../perf";
 
   export let onClose: () => void;
@@ -108,6 +109,16 @@
           </tbody>
         </table>
       {/if}
+      <!-- #260: the long-task tally for NFR-PERF-005's 30-minute recording;
+           every task over the threshold is also one perf longtask= line in
+           the log below. -->
+      <p class="muted perf-longtasks" data-testid="long-tasks">
+        {#if $longTasks.supported || $longTasks.count > 0}
+          Long tasks over {LONG_TASK_MS} ms this session: {$longTasks.count}{#if $longTasks.count > 0}&nbsp;(longest {$longTasks.longestMs} ms, {$longTasks.totalMs} ms in all){/if}
+        {:else}
+          Long tasks are not recorded: this WebView does not expose the longtask timeline.
+        {/if}
+      </p>
     </section>
     <div class="log-body">
       {#if visible.length === 0}

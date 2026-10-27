@@ -1,10 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { get } from "svelte/store";
 
 import {
-  PERF_ACTIONS, TIER_BUDGETS, formatPerfLine, percentile, perfAbort, perfBegin, perfEnd, perfInFlight,
-  perfResponded, perfSamples, perfSummary, perfTableMarkdown, registerPerfRunner, runPerfSample, setPerfSink,
-  type PerfSample,
+  LONG_TASK_MS, PERF_ACTIONS, TIER_BUDGETS, formatLongTaskLine, formatPerfLine, longTasks, observeLongTasks,
+  percentile, perfAbort, perfBegin, perfEnd, perfInFlight, perfResponded, perfSamples, perfSummary,
+  perfTableMarkdown, registerPerfRunner, runPerfSample, setPerfSink, type PerfSample,
 } from "../perf";
 
 function sample(action: string, respondedMs: number, completeMs: number): PerfSample {
@@ -137,5 +137,74 @@ describe("the in-app runner", () => {
 
   it("refuses to run without a registered runner", async () => {
     await expect(runPerfSample(1)).rejects.toThrow(/open project/);
+  });
+});
+
+describe("long tasks (#260)", () => {
+  const realObserver = (globalThis as { PerformanceObserver?: unknown }).PerformanceObserver;
+
+  /** A PerformanceObserver double that exposes the longtask type and hands
+   *  the test the callback, so entries can be fed by hand. */
+  function fakeObserver(entryTypes: string[]) {
+    let callback: ((list: { getEntries: () => Array<{ duration: number }> }) => void) | null = null;
+    const observed: unknown[] = [];
+    const disconnect = vi.fn();
+    class Fake {
+      static supportedEntryTypes = entryTypes;
+      constructor(cb: typeof callback) { callback = cb; }
+      observe(options: unknown) { observed.push(options); }
+      disconnect() { disconnect(); }
+    }
+    (globalThis as { PerformanceObserver?: unknown }).PerformanceObserver = Fake;
+    return {
+      feed: (durations: number[]) => callback?.({ getEntries: () => durations.map((duration) => ({ duration })) }),
+      observed, disconnect,
+    };
+  }
+
+  beforeEach(() => {
+    longTasks.set({ supported: false, count: 0, longestMs: 0, totalMs: 0 });
+  });
+
+  afterEach(() => {
+    (globalThis as { PerformanceObserver?: unknown }).PerformanceObserver = realObserver;
+  });
+
+  it("counts every task over the threshold and writes one perf longtask= line each through the sink", () => {
+    const fake = fakeObserver(["longtask", "mark"]);
+    const lines: string[] = [];
+    const stop = observeLongTasks((line) => lines.push(line));
+
+    expect(get(longTasks).supported).toBe(true);
+    expect(fake.observed).toEqual([{ type: "longtask", buffered: true }]);
+    fake.feed([312.46, 100, LONG_TASK_MS, 249.9]);
+
+    expect(lines).toEqual(["perf longtask=312.5", `perf longtask=${LONG_TASK_MS}`]);
+    expect(get(longTasks)).toEqual({ supported: true, count: 2, longestMs: 312.5, totalMs: 562.5 });
+    expect(formatLongTaskLine(1000)).toBe("perf longtask=1000");
+
+    stop();
+    expect(fake.disconnect).toHaveBeenCalledOnce();
+    expect(get(longTasks).supported).toBe(false);
+  });
+
+  it("registers nothing where the WebView has no PerformanceObserver or no longtask type", () => {
+    (globalThis as { PerformanceObserver?: unknown }).PerformanceObserver = undefined;
+    const lines: string[] = [];
+    expect(() => observeLongTasks((line) => lines.push(line))()).not.toThrow();
+    expect(get(longTasks).supported).toBe(false);
+
+    const fake = fakeObserver(["mark", "measure"]);
+    observeLongTasks((line) => lines.push(line));
+    expect(fake.observed).toEqual([]);
+    expect(get(longTasks).supported).toBe(false);
+    expect(lines).toEqual([]);
+  });
+
+  it("a throwing log never stops the count", () => {
+    const fake = fakeObserver(["longtask"]);
+    observeLongTasks(() => { throw new Error("log closed"); });
+    expect(() => fake.feed([400])).not.toThrow();
+    expect(get(longTasks).count).toBe(1);
   });
 });
