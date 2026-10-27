@@ -208,7 +208,9 @@
       replaceResolution(result.record);
       mutationNotice = result.handoff.status === "sent"
         ? "Issue resolution saved and sent to Paratext."
-        : `Issue resolution saved in the Paratext outbox. ${result.handoff.lastError || "Retry when Paratext is available."}`;
+        : result.handoff.status === "refused"
+          ? `Issue resolution saved; Paratext refused the note. ${result.handoff.lastError}`
+          : `Issue resolution saved in the Paratext outbox. ${result.handoff.lastError || "Retry when Paratext is available."}`;
       resolutionKey = "";
     } catch (error) {
       resolutionError = error instanceof Error ? error.message : String(error);
@@ -236,7 +238,9 @@
       threadsRefresh += 1;
       mutationNotice = result.handoff.status === "sent"
         ? "Queued issue was sent to Paratext."
-        : `Paratext handoff remains queued. ${result.handoff.lastError}`;
+        : result.handoff.status === "refused"
+          ? `Paratext refused the note again. ${result.handoff.lastError}`
+          : `Paratext handoff remains queued. ${result.handoff.lastError}`;
     } catch (error) {
       mutationError = error instanceof Error ? error.message : String(error);
     } finally {
@@ -754,9 +758,9 @@
               {resolutionLifecycleLabel(resolution)}
             </span>
             <span class="handoff-status {resolution.paratext.status}">
-              {resolution.paratext.status === "sent" ? "Sent to Paratext" : resolution.paratext.status === "queued" ? "Paratext queued" : "Resolution saved"}
+              {resolution.paratext.status === "sent" ? "Sent to Paratext" : resolution.paratext.status === "queued" ? "Paratext queued" : resolution.paratext.status === "refused" ? "Paratext refused" : "Resolution saved"}
             </span>
-            {#if resolution.paratext.status === "queued"}
+            {#if resolution.paratext.status === "queued" || resolution.paratext.status === "refused"}
               <button class="small-btn" on:click={() => retryResolution(resolution)} disabled={resolutionBusy}>Retry handoff</button>
             {/if}
             {#if ["stale", "failed", "cancelled", "reflagged", "needs_review"].includes(resolution.recheck.status)}
@@ -883,6 +887,7 @@
   .handoff-status { font-size: var(--fs-3xs); padding: 3px 6px; border-radius: 999px; color: var(--text-2); background: var(--surface-2); }
   .handoff-status.queued { color: var(--warning); background: var(--warning-bg); }
   .handoff-status.sent { color: var(--success); background: var(--success-bg); }
+  .handoff-status.refused { color: var(--danger); background: var(--danger-bg); }
   .lifecycle-status { font-size: var(--fs-3xs); padding: 3px 6px; border-radius: 999px; color: var(--text-2); background: var(--surface-2); }
   .lifecycle-status.resolved { color: var(--success); background: var(--success-bg); }
   .lifecycle-status.stale, .lifecycle-status.running { color: var(--warning); background: var(--warning-bg); }

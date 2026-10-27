@@ -5518,7 +5518,8 @@ class BridgeEngine:
         try:
             self.project.update_issue_resolution_paratext(
                 record["chapter"], record["verse"], record["resolutionId"], handoff,
-                "paratext_sent" if item["status"] == outbox_module.SENT else "paratext_queued",
+                {outbox_module.SENT: "paratext_sent", outbox_module.REFUSED: "paratext_refused"}.get(
+                    item["status"], "paratext_queued"),
             )
         except (ProjectError, KeyError) as exc:
             _trace(f"paratext outbox: could not mirror {item['messageId']} onto its record: {exc}")
@@ -5593,6 +5594,8 @@ class BridgeEngine:
         if existing is not None and existing["status"] == outbox_module.SENT:
             return {"record": record, "handoff": self._handoff_from(existing, record)}
         selected = str(record.get("selectedText") or "")
+        if selected:
+            self.project.require_unique_selection(chapter, verse, selected)
         before, after = outbox_module.selection_context(self.project.target_verse_text(chapter, verse), selected)
         item = outbox.enqueue(
             outbox_module.OP_CREATE, message_id=message_id, kind="issue_resolution", local_id=resolution_id,
@@ -5668,7 +5671,7 @@ class BridgeEngine:
         for link in outbox.links_for(kind, local_id):
             found = session.note_thread(link["threadId"]).get("thread")
             links.append({**{k: v for k, v in link.items() if k != "createdAt"}, "thread": found})
-        pending = [item for item in outbox.items(outbox_module.QUEUED)
+        pending = [item for item in outbox.items(outbox_module.QUEUED) + outbox.items(outbox_module.REFUSED)
                    if item.get("kind") == kind and item.get("localId") == local_id]
         # A create_thread already sent but whose thread the index has not shown
         # yet is a link-to-be: show it as one, with no thread.

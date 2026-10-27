@@ -1080,8 +1080,8 @@ class TranslationCoreProject:
             raise ProjectError('Describe the translation issue before creating a resolution.')
         if not note:
             raise ProjectError('Add a reviewer note before handing the issue to Paratext.')
-        if selected and not self._selection_ranges(self.target_verse_text(chapter, verse), selected):
-            raise ProjectError('The selected target text is not present in the current verse.')
+        if selected:
+            self.require_unique_selection(chapter, verse, selected)
         clean_evidence: list[Any] = []
         for item in list(evidence or [])[:25]:
             if isinstance(item, dict):
@@ -2064,6 +2064,17 @@ class TranslationCoreProject:
                         and str(ctx.get('groupId', '')) == str(group_id)):
                     return candidate, data, i
         raise ProjectError(f'Could not find check {check_id} in {tool}/{group_id}')
+
+    def require_unique_selection(self, chapter: str | int, verse: str | int, selected_text: str) -> None:
+        """Require one occurrence in verse content. The outbox sends neighbouring
+        words to distinguish it from a repeat in a footnote (#358 h)."""
+        found = self._selection_ranges(strip_usfm(self.target_verse_text(chapter, verse)), selected_text)
+        if not found:
+            raise ProjectError('The selected target text is not present in the current verse.')
+        if len(found) > 1:
+            raise ProjectError(
+                f'The selected text occurs {len(found)} times in this verse. Select enough '
+                'words that it occurs once, so the Paratext note attaches to the right place.')
 
     @staticmethod
     def _selection_ranges(target_text: str, selected_text: str) -> list[tuple[int, int]]:

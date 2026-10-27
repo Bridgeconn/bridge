@@ -185,4 +185,16 @@ describe("TranslationHelpsReview: Mark resolved in Bridge (#358 f)", () => {
     expect(await screen.findByText("Resolved, following Paratext")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Mark resolved in Bridge" })).toBeNull();
   });
+
+  it("labels a note Paratext refused and offers the retry (#358 h)", async () => {
+    listIssueResolutions.mockResolvedValue({ items: [resolution({
+      paratext: { status: "refused", messageId: "m1", attempts: 1, sentAt: "", remoteId: "", contentSignature: "sig",
+        lastError: "The selected text occurs more than once in this verse." },
+    })] });
+    paratextThreadsFor.mockResolvedValue({ state: "ready", links: [], pending: [] });
+    mount([check()]);
+
+    expect(await screen.findByText("Paratext refused")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry handoff" })).toBeInTheDocument();
+  });
 });

@@ -45,6 +45,12 @@ OPS = (OP_CREATE, OP_COMMENT, OP_RESOLVE)
 
 QUEUED = "queued"
 SENT = "sent"
+# A note Paratext refused because its selection is not unique in the verse.
+# Sending it again cannot help until the reviewer acts, so the background pass
+# leaves it; the card's retry still tries it (the plugin takes the live
+# selection when Paratext shows that exact occurrence selected).
+REFUSED = "refused"
+AMBIGUOUS_SELECTION = "occurs more than once"
 
 KINDS = ("issue_resolution", "finding", "correction_proposal")
 TO_PARATEXT = "bridge_to_paratext"
@@ -254,6 +260,8 @@ class ParatextOutbox:
                     changed(item)
 
         queued = [i for i in self.items(QUEUED) if wanted is None or i["messageId"] in wanted]
+        if wanted is not None:
+            queued += [i for i in self.items(REFUSED) if i["messageId"] in wanted]
         if not queued:
             return touched
         expected_id = str((expected or {}).get("id") or "")
@@ -302,7 +310,9 @@ class ParatextOutbox:
                 item = self._send(client_factory(), item, expected_id, attempts)
                 changed(item)
             except ParatextConnectorError as exc:
-                changed(self._mark(item, attempts=attempts, lastError=str(exc)))
+                refused = item["op"] == OP_CREATE and AMBIGUOUS_SELECTION in str(exc)
+                changed(self._mark(item, attempts=attempts, lastError=str(exc),
+                                   status=REFUSED if refused else QUEUED))
         return touched
 
     def _send(self, client: Any, item: dict[str, Any], project_id: str, attempts: int) -> dict[str, Any]:

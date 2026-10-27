@@ -112,6 +112,17 @@ describe("ParatextThreadPanel (#358)", () => {
     expect(screen.getByText(/Reply queued for Paratext\.\s+Paratext is offline/)).toBeTruthy();
   });
 
+  it("says a note Paratext refused waits for the reviewer's retry (#358 h)", async () => {
+    paratextThreadsFor.mockResolvedValue(data({
+      links: [],
+      pending: [{ messageId: "m3", op: "create_thread", threadId: "", status: "refused", attempts: 1,
+        lastError: "The selected text occurs more than once in this verse.", sentAt: "", resultKey: "", createdAt: "" }],
+    }));
+    render(ParatextThreadPanel, props);
+    expect(await screen.findByText(/Note\s+refused by Paratext; it waits for Retry handoff\.\s+The selected text occurs more than once/)).toBeTruthy();
+    expect(screen.queryByText(/queued for Paratext/)).toBeNull();
+  });
+
   it("links an existing thread on the verse that is not linked yet", async () => {
     paratextThreadsFor.mockResolvedValue(data());
     paratextNotesForVerse.mockResolvedValue({ state: "ready", book: "TIT", chapter: "1", verse: "1",
