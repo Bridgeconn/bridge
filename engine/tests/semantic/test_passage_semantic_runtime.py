@@ -147,9 +147,12 @@ def test_first_open_initializes_companion_and_second_open_is_idempotent(
 
 
 def test_moved_project_retains_identity_but_live_copy_is_rejected(
-    tmp_path: Path, stage4_project: Path,
+    tmp_path: Path, stage4_project: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     engine = _engine(tmp_path)
+    # The move models relocation with the app closed. A live Language QA
+    # worker may hold a SQLite handle, which Windows correctly refuses to move.
+    monkeypatch.setattr(engine._language_qa, "_schedule", lambda: None)
     opened = _call(engine, "project.open", {"path": str(stage4_project), "awaitSemantic": True})
     project_id = opened["result"]["projectId"]
 
