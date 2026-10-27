@@ -22141,3 +22141,38 @@ no duplicate; M17/M20). QA matrix A26 and M18 updated.
 
 **Gates.** `pytest -n auto -k "paratext or notes"`: 157 passed. Vitest Paratext components 17 passed;
 `npm run check` 0/0.
+
+## 2026-10-27 — A note on a word repeated in its footnote no longer stays queued for ever (#358 h)
+
+**The defect (found in the 2026-10-26 live run, entry above).** The outbox called `create_note` with
+no `before_context`/`after_context`. When the selected text matched twice in Paratext's verse (NTB
+PSA 1:1: the first word repeats in its own footnote) the plugin refused with "occurs more than once"
+and the note stayed queued for ever. Fixed in this batch so a stuck note cannot show in the Nov 2 demo.
+
+**Engine.** `paratext_outbox.selection_context(raw_verse, selected)` returns the word before and the
+word after the selection in the verse's plain text (`usfm_verse.lift_verse`, notes removed), and
+`("", "")` unless the selection occurs exactly once there: a repeat in the verse itself is the
+reviewer's to pick in Paratext, never Bridge's guess. A token of bare punctuation is extended to the
+next word. `issueResolution.queueParatext` stores both on the outbox row (`beforeContext`,
+`afterContext`, kept by `_mark`) and `_send` passes them to `create_note`. A row queued before this
+change has none until it is queued again.
+
+**Plugin 0.8.1.** `ContextCompatible` compared Bridge's trimmed context with Paratext's untrimmed one,
+so an after-context starting with the space next to the selection could never match. Both sides are
+now compared with whitespace collapsed (`CollapseWhitespace`). The version bump makes Settings ›
+Connections offer Update. 0.8.0 with the new engine is never worse than before: it reads the context
+only when there are several matches, where it refused anyway.
+
+**Not verified:** the shape of Paratext's real `BeforeContext`/`AfterContext` has never been recorded,
+so that the body occurrence matches and the footnote one does not is believed from the API, not seen.
+Paratext is not installed on the PC this was written on, so the full plugin was not compiled here;
+the two changed functions were compiled alone with the Framework `csc.exe` and passed 8 cases
+(adjacent space either side, footnote neighbour refused, empty and whitespace-only context). The live
+check is on #358 for Benz.
+
+**Gates.** Engine `pytest -n auto`: 5619 passed, 27 failed, 3 xfailed, all 27 environmental on this
+PC: 12 in `test_semantic_mapping_stage3.py` need the gitignored Stage 3 release asset (`stage3db`),
+15 hit Windows `MAX_PATH` in `_backup_paths` (263-character pytest temp path,
+`LongPathsEnabled = 0`); those 15 files' 87 tests pass with `--basetemp=C:/pt/b`. After rebasing onto
+d2e31ad: `-k "paratext or notes or report"` 275 passed, 1 skipped (the real plugin compile). Sidecars
+rebuilt and `scripts/smoke_sidecars.py` passed. No frontend change.

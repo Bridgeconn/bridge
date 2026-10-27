@@ -52,15 +52,15 @@ def write_thread(folder: Path, thread: str, contents: list[str], *, user: str = 
                                      "status": status, "contents": contents}])
 
 
-def saved_resolution(engine) -> str:
-    """An issue resolution on TIT 1:1, through the review panel's RPCs."""
+def saved_resolution(engine, selected_text: str = "") -> str:
+    """An issue resolution on TIT 1:1 ("alpha beta gamma"), through the review panel's RPCs."""
     listed = call(engine, "check.listForVerse", {"chapter": "1", "verse": "1"})
     assert listed["success"] is True, listed
     check = listed["result"]["checks"][0]
     saved = call(engine, "issueResolution.save", {
         "chapter": "1", "verse": "1", "tool": check["tool"], "groupId": check["groupId"],
         "checkId": check["checkId"], "expectedFingerprint": check["stateFingerprint"],
-        "selectedText": "", "issueSummary": "Wording to confirm with the team.",
+        "selectedText": selected_text, "issueSummary": "Wording to confirm with the team.",
         "reviewerNote": "Please look at this in Paratext.",
         "proposedCorrection": "AI: use a natural metaphor.", "evidence": [{"title": "Translation Academy"}],
     })

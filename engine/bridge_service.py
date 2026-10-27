@@ -5535,10 +5535,12 @@ class BridgeEngine:
         existing = outbox.get(message_id)
         if existing is not None and existing["status"] == outbox_module.SENT:
             return {"record": record, "handoff": self._handoff_from(existing, record)}
+        selected = str(record.get("selectedText") or "")
+        before, after = outbox_module.selection_context(self.project.target_verse_text(chapter, verse), selected)
         item = outbox.enqueue(
             outbox_module.OP_CREATE, message_id=message_id, kind="issue_resolution", local_id=resolution_id,
             text=comment, reference=str(record.get("reference") or ""),
-            selected_text=str(record.get("selectedText") or ""),
+            selected_text=selected, before_context=before, after_context=after,
             book=str(self.project.book_id or ""), chapter=str(chapter),
             record={"chapter": str(chapter), "verse": str(verse), "resolutionId": resolution_id,
                     "contentSignature": signature},

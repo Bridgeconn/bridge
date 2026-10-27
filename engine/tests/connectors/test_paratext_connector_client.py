@@ -69,8 +69,8 @@ def test_thread_calls_name_the_project_the_chapter_and_the_key():
     assert resolved == {"project_id": "c2d042a9-linked", "book": "TIT", "chapter": "1", "key": key}
 
 
-def test_the_bundled_plugin_is_0_8_0_and_serves_the_six_actions_without_any_scripture_write():
-    assert paratext_install.bundled_version() == "0.8.0"
+def test_the_bundled_plugin_is_0_8_1_and_serves_the_six_actions_without_any_scripture_write():
+    assert paratext_install.bundled_version() == "0.8.1"
     source = PLUGIN.read_text(encoding="utf-8")
     for action in ("get_state", "set_reference", "create_note", "list_notes", "add_comment", "resolve_note"):
         assert f'action == "{action}"' in source, action

@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Iterable
 
 from .paratext_connector import ConnectorState, ParatextConnectorError
+from .usfm_verse import lift_verse
 from .workbench_repository import WorkbenchIdentity, WorkbenchRepository, natural_row_id
 
 OUTBOX = "paratext_outbox"
@@ -63,6 +64,34 @@ def footer(message_id: str) -> str:
 
 def with_footer(text: str, message_id: str) -> str:
     return f"{str(text or '').rstrip()}\n\n{footer(message_id)}"
+
+
+def selection_context(raw_verse: str, selected_text: str) -> tuple[str, str]:
+    """The word before and the word after `selected_text` in the verse's plain
+    text (notes removed), for the plugin to tell one Paratext match from
+    another: a word repeated in its own footnote is two matches there and the
+    note was refused for ever (#358 h). ("", "") unless the selection occurs
+    exactly once here -- a repeat in the verse itself is the reviewer's to
+    choose in Paratext, never Bridge's guess."""
+    if not selected_text:
+        return "", ""
+    plain = lift_verse(raw_verse or "").plain
+    if plain.count(selected_text) != 1:
+        return "", ""
+    start = plain.index(selected_text)
+    return (_edge_word(plain[:start].split(), reverse=True),
+            _edge_word(plain[start + len(selected_text):].split(), reverse=False))
+
+
+def _edge_word(tokens: list[str], *, reverse: bool) -> str:
+    """The tokens nearest the selection up to and including the first with a
+    letter or digit, so bare punctuation is never the whole context."""
+    taken: list[str] = []
+    for token in reversed(tokens) if reverse else tokens:
+        taken.append(token)
+        if any(ch.isalnum() for ch in token):
+            break
+    return " ".join(reversed(taken) if reverse else taken)
 
 
 def new_message_id(prefix: str = "bridge") -> str:
@@ -116,7 +145,8 @@ class ParatextOutbox:
         return [item for item in (self._item(row) for row in rows) if item is not None]
 
     def enqueue(self, op: str, *, message_id: str, kind: str, local_id: str, text: str = "",
-                reference: str = "", selected_text: str = "", thread_id: str = "",
+                reference: str = "", selected_text: str = "", before_context: str = "",
+                after_context: str = "", thread_id: str = "",
                 key: dict[str, Any] | None = None, book: str = "", chapter: str = "",
                 record: dict[str, Any] | None = None) -> dict[str, Any]:
         """Put one write in the queue. A message id already sent is returned as
@@ -136,6 +166,7 @@ class ParatextOutbox:
         payload = {
             "kind": kind, "localId": local_id, "book": book.upper(), "chapter": str(chapter),
             "reference": reference, "selectedText": selected_text,
+            "beforeContext": before_context, "afterContext": after_context,
             "text": with_footer(text, message_id) if op != OP_RESOLVE else "",
             "key": dict(key or {}), "record": dict(record or {}),
         }
@@ -149,7 +180,7 @@ class ParatextOutbox:
     def _mark(self, item: dict[str, Any], **changes: Any) -> dict[str, Any]:
         merged = {**item, **changes}
         payload = {k: merged.get(k) for k in ("kind", "localId", "book", "chapter", "reference", "selectedText",
-                                              "text", "key", "record", "anchor", "author", "created")
+                                              "beforeContext", "afterContext", "text", "key", "record", "anchor", "author", "created")
                    if merged.get(k) not in (None, "")}
         self._write(OUTBOX, item["messageId"], payload, {
             "op": merged["op"], "thread_id": merged.get("threadId") or None, "status": merged["status"],
@@ -279,6 +310,7 @@ class ParatextOutbox:
             answer = client.create_note(
                 item.get("reference", ""), item.get("selectedText", ""), item.get("text", ""),
                 project_id=project_id, message_id=item["messageId"],
+                before_context=item.get("beforeContext", ""), after_context=item.get("afterContext", ""),
             )
             result = self._mark(item, attempts=attempts, status=SENT, lastError="", sentAt=_now(),
                                 resultKey=f"{answer.get('author', '')}|{answer.get('created', '')}",

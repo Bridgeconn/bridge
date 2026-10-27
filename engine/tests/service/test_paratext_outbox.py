@@ -7,6 +7,7 @@ from __future__ import annotations
 import pytest
 
 import bridge_service as bridge_service_module
+from tc_ai_bridge import paratext_outbox as outbox_module
 from tests.support.paratext_fixture import DEFAULT_GUID
 from tests.support.paratext_writeback import (
     CAPABILITIES_074, DVT, IRVT, open_linked_review_project, reread_notes, saved_resolution, stand_in, write_thread,
@@ -290,3 +291,33 @@ def test_one_click_is_refused_while_paratext_has_not_resolved_the_thread_or_it_i
     assert unlinked["success"] is False and "not linked to this issue" in str(unlinked)
     record = call(engine, "issueResolution.list", {"chapter": "1", "verse": "1"})["result"]["items"][0]
     assert record["status"] == "open"
+
+
+def test_a_note_on_a_selection_carries_the_neighbouring_words_so_paratext_can_tell_repeats_apart(tmp_path, monkeypatch):
+    connector = stand_in()
+    monkeypatch.setattr(bridge_service_module, "ParatextConnectorClient", connector)
+    engine, _ = open_linked_review_project(tmp_path, monkeypatch)
+
+    handoff = _queue(engine, saved_resolution(engine, selected_text="beta"))["handoff"]
+
+    assert handoff["status"] == "sent", handoff
+    [(action, sent)] = connector.calls
+    assert action == "create_note"
+    assert (sent["before_context"], sent["after_context"]) == ("alpha", "gamma")
+    [item] = call(engine, "paratext.outbox")["result"]["items"]
+    assert (item["beforeContext"], item["afterContext"]) == ("alpha", "gamma")
+
+
+@pytest.mark.parametrize(("verse", "selected", "expected"), [
+    # #358 h: the NTB PSA 1:1 shape -- the first word repeated in its own footnote.
+    (r"பாவிகளுடைய வழியில் நில்லாமல்\f + \fr 1:1 \ft பாவிகளுடைய எனவும்\f* இருக்கிறான்.",
+     "பாவிகளுடைய", ("", "வழியில்")),
+    ("alpha beta, gamma", "beta", ("alpha", ", gamma")),
+    ("alpha beta gamma", "gamma", ("beta", "")),
+    # A repeat in the verse itself is the reviewer's to pick in Paratext: no context.
+    ("beta alpha beta", "beta", ("", "")),
+    ("alpha beta gamma", "delta", ("", "")),
+    ("alpha beta gamma", "", ("", "")),
+])
+def test_selection_context_is_one_word_each_side_and_only_for_a_selection_found_once(verse, selected, expected):
+    assert outbox_module.selection_context(verse, selected) == expected

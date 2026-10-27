@@ -18,10 +18,14 @@ namespace TranslationCoreAiBridge.ParatextConnector
     /// PC), never by whatever window happens to be active; `create_note` answers with the author
     /// and creation time Paratext recorded, the only identity a Project Note has; `list_notes`,
     /// `add_comment` and `resolve_note` find a thread again by its anchor and that first comment.
+    ///
+    /// 0.8.1 (#358 h): the before/after context Bridge sends with `create_note` is compared with
+    /// whitespace collapsed on both sides, so a selection repeated elsewhere in the verse (a
+    /// footnote) is told apart instead of refused for ever.
     /// </summary>
     public sealed class AiBridgeConnectorPlugin : IParatextStartupAutomaticPlugin, IPluginObject
     {
-        private const string PluginVersion = "0.8.0";
+        private const string PluginVersion = "0.8.1";
         private IPluginHost _host;
         private NamedPipeBridgeServer _server;
         private SynchronizationContext _uiContext;
@@ -659,14 +663,35 @@ namespace TranslationCoreAiBridge.ParatextConnector
 
         private static bool ContextCompatible(string actual, string supplied, bool compareSuffix)
         {
-            if (String.IsNullOrEmpty(supplied)) return true;
-            actual = actual ?? String.Empty;
-            supplied = supplied.Trim();
+            supplied = CollapseWhitespace(supplied);
+            if (supplied.Length == 0) return true;
+            // Paratext's context keeps the space next to the selection; Bridge sends
+            // the neighbouring word without it. Compare both with whitespace collapsed.
+            actual = CollapseWhitespace(actual);
             if (supplied.Length > 80)
                 supplied = compareSuffix ? supplied.Substring(supplied.Length - 80) : supplied.Substring(0, 80);
             return compareSuffix
                 ? actual.EndsWith(supplied, StringComparison.Ordinal)
                 : actual.StartsWith(supplied, StringComparison.Ordinal);
+        }
+
+        private static string CollapseWhitespace(string text)
+        {
+            if (String.IsNullOrEmpty(text)) return String.Empty;
+            StringBuilder collapsed = new StringBuilder(text.Length);
+            bool pendingSpace = false;
+            foreach (char ch in text)
+            {
+                if (Char.IsWhiteSpace(ch))
+                {
+                    pendingSpace = collapsed.Length > 0;
+                    continue;
+                }
+                if (pendingSpace) collapsed.Append(' ');
+                pendingSpace = false;
+                collapsed.Append(ch);
+            }
+            return collapsed.ToString();
         }
 
         private static IScriptureTextSelection FirstScriptureSelection(IReadOnlyList<ISelection> selections)
