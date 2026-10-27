@@ -22,6 +22,19 @@ describe("instant action tooltips", () => {
     button.remove();
   });
 
+  it("renders dialog hints inside the dialog so they appear above its backdrop", async () => {
+    const dialog = document.createElement("dialog");
+    dialog.setAttribute("open", "");
+    const button = document.createElement("button");
+    dialog.append(button);
+    document.body.append(dialog);
+    const action = tooltip(button, "Open project");
+    await fireEvent.mouseEnter(button);
+    expect(screen.getByRole("tooltip").parentElement).toBe(dialog);
+    action.destroy();
+    dialog.remove();
+  });
+
   it("removes the tooltip when its button is destroyed", async () => {
     const button = document.createElement("button");
     button.setAttribute("aria-describedby", "existing-description");

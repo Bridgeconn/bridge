@@ -212,7 +212,7 @@ describe("ImportScreen identity conflict row (#309)", () => {
         }),
         project({
           projectId: "", path: "C:/projects/second-copy", projectName: "Second copy",
-          conflict: { message, projectId: "p-1", registeredPath: "C:/projects/eng_bible_gen" },
+          conflict: { message, projectId: "p-1", collectionId: "c-1", registeredPath: "C:/projects/eng_bible_gen" },
         }),
       ],
     });

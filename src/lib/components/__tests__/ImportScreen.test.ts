@@ -141,7 +141,7 @@ describe("ImportScreen background import (#231)", () => {
     expect(screen.getByRole("checkbox", { name: "Select all" })).not.toBeChecked();
     expect(screen.queryByRole("checkbox", { name: "Unselect all" })).toBeNull();
     expect(screen.getByRole("button", { name: "Import 0 books" })).toBeDisabled();
-    expect(screen.getByText("Select at least one book.")).toBeInTheDocument();
+    expect(screen.getByText("Select at least one book to import.")).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("checkbox", { name: "Select all" }));
     expect(screen.getByRole("checkbox", { name: "Import Titus" })).toBeChecked();
     await fireEvent.click(screen.getByRole("checkbox", { name: "Import Titus" }));
@@ -179,7 +179,7 @@ describe("ImportScreen background import (#231)", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "Import book" }));
 
-    const banner = await screen.findByRole("status");
+    const banner = await screen.findByRole("status", { name: "Import progress" });
     expect(banner).toHaveTextContent("Importing: Starting — 0%");
     expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
     expect(importStart).toHaveBeenCalledWith(SOURCE, expect.objectContaining({ languageId: "eng" }), false);
@@ -194,7 +194,7 @@ describe("ImportScreen background import (#231)", () => {
     await waitFor(() => expect(onOpened).toHaveBeenCalledTimes(1));
     expect(openProject).toHaveBeenCalledWith(PRIMARY, "p-1");
     expect(get(project)?.importedProjects).toEqual(succeeded.result?.projects);
-    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByRole("status", { name: "Import progress" })).toBeNull();
   });
 
   it("cancel asks the engine, nothing opens, and the import can be started again", async () => {
@@ -217,7 +217,7 @@ describe("ImportScreen background import (#231)", () => {
     await screen.findByText("Import cancelled. Nothing was written.");
     expect(onOpened).not.toHaveBeenCalled();
     expect(openProject).not.toHaveBeenCalled();
-    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByRole("status", { name: "Import progress" })).toBeNull();
     expect(screen.getByRole("button", { name: "Import book" })).toBeEnabled();
   });
 
@@ -248,8 +248,8 @@ describe("ImportScreen detected language code (#308)", () => {
     await renderWithPreview();
 
     expect(screen.getByPlaceholderText("Search language or code")).toHaveValue("Sanskrit");
-    expect(screen.getByPlaceholderText("ISO 639-3")).toHaveValue("san");
-    expect(screen.queryByText("Choose a language and enter both names.")).toBeNull();
+    expect(screen.getByLabelText("Language code")).toHaveTextContent("san");
+    expect(screen.getByRole("button", { name: "Import book" })).toBeEnabled();
   });
 
   it("falls back to Paratext's own language name only for a code not in the table (#355)", async () => {
@@ -302,6 +302,6 @@ describe("ImportScreen detected language code (#308)", () => {
     inspectImport.mockResolvedValue({ ...base, kind: "paratext", metadata: { ...base.metadata, languageId: "qqq", languageName: "" } });
     await renderWithPreview();
 
-    expect(screen.getByText("Choose a language and enter both names.")).toBeInTheDocument();
+    expect(screen.getByText("To import, complete: language.")).toBeInTheDocument();
   });
 });

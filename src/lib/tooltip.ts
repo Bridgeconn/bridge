@@ -19,7 +19,9 @@ export function tooltip(node: HTMLElement, text: string) {
     hint.setAttribute("role", "tooltip");
     hint.setAttribute("data-bridge-tooltip", "");
     hint.textContent = text;
-    document.body.append(hint);
+    // Native modal dialogs paint above every body-level z-index. Keep their
+    // hints in the same top layer, outside the dialog's scrolling list.
+    (node.closest("dialog[open]") ?? document.body).append(hint);
     node.setAttribute("aria-describedby", [node.getAttribute("aria-describedby"), id].filter(Boolean).join(" "));
     const anchor = node.getBoundingClientRect();
     const box = hint.getBoundingClientRect();

@@ -15,15 +15,16 @@
 </script>
 
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
+  import { onDestroy, onMount, tick } from "svelte";
   import UiIcon from "./UiIcon.svelte";
+  import DuplicateImportDialog, { type RelatedImportProject } from "./DuplicateImportDialog.svelte";
   import { tooltip } from "../tooltip";
   import { iso6393 } from "iso-639-3";
   import { bridge } from "../api/bridgeClient";
   import { perfAbort, perfBegin, perfResponded } from "../perf";
   import { project } from "../stores";
   import type {
-    DuplicateMatch, ImportJobSnapshot, ImportMetadata, ImportPreview, RegisteredProject,
+    DuplicateAssessment, DuplicateMatch, ImportJobSnapshot, ImportMetadata, ImportPreview, RegisteredProject,
   } from "../types/finding";
 
   const IMPORT_TERMINAL = new Set<ImportJobSnapshot["state"]>(["succeeded", "failed", "cancelled"]);
@@ -58,7 +59,10 @@
   let slowEngineStartTimer: ReturnType<typeof setTimeout> | undefined;
   let preview: ImportPreview | null = null;
   let selectedBookIds: string[] = [];
-  let reviewedBookKey = "";
+  let duplicateDialogOpen = false;
+  let approvedDuplicateKey = "";
+  let languageInput: HTMLInputElement | undefined;
+  let projectNameInput: HTMLInputElement | undefined;
   let languageQuery = "";
   let showLanguages = false;
   let metadata: ImportMetadata = {
@@ -89,18 +93,13 @@
       ).slice(0, 40)
     : languages.slice(0, 40);
   $: allBooksSelected = Boolean(preview?.books.length && selectedBookIds.length === preview.books.length);
-  $: selectedBookKey = selectedBookIds.slice().sort().join(",");
-  $: selectionReviewed = selectedBookKey === reviewedBookKey;
-  $: reviewClassification = selectionReviewed ? preview?.duplicates.classification : "new";
-  $: canImport = Boolean(preview && selectedBookIds.length > 0 && metadata.languageId && metadata.languageName && metadata.projectName && metadata.bibleName);
-  $: exactMatch = selectionReviewed && selectedBookIds.length > 0 && preview?.duplicates.exactMatchGroupId
-    ? preview.duplicates.matches.find((match) =>
-        match.groupId === preview?.duplicates.exactMatchGroupId && match.match === "exact" && !match.missing,
-      )
-    : undefined;
-  $: matchedGroups = groupDuplicateMatches(preview?.duplicates.matches ?? []);
-  $: visibleMatchedGroups = matchedGroups.slice(0, 5);
-  $: hiddenMatchedGroupCount = Math.max(0, matchedGroups.length - visibleMatchedGroups.length);
+  $: canImport = Boolean(preview && selectedBookIds.length > 0 && metadata.languageId && metadata.languageName && metadata.projectName.trim() && metadata.bibleName.trim());
+  $: matchedGroups = groupDuplicateMatches(preview?.duplicates.matches ?? [], projects);
+  $: importFieldsMissing = [
+    !metadata.languageId || !metadata.languageName ? "language" : "",
+    !metadata.projectName.trim() ? "project name" : "",
+    !metadata.bibleName.trim() ? "Bible / translation name" : "",
+  ].filter(Boolean);
   let confirmingId = "";
   // #238: the list's management. Archived rows stay behind a filter; a
   // rename is a display name in the registry, never the folder.
@@ -177,28 +176,56 @@
     return value instanceof Error ? value.message : String(value);
   }
 
-  function groupDuplicateMatches(matches: DuplicateMatch[]) {
+  function groupDuplicateMatches(matches: DuplicateMatch[], registered: RegisteredProject[]): RelatedImportProject[] {
     const groups = new Map<string, {
-      id: string; label: string; path: string; missing: boolean;
+      id: string; label: string; path: string; projectId: string; missing: boolean;
       exactBooks: Set<string>; possibleBooks: Set<string>;
     }>();
     for (const match of matches) {
       let group = groups.get(match.groupId);
       if (!group) {
+        const entry = registered.find((item) => !item.conflict && (item.projectId === match.projectId || (match.collectionId && item.collectionId === match.collectionId)));
         group = {
           id: match.groupId,
-          label: match.projectName || match.bibleName || match.bookName || "Existing project",
-          path: match.path,
-          missing: match.missing,
-          exactBooks: new Set<string>(),
-          possibleBooks: new Set<string>(),
+          label: entry ? displayName(entry) : match.projectName || match.bibleName || match.bookName || "Existing project",
+          path: match.path, projectId: match.projectId, missing: match.missing,
+          exactBooks: new Set<string>(), possibleBooks: new Set<string>(),
         };
         groups.set(match.groupId, group);
+      }
+      // A collection may have both missing and available members. Open an
+      // available matching member, never the missing representative.
+      if (group.missing && !match.missing) {
+        group.path = match.path;
+        group.projectId = match.projectId;
       }
       group.missing = group.missing && match.missing;
       (match.match === "exact" ? group.exactBooks : group.possibleBooks).add(match.bookId.toUpperCase());
     }
-    return [...groups.values()];
+    return [...groups.values()].map((group) => ({ ...group, exactBooks: [...group.exactBooks], possibleBooks: [...group.possibleBooks] }));
+  }
+
+  function duplicateReviewKey(assessment: DuplicateAssessment, selection: string[]) {
+    // Consent applies only to these books and this set of related projects.
+    return JSON.stringify([
+      preview?.sourcePath, [...selection].sort(), assessment.classification,
+      Object.entries(assessment.sourceFingerprints).sort(),
+      assessment.matches.map((match) => [match.groupId, match.projectId, match.path, match.bookId, match.match, match.missing].join("|")).sort(),
+    ]);
+  }
+
+  async function chooseNewProject() {
+    if (!preview) return;
+    approvedDuplicateKey = duplicateReviewKey(preview.duplicates, selectedBookIds);
+    duplicateDialogOpen = false;
+    error = null;
+    await tick();
+    (metadata.languageId && metadata.languageName ? projectNameInput : languageInput)?.focus();
+  }
+
+  async function openRelatedProject(item: RelatedImportProject) {
+    if (item.missing || loading) return;
+    if (await openPath(item.path, item.projectId)) duplicateDialogOpen = false;
   }
 
   async function loadProjects() {
@@ -226,10 +253,12 @@
       const info = await bridge.openProject(path, projectId);
       project.set(info);
       onOpened();
+      return true;
     } catch (value) {
       perfAbort("project.open");
       error = message(value);
       await loadProjects();
+      return false;
     } finally {
       loading = false;
     }
@@ -283,6 +312,10 @@
   }
 
   async function inspect(path: string) {
+    if (duplicateDialogOpen) {
+      error = "Choose an existing project or create a new project before importing another source.";
+      return;
+    }
     if (loading || importing) {
       error = "Please wait for the current operation to finish, then drop the source again.";
       return;
@@ -290,10 +323,12 @@
     loading = true;
     error = null;
     preview = null;
+    approvedDuplicateKey = "";
+    duplicateDialogOpen = false;
+    showLanguages = false;
     try {
       preview = await bridge.inspectImport(path);
       selectedBookIds = preview.books.map((book) => book.bookId);
-      reviewedBookKey = selectedBookIds.slice().sort().join(",");
       metadata = {
         languageId: preview.metadata.languageId ?? "",
         languageName: preview.metadata.languageName ?? "",
@@ -312,6 +347,7 @@
         metadata = { ...metadata, languageName: preview.paratextLanguageName };
       }
       languageQuery = metadata.languageName || metadata.languageId;
+      duplicateDialogOpen = preview.duplicates.classification !== "new";
     } catch (value) {
       error = message(value);
     } finally {
@@ -319,37 +355,56 @@
     }
   }
 
+  function closeLanguageMenu(event: FocusEvent) {
+    const container = event.currentTarget as HTMLElement;
+    if (!(event.relatedTarget instanceof Node) || !container.contains(event.relatedTarget)) showLanguages = false;
+  }
+
+  async function handleLanguageKey(event: KeyboardEvent) {
+    if (event.key === "Escape") showLanguages = false;
+    if (event.key === "ArrowDown") {
+      const field = languageInput?.parentElement;
+      event.preventDefault();
+      showLanguages = true;
+      await tick();
+      field?.querySelector<HTMLButtonElement>(".language-menu button")?.focus();
+    }
+  }
+
   function selectLanguage(language: (typeof iso6393)[number]) {
     metadata = { ...metadata, languageId: language.iso6393, languageName: language.name };
-    languageQuery = `${language.name} (${language.iso6393})`;
+    languageQuery = language.name;
     showLanguages = false;
   }
 
-  async function runImport(allowDuplicate = false) {
-    if (!preview || !canImport) return;
+  async function runImport() {
+    if (!preview || !canImport || loading || importing || duplicateDialogOpen) return;
     loading = true;
     error = null;
     try {
-      const previousClassification = reviewClassification;
       const selection = [...selectedBookIds];
+      const importMetadata = { ...metadata };
       const partialSelection = selection.length !== preview.books.length;
       const refreshed = partialSelection
-        ? await bridge.inspectImport(preview.sourcePath, metadata, selection)
-        : await bridge.inspectImport(preview.sourcePath, metadata);
+        ? await bridge.inspectImport(preview.sourcePath, importMetadata, selection)
+        : await bridge.inspectImport(preview.sourcePath, importMetadata);
       if (partialSelection && refreshed.books.map((book) => book.bookId).sort().join(",") !== selection.slice().sort().join(",")) {
         throw new Error("Book selection requires the updated engine. Rebuild the engine and restart Bridge, then try again.");
       }
       preview = { ...preview, duplicates: refreshed.duplicates };
-      reviewedBookKey = selection.slice().sort().join(",");
-      if (previousClassification === "new" && refreshed.duplicates.classification !== "new") {
+      const reviewKey = duplicateReviewKey(refreshed.duplicates, selection);
+      if (refreshed.duplicates.classification !== "new" && approvedDuplicateKey !== reviewKey) {
+        duplicateDialogOpen = true;
+        showLanguages = false;
         return;
       }
+      const allowDuplicate = refreshed.duplicates.classification !== "new" && approvedDuplicateKey === reviewKey;
       importNotice = "";
       let snapshot: ImportJobSnapshot;
       try {
         snapshot = partialSelection
-          ? await bridge.importStart(preview.sourcePath, metadata, allowDuplicate, selection)
-          : await bridge.importStart(preview.sourcePath, metadata, allowDuplicate);
+          ? await bridge.importStart(preview.sourcePath, importMetadata, allowDuplicate, selection)
+          : await bridge.importStart(preview.sourcePath, importMetadata, allowDuplicate);
       } catch (value) {
         // An import is already running (a double click): follow it instead.
         if (!/already running/i.test(message(value))) throw value;
@@ -419,10 +474,11 @@
 
   function reset() {
     preview = null;
+    duplicateDialogOpen = false;
+    approvedDuplicateKey = "";
     error = null;
     languageQuery = "";
     selectedBookIds = [];
-    reviewedBookKey = "";
     showLanguages = false;
     void loadProjects();
   }
@@ -430,7 +486,7 @@
 
 <div class="screen" class:project-home={preview === null} class:import-review={preview !== null}>
   {#if importJob}
-    <div class="import-banner" role="status" aria-live="polite">
+    <div class="import-banner" role="status" aria-label="Import progress" aria-live="polite">
       <span class="import-label" title={importJob.sourcePath}>
         Importing: {importLabel(importJob)} — {importJob.percent}%
       </span>
@@ -464,7 +520,7 @@
       <button class="link-button" on:click={openExisting} disabled={loading} title="Open a Bridge or translationCore project in its current location, without copying it">Open an existing project</button>
       {#if loading}<p class="working">Reading, validating, or opening the selected project…</p>{/if}
       {#if importNotice}<p class="working">{importNotice}</p>{/if}
-      {#if error}<p class="error">{error}</p>{/if}
+      {#if error && !duplicateDialogOpen}<p class="error" role="alert">{error}</p>{/if}
     </div>
 
     <div class="list-area">
@@ -585,30 +641,14 @@
           {/if}
         </div>
         <button class="back action-icon" aria-label="Back to projects" use:tooltip={"Back to projects"} on:click={reset} disabled={loading}><UiIcon name="back" /></button>
+        <button class="action-icon review-close" aria-label="Close import review" use:tooltip={"Close and return to projects"} on:click={reset} disabled={loading}><UiIcon name="close" /></button>
       </div>
     </div>
 
     <div class="list-area">
-      {#if selectionReviewed && preview.duplicates.classification !== "new"}
-        <div class:exact={preview.duplicates.classification === "exactDuplicate"} class="duplicate-notice">
-          <strong>{preview.duplicates.classification === "exactDuplicate" ? "Already imported. Open the existing project or import a separate copy." : "Related projects found. Importing creates a separate copy."}</strong>
-          <details>
-            <summary>Related projects ({preview.duplicates.matchingGroupCount})</summary>
-            <div class="duplicate-matches">
-              {#each visibleMatchedGroups as group}
-                <div class="duplicate-match">
-                  <span><b>{group.label}</b>{group.missing ? " · folder missing" : ""}</span>
-                  <small>{group.exactBooks.size ? `Exact source: ${[...group.exactBooks].join(", ")}` : ""}{group.exactBooks.size && group.possibleBooks.size ? " · " : ""}{group.possibleBooks.size ? `Metadata overlap: ${[...group.possibleBooks].join(", ")}` : ""}</small>
-                </div>
-              {/each}
-              {#if hiddenMatchedGroupCount > 0}<small>+ {hiddenMatchedGroupCount} more</small>{/if}
-            </div>
-          </details>
-        </div>
-      {/if}
-
       <div class="content-grid">
         <section class="summary">
+          <div class="books-card-content">
           <div class="books-heading">
             <h2>Books</h2>
             <div class="books-controls">
@@ -636,51 +676,58 @@
             </details>
           {/if}
           <p class="note">Selected books are copied. Source files stay unchanged.</p>
+          </div>
         </section>
 
         <section class="form">
-          <h2>Project details</h2>
-          <label>
-            <span>Language</span>
+          <div class="form-heading"><h2>Project details</h2><span>New project</span></div>
+          <div class="language-control" on:focusout={closeLanguageMenu}>
+            <div class="field-heading"><label for="import-language">Language</label>{#if metadata.languageId}<output class="language-code" aria-label="Language code">{metadata.languageId}</output>{/if}</div>
             <div class="language-field">
-              <input value={languageQuery} placeholder="Search language or code" autocomplete="off"
+              <input id="import-language" bind:this={languageInput} disabled={loading || importing} value={languageQuery} placeholder="Search language or code" autocomplete="off" aria-describedby="import-language-help"
+                on:keydown={handleLanguageKey}
                 on:input={(event) => { languageQuery = event.currentTarget.value; metadata = { ...metadata, languageId: "", languageName: "" }; showLanguages = true; }}
-                on:focus={() => (showLanguages = true)} />
+                on:click={() => (showLanguages = true)} />
               {#if showLanguages}
-                <div class="language-menu">
+                <div class="language-menu" role="group" aria-label="Language suggestions">
                   {#each languageMatches as language}
                     <button type="button" on:mousedown|preventDefault on:click={() => selectLanguage(language)}><span>{language.name}</span><code>{language.iso6393}</code></button>
                   {:else}<div class="no-match">No ISO 639-3 language found</div>{/each}
                 </div>
               {/if}
             </div>
-          </label>
-
-          <div class="two-col">
-            <label><span>Language code</span><input value={metadata.languageId} readonly placeholder="ISO 639-3" /></label>
-            <label><span>Text direction</span><select bind:value={metadata.languageDirection}><option value="ltr">Left to right</option><option value="rtl">Right to left</option></select></label>
           </div>
-          <label><span>Project name</span><input bind:value={metadata.projectName} placeholder="e.g. Community review 2026" /></label>
-          <label><span>Bible / translation name</span><input bind:value={metadata.bibleName} placeholder="e.g. Unlocked Literal Text" /></label>
 
-          {#if exactMatch}
-            <button class="import-button" on:click={() => openPath(exactMatch.path, exactMatch.projectId)} disabled={loading || importing || selectedBookIds.length === 0}>Open existing project</button>
-            <button class="separate-button" on:click={() => runImport(true)} disabled={loading || importing || !canImport}>Import as a separate copy</button>
-          {:else}
-            <button class="import-button" on:click={() => runImport(false)} disabled={loading || importing || !canImport}>
-              {importing ? `Importing ${selectedBookIds.length === 1 ? "book" : `${selectedBookIds.length} books`}…` : reviewClassification === "new" ? `Import ${selectedBookIds.length === 1 ? "book" : `${selectedBookIds.length} books`}` : "Continue with separate import"}
+          <p class="field-help" id="import-language-help">{metadata.languageId && metadata.languageName ? "Language for the imported text." : "Search, then select a language from the list."}</p>
+          <fieldset class="direction-field">
+            <legend>Text direction</legend>
+            <div class="direction-options">
+              <button type="button" disabled={loading || importing} aria-pressed={metadata.languageDirection === "ltr"} on:click={() => (metadata = { ...metadata, languageDirection: "ltr" })}><span aria-hidden="true">→</span> Left to right {#if metadata.languageDirection === "ltr"}<span aria-hidden="true">✓</span>{/if}</button>
+              <button type="button" disabled={loading || importing} aria-pressed={metadata.languageDirection === "rtl"} on:click={() => (metadata = { ...metadata, languageDirection: "rtl" })}><span aria-hidden="true">←</span> Right to left {#if metadata.languageDirection === "rtl"}<span aria-hidden="true">✓</span>{/if}</button>
+            </div>
+          </fieldset>
+          <label><span>Project name</span><input disabled={loading || importing} bind:this={projectNameInput} bind:value={metadata.projectName} placeholder="e.g. Community review" /></label>
+          <label><span>Bible / translation name</span><input disabled={loading || importing} bind:value={metadata.bibleName} placeholder="e.g. IRV Malayalam" /></label>
+
+          <div class="import-submit">
+            {#if selectedBookIds.length === 0}<p class="required">Select at least one book to import.</p>{:else if importFieldsMissing.length > 0}<p class="required">To import, complete: {importFieldsMissing.join(", ")}.</p>{/if}
+            <button class="import-button" on:click={runImport} disabled={loading || importing || !canImport}>
+              {importing ? `Importing ${selectedBookIds.length === 1 ? "book" : `${selectedBookIds.length} books`}…` : `Import ${selectedBookIds.length === 1 ? "book" : `${selectedBookIds.length} books`}`}
             </button>
-          {/if}
-          {#if selectedBookIds.length === 0}<p class="required">Select at least one book.</p>{:else if !canImport}<p class="required">Choose a language and enter both names.</p>{/if}
+          </div>
         </section>
       </div>
 
       {#if loading}<p class="working">Checking the source…</p>{/if}
       {#if importNotice}<p class="working">{importNotice}</p>{/if}
-      {#if error}<p class="error">{error}</p>{/if}
+      {#if error && !duplicateDialogOpen}<p class="error" role="alert">{error}</p>{/if}
     </div>
   {/if}
 </div>
+
+{#if duplicateDialogOpen && preview}
+  <DuplicateImportDialog projects={matchedGroups} exact={preview.duplicates.classification === "exactDuplicate"} busy={loading || importing} {error} onOpen={openRelatedProject} onCreate={chooseNewProject} />
+{/if}
 
 <style>
   .screen { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; overflow: auto; background: var(--surface); }
@@ -729,12 +776,6 @@
   .paratext-link { color: var(--text-2); font-size: var(--fs-2xs); margin: 4px 0 0; max-width: 650px; overflow-wrap: anywhere; }
   .paratext-link code { font-size: var(--fs-2xs); }
   .back { margin: 4px 0 0; white-space: nowrap; }
-  .duplicate-notice { display: flex; flex-direction: column; gap: 3px; margin-top: 16px; border: 1px solid #e8c268; border-radius: 8px; background: #fff9e9; color: #7a5500; padding: 10px 12px; font-size: var(--fs-2xs); }
-  .duplicate-notice.exact { border-color: #e6a9a9; background: #fff2f2; color: #8b2d2d; }
-  .duplicate-matches { display: flex; flex-direction: column; gap: 5px; margin: 4px 0; }
-  .duplicate-match { border-left: 2px solid currentColor; padding-left: 8px; display: flex; flex-direction: column; gap: 1px; }
-  .duplicate-match b { font-weight: 750; }
-  .duplicate-match small { opacity: .86; overflow-wrap: anywhere; }
   .content-grid { display: grid; grid-template-columns: minmax(0, .9fr) minmax(320px, 1.1fr); gap: 30px; padding-top: 20px; }
   .summary { min-width: 0; }
   .book-list { border: 1px solid var(--border); border-radius: 8px; max-height: 225px; overflow: auto; }
@@ -748,19 +789,16 @@
   .note { background: var(--surface-2); color: var(--text-2); }
   .form { display: flex; flex-direction: column; gap: 13px; }
   label { display: flex; flex-direction: column; gap: 5px; color: var(--text); font-size: var(--fs-xs); font-weight: 650; }
-  input, select { width: 100%; box-sizing: border-box; height: 36px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--surface); color: var(--text); padding: 0 10px; font-size: var(--fs-sm); outline: none; }
-  input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-bg); }
-  input[readonly] { background: var(--surface-2); color: var(--text-2); }
-  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  input { width: 100%; box-sizing: border-box; height: 36px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--surface); color: var(--text); padding: 0 10px; font-size: var(--fs-sm); outline: none; }
+  input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-bg); }
   .language-field { position: relative; }
   .language-menu { position: absolute; z-index: var(--z-dropdown); left: 0; right: 0; top: 40px; max-height: 215px; overflow: auto; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); box-shadow: 0 10px 25px rgba(25, 35, 55, .16); }
   .language-menu button { width: 100%; display: flex; justify-content: space-between; align-items: center; border: 0; border-bottom: 1px solid var(--border); background: var(--surface); color: var(--text); padding: 8px 10px; cursor: pointer; font-size: var(--fs-xs); text-align: left; }
   .language-menu button:hover { background: var(--accent-bg); }
   .language-menu code { color: var(--text-2); font-size: var(--fs-2xs); }
   .no-match { color: var(--text-2); font-size: var(--fs-xs); padding: 12px; }
-  .import-button, .separate-button { height: 38px; border-radius: 7px; font-size: var(--fs-sm); font-weight: 700; cursor: pointer; }
+  .import-button { height: 38px; border-radius: 7px; font-size: var(--fs-sm); font-weight: 700; cursor: pointer; }
   .import-button { border: 1px solid var(--accent); background: var(--accent); color: white; }
-  .separate-button { border: 1px solid var(--border-strong); background: var(--surface); color: var(--text-2); }
   button:disabled { opacity: .55; cursor: not-allowed; }
   .required, .working, .error { font-size: var(--fs-2xs); margin: 0; }
   .required, .working { color: var(--text-2); }
@@ -836,18 +874,40 @@
   .import-review .source { max-width: none; white-space: normal; overflow-wrap: anywhere; margin-top: 6px; }
   .import-review .back { order: -1; margin: 0; }
   .import-review .header-row > div { flex: 1; }
-  .import-review .content-grid { gap: 20px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); padding-top: 0; align-items: start; }
+  .import-review .content-grid { gap: 20px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); padding-top: 0; align-items: stretch; }
   .import-review .summary, .import-review .form { min-width: 0; padding: 20px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
-  .import-review .form { gap: 14px; }
+  .import-review .summary { position: relative; }
+  .books-card-content { position: absolute; inset: 20px; display: flex; flex-direction: column; min-height: 0; }
+  .books-card-content .books-heading, .books-card-content .note { flex-shrink: 0; }
+  .books-card-content .import-notes { max-height: 120px; overflow: auto; flex-shrink: 0; }
+  .review-close:hover:not(:disabled) { background: var(--accent-bg); color: var(--accent); border-color: transparent; }
+  .import-review .form { gap: 16px; }
+  .form-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+  .form-heading > span { color: var(--text-2); background: var(--surface-2); border-radius: 6px; padding: 4px 8px; font-size: var(--fs-3xs); }
+  .form label, .direction-field legend { font-size: var(--fs-xs); font-weight: 550; }
+  .form label { gap: 8px; }
+  .language-control { display: flex; flex-direction: column; gap: 8px; }
+  .field-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .language-code { color: var(--accent); background: var(--accent-bg); border-radius: 5px; font-size: var(--fs-3xs); font-weight: 600; padding: 2px 6px; }
+  .field-help { margin: -9px 0 0; color: var(--text-2); font-size: var(--fs-3xs); line-height: 1.5; }
+  .direction-field { min-width: 0; padding: 0; border: 0; margin: 0; }
+  .direction-field legend { color: var(--text); padding: 0 0 8px; }
+  .direction-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 4px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; }
+  .direction-options button { min-width: 0; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px; border: 1px solid transparent; border-radius: 7px; padding: 8px; color: var(--text-2); background: transparent; font-size: var(--fs-2xs); cursor: pointer; }
+  .direction-options button[aria-pressed="true"] { background: var(--accent); color: white; border-color: var(--accent); font-weight: 650; box-shadow: 0 1px 3px rgb(0 0 0 / 8%); }
+  .direction-options button:hover:not([aria-pressed="true"]) { color: var(--accent); }
+  .import-submit { display: flex; flex-direction: column; gap: 10px; padding-top: 16px; margin-top: 2px; border-top: 1px solid var(--border); }
+  .import-review .form input { border-radius: 9px; font-weight: 400; }
+  .import-review .form input::placeholder { color: var(--text-2); opacity: .75; }
   .import-review .form h2 { margin: 0 0 2px; }
-  .import-review input:not([type="checkbox"]), .import-review select { height: 40px; }
+  .import-review input:not([type="checkbox"]) { height: 40px; }
   .books-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-bottom: 14px; }
   .books-heading h2 { margin: 0; }
   .books-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 14px; margin-left: auto; }
   .bulk-selection { flex-direction: row; align-items: center; gap: 7px; font-size: var(--fs-2xs); font-weight: 500; cursor: pointer; white-space: nowrap; }
   .bulk-selection input { width: 17px; height: 17px; margin: 0; padding: 0; accent-color: var(--accent); cursor: pointer; }
   .selection-count { font-size: var(--fs-2xs); color: var(--text-2); white-space: nowrap; }
-  .import-review .book-list { max-height: clamp(200px, 45vh, 480px); }
+  .import-review .book-list { flex: 1; min-height: 0; max-height: none; }
   .import-review .book-row { grid-template-columns: 18px 38px minmax(0, 1fr) auto; gap: 10px; min-height: 44px; padding: 8px 10px; cursor: pointer; font-weight: 400; }
   .book-row input[type="checkbox"] { width: 17px; height: 17px; margin: 0; padding: 0; accent-color: var(--accent); }
   .import-review .book-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.6; }
@@ -855,13 +915,14 @@
   .book-separator { color: var(--text-3); font-size: var(--fs-lg); font-weight: 400; }
   .book-unselected { background: var(--surface-2); }
   .import-notes { font-size: var(--fs-2xs); margin-top: 12px; color: var(--text-2); }
-  .import-notes summary, .duplicate-notice summary { cursor: pointer; padding: 4px 0; }
-  .import-review .import-button, .import-review .separate-button { height: auto; min-height: 40px; padding: 8px 12px; }
+  .import-notes summary { cursor: pointer; padding: 4px 0; }
+  .import-review .import-button { height: auto; min-height: 40px; padding: 8px 12px; }
   @media (max-width: 760px) {
     .import-review .content-grid { grid-template-columns: minmax(0, 1fr); }
     .import-review .header, .import-review .list-area { padding-left: 16px; padding-right: 16px; }
     .import-review .summary, .import-review .form { padding: 16px; }
-    .import-review .book-list { max-height: 260px; }
+    .books-card-content { position: static; }
+    .import-review .book-list { flex: none; max-height: 260px; }
   }
   .project-home .project-actions .action-icon { display: grid; place-items: center; width: 34px; height: 34px; min-height: 34px; padding: 0; border: 0; background: transparent; color: var(--text-2); border-radius: 8px; transition: color .15s, background .15s; }
   .project-home .project-actions .action-icon.primary { color: var(--accent); }
@@ -887,7 +948,6 @@
   }
   @media (max-width: 380px) {
     .project-home .header, .project-home .list-area, .project-home .footer { padding-left: 12px; padding-right: 12px; }
-    .two-col { grid-template-columns: 1fr; }
     h1 { font-size: var(--fs-3xl); }
   }
   @media (max-width: 760px) {
