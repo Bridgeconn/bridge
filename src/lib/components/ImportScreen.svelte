@@ -630,7 +630,7 @@
   {:else}
     <div class="header">
       <div class="header-row">
-        <div>
+        <div class="review-heading">
           <h1>Confirm project details</h1>
           <p class="source" title={preview.sourcePath}>{preview.sourcePath}</p>
           {#if preview.paratext}
@@ -869,9 +869,17 @@
   .import-review { background: var(--bg); }
   .import-review .header, .import-review .list-area { max-width: 1200px; padding-left: 32px; padding-right: 32px; }
   .import-review .header { border: 0; padding-bottom: 0; }
-  .import-review .header-row { align-items: center; border: 0; padding-bottom: 0; }
+  .import-review .header-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) 34px; align-items: center; gap: 2px 14px; border: 0; padding-bottom: 0; }
+  .review-heading { display: contents; }
+  .review-heading h1 { grid-column: 2; grid-row: 1; min-width: 0; line-height: 1.15; }
+  .review-heading .paratext-link { grid-column: 2; grid-row: 3; margin-top: 2px; line-height: 1.35; }
+  .import-review .header-row .action-icon { border: 0; background: transparent; transition: color .15s, background .15s; }
+  .import-review .header-row .back { grid-column: 1; grid-row: 1; }
+  .import-review .header-row .review-close { grid-column: 3; grid-row: 1; }
+  .import-review .header-row .back:hover:not(:disabled), .import-review .header-row .back:focus-visible { color: var(--accent); background: var(--accent-bg); }
+  .import-review .header-row .review-close:hover:not(:disabled), .import-review .header-row .review-close:focus-visible { color: var(--danger); background: var(--danger-bg); }
   .import-review .header-row > div { min-width: 0; }
-  .import-review .source { max-width: none; white-space: normal; overflow-wrap: anywhere; margin-top: 6px; }
+  .import-review .source { grid-column: 2; grid-row: 2; min-width: 0; max-width: none; white-space: normal; overflow-wrap: anywhere; margin: 0; line-height: 1.35; }
   .import-review .back { order: -1; margin: 0; }
   .import-review .header-row > div { flex: 1; }
   .import-review .content-grid { gap: 20px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); padding-top: 0; align-items: stretch; }
@@ -880,7 +888,6 @@
   .books-card-content { position: absolute; inset: 20px; display: flex; flex-direction: column; min-height: 0; }
   .books-card-content .books-heading, .books-card-content .note { flex-shrink: 0; }
   .books-card-content .import-notes { max-height: 120px; overflow: auto; flex-shrink: 0; }
-  .review-close:hover:not(:disabled) { background: var(--accent-bg); color: var(--accent); border-color: transparent; }
   .import-review .form { gap: 16px; }
   .form-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
   .form-heading > span { color: var(--text-2); background: var(--surface-2); border-radius: 6px; padding: 4px 8px; font-size: var(--fs-3xs); }
@@ -973,6 +980,6 @@
     .project-home .choice-icon { flex-basis: 30px; height: 30px; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .project-home .project-actions .action-icon { transition: none; }
+    .project-home .project-actions .action-icon, .import-review .header-row .action-icon { transition: none; }
   }
 </style>
