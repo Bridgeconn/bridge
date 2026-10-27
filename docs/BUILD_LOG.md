@@ -22392,3 +22392,73 @@ The complete semantic-runtime test file passed after that setup fix (37 tests,
 the complete 5,669-pass run plus the repaired 37-test file, not a claim that the
 whole suite was rerun green after its last test-only edit. Main's full serial CI
 is the remaining push gate; issue closure follows its result.
+
+
+## 2026-10-28 — Baseline and a local installer for the week's walks; #260 marks, #399, #400
+
+**Baseline on `main` at c2bd236** (Benz's #358 h and i, the #353 test isolation, Joel's #406
+merge, Revant's milestone 3 engine batch, all since 0.21.0 at 4cd22bf), every gate green with no
+re-run needed: `pytest -n auto` 5670 passed, 3 xfailed (10:25); `npm run check` 0 errors / 0
+warnings; `npm run test` 99 files, 1032 passed; `npm run build` ok; `cargo check` ok; `cargo test`
+15 passed; `build-sidecars.ps1` and `smoke_sidecars.py` passed ("Frozen sidecar smoke test
+passed", hub `--serve` included). The three timing tests that fail under full parallel load did not
+fail this time.
+
+**The installer for the installed-build walks** was built from a detached worktree at c2bd236
+(`C:\code\bridge-installer`, the day's edits kept out of it; the frozen sidecars and
+`src-tauri/resources` copied in from the main checkout since both are git-ignored):
+`C:debridge-installersrc-tauri	argeteleasebundle
+sisBridge_0.21.0_x64-setup.exe`, 85,265,216 bytes, `npm run tauri build` 6m 21s for the release profile. Version 0.21.0 is unchanged; the file is identified by the commit
+only. Nothing was tagged or released; 0.22.0 is Thursday's or Friday's cut in a separate session,
+0.21.0 (4cd22bf) stays the fallback demo build. Every walk this week records that hash.
+
+**#260 (87a06e0), code remainder.** `word.select`, the one Tier A action without a mark since 13
+Oct, is marked in `VerseList.svelte`: `perfBegin` at the mousedown in a verse's text, `perfEnd` at
+the mouseup that leaves a word under the pointer or a selection inside the verse (the paint after
+the browser has drawn it), or at the right-click menu that names a word; a mouseup on nothing drops
+the mark. A left click on a word also records `verse.navigate`, as any row click does; the rows are
+separate. The long-task counter: `observeLongTasks` in `perf.ts`, a `PerformanceObserver` on the
+`longtask` entry type, feature-detected on `supportedEntryTypes` (nothing registers and the panel
+says so where WebView2 does not expose it), registered once in `App.svelte` through the same
+`frontend_log` sink as the action samples. Every task of 250 ms or more is one
+`perf longtask=<ms>` line in `engine-events.log` and counted in Engine diagnostics >
+Responsiveness ("Long tasks over 250 ms this session: n (longest m ms, t ms in all)"), so the
+30-minute recording on the field laptop needs no DevTools. `scripts/perf_table.py` parses those
+lines apart from the action rows (its action table pin against `perf.ts` is unchanged) and prints
+the count under the table and as `longTasks` in `--json`. The measurement procedure for Thursday 29
+Oct is on the issue. The issue stays open until the measured table is in a release's notes.
+
+**#399 (3c71168).** The strip under the top bar set `running: true` for Collection QA without a
+percent (the previous check job's number stayed, frozen) and its Cancel called the chapter-job
+cancel with an empty `activeJobId`. `src/lib/collectionStrip.ts`: `bindCollectionStrip()` feeds
+`checkingProgress` from every poll of the run ("Collection QA · 3/66 books · about 40 min left",
+the job's percent, paused, cancelling) while holding the app read-only as before, and releases it
+with the outcome; `cancelStripJob` routes the strip's Cancel to `collection.cancelChecks` while a
+run is active, else to the check job. The state after a cancelled or failed run stays `succeeded`
+deliberately: the failed/cancelled notice rows offer Retry, which re-runs a chapter job by id.
+`formatDuration` is lifted from the panel into `collectionQa.ts`.
+
+**#400 (ec6bafe).** `ImportScreen.openPath` and the open after an import called `openProject`
+without `onProgress`, so a lazy sibling's chapter-by-chapter prepare (#210) showed only the still
+sentence. `src/lib/openProgress.ts` carries the prepare into App's "Opening X… preparing chapter n
+of N" strip (already above the screens, so visible on Home); `openPath` passes
+`trackPrepare(<display name>)` and clears it in `finally`; the open after an import sets `importJob`
+to each prepare snapshot so the banner follows the open rather than the import's last snapshot;
+the book switch shares `prepareDetail`. The ImportScreen hunks are the two call sites and one
+import, as agreed with Joel's #406 work on that file.
+
+**App.svelte commits.** The three issues share hunks in `App.svelte`; the file was committed in
+three stages (a splitter rebuilt each stage from the previous commit) so each commit carries only
+its own hunks. The first attempt committed #399 and #400 with the #260 stage of the file; both
+were reset (never pushed) and redone, and the working file was checked byte-for-byte against the
+one the gate ran on.
+
+**Gates, batch B.** `npm run check` 0 errors / 0 warnings; `npm run test` 101 files, 1045 passed;
+`npm run build` ok; `pytest tests/service/test_perf_table_script.py` 6 passed; full
+`pytest -n auto` 5671 passed, 3 xfailed, 0 failed (12:26, run alongside the installer build; the three known timing tests did not fail). Not run: cargo (no Rust change), the frozen pair (no engine change; the
+script is not in the spec).
+
+**Not verified anywhere today:** the installed app at 1366x768 (the strip's longer label, the
+Responsiveness line, the Home-screen strip); a real `word.select` click and a real long-task
+count in WebView2; a real Collection QA run cancelled from the editor; a real lazy book opened
+from Home. The installer itself was not installed or started here (Revant installs and walks it).
