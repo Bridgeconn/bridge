@@ -20,6 +20,7 @@ vi.mock("../../api/bridgeClient", () => ({
 
 import ImportScreen, { forgetHandledDrops } from "../ImportScreen.svelte";
 import { project } from "../../stores";
+import { prepareProgress } from "../../openProgress";
 import type { ImportJobSnapshot, ImportPreview, ProjectInfo } from "../../types/finding";
 
 const SOURCE = "C:/sources/TIT.usfm";
@@ -192,8 +193,32 @@ describe("ImportScreen background import (#231)", () => {
     }));
     await waitFor(() => expect(banner).toHaveTextContent("Preparing TIT, chapter 2 of 2 — 50%"));
     await waitFor(() => expect(onOpened).toHaveBeenCalledTimes(1));
-    expect(openProject).toHaveBeenCalledWith(PRIMARY, "p-1");
+    expect(openProject).toHaveBeenCalledWith(PRIMARY, "p-1", expect.any(Function));
     expect(get(project)?.importedProjects).toEqual(succeeded.result?.projects);
+    expect(screen.queryByRole("status", { name: "Import progress" })).toBeNull();
+  });
+
+  it("keeps the banner on the open's prepare after the import, not the import's last snapshot (#400)", async () => {
+    importStatus.mockResolvedValue(succeeded);
+    let finishOpen: (info: ProjectInfo) => void = () => {};
+    openProject.mockImplementation((_path: string, _id: string, onProgress?: (s: ImportJobSnapshot) => void) => {
+      onProgress?.(snapshot({
+        jobId: "prep-1", state: "running", phase: "normalize", phaseLabel: "Preparing TIT", totalBooks: 1,
+        currentBook: "tit", chapter: 2, chapterCount: 3, percent: 66,
+      }));
+      return new Promise<ProjectInfo>((resolve) => { finishOpen = resolve; });
+    });
+    const onOpened = await renderWithPreview();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Import book" }));
+
+    const banner = await screen.findByRole("status", { name: "Import progress" });
+    await waitFor(() => expect(banner).toHaveTextContent("Preparing TIT, chapter 2 of 3 — 66%"));
+    expect(openProject).toHaveBeenCalledWith(PRIMARY, "p-1", expect.any(Function));
+    expect(onOpened).not.toHaveBeenCalled();
+
+    finishOpen({ ...opened });
+    await waitFor(() => expect(onOpened).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole("status", { name: "Import progress" })).toBeNull();
   });
 
@@ -303,5 +328,43 @@ describe("ImportScreen detected language code (#308)", () => {
     await renderWithPreview();
 
     expect(screen.getByText("To import, complete: language.")).toBeInTheDocument();
+  });
+});
+
+describe("ImportScreen open from Home (#400)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    forgetHandledDrops();
+    project.set(null);
+    prepareProgress.set(null);
+    listProjects.mockResolvedValue({ projects: [{
+      projectId: "p-1", collectionId: "c-1", path: "C:/projects/tam_irv_psa", managed: true, missing: false,
+      bookId: "psa", bookName: "Psalms", targetLanguageId: "tam", targetLanguage: "Tamil",
+      projectName: "IRV Tamil", bibleName: "IRV", lastOpenedAt: null, bookCount: 66,
+    }] });
+  });
+
+  it("passes the prepare callback and shows the prepare in the strip store until the open returns", async () => {
+    const seen: unknown[] = [];
+    const unsubscribe = prepareProgress.subscribe((value) => seen.push(value));
+    let finishOpen: (info: ProjectInfo) => void = () => {};
+    openProject.mockImplementation((_path: string, _id: string, onProgress?: (s: ImportJobSnapshot) => void) => {
+      onProgress?.(snapshot({ state: "running", phaseLabel: "Preparing PSA", currentBook: "psa", chapter: 7, chapterCount: 150, percent: 4 }));
+      return new Promise<ProjectInfo>((resolve) => { finishOpen = resolve; });
+    });
+    const onOpened = vi.fn();
+    render(ImportScreen, { props: { onOpened } });
+    await screen.findByText("IRV Tamil");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open IRV Tamil" }));
+
+    await waitFor(() => expect(openProject).toHaveBeenCalledWith("C:/projects/tam_irv_psa", "p-1", expect.any(Function)));
+    expect(get(prepareProgress)).toEqual({ name: "IRV Tamil", detail: "preparing chapter 7 of 150" });
+
+    finishOpen({ ...opened, path: "C:/projects/tam_irv_psa", bookId: "psa", bookName: "Psalms" });
+    await waitFor(() => expect(onOpened).toHaveBeenCalledTimes(1));
+    expect(get(prepareProgress)).toBeNull();
+    expect(seen).toContainEqual({ name: "IRV Tamil", detail: "preparing chapter 7 of 150" });
+    unsubscribe();
   });
 });

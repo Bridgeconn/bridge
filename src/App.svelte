@@ -73,6 +73,7 @@
   import { toggleLanguageQaPanel } from "./lib/languageQaPanelUi";
   import { collectionQaRunning, stopCollectionQa } from "./lib/collectionQa";
   import { bindCollectionStrip, cancelStripJob } from "./lib/collectionStrip";
+  import { prepareDetail, prepareProgress } from "./lib/openProgress";
   import CollectionQaPanel from "./lib/components/CollectionQaPanel.svelte";
 
   let opened = false;
@@ -937,11 +938,7 @@
     perfResponded("book.switch");
     try {
       await stopActiveJob();
-      const info = await bridge.openProject(path, undefined, (snapshot) => {
-        openingDetail = snapshot.chapter && snapshot.chapterCount
-          ? `preparing chapter ${snapshot.chapter} of ${snapshot.chapterCount}`
-          : snapshot.state === "succeeded" ? "" : "preparing";
-      });
+      const info = await bridge.openProject(path, undefined, (snapshot) => { openingDetail = prepareDetail(snapshot); });
       openingDetail = "";
       if (!info.importedProjects && siblings) info.importedProjects = siblings;
       resetBookState();
@@ -1473,10 +1470,14 @@
       <button class="progress-action" on:click={() => (workspaceRecoveryNoticeText = "")}>Dismiss</button>
     </div>
   {/if}
-  {#if openingBook}
-    <div class="progress-row checking-row">
+  {#if openingBook || $prepareProgress}
+    <!-- The book switch's strip; a Home-screen open that prepares a lazy
+         book shows here too (#400), through the prepareProgress store. -->
+    <div class="progress-row checking-row" role="status" aria-label="Opening progress">
       <div class="spin" />
-      <span class="progress-label">Opening {openingBook}…{openingDetail ? ` ${openingDetail}` : ""}</span>
+      <span class="progress-label">Opening {openingBook || $prepareProgress?.name}…{openingBook
+        ? (openingDetail ? ` ${openingDetail}` : "")
+        : ($prepareProgress?.detail ? ` ${$prepareProgress.detail}` : "")}</span>
       <div class="track"><div class="fill indeterminate" /></div>
       <span />
     </div>
