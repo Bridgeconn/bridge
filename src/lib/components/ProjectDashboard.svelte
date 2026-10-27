@@ -266,11 +266,24 @@
         </div>
       {:else if report}
         <div class="report-area" aria-label="Current book QA report">
-          <div class="gate" class:ready={report.publicationGate.readyForHumanPublicationSignoff}>
-            {#if report.publicationGate.readyForHumanPublicationSignoff}
-              ✓ No blocking issues detected in {report.bookId?.toUpperCase()} — advisory only, not a translation-quality signoff.
+          <!-- #337: a tick means every verse checked and nothing blocking open.
+               Unchecked verses are named with their count, never folded into
+               "No blocking issues"; an open high or critical check finding from
+               any engine blocks like an open high Language QA finding. Advisory. -->
+          <div
+            class="gate"
+            class:ready={report.publicationGate.readyForHumanPublicationSignoff}
+            class:unchecked={(report.publicationGate.uncheckedVerses ?? 0) > 0}
+          >
+            {#if (report.publicationGate.uncheckedVerses ?? 0) > 0}
+              Not checked ({report.publicationGate.uncheckedVerses} of {report.publicationGate.totalVerses} verses) in
+              {report.bookId?.toUpperCase()} — run checks on every verse before this gate can clear.
+            {:else if report.publicationGate.readyForHumanPublicationSignoff}
+              ✓ Every verse checked, no blocking issues open in {report.bookId?.toUpperCase()} — advisory only, not a translation-quality signoff.
             {:else}
-              {report.publicationGate.criticalFindings} critical · {report.publicationGate.highFindings} high ·
+              {(report.publicationGate.checkCriticalFindings ?? 0) + (report.publicationGate.checkHighFindings ?? 0)} high/critical check finding(s) ·
+              {report.publicationGate.criticalFindings} critical · {report.publicationGate.highFindings} high AI ·
+              {report.publicationGate.languageQaBlocking ?? 0} Language QA ·
               {report.publicationGate.staleAIReviews} stale · {report.publicationGate.openDiscussions} discussion(s) open in {report.bookId?.toUpperCase()}
             {/if}
           </div>
@@ -408,6 +421,7 @@
   .report-cta:hover { border-color: var(--accent); color: var(--accent); }
   .gate { border-radius: 8px; padding: 10px 14px; font-size: var(--fs-xs); font-weight: 600; background: var(--danger-bg); color: var(--danger); margin-bottom: 12px; }
   .gate.ready { background: var(--pass-bg); color: var(--pass); }
+  .gate.unchecked { background: var(--not-checked-bg, var(--surface-muted, #f3f4f6)); color: var(--not-checked, var(--text-muted, #4b5563)); }
   .coverage-bar { display: flex; width: 100%; height: 10px; border-radius: 5px; overflow: hidden; background: var(--surface-2); }
   .coverage-seg { height: 100%; }
   .coverage-seg.pass { background: var(--pass); }

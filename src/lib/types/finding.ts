@@ -91,11 +91,20 @@ export interface VerseCoverage {
 
 export interface PublicationGate {
   readyForHumanPublicationSignoff: boolean;
+  /** #337: ready (every verse checked, nothing blocking open), not_checked
+   *  (unchecked verses remain) or blocked. Advisory: never prevents export. */
+  status?: "ready" | "not_checked" | "blocked";
   criticalFindings: number;
   highFindings: number;
   staleAIReviews: number;
   pendingTransactions: number;
   openDiscussions: number;
+  /** #337: open critical / high check findings from any engine. */
+  checkCriticalFindings?: number;
+  checkHighFindings?: number;
+  uncheckedVerses?: number;
+  totalVerses?: number;
+  languageQaBlocking?: number;
   note: string;
 }
 

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .analytics import translation_words_book_analytics, exception_first_queue
+from .analytics import translation_words_book_analytics, exception_first_queue, open_blocking_check_findings
 from .language_qa_jobs import LANGUAGE_QA_BLOCKING, language_qa_open_counts, reported_language_qa
 
 # The publication gate's advisory line for open medium Language QA findings;
@@ -93,6 +93,8 @@ class ReportService:
         except Exception as e: provenance={'error':str(e)}
         git=GitService(self.project.path).status()
         severity=Counter(str(q.get('severity','medium')).lower() for q in qa)
+        coverage={'verses':self._verse_coverage(),'resources':self._resource_coverage()}
+        check_findings=open_blocking_check_findings(self.project)
         return {
             'schemaVersion':2,'generatedTimestamp':datetime.now(timezone.utc).isoformat().replace('+00:00','Z'),
             'project':self.project.summary.display_name,'bookId':self.project.book_id,
@@ -101,10 +103,11 @@ class ReportService:
             'knowledgeBaseProvenance':provenance,'git':{'available':git.available,'repository':git.repository,'branch':git.branch,'dirty':git.dirty},
             'metrics':self._metrics(),
             'languageQa':language_qa,
-            'publicationGate':{**self._publication_gate(scan,queue,qa,discussions,language_qa,self.language_qa_medium_advisory),
+            'publicationGate':{**self._publication_gate(scan,queue,qa,discussions,language_qa,self.language_qa_medium_advisory,
+                                                        coverage=coverage['verses'],check_findings=check_findings),
                                # What an export would be blocked by: the same function export consults.
                                'exportBlocking':publication_gate(self.project)},
-            'coverage':{'verses':self._verse_coverage(),'resources':self._resource_coverage()},
+            'coverage':coverage,
         }
 
     def _verse_coverage(self) -> dict[str, Any]:
@@ -179,6 +182,7 @@ class ReportService:
         all_ready = True
         critical = high = stale = pending_tx = discussions = 0
         lqa_blocking = lqa_medium = 0
+        check_critical = check_high = unchecked = total_verses = 0
         advisories: list[str] = []
         language_qa: Counter = Counter()
         for report in book_reports:
@@ -199,6 +203,9 @@ class ReportService:
             discussions += int(gate.get('openDiscussions', 0) or 0)
             lqa_blocking += int(gate.get('languageQaBlocking', 0) or 0)
             lqa_medium += int(gate.get('languageQaOpenMedium', 0) or 0)
+            check_critical += int(gate.get('checkCriticalFindings', 0) or 0)
+            check_high += int(gate.get('checkHighFindings', 0) or 0)
+            unchecked += int(gate.get('uncheckedVerses', 0) or 0)
             advisories.extend(f"{report.get('bookId')}: {line}" for line in gate.get('advisories') or [])
             books.append({
                 'bookId': report.get('bookId'), 'project': report.get('project'),
@@ -221,8 +228,11 @@ class ReportService:
             'qaSeverityCounts': dict(severity_counts),
             'publicationGate': {
                 'readyForHumanPublicationSignoff': all_ready and bool(book_reports),
+                'status': 'not_checked' if unchecked else ('ready' if all_ready and bool(book_reports) else 'blocked'),
                 'criticalFindings': critical, 'highFindings': high,
                 'staleAIReviews': stale, 'pendingTransactions': pending_tx, 'openDiscussions': discussions,
+                'checkCriticalFindings': check_critical, 'checkHighFindings': check_high,
+                'uncheckedVerses': unchecked, 'totalVerses': total_verses,
                 'languageQaBlocking': lqa_blocking, 'languageQaOpenMedium': lqa_medium,
                 'advisories': advisories,
                 'note': 'This gate is advisory. Final publication approval remains human/organizational.',
@@ -232,11 +242,22 @@ class ReportService:
         }
 
     @staticmethod
-    def _publication_gate(scan,queue,qa,discussions,language_qa=None,medium_advisory=LANGUAGE_QA_MEDIUM_ADVISORY):
+    def _publication_gate(scan,queue,qa,discussions,language_qa=None,medium_advisory=LANGUAGE_QA_MEDIUM_ADVISORY,
+                          coverage=None,check_findings=None):
         """Advisory. Language QA (layered-rules Phase 4.2) adds one blocking
         input -- open findings with severity high AND confidence high -- and
         one advisory line when open medium findings exceed `medium_advisory`
-        (default 50). The advisory line never blocks."""
+        (default 50). The advisory line never blocks.
+
+        #337 (decision 2026-10-24): any open critical or high check finding,
+        whatever engine raised it (`check_findings`, from
+        analytics.open_blocking_check_findings), blocks the same way an open
+        high Language QA finding does; and while any verse is unchecked
+        (`coverage`, the report's verse coverage) the gate is `not_checked`,
+        never a tick. `status` is one of `ready` (every verse checked, nothing
+        blocking open), `not_checked` (unchecked verses remain, whatever else
+        is open) and `blocked`. The gate stays advisory: it never prevents an
+        export or a report."""
         critical=sum(1 for q in qa if str(q.get('severity','')).lower()=='critical')
         high=sum(1 for q in qa if str(q.get('severity','')).lower()=='high')
         stale=int(scan.get('aiReview',{}).get('stale',0) or 0)
@@ -244,11 +265,23 @@ class ReportService:
         language_qa=language_qa or {}
         lqa_blocking=int(language_qa.get('blocking',0) or 0)
         lqa_medium=int(language_qa.get('medium',0) or 0)
+        check_findings=list(check_findings or [])
+        check_critical=sum(1 for f in check_findings if str(f.get('severity','')).lower()=='critical')
+        check_high=sum(1 for f in check_findings if str(f.get('severity','')).lower()=='high')
+        coverage=coverage or {}
+        counts=coverage.get('counts') if isinstance(coverage.get('counts'),dict) else {}
+        unchecked=int(counts.get('NOT_CHECKED',0) or 0)
+        total_verses=int(coverage.get('totalVerses',0) or 0)
         advisories=[]
         if lqa_medium>medium_advisory:
             advisories.append(f'{lqa_medium} open medium Language QA findings (more than {medium_advisory}).')
-        ready=not (critical or high or stale or pending_tx or discussions or lqa_blocking)
-        return {'readyForHumanPublicationSignoff':ready,'criticalFindings':critical,'highFindings':high,'staleAIReviews':stale,'pendingTransactions':pending_tx,'openDiscussions':len(discussions),
+        blocked=bool(critical or high or stale or pending_tx or discussions or lqa_blocking or check_critical or check_high)
+        status='not_checked' if unchecked else ('blocked' if blocked else 'ready')
+        ready=status=='ready'
+        return {'readyForHumanPublicationSignoff':ready,'status':status,'criticalFindings':critical,'highFindings':high,'staleAIReviews':stale,'pendingTransactions':pending_tx,'openDiscussions':len(discussions),
+                'checkCriticalFindings':check_critical,'checkHighFindings':check_high,
+                'checkBlockingFindings':[{k:f.get(k,'') for k in ('chapter','verse','engine','checkType','severity')} for f in check_findings],
+                'uncheckedVerses':unchecked,'totalVerses':total_verses,
                 'languageQaBlocking':lqa_blocking,'languageQaOpenMedium':lqa_medium,'languageQaMediumAdvisory':medium_advisory,'advisories':advisories,
                 'note':'This gate is advisory. Final publication approval remains human/organizational.'}
 
@@ -290,6 +323,12 @@ class ReportService:
         rows=''.join(f"<tr><td>{html.escape(str(x.get('chapter'))+':'+str(x.get('verse')))}</td><td>{x.get('critical',0)}</td><td>{x.get('high',0)}</td><td>{html.escape(str(x.get('cache','')))}</td><td>{html.escape(str(x.get('summary','')))}</td></tr>" for x in d['exceptionQueue'][:1000])
         term=''.join(f"<tr><td>{html.escape(str(x.get('conceptId','')))}</td><td>{x.get('total',0)}</td><td>{x.get('distinctRenderings',0)}</td><td>{x.get('unexplainedOccurrences',0)}</td></tr>" for x in d['terminology'].get('concepts',[])[:1000])
         gate_class='ok' if gate['readyForHumanPublicationSignoff'] else 'bad'
+        if gate.get('uncheckedVerses'):
+            gate_line=f"Not checked ({gate['uncheckedVerses']} of {gate.get('totalVerses',0)} verses): run checks on every verse before this gate can clear"
+        elif gate['readyForHumanPublicationSignoff']:
+            gate_line='Ready for human publication sign-off: every verse checked, no blocking issue open'
+        else:
+            gate_line='Not ready: unresolved production gates remain'
         lqa=d.get('languageQa') or {}
         lqa_categories=''.join(f"<tr><td>{html.escape(k or '—')}</td><td>{v.get('total',0)}</td><td>{v.get('open',0)}</td></tr>" for k,v in sorted((lqa.get('byCategory') or {}).items()))
         lqa_blocking=''.join(f"<tr><td>{html.escape(x['chapter']+':'+x['verse'])}</td><td>{html.escape(x['ruleId'])}</td><td>{html.escape(x['originalText'])}</td><td>{html.escape(x['message'])}</td></tr>" for x in (lqa.get('blockingFindings') or [])[:500])
@@ -299,4 +338,4 @@ class ReportService:
                   f"<table><thead><tr><th>Category</th><th>Findings</th><th>Open</th></tr></thead><tbody>{lqa_categories}</tbody></table>"
                   + (f"<h3>Blocking</h3><table><thead><tr><th>Reference</th><th>Rule</th><th>Text</th><th>Message</th></tr></thead><tbody>{lqa_blocking}</tbody></table>" if lqa_blocking else "")
                   + (f"<h3>Advisories</h3><ul>{advisories}</ul>" if advisories else "")) if lqa.get('available',True) else ''
-        return f'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(d['project'])} QA Report</title><style>body{{font:15px system-ui;margin:32px;max-width:1200px;color:#1f2937}}table{{border-collapse:collapse;width:100%}}th,td{{border:1px solid #ddd;padding:7px;vertical-align:top}}th{{background:#f4f4f4}}.bad{{color:#b00020;font-weight:700}}.ok{{color:#08783e;font-weight:700}}pre{{white-space:pre-wrap;background:#f8fafc;padding:12px}}@media print{{body{{margin:12mm}}button{{display:none}}}}</style></head><body><h1>{html.escape(d['project'])} — Translation QA</h1><p>Generated {html.escape(d['generatedTimestamp'])}</p><h2>Publication readiness</h2><p class="{gate_class}">{'Ready for human publication sign-off' if gate['readyForHumanPublicationSignoff'] else 'Not ready: unresolved production gates remain'}</p><pre>{html.escape(json.dumps(gate,ensure_ascii=False,indent=2))}</pre><h2>Project state</h2><pre>{html.escape(json.dumps(scan,ensure_ascii=False,indent=2))}</pre><h2>Exception-first queue</h2><table><thead><tr><th>Reference</th><th>Critical</th><th>High</th><th>Cache</th><th>Summary</th></tr></thead><tbody>{rows}</tbody></table>{lqa_html}<h2>Terminology / Translation Words</h2><table><thead><tr><th>Concept</th><th>Occurrences</th><th>Distinct renderings</th><th>Unexplained</th></tr></thead><tbody>{term}</tbody></table><h2>Quality metrics</h2><pre>{html.escape(json.dumps(d.get('metrics',{}),ensure_ascii=False,indent=2))}</pre><h2>Knowledge Base provenance</h2><pre>{html.escape(json.dumps(d.get('knowledgeBaseProvenance',{}),ensure_ascii=False,indent=2))}</pre><p><strong>Human authority:</strong> This report assists review; it does not itself approve Scripture, terminology, or publication.</p></body></html>'''
+        return f'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(d['project'])} QA Report</title><style>body{{font:15px system-ui;margin:32px;max-width:1200px;color:#1f2937}}table{{border-collapse:collapse;width:100%}}th,td{{border:1px solid #ddd;padding:7px;vertical-align:top}}th{{background:#f4f4f4}}.bad{{color:#b00020;font-weight:700}}.ok{{color:#08783e;font-weight:700}}pre{{white-space:pre-wrap;background:#f8fafc;padding:12px}}@media print{{body{{margin:12mm}}button{{display:none}}}}</style></head><body><h1>{html.escape(d['project'])} — Translation QA</h1><p>Generated {html.escape(d['generatedTimestamp'])}</p><h2>Publication readiness</h2><p class="{gate_class}">{html.escape(gate_line)}</p><pre>{html.escape(json.dumps(gate,ensure_ascii=False,indent=2))}</pre><h2>Project state</h2><pre>{html.escape(json.dumps(scan,ensure_ascii=False,indent=2))}</pre><h2>Exception-first queue</h2><table><thead><tr><th>Reference</th><th>Critical</th><th>High</th><th>Cache</th><th>Summary</th></tr></thead><tbody>{rows}</tbody></table>{lqa_html}<h2>Terminology / Translation Words</h2><table><thead><tr><th>Concept</th><th>Occurrences</th><th>Distinct renderings</th><th>Unexplained</th></tr></thead><tbody>{term}</tbody></table><h2>Quality metrics</h2><pre>{html.escape(json.dumps(d.get('metrics',{}),ensure_ascii=False,indent=2))}</pre><h2>Knowledge Base provenance</h2><pre>{html.escape(json.dumps(d.get('knowledgeBaseProvenance',{}),ensure_ascii=False,indent=2))}</pre><p><strong>Human authority:</strong> This report assists review; it does not itself approve Scripture, terminology, or publication.</p></body></html>'''

@@ -248,3 +248,43 @@ describe("ProjectDashboard", () => {
     });
   });
 });
+
+// #337: the advisory gate's three states. A tick only when every verse is
+// checked and nothing blocking is open; unchecked verses are counted, never
+// folded into "no blocking issues"; an open high check finding blocks.
+describe("ProjectDashboard publication gate (#337)", () => {
+  function mountGate(gate: Partial<ProjectReport["publicationGate"]>, notChecked = 0) {
+    const base = report([]);
+    base.publicationGate = { ...base.publicationGate, ...gate };
+    base.coverage.verses = {
+      counts: { PASS: 3 - notChecked, ISSUE: 0, REVIEW_REQUIRED: 0, NOT_CHECKED: notChecked },
+      totalVerses: 3, checkedPercent: Math.round((100 * (3 - notChecked)) / 3),
+    } as never;
+    return render(ProjectDashboard, {
+      props: {
+        projectName: "Ruth", books, loading: false, error: "",
+        onSelectBook: () => {}, onPreviewBook: () => {}, onRetry: () => {},
+        report: base, reportLoading: false, reportError: "",
+      },
+    });
+  }
+
+  it("reads 'Not checked (n of m verses)' while any verse is unchecked, even with nothing open", () => {
+    mountGate({ readyForHumanPublicationSignoff: false, status: "not_checked", uncheckedVerses: 3, totalVerses: 3 }, 3);
+    expect(screen.getByText(/Not checked \(3 of 3 verses\) in RUT/)).toBeInTheDocument();
+    expect(screen.queryByText(/No blocking issues/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/✓/)).not.toBeInTheDocument();
+  });
+
+  it("blocks on an open high check finding from any engine, with the count in the line", () => {
+    mountGate({ readyForHumanPublicationSignoff: false, status: "blocked", uncheckedVerses: 0, totalVerses: 3,
+                checkCriticalFindings: 0, checkHighFindings: 2 });
+    expect(screen.getByText(/2 high\/critical check finding\(s\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/✓/)).not.toBeInTheDocument();
+  });
+
+  it("ticks only when every verse is checked and nothing blocking is open", () => {
+    mountGate({ readyForHumanPublicationSignoff: true, status: "ready", uncheckedVerses: 0, totalVerses: 3 });
+    expect(screen.getByText(/✓ Every verse checked, no blocking issues open in RUT/)).toBeInTheDocument();
+  });
+});

@@ -487,3 +487,75 @@ def test_summarize_rows_counts_fixed_by_and_open_severity():
     assert summary["byFixedBy"] == {"human": 1, "machine": 1, "unresolved": 1}
     assert summary["openBySeverity"] == {"high": 1}
     assert summary["byCategory"][CATEGORY_TN] == {"total": 2, "resolved": 2, "unresolved": 0}
+
+
+# ---- #337: the advisory gate blocks on any open high/critical check finding and names unchecked verses ----
+
+def test_publication_gate_status_not_checked_blocked_ready():
+    from tc_ai_bridge.reporting import ReportService
+    coverage_unchecked = {"counts": {"PASS": 1, "ISSUE": 0, "REVIEW_REQUIRED": 0, "NOT_CHECKED": 2}, "totalVerses": 3}
+    coverage_checked = {"counts": {"PASS": 3, "ISSUE": 0, "REVIEW_REQUIRED": 0, "NOT_CHECKED": 0}, "totalVerses": 3}
+    high = [{"chapter": "1", "verse": "1", "engine": "usfm", "checkType": "usfm.missing_closing_tag_bd", "severity": "high"}]
+    # Unchecked verses: never a tick, whatever else is open.
+    gate = ReportService._publication_gate({}, [], [], [], None, 50, coverage=coverage_unchecked, check_findings=[])
+    assert (gate["status"], gate["readyForHumanPublicationSignoff"]) == ("not_checked", False)
+    assert (gate["uncheckedVerses"], gate["totalVerses"]) == (2, 3)
+    # An open high check finding from any engine blocks like a high Language QA finding.
+    gate = ReportService._publication_gate({}, [], [], [], None, 50, coverage=coverage_checked, check_findings=high)
+    assert (gate["status"], gate["readyForHumanPublicationSignoff"]) == ("blocked", False)
+    assert (gate["checkHighFindings"], gate["checkCriticalFindings"]) == (1, 0)
+    assert gate["checkBlockingFindings"][0]["checkType"] == "usfm.missing_closing_tag_bd"
+    # A medium check finding does not block.
+    medium = [{**high[0], "severity": "medium"}]
+    gate = ReportService._publication_gate({}, [], [], [], None, 50, coverage=coverage_checked, check_findings=medium)
+    assert (gate["status"], gate["readyForHumanPublicationSignoff"]) == ("ready", True)
+    # Every verse checked and nothing blocking open: the tick.
+    gate = ReportService._publication_gate({}, [], [], [], None, 50, coverage=coverage_checked, check_findings=[])
+    assert (gate["status"], gate["readyForHumanPublicationSignoff"]) == ("ready", True)
+    # Callers without coverage (the older signature) are unchanged.
+    assert ReportService._publication_gate({}, [], [], [], {"blocking": 0, "medium": 0}, 50)["status"] == "ready"
+
+
+def test_book_report_gate_reads_not_checked_then_blocks_on_a_high_check_finding_then_clears(fixture_project, monkeypatch):
+    """The issue's walk: before any check the gate is "not checked", not a
+    tick; after a job that leaves an open high Greek Room finding it is
+    blocked, with the finding named; once the reviewer decides the finding it
+    clears."""
+    from tc_ai_bridge.reporting import ReportService
+    engine = BridgeEngine()
+    call(engine, "project.open", {"path": str(fixture_project)})
+    before = ReportService(engine.project).build_book_report()["publicationGate"]
+    assert before["readyForHumanPublicationSignoff"] is False
+    assert before["status"] == "not_checked"
+    assert before["uncheckedVerses"] == before["totalVerses"] > 0
+
+    def fake_checks(project, chapter, verse, checks, **_kwargs):
+        return [QaFinding(
+            id=_stable_finding_id(chapter=chapter, verse=verse, engine="usfm",
+                                  check_type="usfm.missing_closing_tag_bd", disambiguator="0"),
+            project_id=str(project.summary.path), book="rut", chapter=int(chapter), verse=int(verse),
+            start_offset=0, end_offset=3, original_text="ஆதி", engine="usfm",
+            check_type="usfm.missing_closing_tag_bd", category=FindingCategory.STRUCTURE, severity=Severity.HIGH,
+            confidence=0.9, suggested_replacement="", explanation="\\bd is never closed.",
+        )]
+
+    monkeypatch.setattr(engine, "_run_verse_checks_for_project", fake_checks)
+    started = call(engine, "checks.start", {"scope": "book", "checks": ["wildebeest"]})["result"]
+    assert wait_for_job(engine, started["jobId"])["state"] == "succeeded"
+    report = ReportService(engine.project).build_book_report()
+    gate = report["publicationGate"]
+    assert gate["uncheckedVerses"] == 0
+    assert gate["status"] == "blocked" and gate["readyForHumanPublicationSignoff"] is False
+    assert gate["checkHighFindings"] >= 1
+    assert gate["checkBlockingFindings"][0]["checkType"] == "usfm.missing_closing_tag_bd"
+    html_report = ReportService(engine.project)._html(report)
+    assert "Not ready" in html_report
+
+    for item in gate["checkBlockingFindings"]:
+        finding_id = _stable_finding_id(chapter=item["chapter"], verse=item["verse"], engine="usfm",
+                                        check_type="usfm.missing_closing_tag_bd", disambiguator="0")
+        assert call(engine, "verse.decide", {"chapter": item["chapter"], "verse": item["verse"],
+                                             "findingId": finding_id, "status": "accepted"})["success"]
+    after = ReportService(engine.project).build_book_report()["publicationGate"]
+    assert after["status"] == "ready" and after["readyForHumanPublicationSignoff"] is True
+    assert after["checkHighFindings"] == 0

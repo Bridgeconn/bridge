@@ -79,6 +79,52 @@ def _local_findings_by_verse(project) -> dict[tuple[str, str], list[dict[str, An
     return by_verse
 
 
+def open_blocking_check_findings(project) -> list[dict[str, Any]]:
+    """Every open check finding of severity critical or high, whatever engine
+    raised it (#337): the check job's finding snapshots for every chapter
+    (Wildebeest, USFM, names, the local tN/tW and alignment checks) plus the
+    usfm/names sections of checkCache.json, de-duplicated by the stable
+    finding id (gotcha 3) and filtered to still-open status through the same
+    progress rollup the coverage bar reads. These are what the advisory
+    publication gate blocks on; a verse never checked is reported by the
+    gate separately, as unchecked, not as clean."""
+    rollup = project.load_progress_rollup()
+    chapters_rollup = rollup.get('chapters', {}) if isinstance(rollup.get('chapters'), dict) else {}
+    cache = project.load_check_cache()
+    found: list[tuple[str, str, dict[str, Any]]] = [
+        (str(chapter), str(verse), f) for chapter in project.chapters()
+        for verse, findings in project.load_check_findings_snapshot(chapter).items()
+        for f in findings if isinstance(f, dict)
+    ]
+    for section in ('usfm', 'names'):
+        found += [(str(f.get('chapter', '')), str(f.get('verse', '')), f)
+                  for f in (cache.get(section) or {}).get('findings', []) or [] if isinstance(f, dict)]
+    seen: set[str] = set()
+    blocking: list[dict[str, Any]] = []
+    for chapter, verse, f in found:
+        severity = str(f.get('severity', 'medium')).lower()
+        if severity not in ('critical', 'high'):
+            continue
+        finding_id = str(f.get('id', ''))
+        key = finding_id or f'{chapter}:{verse}:{f.get("engine", "")}:{f.get("check_type", "")}:{f.get("start_offset", "")}'
+        if key in seen:
+            continue
+        seen.add(key)
+        chapter_entry = chapters_rollup.get(chapter)
+        verse_map = chapter_entry.get('verses', {}) if isinstance(chapter_entry, dict) else {}
+        verse_entry = verse_map.get(verse) if isinstance(verse_map, dict) else None
+        statuses = verse_entry.get('findings', {}) if isinstance(verse_entry, dict) else {}
+        status = statuses.get(finding_id, 'open') if isinstance(statuses, dict) else 'open'
+        if status != 'open':
+            continue
+        blocking.append({
+            'chapter': chapter, 'verse': verse, 'id': finding_id,
+            'engine': str(f.get('engine', '')), 'checkType': str(f.get('check_type', '')),
+            'severity': severity, 'explanation': str(f.get('explanation', '')),
+        })
+    return blocking
+
+
 def _translation_helps_findings(
     project, chapter: str, verse: str, checks: list[dict[str, Any]],
 ) -> tuple[int, list[dict[str, Any]]]:
