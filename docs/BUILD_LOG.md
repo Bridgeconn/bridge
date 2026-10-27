@@ -22176,3 +22176,79 @@ PC: 12 in `test_semantic_mapping_stage3.py` need the gitignored Stage 3 release 
 `LongPathsEnabled = 0`); those 15 files' 87 tests pass with `--basetemp=C:/pt/b`. After rebasing onto
 d2e31ad: `-k "paratext or notes or report"` 275 passed, 1 skipped (the real plugin compile). Sidecars
 rebuilt and `scripts/smoke_sidecars.py` passed. No frontend change.
+
+
+## 2026-10-27 — Milestone 3 engine batch for the 2 Nov demo (#391, #304, #337, #339, #352, #338)
+
+Six items worked in three batches on `main`, one commit per issue, the gates once per batch, Benz's
+#358 and Joel's #406 files untouched. Decisions were already on the issues (2026-10-24 and 2026-10-26)
+and were built to, not re-decided; each closing comment quotes its decision.
+
+**#391 (13b3fca), P1 outside the milestone.** `alignment.undo` / `alignment.restore` wrote a history
+entry's backup straight back, skipping the identity and one-home checks every forward save runs, so a
+word since linked across verses or marked null got a second home. `TranslationCoreProject.
+restore_verse_alignment_history` is split: `load_verse_alignment_history` reads and shape-checks the
+backup, and `BridgeEngine.undo_alignment` hands it to `_save_alignment` (operation `restore`). A restore
+that would violate either check is refused with the existing message naming the partner verse and
+nothing is written. `autoAlign.revert` only unaligns, so it needs no guard. Tests in
+`tests/service/test_alignment_one_home.py`.
+
+**#304 (no commit).** The main window's `backgroundColor` has been the loading screen's grey since
+a6787e2 and the #287 splash window's white matches `splash.html`; `cargo check` and `cargo test` (15)
+re-run on today's tree. Left open: the acceptance is the installed build at 1366x768 (QA matrix M87).
+
+**#337 (d2e31ad).** The advisory gate blocks on any open HIGH or CRITICAL check finding from any engine
+(`analytics.open_blocking_check_findings`: every chapter's finding snapshot plus the usfm/names cache,
+deduped by stable id, open status from the rollup) and is `not_checked` while any verse is unchecked.
+`_publication_gate` returns `status` (`ready` / `not_checked` / `blocked`), `checkCriticalFindings`,
+`checkHighFindings`, `checkBlockingFindings`, `uncheckedVerses`, `totalVerses`; the collection gate
+aggregates them; the HTML and `ProjectDashboard` wording follow ("Not checked (n of m verses)"; a tick
+only when every verse is checked and nothing blocking is open). Interpretation flagged on the issue: a
+pending tW selection (`TC_PENDING`) is work, not a finding, and does not block. Export's gate is
+unchanged.
+
+**#339 (bd8d45e).** A group whose target words are not adjacent is written as one `\zaln-s … \zaln-e`
+nest per contiguous run, each nest repeating the same source milestones. Point 2 of Benz's decision
+confirmed offline against translationCore's own exporter: `word-aligner` 1.1.1 `lib/js/aligner.js`
+`merge` splits a group's positions with `groupConsecutiveNumbers` and nests the full milestone chain
+around each run; its reader merges them back by `sameMilestone` ("needed when milestones are not
+contiguous"). A verse whose alignment data still cannot be serialized is written unaligned and reported
+(`unalignedVerses`, reason `alignment-not-serializable`, the #307 shape); one verse never blocks the
+book. The verse-level "non-adjacent target words" issue is gone, so it no longer stops completion.
+Round trip pinned on the Jonah structure fixture (`tests/service/test_aligned_export_segments.py`).
+
+**#352 (af8f089).** `tc_ai_bridge/source_verse_map.py`: the versification is detected at import
+(`org`, flagged as a fallback, when every schema fits equally — a 14-verse 3 John scores 0 everywhere —
+or the library is unavailable), recorded as `manifest.json` `bridge_versification`, and the source verse
+map is derived from it following the library's `same` / `mapped` / `split` / `merge` shapes (a merge
+gives the org verse to its first target verse only). A source verse no target verse receives is listed
+in `.bridge/import.json` `unplacedSourceVerses` and raised by `local_checks.versification_checks` (the
+alignment group of every local check) on the nearest target verse: engine `versification`, check type
+`alignment.source_verse_unplaced`, severity medium, id stable on the source reference. UGNT 3JN 1:15 is
+never merged into 1:14. Two readings flagged on the issue: "alignable from there" read as "the words
+are on the finding", not as attaching the tokens (that is the merge the decision forbids); and on an
+`eng` Psalter every superscription raises one.
+
+**#338 (1e2d31f).** `WorkspaceRepository.__init__` runs the recovery ladder: a healthy open writes
+`workspace.last-good.sqlite3` beside the database (`VACUUM INTO`, at startup, not shutdown); on a
+`DatabaseError` that is damage ("not a database", "malformed", "corrupt"; a lock or permission error is
+re-raised as before) the file and its `-wal`/`-shm` are renamed `workspace.quarantined-<stamp>.sqlite3`,
+the backup is copied back and opened (a damaged backup is quarantined too, `-backup`), else the ladder
+builds a fresh database. Nothing is deleted. `BridgeEngine` lists the registry once (data\projects is
+rediscovered, the managed count reported), reports the outcome on `engine.info` and `project.open`
+(`workspaceRecovery`, never fatal), and on a hub-joined install re-pulls users and roles
+(`GET /hub/users` → `workspace.upsert_user`, own `hub_identity.role` refreshed) on the warmup thread.
+No schema bump. The one-time notice is a dismissible banner in `App.svelte` from `engine.info`
+(`workspaceRecoveryNotice`), not in `ImportScreen` (Joel's). Tier 3 salvage is not built, as the
+decision allowed. Under the crash loop was a real bug: `_connect` left its handle open when the first PRAGMA failed on a non-database file, so Windows would have refused the rename; it closes now.
+
+**Gates.** Batch A (#391, #304, #337): `pytest -n auto` 5639 passed, 3 xfailed (15:30); after the
+rebase onto Joel's merge (an unrelated hunk of `bridge_service.py`) the one-home, import-job, QA-report
+and bridge-service files re-ran, 109 passed; `npm run check` 0/0, `npm run test` 96 files 1002 passed,
+`npm run build` ok; `cargo check` ok, `cargo test` 15 passed; `build-sidecars.ps1` + `smoke_sidecars.py`
+passed. Batch B (#339, #352): `pytest -n auto` 5652 passed, 3 xfailed, 3 timing failures (`test_continuous_foreground_polling_does_not_starve_worker`, `test_concurrent_detect_schema_serializes_expensive_scan`, the #353 projects-list flake), all passed on their own rerun; the first full run had instead caught a real #352 consequence (a one-verse fixture book raised a finding per missing verse) which led to the `MAX_UNPLACED_RUN = 3` bound; `npm run check` 0/0, `npm run test` 2 `VerseList` click-budget failures beside the running suite, 113 passed alone, `npm run build` ok; `build-sidecars.ps1` + `smoke_sidecars.py` passed; after the rebase onto Benz's bc91c2c the export, versification, outbox, bridge-service and aligned-USFM files re-ran, 105 passed. Batch C (#338): `pytest -n auto` 5666 passed, 3 xfailed, 0 failed (10:31); `npm run check` 0/0, `npm run test` 99 files 1030 passed, `npm run build` ok; frozen pair: `build-sidecars.ps1` and `smoke_sidecars.py` passed ("Frozen sidecar smoke test passed", project registry step included)..
+
+**Not verified anywhere today:** the installed app at 1366x768 (every item), translationCore reading a
+Bridge export (#339, confirmed against tC's source only), a real `eng`-versified import (#352), a real
+damaged `%LOCALAPPDATA%\Bridge\data\workspace.sqlite3` on an installed build (#338; QA matrix PRJ-007
+still to re-walk).
