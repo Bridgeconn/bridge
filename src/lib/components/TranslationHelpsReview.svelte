@@ -95,8 +95,12 @@
     return aiReviews.find((item) => item.tool === check.tool && item.check_id === check.checkId);
   }
 
-  function resolutionFor(check: NativeCheckReview): IssueResolutionRecord | undefined {
-    return resolutions.find((item) => (
+  // The template passes `resolutions` so a change to it alone re-renders the
+  // card: a dependency read only inside the function is invisible to Svelte.
+  function resolutionFor(
+    check: NativeCheckReview, records: IssueResolutionRecord[] = resolutions,
+  ): IssueResolutionRecord | undefined {
+    return records.find((item) => (
       item.check.tool === check.tool
       && item.check.groupId === check.groupId
       && item.check.checkId === check.checkId
@@ -585,7 +589,7 @@
 
   {#each checks as check (identity(check))}
     {@const aiReview = aiReviewFor(check)}
-    {@const resolution = resolutionFor(check)}
+    {@const resolution = resolutionFor(check, resolutions)}
     <article class="native-check" class:tn={check.tool === "translationNotes"} class:tw={check.tool === "translationWords"} class:invalid={check.invalidated}>
       <div class="check-heading">
         <span class="tool-dot" />
