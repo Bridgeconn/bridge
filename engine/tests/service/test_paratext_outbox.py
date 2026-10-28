@@ -8,6 +8,7 @@ import pytest
 
 import bridge_service as bridge_service_module
 from tc_ai_bridge import paratext_outbox as outbox_module
+from tc_ai_bridge.paratext_connector import ParatextConnectorError
 from tests.support.paratext_fixture import DEFAULT_GUID
 from tests.support.paratext_writeback import (
     CAPABILITIES_074, DVT, IRVT, open_linked_review_project, reread_notes, saved_resolution, stand_in, write_thread,
@@ -321,3 +322,91 @@ def test_a_note_on_a_selection_carries_the_neighbouring_words_so_paratext_can_te
 ])
 def test_selection_context_is_one_word_each_side_and_only_for_a_selection_found_once(verse, selected, expected):
     assert outbox_module.selection_context(verse, selected) == expected
+# -- (h): a selection Paratext cannot anchor -------------------------------------
+# The verse of `open_linked_review_project` is "alpha beta gamma".
+
+def _save_with_selection(engine, selected_text):
+    check = call(engine, "check.listForVerse", {"chapter": "1", "verse": "1"})["result"]["checks"][0]
+    return call(engine, "issueResolution.save", {
+        "chapter": "1", "verse": "1", "tool": check["tool"], "groupId": check["groupId"],
+        "checkId": check["checkId"], "expectedFingerprint": check["stateFingerprint"],
+        "selectedText": selected_text, "issueSummary": "Wording to confirm with the team.",
+        "reviewerNote": "Please look at this in Paratext.",
+    })
+
+
+def test_a_selection_that_repeats_in_the_verse_is_refused_at_save(tmp_path, monkeypatch):
+    monkeypatch.setattr(bridge_service_module, "ParatextConnectorClient", stand_in())
+    engine, _ = open_linked_review_project(tmp_path, monkeypatch)
+
+    repeated = _save_with_selection(engine, "a")
+
+    assert repeated["success"] is False
+    assert "occurs 5 times in this verse" in repeated["error"]["message"]
+    assert _save_with_selection(engine, "beta")["success"] is True
+
+
+def test_a_selection_that_repeats_since_the_save_is_not_queued(tmp_path, monkeypatch):
+    connector = stand_in()
+    monkeypatch.setattr(bridge_service_module, "ParatextConnectorClient", connector)
+    engine, _ = open_linked_review_project(tmp_path, monkeypatch)
+    resolution_id = _save_with_selection(engine, "beta")["result"]["resolutionId"]
+    assert call(engine, "verse.edit", {"chapter": "1", "verse": "1", "newText": "alpha beta beta"})["success"] is True
+
+    queued = call(engine, "issueResolution.queueParatext", {"chapter": "1", "verse": "1", "resolutionId": resolution_id})
+
+    assert queued["success"] is False and "occurs 2 times" in queued["error"]["message"]
+    assert connector.calls == []
+    assert call(engine, "paratext.outbox")["result"]["items"] == []
+
+
+def test_a_selection_repeated_only_in_a_footnote_can_be_saved_and_sent(tmp_path, monkeypatch):
+    connector = stand_in()
+    monkeypatch.setattr(bridge_service_module, "ParatextConnectorClient", connector)
+    engine, _ = open_linked_review_project(tmp_path, monkeypatch)
+    edited = call(engine, "verse.edit", {"chapter": "1", "verse": "1",
+                  "newText": r"alpha beta gamma\f + \ft beta\f*"})
+    assert edited["success"] is True, edited
+
+    saved = _save_with_selection(engine, "beta")
+    assert saved["success"] is True, saved
+    assert _queue(engine, saved["result"]["resolutionId"])["handoff"]["status"] == "sent"
+    assert connector.calls[0][1]["before_context"] == "alpha"
+    assert connector.calls[0][1]["after_context"] == "gamma"
+
+
+def test_a_note_paratext_refuses_as_ambiguous_stops_until_the_reviewer_retries(tmp_path, monkeypatch):
+    """The plugin's "occurs more than once" (its selection matching counts text
+    Bridge may not see the same way) used to leave the note queued and retried
+    on every probe for ever. It now stops as `refused`; the card's retry sends."""
+    connector = stand_in()
+    sent = connector.create_note
+
+    def refuse(self, reference, selected_text, comment, **kwargs):
+        connector.calls.append(("create_note", {"reference": reference, "comment": comment, **kwargs}))
+        raise ParatextConnectorError(
+            "The selected text occurs more than once in this verse. Select the exact occurrence inside "
+            "Paratext, then retry so the note cannot attach to the wrong word.")
+
+    connector.create_note = refuse
+    monkeypatch.setattr(bridge_service_module, "ParatextConnectorClient", connector)
+    engine, _ = open_linked_review_project(tmp_path, monkeypatch)
+    resolution_id = _save_with_selection(engine, "beta")["result"]["resolutionId"]
+
+    handoff = _queue(engine, resolution_id)["handoff"]
+
+    assert handoff["status"] == "refused" and "occurs more than once" in handoff["lastError"]
+    threads = call(engine, "paratext.threadsFor", {"kind": "issue_resolution", "localId": resolution_id})["result"]
+    assert [(i["op"], i["status"]) for i in threads["pending"]] == [("create_thread", "refused")]
+    # The background pass leaves it: nothing to retry, no second call.
+    assert engine._outbox_work is False
+    engine._outbox_flushed_at = 0.0
+    engine._background_outbox_flush()
+    assert len(connector.calls) == 1
+
+    # The reviewer selects that occurrence in Paratext and retries from the card.
+    connector.create_note = sent
+    retried = call(engine, "issueResolution.retryParatext",
+                   {"chapter": "1", "verse": "1", "resolutionId": resolution_id})["result"]["handoff"]
+    assert retried["status"] == "sent" and retried["attempts"] == 2
+    assert len(connector.calls) == 2

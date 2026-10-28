@@ -73,6 +73,10 @@ def book(tmp_path):
 
 def _engine(root, monkeypatch) -> BridgeEngine:
     engine = BridgeEngine()
+    # These tests count only writes made by the check job and the reviewer.
+    # A live Language QA cache flush also advances the workbench generation
+    # and can legitimately cause an extra gap prefetch under load.
+    monkeypatch.setattr(engine._language_qa, "_schedule", lambda: None)
     assert call(engine, "project.open", {"path": str(root)})["success"]
     monkeypatch.setattr(engine, "_usfm_findings_for_book", lambda project=None, cancel_event=None: [])
     monkeypatch.setattr(engine, "_names_findings_for_book", lambda project=None: [])

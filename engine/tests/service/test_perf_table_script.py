@@ -17,6 +17,9 @@ LINES = [
     *[f"17604001{i:05d} [info] perf action=book.report tier=B responded=50 complete={1900 + i * 20}" for i in range(20)],
     "1760400200000 [info] perf action=chapter.open tier=B responded=40 complete=400 detail=3",
     "1760400200001 [warn] perf action=garbage",
+    "1760400200002 [info] perf longtask=312.5",
+    "1760400200003 [info] perf longtask=1000",
+    "1760400200004 [info] perf longtask=garbage",
 ]
 
 
@@ -48,11 +51,33 @@ def test_markdown_table_carries_hardware_budget_and_result():
     assert "| Select a word (`word.select`) | A | 0 | - | - | 100 / 300 | not measured |" in table
 
 
+def test_long_task_lines_are_counted_apart_from_the_action_rows():
+    # #260: one `perf longtask=<ms>` line per task over 250 ms; they never
+    # become an action row, and the summary carries count, longest and total.
+    samples = perf_table.parse_lines(LINES)
+    assert "longtask" not in samples and all(action in perf_table.ACTIONS for action in samples)
+    durations = perf_table.parse_long_tasks(LINES)
+    assert durations == [312.5, 1000.0]
+    assert perf_table.parse_long_tasks(LINES, since_ms=1760400200003) == [1000.0]
+    summary = perf_table.summarize_long_tasks(durations)
+    assert summary == {"thresholdMs": 250.0, "count": 2, "longestMs": 1000.0, "totalMs": 1312.5}
+    assert perf_table.long_tasks_markdown(summary) == "Long tasks over 250 ms: 2 (longest 1000 ms, 1312.5 ms in all)"
+    assert perf_table.long_tasks_markdown(perf_table.summarize_long_tasks([])) == "Long tasks over 250 ms: none recorded"
+    # The frontend writes the line this parses.
+    source = (REPO_ROOT / "src" / "lib" / "perf.ts").read_text(encoding="utf-8")
+    assert "`perf longtask=${round1(durationMs)}`" in source
+    assert "export const LONG_TASK_MS = 250;" in source
+
+
 def test_gate_and_json(tmp_path, capsys):
     log = tmp_path / "engine-events.log"
     log.write_text("\n".join(LINES), encoding="utf-8")
     assert perf_table.main(["--log", str(log), "--json"]) == 0
-    assert '"action": "verse.navigate"' in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert '"action": "verse.navigate"' in out
+    assert '"longTasks": {' in out and '"count": 2' in out
+    assert perf_table.main(["--log", str(log)]) == 0
+    assert capsys.readouterr().out.rstrip().endswith("Long tasks over 250 ms: 2 (longest 1000 ms, 1312.5 ms in all)")
     assert perf_table.main(["--log", str(log), "--gate"]) == 1
     assert perf_table.main(["--log", str(tmp_path / "missing.log")]) == 2
 

@@ -148,7 +148,7 @@ export interface ParatextOutboxItem {
   messageId: string;
   op: ParatextOutboxOp;
   threadId: string;
-  status: "queued" | "sent";
+  status: "queued" | "refused" | "sent";
   attempts: number;
   lastError: string;
   sentAt: string;

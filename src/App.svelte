@@ -4,7 +4,8 @@
   import { workspaceRecoveryNotice } from "./lib/workspaceRecovery";
   import { bridgeReference } from "./lib/navigationReference";
   import {
-    formatPerfLine, perfAbort, perfBegin, perfEnd, perfInFlight, perfResponded, registerPerfRunner, setPerfSink,
+    formatPerfLine, observeLongTasks, perfAbort, perfBegin, perfEnd, perfInFlight, perfResponded, registerPerfRunner,
+    setPerfSink,
   } from "./lib/perf";
   import { BUSY_LABEL, MAX_BUSY_TIMEOUTS, checkFailureMessage, isBusyTimeout } from "./lib/checkMonitor";
   import ImportScreen from "./lib/components/ImportScreen.svelte";
@@ -71,6 +72,8 @@
   import { languageQaChannel, nudgeLanguageQa, startLanguageQaInline } from "./lib/languageQaInline";
   import { toggleLanguageQaPanel } from "./lib/languageQaPanelUi";
   import { collectionQaRunning, stopCollectionQa } from "./lib/collectionQa";
+  import { bindCollectionStrip, cancelStripJob } from "./lib/collectionStrip";
+  import { prepareDetail, prepareProgress } from "./lib/openProgress";
   import CollectionQaPanel from "./lib/components/CollectionQaPanel.svelte";
 
   let opened = false;
@@ -161,7 +164,12 @@
   // #232: every finished responsiveness sample goes to the diagnostics log
   // through the shell, where scripts/perf_table.py reads it; a logging
   // failure is nobody's problem but the log's.
-  setPerfSink((sample) => { void bridge.logFrontend("info", formatPerfLine(sample)).catch(() => {}); });
+  const logPerfLine = (line: string) => { void bridge.logFrontend("info", line).catch(() => {}); };
+  setPerfSink((sample) => logPerfLine(formatPerfLine(sample)));
+  // #260: every task over 250 ms is counted (Engine diagnostics) and written
+  // to the same log, so the field laptop's 30-minute recording needs no
+  // DevTools. A no-op where WebView2 does not expose the longtask timeline.
+  const stopLongTasks = observeLongTasks(logPerfLine);
   // A side-panel toggle (#232, Tier A) is timed at the store: the rail and the
   // toolbar both go through toggleSidePanel, whose update notifies here
   // synchronously inside the click, and the paint after it is the response.
@@ -171,7 +179,7 @@
     perfBegin("panel.toggle");
     void perfEnd("panel.toggle");
   });
-  onDestroy(() => { unsubscribeSidePanels(); registerPerfRunner(null); setPerfSink(null); });
+  onDestroy(() => { unsubscribeSidePanels(); registerPerfRunner(null); setPerfSink(null); stopLongTasks(); });
   // The in-app runner for the measurement day (#232): the actions App.svelte
   // can drive without a mouse, each already instrumented. Registered while a
   // book is open in the editor, cleared otherwise.
@@ -399,14 +407,10 @@
   // Collection QA (layered-rules 4.4): while a run checks every book, the app
   // is read-only. checkingProgress.running is what already holds editing,
   // alignment and AI review; the book switcher checks collectionQaRunning.
-  let collectionHeldProgress = false;
-  $: if ($collectionQaRunning && !collectionHeldProgress) {
-    collectionHeldProgress = true;
-    checkingProgress.update((p) => ({ ...p, running: true, label: "Collection QA running", state: "running" }));
-  } else if (!$collectionQaRunning && collectionHeldProgress) {
-    collectionHeldProgress = false;
-    checkingProgress.update((p) => ({ ...p, running: false, label: "Collection QA finished", state: "succeeded" }));
-  }
+  // #399: the strip shows the run's own books, percent and time left, and
+  // its Cancel (cancelChecks below) reaches the collection job.
+  const unbindCollectionStrip = bindCollectionStrip();
+  onDestroy(unbindCollectionStrip);
   $: if (!$project || !opened) stopCollectionQa();
   // #279: the signed-in user's role on the open project, re-read when the
   // project or the user changes (a role set in Settings > Users refreshes it too).
@@ -934,11 +938,7 @@
     perfResponded("book.switch");
     try {
       await stopActiveJob();
-      const info = await bridge.openProject(path, undefined, (snapshot) => {
-        openingDetail = snapshot.chapter && snapshot.chapterCount
-          ? `preparing chapter ${snapshot.chapter} of ${snapshot.chapterCount}`
-          : snapshot.state === "succeeded" ? "" : "preparing";
-      });
+      const info = await bridge.openProject(path, undefined, (snapshot) => { openingDetail = prepareDetail(snapshot); });
       openingDetail = "";
       if (!info.importedProjects && siblings) info.importedProjects = siblings;
       resetBookState();
@@ -1242,8 +1242,8 @@
   }
 
   async function cancelChecks(): Promise<void> {
-    if (!activeJobId) return;
-    applyJobSnapshot(await bridge.cancelChecks(activeJobId));
+    // #399: during Collection QA the strip's Cancel stops that run.
+    await cancelStripJob(activeJobId, async (jobId) => applyJobSnapshot(await bridge.cancelChecks(jobId)));
   }
 
   async function stopActiveJob(): Promise<void> {
@@ -1470,10 +1470,14 @@
       <button class="progress-action" on:click={() => (workspaceRecoveryNoticeText = "")}>Dismiss</button>
     </div>
   {/if}
-  {#if openingBook}
-    <div class="progress-row checking-row">
+  {#if openingBook || $prepareProgress}
+    <!-- The book switch's strip; a Home-screen open that prepares a lazy
+         book shows here too (#400), through the prepareProgress store. -->
+    <div class="progress-row checking-row" role="status" aria-label="Opening progress">
       <div class="spin" />
-      <span class="progress-label">Opening {openingBook}…{openingDetail ? ` ${openingDetail}` : ""}</span>
+      <span class="progress-label">Opening {openingBook || $prepareProgress?.name}…{openingBook
+        ? (openingDetail ? ` ${openingDetail}` : "")
+        : ($prepareProgress?.detail ? ` ${$prepareProgress.detail}` : "")}</span>
       <div class="track"><div class="fill indeterminate" /></div>
       <span />
     </div>

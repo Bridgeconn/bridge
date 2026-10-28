@@ -1300,7 +1300,9 @@ export interface CheckSelectionMutation {
   files: Record<string, string>;
 }
 
-export type ParatextHandoffStatus = "not_queued" | "queued" | "sent";
+// "refused": Paratext refused the note (its selection is not unique there);
+// it waits for the reviewer's retry rather than being retried in the background.
+export type ParatextHandoffStatus = "not_queued" | "queued" | "refused" | "sent";
 
 export interface IssueResolutionRecheck {
   status: "not_run" | "stale" | "running" | "resolved" | "reflagged" | "needs_review" | "failed" | "cancelled";
@@ -1372,7 +1374,7 @@ export interface IssueResolutionHandoffResult {
   handoff: {
     messageId: string;
     resolutionId: string;
-    status: "queued" | "sent";
+    status: "queued" | "refused" | "sent";
     attempts: number;
     lastError: string;
     sentAt?: string;

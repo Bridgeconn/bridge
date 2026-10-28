@@ -24,8 +24,9 @@ import { writable, type Writable } from "svelte/store";
 export type PerfTier = "A" | "B";
 
 /** The actions requirement 1 names, with the tier each belongs to. "word.select"
- *  is listed so the table has its row; its mark lives in the verse editor, which
- *  is not instrumented yet (see BUILD_LOG 2026-10-14). */
+ *  is marked in VerseList.svelte: begun at the mousedown in a verse's text,
+ *  ended at the mouseup that leaves a word under the pointer or a selection
+ *  inside the verse, or at the verse menu that names a word (#260). */
 export const PERF_ACTIONS: Record<string, { tier: PerfTier; label: string }> = {
   "verse.navigate": { tier: "A", label: "Navigate to a verse" },
   "word.select": { tier: "A", label: "Select a word" },
@@ -158,6 +159,64 @@ export function perfEnd(action: string): Promise<PerfSample | null> {
 
 function round1(value: number): number {
   return Math.round(value * 10) / 10;
+}
+
+// -- long tasks ------------------------------------------------------------
+
+/** NFR-PERF-005's "any frame over 250 ms". */
+export const LONG_TASK_MS = 250;
+
+export interface LongTaskTally {
+  /** The WebView exposes the `longtask` entry type and the observer is running. */
+  supported: boolean;
+  /** Tasks of LONG_TASK_MS or more since the observer started. */
+  count: number;
+  longestMs: number;
+  totalMs: number;
+}
+
+export const longTasks: Writable<LongTaskTally> = writable({ supported: false, count: 0, longestMs: 0, totalMs: 0 });
+
+/** The diagnostics-log line for one long task; `scripts/perf_table.py` counts
+ *  them and reports the longest. */
+export function formatLongTaskLine(durationMs: number): string {
+  return `perf longtask=${round1(durationMs)}`;
+}
+
+/** Count every task of LONG_TASK_MS or more for the rest of the session and
+ *  write each one to `log`, so the 30-minute recording on the field laptop
+ *  needs no DevTools (#260). Feature-detected: where the WebView does not
+ *  expose `PerformanceObserver` or its `longtask` entry type this registers
+ *  nothing, `longTasks.supported` stays false and the returned stop is a
+ *  no-op. Registered once, by App.svelte. */
+export function observeLongTasks(log: (line: string) => void): () => void {
+  const Observer = (globalThis as { PerformanceObserver?: typeof PerformanceObserver }).PerformanceObserver;
+  const supported = typeof Observer === "function"
+    && Array.isArray(Observer.supportedEntryTypes) && Observer.supportedEntryTypes.includes("longtask");
+  if (!supported) return () => {};
+  let observer: PerformanceObserver;
+  try {
+    observer = new Observer((list) => {
+      for (const entry of list.getEntries()) {
+        if (entry.duration < LONG_TASK_MS) continue;
+        longTasks.update((tally) => ({
+          supported: true,
+          count: tally.count + 1,
+          longestMs: Math.max(tally.longestMs, round1(entry.duration)),
+          totalMs: round1(tally.totalMs + entry.duration),
+        }));
+        try { log(formatLongTaskLine(entry.duration)); } catch { /* the log is nobody's problem but the log's */ }
+      }
+    });
+    observer.observe({ type: "longtask", buffered: true });
+  } catch {
+    return () => {};
+  }
+  longTasks.update((tally) => ({ ...tally, supported: true }));
+  return () => {
+    observer.disconnect();
+    longTasks.update((tally) => ({ ...tally, supported: false }));
+  };
 }
 
 /** The diagnostics-log line for one sample; `scripts/perf_table.py` parses it. */

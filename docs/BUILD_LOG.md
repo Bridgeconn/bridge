@@ -22253,6 +22253,235 @@ Bridge export (#339, confirmed against tC's source only), a real `eng`-versified
 damaged `%LOCALAPPDATA%\Bridge\data\workspace.sqlite3` on an installed build (#338; QA matrix PRJ-007
 still to re-walk).
 
+## 2026-10-27 — #358 follow-up integration and NTB outbox verification (initial checkpoint)
+
+**Ownership and current main.** Joel C Johnson (`Joel-C-Johnson`) already shipped #358(h)'s
+selection-context fix in `bc91c2c` (connector 0.8.1). The handoff's (f), (g) and the card-refresh
+fix were also already on main (`6074d69`, `172c1c1`, `fec5396`). This session preserved the ten
+unfinished local files in Git stashes, integrated main, and combined them with Joel's fix.
+After the verification below, main advanced from `af8f089` to `f237c18` (Revant's #338); that
+fast-forward and the local patch applied without conflicts. The full gates below were run
+before that final fast-forward and must not be represented as gates on `f237c18`.
+
+**Local change, not committed or pushed.** A selection repeated in verse content is refused
+before saving/queueing; verse text is read through the existing `strip_usfm` wrapper so a repeat
+only in a footnote remains sendable with Joel's context. A connector ambiguity refusal persists
+as `refused`, is displayed on the card with Retry handoff, and is left alone by background
+flushes until the reviewer retries. No schema change, Scripture write, golden or threshold change.
+The original draft counted footnotes too; that would have blocked Joel's repaired use case and
+was changed to count the displayed verse content. A protocol regression covers that combination.
+
+**Ran and watched: source and frontend at `af8f089` plus this patch.**
+- Paratext protocol tests: 25 passed, including the footnote-repeat and explicit-retry cases.
+- `npm run check`: zero errors/warnings. Full Vitest: 98 files, 1,028 tests passed.
+- `npm run build`: app and hub dashboard passed (existing large-chunk warning).
+- Full engine `pytest -n auto`: 5,663 passed, 3 failed, 3 xfailed in 27m46s. Failures:
+  `test_locate_rejects_a_different_book_for_missing_project` (Windows directory rename denied),
+  `test_a_null_decision_written_mid_job_is_seen_by_the_later_verse` (3 prefetch calls, expected 2),
+  `test_the_list_carries_summed_progress_and_the_latest_open_with_its_user` (job wait timeout,
+  previously reported on #353). They are outside the changed Paratext paths; their causes were
+  not established or fixed. The handoff requires stop-and-ask for unrelated gate failures;
+  asked Benz whether to investigate/fix separately. Push and issue closure are held.
+- Frozen sidecar pair rebuilt successfully and `scripts/smoke_sidecars.py` passed (real
+  Wildebeest/Uroman, both indic-qa layers, desktop connectors, alignment/export/undo and hub health).
+  A first logging attempt stopped because PowerShell
+  treated redirected informational stderr as an error; rerunning without redirection built both.
+
+**Ran and watched: real Paratext 9.5.110.1, NTB, connector 0.8.1.** Benz explicitly chose NTB
+and removal of test notes before Send/Receive. With Paratext closed, the full connector compiled
+and installed; after restart `get_state` reported 0.8.1 and NTB's linked Guid
+`32d364d62f20a7ccb7a018cdc7d3f5d2b1eba187`. A separate Bridge import of NTB Psalms and isolated
+settings/workspace under ignored `test-temp-358/` kept the normal Bridge registry untouched.
+No direct Notes XML writes were used. This was the source engine and local plugin, not the
+installed Bridge UI.
+
+Two seed notes were made through the plugin, then Paratext was closed. The production outbox
+queued a create on PSA 1:1, reply on PSA 1:2 and resolve on PSA 1:3. All three held `queued` and
+an unavailable-connector error. A fresh engine process read the same message ids, statuses and
+last errors unchanged. After reopening Paratext, ordinary navigation-status polls triggered the
+production background flusher; all three became `sent`. Retrying the same ids added no attempts
+or duplicate comments. The first version of the local verification driver omitted those desktop
+polls and did not deliver; adding the polls fixed the driver, not the product.
+
+Read-only file evidence in NTB `Notes_Yesu Selva Benz.xml`:
+- Create `qa358-20261027-create`: thread `178180fa`, PSA 1:1, Date
+  `2026-10-27T13:06:54.5157134+05:30`. Selection `பாவிகளுடைய` repeats in its footnote;
+  the new context successfully distinguished it. Its Bridge footer occurs exactly once.
+- Reply `bridge-d7eee3eeb1ed496d`: thread `dff9683d`, PSA 1:2, Date
+  `2026-10-27T13:06:48.1712332+05:30`. Footer occurs exactly once; two comments including seed.
+- Resolve `bridge-5bf8cfe4175f4010`: thread `17f9f8bb`, PSA 1:3, Date
+  `2026-10-27T13:06:56.5637349+05:30`. Exactly one native Status `deleted` comment. Native
+  resolves carry no body/footer; idempotency is the plugin's already-resolved check.
+
+The device-local driver, responses and assertions are in ignored `test-temp-358/live.py` and
+`live-evidence.json`; full test logs are local `paratext-358-*-gate.log`. These contain local
+verification data and are not staged for publication. The native files were inspected before
+cleanup, and a final assertion checked footer counts, resolve count and unchanged retry attempts.
+#358(c) superseded #347's note hold: notes go to the linked project by id even with another
+project active. The navigation mismatch hold remains.
+
+**Still open.** Desktop card walk/screenshots: not completed. Windows helper snapshots became
+stale (`element ... is not available in cached app state`), and capture also timed out. No desktop
+success is claimed. Asked Benz to remove today's three test threads plus yesterday's `565d540e`
+through Paratext before Send/Receive; cleanup confirmation is pending. The QA matrix's M20 also
+covers automatic-recheck lifecycle recovery, which this outbox restart run does not establish.
+#358, #132 and #353 remain open; no new issues were filed or board items moved to Done.
+
+### #358 follow-up: desktop acceptance and gate investigation
+
+This supersedes the held items in the initial checkpoint above. Benz confirmed
+removal through Paratext of threads `178180fa`, `565d540e`, `dff9683d` and
+`17f9f8bb` before Send/Receive, and authorised investigation of the unrelated
+engine failures with fixes kept in separate commits.
+
+**Desktop evidence.** The installed 0.21.0 app and a newly compiled desktop app
+used a synthetic, isolated Titus project and Notes fixture under ignored
+`test-temp-358/desktop-data`; no real project or regular Bridge registry was changed.
+The installed version supplied the baseline. `tauri dev` produced a blank webview
+while its Vite endpoint timed out, so no dev-mode success is claimed. A bundled
+`tauri build --debug --no-bundle` succeeded and supplied the current desktop check.
+At 1282x824, the linked resolved thread showed **Resolved in Paratext** and
+**Mark resolved in Bridge**. Clicking changed the card without a verse reload;
+the open-thread card showed Reply, Resolve in Paratext and Link existing thread.
+After closing the app, a fresh engine read exactly one `resolved_from_paratext`
+history event and zero outbox rows. A second resolve request was refused as already
+resolved, leaving the history unchanged. Four screenshots are in
+`D:\Claude Lab\Claude outputs\qa-0.21.0\2026-10-27-codex-358`; assertions are in
+local `test-temp-358/desktop-check-result.json`. This fixture check complements
+the real NTB plugin/outbox run above; it does not claim a new installed release
+or a 1366x768 acceptance walk.
+
+**Separate test fixes, with assertions retained.** `bd5f326` isolates the missing
+project relocation test from live Language QA file handles. `839999e` isolates
+the alignment prefetch-count test from unrelated Language QA workbench generation
+writes. `3054042` uses a real alignment check job for the project-list progress
+test rather than materialising tN/tW and running every local check. Their three
+test files passed together (49 tests). These are test setup changes, not new
+production behavior.
+
+A second full run at `3054042` gave 5,666 passed, 4 failed, 3 xfailed in 28m56s.
+The original three failures passed. New failures were dispatcher handle counting,
+navigation's 100ms wall-clock assertion, engine.info's 2s wall-clock assertion,
+and a live Language QA progress count remaining at 1 after an edit (expected 0).
+All five tests, including both dispatcher tests, passed in isolation. `ce1de95`
+excludes the live QA worker when counting dispatcher connections; `78cf4a0` and
+`5f36731` hold the connector/preloader open with explicit gates and assert the
+foreground operation completes before release. Their three complete test files
+passed (13 tests). The progress-count test and its entire file passed in parallel
+(5 tests); its failure has not been reliably reproduced or fixed. It remains a
+proposed follow-up, alongside the previously recorded semantic-runtime trace.
+
+**Final frontend and frozen checks after integrating `f237c18`.** `npm run check`
+reported zero errors/warnings; Vitest passed 1,032 tests in 99 files; both app and
+dashboard production builds succeeded. Both frozen sidecars were rebuilt and
+`smoke_sidecars.py engine/dist/bridge-engine.exe` passed. The later commits only
+change test setup. No Rust source changed; a bundled desktop compile succeeded,
+but separate `cargo check`/`cargo test` were not part of this no-Rust-change gate.
+
+A four-worker full run (`PYTEST_XDIST_AUTO_NUM_WORKERS=4`, `pytest -n auto`)
+finished with 5,669 passed, 1 failed, 3 xfailed in 23m27s. All prior failures,
+including the live progress-count test, passed. The remaining failure was
+`test_moved_project_retains_identity_but_live_copy_is_rejected`: Windows refused
+to move a database held by the live QA worker. As with `bd5f326`, this relocation
+test now disables background QA before opening the fixture, modelling an app
+closed during relocation. Project identity and live-copy rejection assertions
+are unchanged.
+
+The complete semantic-runtime test file passed after that setup fix (37 tests,
+67.59s). No further production changes were made. The final local evidence is
+the complete 5,669-pass run plus the repaired 37-test file, not a claim that the
+whole suite was rerun green after its last test-only edit. Main's full serial CI
+is the remaining push gate; issue closure follows its result.
+
+
+## 2026-10-28 — Baseline and a local installer for the week's walks; #260 marks, #399, #400
+
+**Baseline on `main` at c2bd236** (Benz's #358 h and i, the #353 test isolation, Joel's #406
+merge, Revant's milestone 3 engine batch, all since 0.21.0 at 4cd22bf), every gate green with no
+re-run needed: `pytest -n auto` 5670 passed, 3 xfailed (10:25); `npm run check` 0 errors / 0
+warnings; `npm run test` 99 files, 1032 passed; `npm run build` ok; `cargo check` ok; `cargo test`
+15 passed; `build-sidecars.ps1` and `smoke_sidecars.py` passed ("Frozen sidecar smoke test
+passed", hub `--serve` included). The three timing tests that fail under full parallel load did not
+fail this time.
+
+**The installer for the installed-build walks** was built from a detached worktree at c2bd236
+(`C:\code\bridge-installer`, the day's edits kept out of it; the frozen sidecars and
+`src-tauri/resources` copied in from the main checkout since both are git-ignored):
+`C:debridge-installersrc-tauri	argeteleasebundle
+sisBridge_0.21.0_x64-setup.exe`, 85,265,216 bytes, `npm run tauri build` 6m 21s for the release profile. Version 0.21.0 is unchanged; the file is identified by the commit
+only. Nothing was tagged or released; 0.22.0 is Thursday's or Friday's cut in a separate session,
+0.21.0 (4cd22bf) stays the fallback demo build. Every walk this week records that hash.
+
+**#260 (87a06e0), code remainder.** `word.select`, the one Tier A action without a mark since 13
+Oct, is marked in `VerseList.svelte`: `perfBegin` at the mousedown in a verse's text, `perfEnd` at
+the mouseup that leaves a word under the pointer or a selection inside the verse (the paint after
+the browser has drawn it), or at the right-click menu that names a word; a mouseup on nothing drops
+the mark. A left click on a word also records `verse.navigate`, as any row click does; the rows are
+separate. The long-task counter: `observeLongTasks` in `perf.ts`, a `PerformanceObserver` on the
+`longtask` entry type, feature-detected on `supportedEntryTypes` (nothing registers and the panel
+says so where WebView2 does not expose it), registered once in `App.svelte` through the same
+`frontend_log` sink as the action samples. Every task of 250 ms or more is one
+`perf longtask=<ms>` line in `engine-events.log` and counted in Engine diagnostics >
+Responsiveness ("Long tasks over 250 ms this session: n (longest m ms, t ms in all)"), so the
+30-minute recording on the field laptop needs no DevTools. `scripts/perf_table.py` parses those
+lines apart from the action rows (its action table pin against `perf.ts` is unchanged) and prints
+the count under the table and as `longTasks` in `--json`. The measurement procedure for Thursday 29
+Oct is on the issue. The issue stays open until the measured table is in a release's notes.
+
+**#399 (3c71168).** The strip under the top bar set `running: true` for Collection QA without a
+percent (the previous check job's number stayed, frozen) and its Cancel called the chapter-job
+cancel with an empty `activeJobId`. `src/lib/collectionStrip.ts`: `bindCollectionStrip()` feeds
+`checkingProgress` from every poll of the run ("Collection QA · 3/66 books · about 40 min left",
+the job's percent, paused, cancelling) while holding the app read-only as before, and releases it
+with the outcome; `cancelStripJob` routes the strip's Cancel to `collection.cancelChecks` while a
+run is active, else to the check job. The state after a cancelled or failed run stays `succeeded`
+deliberately: the failed/cancelled notice rows offer Retry, which re-runs a chapter job by id.
+`formatDuration` is lifted from the panel into `collectionQa.ts`.
+
+**#400 (ec6bafe).** `ImportScreen.openPath` and the open after an import called `openProject`
+without `onProgress`, so a lazy sibling's chapter-by-chapter prepare (#210) showed only the still
+sentence. `src/lib/openProgress.ts` carries the prepare into App's "Opening X… preparing chapter n
+of N" strip (already above the screens, so visible on Home); `openPath` passes
+`trackPrepare(<display name>)` and clears it in `finally`; the open after an import sets `importJob`
+to each prepare snapshot so the banner follows the open rather than the import's last snapshot;
+the book switch shares `prepareDetail`. The ImportScreen hunks are the two call sites and one
+import, as agreed with Joel's #406 work on that file.
+
+**App.svelte commits.** The three issues share hunks in `App.svelte`; the file was committed in
+three stages (a splitter rebuilt each stage from the previous commit) so each commit carries only
+its own hunks. The first attempt committed #399 and #400 with the #260 stage of the file; both
+were reset (never pushed) and redone, and the working file was checked byte-for-byte against the
+one the gate ran on.
+
+**Gates, batch B.** `npm run check` 0 errors / 0 warnings; `npm run test` 101 files, 1045 passed;
+`npm run build` ok; `pytest tests/service/test_perf_table_script.py` 6 passed; full
+`pytest -n auto` 5671 passed, 3 xfailed, 0 failed (12:26, run alongside the installer build; the three known timing tests did not fail). Not run: cargo (no Rust change), the frozen pair (no engine change; the
+script is not in the spec).
+
+**Not verified anywhere today:** the installed app at 1366x768 (the strip's longer label, the
+Responsiveness line, the Home-screen strip); a real `word.select` click and a real long-task
+count in WebView2; a real Collection QA run cancelled from the editor; a real lazy book opened
+from Home. The installer itself was not installed or started here (Revant installs and walks it).
+
+## 2026-10-27 — #358 / #353 verification complete and closed
+
+The Paratext push at `c2bd236` passed [main CI](https://github.com/Bridgeconn/bridge/actions/runs/40480265616).
+The full serial Windows Python suite reported **5,655 passed, 2 skipped, 3 xfailed**
+(41m25s); the foreground latency gate and both human-label accuracy gates passed.
+Frontend CI passed. This is the final green gate for the Paratext code and the
+separate test-setup fixes, complementing the local frontend/build, frozen-pair,
+NTB and bundled-desktop evidence above.
+
+The network interruption after the successful push delayed GitHub writes only.
+After connectivity returned, verification comments were posted and **#132, #358
+and #353 closed as completed**; #358 and #353 are **Done** on board 40. The parent
+records all completed sub-issues, #347's retained navigation hold, and Benz's six
+decisions of 26 Oct; its deferred QA inputs are unchanged. Proposed follow-ups
+remain in the consolidated #353 comment for Benz to tick; none was filed. The
+intermittent progress-count failure and semantic-runtime trace are not claimed
+fixed, and M20's separate automatic-recheck recovery remains NOT RUN.
+
+
 ## 2026-10-27 — Add books to an existing project from Project Home (branch `addBook`, Joel)
 
 **Ask.** The project list could import a file or folder as a new project, but a book could not be
@@ -22298,4 +22527,3 @@ suite is in this session's handoff. `npm run check` 0/0, `npm run test` 100 file
 `npm run build` ok; `cargo check` ok, `cargo test` 15 passed. **Not verified:** the installed app
 (sidecars not rebuilt in this session; `build-sidecars.ps1` + `smoke_sidecars.py` still to run), the
 native multi-select dialog on a real desktop, and the 1366x768 rendering of the dialog.
-

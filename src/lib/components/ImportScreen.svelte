@@ -23,6 +23,7 @@
   import { iso6393 } from "iso-639-3";
   import { bridge } from "../api/bridgeClient";
   import { perfAbort, perfBegin, perfResponded } from "../perf";
+  import { clearPrepare, trackPrepare } from "../openProgress";
   import { project } from "../stores";
   import type {
     DuplicateAssessment, DuplicateMatch, ImportJobSnapshot, ImportMetadata, ImportPreview, RegisteredProject,
@@ -249,12 +250,15 @@
   async function openPath(path: string, projectId?: string) {
     // #232 (Tier B): begins at the click; App.svelte ends it when the
     // dashboard has painted. The disabled buttons are the first response.
-    perfBegin("project.open", path.split(/[\\/]/).pop() ?? "");
+    const name = path.split(/[\\/]/).pop() ?? "";
+    perfBegin("project.open", name);
+    const listed = projects.find((item) => item.path === path);
     loading = true;
     error = null;
     perfResponded("project.open");
     try {
-      const info = await bridge.openProject(path, projectId);
+      // #400: a lazy book's prepare shows in App's "Opening …" strip.
+      const info = await bridge.openProject(path, projectId, trackPrepare(listed ? displayName(listed) : name));
       project.set(info);
       onOpened();
       return true;
@@ -265,6 +269,7 @@
       return false;
     } finally {
       loading = false;
+      clearPrepare();
     }
   }
 
@@ -436,7 +441,9 @@
         if (IMPORT_TERMINAL.has(snapshot.state)) {
           if (snapshot.state === "succeeded" && snapshot.result) {
             const primary = snapshot.result.projects[0];
-            const info = await bridge.openProject(snapshot.result.primaryProjectPath, primary?.projectId);
+            // #400: the banner follows the open's prepare, not the import's last snapshot.
+            const info = await bridge.openProject(snapshot.result.primaryProjectPath, primary?.projectId,
+              (prepare) => { if (generation === importGeneration) importJob = prepare; });
             if (generation !== importGeneration) return;
             // project.open does not echo the collection's siblings; only the
             // import knows them, and the book switcher reads them from here.

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -13,9 +14,9 @@ from tests.support.waits import job_timeout
 
 
 class Sidecar:
-    def __init__(self) -> None:
+    def __init__(self, entrypoint: Path | None = None) -> None:
         self.process = subprocess.Popen(
-            [sys.executable, str(ENGINE_ROOT / "main.py")],
+            [sys.executable, str(entrypoint or ENGINE_ROOT / "main.py")],
             cwd=ENGINE_ROOT,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -150,24 +151,60 @@ def test_import_check_decide_restart_edit_and_export_over_stdio(tmp_path):
 
 
 
-def test_uroman_loads_after_ready_and_engine_info_does_not_wait_for_it():
+def test_uroman_loads_after_ready_and_engine_info_does_not_wait_for_it(tmp_path):
     """main.py starts the uroman preload after the ready line (#242):
     engine.info answers at once with names available, and names reports
     loaded once the background load finishes."""
-    sidecar = Sidecar()
+    entered, release = tmp_path / "loading", tmp_path / "release"
+    bootstrap = tmp_path / "gated_main.py"
+    bootstrap.write_text(
+        "import runpy, sys, time\n"
+        "from pathlib import Path\n"
+        f"sys.path.insert(0, {str(ENGINE_ROOT)!r})\n"
+        "from greek_room_engine.adapters import names_adapter\n"
+        "original = names_adapter._ensure_uroman\n"
+        "def gated_load():\n"
+        f"    Path({str(entered)!r}).touch()\n"
+        f"    while not Path({str(release)!r}).exists():\n"
+        "        time.sleep(.01)\n"
+        "    return original()\n"
+        "names_adapter._ensure_uroman = gated_load\n"
+        f"runpy.run_path({str(ENGINE_ROOT / 'main.py')!r}, run_name='__main__')\n",
+        encoding="utf-8",
+    )
+    sidecar = Sidecar(bootstrap)
+    returned = threading.Event()
+    responses = []
+    caller = None
     try:
-        started = time.monotonic()
-        info = sidecar.request("engine.info", {})
-        elapsed = time.monotonic() - started
+        deadline = time.monotonic() + job_timeout(30)
+        while not entered.exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert entered.exists(), "background preload did not start after ready"
+
+        def request_info():
+            responses.append(sidecar.request("engine.info", {}))
+            returned.set()
+
+        caller = threading.Thread(target=request_info, daemon=True)
+        caller.start()
+        # The loader cannot finish until we release it: a response now proves
+        # engine.info is independent of its completion, under any CPU load.
+        assert returned.wait(10), "engine.info waited for the held preload"
+        info = responses[0]
         names = info["result"]["greekRoom"]["adapters"]["names"]
         assert names["available"] is True
-        assert elapsed < 2.0, f"engine.info took {elapsed:.2f}s"
+        assert names["state"] == "loading"
+        release.touch()
         deadline = time.monotonic() + job_timeout(30)
         while names.get("state") != "loaded" and time.monotonic() < deadline:
             time.sleep(0.25)
             names = sidecar.request("engine.info", {})["result"]["greekRoom"]["adapters"]["names"]
         assert names["state"] == "loaded", names
     finally:
+        release.touch()
+        if caller is not None:
+            caller.join(10)
         sidecar.close()
 
 

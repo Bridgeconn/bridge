@@ -187,7 +187,8 @@
     {/each}
     {#each data.pending as item (item.messageId)}
       <p class="pt-msg" role="status">
-        {item.op === "resolve" ? "Resolve" : item.op === "add_comment" ? "Reply" : "Note"} queued for Paratext.
+        {item.op === "resolve" ? "Resolve" : item.op === "add_comment" ? "Reply" : "Note"}
+        {item.status === "refused" ? "refused by Paratext; it waits for Retry handoff." : "queued for Paratext."}
         {item.lastError}
       </p>
     {/each}

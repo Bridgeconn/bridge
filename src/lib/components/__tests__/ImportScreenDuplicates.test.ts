@@ -61,7 +61,7 @@ describe("duplicate import choices (#407)", () => {
     await fireEvent.click(open);
     await waitFor(() => expect(onOpened).toHaveBeenCalledOnce());
     expect(openProject).toHaveBeenCalledOnce();
-    expect(openProject).toHaveBeenCalledWith("C:/projects/copy-2", "p-2");
+    expect(openProject).toHaveBeenCalledWith("C:/projects/copy-2", "p-2", expect.any(Function));
     expect(importStart).not.toHaveBeenCalled();
     expect(screen.queryByRole("dialog")).toBeNull();
   });
@@ -148,7 +148,7 @@ describe("duplicate import choices (#407)", () => {
     await waitFor(() => expect(within(dialog()).getByRole("button", { name: "Open Review 2" })).toBeEnabled());
     await fireEvent.click(within(dialog()).getByRole("button", { name: "Open Review 2" }));
     await waitFor(() => expect(onOpened).toHaveBeenCalledOnce());
-    expect(openProject).toHaveBeenLastCalledWith("C:/projects/copy-2", "p-2");
+    expect(openProject).toHaveBeenLastCalledWith("C:/projects/copy-2", "p-2", expect.any(Function));
   });
 
   it("disables missing projects but opens an available member of a matching collection", async () => {
@@ -160,7 +160,7 @@ describe("duplicate import choices (#407)", () => {
     const available = within(dialog()).getByRole("button", { name: "Open Review 1" });
     expect(available).toBeEnabled();
     await fireEvent.click(available);
-    await waitFor(() => expect(openProject).toHaveBeenCalledWith("C:/projects/copy-2", "p-2"));
+    await waitFor(() => expect(openProject).toHaveBeenCalledWith("C:/projects/copy-2", "p-2", expect.any(Function)));
   });
 
   it("opens language suggestions only on click or typing and displays only the selected name", async () => {
