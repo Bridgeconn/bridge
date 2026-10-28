@@ -16,7 +16,9 @@ def stage3_db():
 
 @pytest.fixture(scope="session")
 def tamil_php_usfm():
-    return _SEMANTIC_MAPPING_RESOURCES / "regression" / "51PHPIRVTam.SFM"
+    # Moved into tests/fixtures/ by #214 (the cold-start alignment fixture reads
+    # it too); #109 deletes the resources/semantic_mapping tree it came from.
+    return Path(__file__).resolve().parent / "fixtures" / "51PHPIRVTam.SFM"
 
 
 @pytest.fixture(scope="session")

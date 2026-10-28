@@ -315,6 +315,40 @@ export interface CrossVerseAiProposalResult extends CrossVerseProposalResult {
   corpusUnavailable?: { reason: string; message: string };
 }
 
+/** One verse's compiled same-verse proposal from `alignment.window.aiPropose`
+ *  (#214). `proposal` round-trips unchanged into alignment.aiApplyProposal and
+ *  `expectedOriginal` is the alignment it was compiled against. */
+export interface WindowVerseProposal {
+  verse: string;
+  proposal: AlignmentAiProposal;
+  expectedOriginal: VerseAlignment;
+  /** Model edges inside this verse, and how many legal groups they compiled to. */
+  edges: number;
+  compiledGroups: number;
+  implicit: number;
+  targetOnly: number;
+  conflicts: number;
+}
+
+/** `alignment.window.aiPropose` (#214): one request over a window of verses with
+ *  every token offered. Same-verse picks are compiled per verse; cross-verse
+ *  picks reuse the suggestions strip's proposal shape with `autoLinkable` always
+ *  false -- on a cold project there is no second method to agree with, and every
+ *  pick is a proposal the reviewer applies or accepts. */
+export interface WindowAiProposalResult {
+  chapter: string;
+  verses: string[];
+  verseProposals: WindowVerseProposal[];
+  crossVerseProposals: CrossVerseProposal[];
+  reviewNotes: string[];
+  calibrationVersion: string;
+  modelConsulted?: boolean;
+  window?: { sources: number; targets: number };
+  edges?: { sameVerse: number; crossVerse: number; dropped: number };
+  usage?: { totalTokens: number; estimatedCostUSD: number };
+  unavailable?: { reason: string; message: string };
+}
+
 export interface AlignmentContext {
   chapter: string;
   verse: string;

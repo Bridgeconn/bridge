@@ -33,6 +33,7 @@ import type {
   AlignmentStatusResponse,
   CrossVerseLinkResult,
   CrossVerseAiProposalResult,
+  WindowAiProposalResult,
   CrossVerseProposalResult,
   BookProgressEntry,
   CheckJobSnapshot,
@@ -217,6 +218,7 @@ export type EngineMethod =
   | "alignment.crossVerse.link"
   | "alignment.crossVerse.propose"
   | "alignment.crossVerse.unlink"
+  | "alignment.window.aiPropose"
   | "alignment.gapScan"
   | "alignment.get"
   | "alignment.getRange"
@@ -626,6 +628,14 @@ export const bridge = {
    *  crossVerseLink below, so there is only ever one writer. */
   crossVerseAiPropose(chapter: string, verses: string[]): Promise<CrossVerseAiProposalResult> {
     return call("alignment.crossVerse.aiPropose", { chapter, verses });
+  },
+
+  /** One model request over a short window of verses, every token offered
+   *  (#214): same-verse picks come back compiled per verse for
+   *  aiApplyAlignmentProposal, cross-verse picks in the suggestions strip's
+   *  shape for crossVerseLink. Read-only, and nothing in it is autoLinkable. */
+  windowAiPropose(chapter: string, verses: string[]): Promise<WindowAiProposalResult> {
+    return call("alignment.window.aiPropose", { chapter, verses });
   },
 
   /** Bridge-private cross-verse link (#117): nothing in alignmentData changes.

@@ -173,6 +173,49 @@ Unmeasured, and worth knowing: per #131 no Bridge AI path has ever been sent a
 real request, so prompt quality and the agreement-gate hit rate are unknown until
 a real-key run is done and recorded.
 
+### Aligning a cold window (#214)
+
+The two passes above presuppose a mostly aligned chapter: the corpus table needs
+completed verses, and the #146 menu holds *gap* tokens and forbids same-verse
+pairs. On a freshly imported book every word is a gap, nearly every word belongs
+in its own verse, and the 40/60 handle cap truncates the range — so a careful
+model correctly returns nothing (#188, #208). `alignment.window.aiPropose` asks a
+different question, from `tc_ai_bridge/window_ai_alignment.py`:
+
+- **One window, every token.** The caller's verses, in chapter order, at most
+  `MAX_WINDOW_VERSES` (5). Each verse contributes its full source inventory (word,
+  Strong's, lemma, gloss) and its full target inventory, plus the translation
+  text, in reading order. Bounded by verse count, never by a token cap, so nothing
+  is silently dropped. The per-language prompt guidance from `plugins.py` is in
+  the instructions, as it is for the single-verse prompt.
+- **Same closed menu.** Opaque `S*`/`T*` handles over the window; an invented id
+  raises. Each handle remembers the positional `H001`/`T001` id of its verse, which
+  is what the compiler, the link store and the frontend key on.
+- **Picks are routed, not filtered.** An edge whose ends share a verse goes to
+  that verse's `alignment_reliability.compile_link_proposal` (gap-fill mode, so an
+  existing non-empty group is protected) and comes back as one proposal per verse
+  with `expectedOriginal`. An edge that crosses a boundary becomes a strip
+  proposal with `status: PROPOSED`, `agreesWithCorpus: false`, `autoLinkable:
+  false`. A target word claimed within its own verse wins over a cross-verse pick
+  onto it, and the drop is a `reviewNotes` line, not a silence.
+- **Every pick is a proposal.** The compiler runs with both thresholds at 0: the
+  gate is the reviewer's per-verse **Apply to verse N** (the existing
+  `alignment.aiApplyProposal`, one explicit save per verse) or per-pair
+  **Accept** (`alignment.crossVerse.link`). Nothing here is auto-linkable, by the
+  maintainer's decision of 2026-10-07: on a cold project there is no second method
+  to agree with, and the #146 gate is left exactly as it was.
+- **Optional, click-only, writes nothing.** No key → structured `unavailable`.
+  The UI entry is **Align with AI** on the cross-verse page, beside **Suggest with
+  AI**.
+
+The fixture for it is a genuinely cold project — the unaligned Tamil IRV
+Philippians in `engine/tests/fixtures/51PHPIRVTam.SFM`, imported against the
+bundled UGNT (`tests/support/cold_start.py`). The IRV itself redistributes
+1:3–6 across verses; two synthetic variants (`swap34`, `spill34`) add a known
+answer. `tests/ai/test_window_ai_alignment_live.py` (marker `live_ai`, opt-in via
+`BRIDGE_LIVE_OPENAI_API_KEY`) is the first real-provider measurement in the
+repository; until it is run and recorded, the hit rate is unknown.
+
 ## Aligned USFM
 
 Aligned export writes USFM 3 and uses unfoldingWord's occurrence-aware `zaln`

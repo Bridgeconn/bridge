@@ -46,7 +46,9 @@ engine: `service` (dispatcher, stdio, protocol), `jobs`, `persistence`,
 `projects.py` for fixture projects and the protocol `call`/`wait_for_job`;
 `semantic.py` for a passage-semantic runtime).
 Markers are registered with `--strict-markers` (`slow`, `subprocess`, `desktop`,
-`resources`, `stage3db`, `external`); directory- and file-level ones are applied
+`resources`, `stage3db`, `external`, and `live_ai` — the one opt-in test that
+sends a real provider request, skipped unless `BRIDGE_LIVE_OPENAI_API_KEY` is
+set, #214); directory- and file-level ones are applied
 automatically in `tests/conftest.py`. `scripts/affected_tests.py` runs the tests
 your uncommitted changes could affect — useful for frontend, docs and test-only
 edits, but it degrades to the full suite for any engine module, for the reason in

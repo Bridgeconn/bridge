@@ -321,6 +321,14 @@ class OpenAIResponsesClient:
         """
         return self._post_structured(instructions, input_text, 'cross_verse_links', schema)
 
+    def propose_window_alignment(
+        self, instructions: str, input_text: str, schema: dict[str, Any],
+    ) -> dict[str, Any]:
+        """One passage-window alignment request (#214). As thin as its #146
+        sibling, for the same reason: the prompt, the id menu and the routing of
+        same-verse against cross-verse picks live in `window_ai_alignment.py`."""
+        return self._post_structured(instructions, input_text, 'window_alignment', schema)
+
     def test_connection(self) -> dict[str, Any]:
         """Authenticate the API key and confirm the configured model is accessible without generating tokens."""
         url = f'{self.models_endpoint}/{urllib.parse.quote(self.model, safe="")}'

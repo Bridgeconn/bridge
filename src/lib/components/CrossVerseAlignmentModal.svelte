@@ -15,7 +15,7 @@
   } from "../stores";
   import type {
     AlignmentContext, AlignmentCounts, AlignmentToken, CrossVerseLink, CrossVerseLinkResult,
-    CrossVerseProposal,
+    CrossVerseProposal, WindowVerseProposal,
   } from "../types/finding";
   import { createPointerDrag } from "../alignmentDrag";
   import {
@@ -78,6 +78,14 @@
   /** The selection the current proposals were computed for, so a widened range
    *  is reported as stale rather than silently showing yesterday's answer. */
   let proposalsFor: string[] = [];
+  /** #214: the window pass. Per-verse compiled proposals the reviewer applies
+   *  one verse at a time; its cross-verse picks join `proposals` above. */
+  let windowProposals: WindowVerseProposal[] = [];
+  let windowBusy = false;
+  let windowError = "";
+  let windowNotes: string[] = [];
+  let windowShown = false;
+  let windowSummary = "";
 
   $: span = spanOf($verseNums, selection);
   $: spanVerses = span ? rangeBetween($verseNums, span[0], span[1]) : [];
@@ -254,6 +262,85 @@
     } finally {
       proposalsBusy = false;
     }
+  }
+
+  /** The window pass (#214): one request over the whole range with every token
+   *  offered, for a book nobody has aligned yet. Still click-only, still writes
+   *  nothing itself. Same-verse picks come back compiled per verse and are
+   *  applied below, one verse per click, through the existing
+   *  alignment.aiApplyProposal; cross-verse picks join the suggestions strip as
+   *  ordinary "AI only" rows. Nothing is auto-linked: on a cold project there is
+   *  no second method to agree with, and the maintainer's decision (2026-10-07)
+   *  is that every pick is a proposal. */
+  async function loadWindowProposals() {
+    if (windowBusy || proposalsBusy) return;
+    windowBusy = true;
+    windowError = "";
+    windowSummary = "";
+    try {
+      const wanted = [...selection];
+      const result = await bridge.windowAiPropose(chapter, wanted);
+      windowShown = true;
+      aiUsed = true;
+      if (result.unavailable) {
+        windowError = result.unavailable.message;
+        windowProposals = [];
+        return;
+      }
+      windowProposals = result.verseProposals;
+      windowNotes = result.reviewNotes ?? [];
+      // Cross-verse picks are strip rows like any other; a pair already shown
+      // (from the corpus or the #146 pass) is not shown twice.
+      const known = new Set(proposals.map(proposalKey));
+      const fresh = result.crossVerseProposals.filter((p) => !known.has(proposalKey(p)));
+      if (fresh.length > 0 || !suggestionsShown) {
+        proposals = [...proposals, ...fresh];
+        proposalsFor = wanted;
+        suggestionsShown = true;
+        proposalsUnavailable = "";
+      }
+      const sameVerse = result.verseProposals.length;
+      const across = result.crossVerseProposals.length;
+      windowSummary = result.modelConsulted === false
+        ? "Nothing to align in this range."
+        : `The AI proposed alignments for ${sameVerse} verse${sameVerse === 1 ? "" : "s"} and ${across} cross-verse link${across === 1 ? "" : "s"}. Nothing is saved until you apply or accept it.`;
+    } catch (value) {
+      windowError = value instanceof Error ? value.message : String(value);
+    } finally {
+      windowBusy = false;
+    }
+  }
+
+  /** Applying is the existing authorized write for an AI proposal, one verse per
+   *  click, with the alignment the proposal was compiled against as the
+   *  optimistic-concurrency check. A refused save leaves the card on screen. */
+  async function applyVerseProposal(item: WindowVerseProposal) {
+    await mutate(
+      item.verse,
+      () => bridge.aiApplyAlignmentProposal(chapter, item.verse, item.proposal, item.expectedOriginal),
+      `AI alignment applied to ${chapter}:${item.verse}.`,
+    );
+    if (error) return;
+    windowProposals = windowProposals.filter((p) => p !== item);
+  }
+
+  function dismissVerseProposal(item: WindowVerseProposal) {
+    windowProposals = windowProposals.filter((p) => p !== item);
+  }
+
+  /** The groups a proposal would write, as words -- only the ones the model
+   *  compiled, not the untouched source tokens the compiler carries through. */
+  function compiledGroups(item: WindowVerseProposal): Array<{ sources: string; targets: string; reason: string }> {
+    const context = contexts[item.verse];
+    const topWord = (id: string) => context?.topTokens.find((t) => t.id === id)?.word ?? id;
+    const bottomWord = (id: string) => context?.bottomTokens.find((t) => t.id === id)?.word ?? id;
+    return item.proposal.groups
+      .filter((g) => g.origin === "ai_compiled" || g.origin === "extended_protected" || g.origin === "implicit")
+      .map((g) => ({
+        sources: g.top_ids.map(topWord).join(" "),
+        targets: g.bottom_ids.length ? g.bottom_ids.map(bottomWord).join(" ") : "(implicit, no separate word)",
+        reason: g.reason,
+      }));
   }
 
   function proposalKey(proposal: CrossVerseProposal): string {
@@ -618,6 +705,18 @@
               {#if proposalsBusy && aiUsed}<span class="spin" />{/if}
               Suggest with AI
             </button>
+            <button
+              type="button"
+              class="ai"
+              on:click={loadWindowProposals}
+              disabled={windowBusy || proposalsBusy || busy || loading || aiAvailable === undefined}
+              title={aiAvailable === undefined
+                ? "Checking whether an AI provider is configured…"
+                : "Ask the AI to align this whole range, same-verse and across verses, for a book nobody has aligned yet. Every word in the range is sent to your provider. Nothing is saved until you apply or accept it."}
+            >
+              {#if windowBusy}<span class="spin" />{/if}
+              Align with AI
+            </button>
           {/if}
           <small>
             {#if aiAvailable === false}
@@ -691,6 +790,55 @@
           </ul>
         {/if}
       </section>
+
+      {#if windowShown || windowBusy || windowError}
+        <section class="suggest window" aria-label="AI alignment proposals">
+          <div class="suggest-head">
+            <strong>Align with AI</strong>
+            {#if windowBusy}<span class="spin" /> Asking the AI about {selection.length} verse{selection.length === 1 ? "" : "s"}…{/if}
+            {#if windowSummary}<small>{windowSummary}</small>{/if}
+          </div>
+          {#if windowError}<div class="error">{windowError}</div>{/if}
+          {#if windowShown && !windowBusy && windowProposals.length === 0 && !windowError}
+            <p class="empty">No same-verse alignments to apply{proposals.length > 0 ? "; see the cross-verse suggestions above" : ""}.</p>
+          {/if}
+          {#if windowProposals.length > 0}
+            <ul class="proposals">
+              {#each windowProposals as item (item.verse)}
+                <li class="proposal verse-proposal">
+                  <div class="proposal-claim">
+                    <strong>Verse {item.verse}</strong>
+                    <small>{item.compiledGroups} group{item.compiledGroups === 1 ? "" : "s"}{#if item.implicit} · {item.implicit} implicit{/if}{#if item.conflicts} · {item.conflicts} conflict{item.conflicts === 1 ? "" : "s"} with existing alignment, not applied{/if}</small>
+                    <span class="status ai-only" title="The AI proposed these; nothing is saved until you apply them.">AI only</span>
+                  </div>
+                  <ul class="window-groups">
+                    {#each compiledGroups(item) as group}
+                      <li title={group.reason}>
+                        <span class="word source-word">{group.sources}</span>
+                        <span aria-hidden="true">→</span>
+                        <span class="word">{group.targets}</span>
+                      </li>
+                    {/each}
+                  </ul>
+                  <div class="proposal-actions">
+                    <button type="button" on:click={() => applyVerseProposal(item)} disabled={busy || windowBusy}>
+                      Apply to verse {item.verse}
+                    </button>
+                    <button type="button" class="link" on:click={() => dismissVerseProposal(item)} disabled={busy}>
+                      Dismiss
+                    </button>
+                  </div>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+          {#if windowNotes.length > 0}
+            <ul class="window-notes">
+              {#each windowNotes as note}<li>{note}</li>{/each}
+            </ul>
+          {/if}
+        </section>
+      {/if}
 
       {#if notice}<div class="notice">{notice}</div>{/if}
       {#if error}<div class="error">{error}</div>{/if}
@@ -918,6 +1066,11 @@
   .proposals { list-style: none; margin: 8px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 6px; }
   .proposal { border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 9px; padding: 6px 10px; background: var(--surface-2); }
   .proposal.ambiguous { border-left-color: var(--warning); }
+  /* #214: per-verse cards from the window pass. Same card as a strip row; the
+     group list inside is what the Apply would write, as words. */
+  .window-groups { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-xs); }
+  .window-groups li { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+  .window-notes { margin: 6px 0 0; padding-left: 18px; font-size: var(--fs-xs); color: var(--text-3); }
   .proposal-claim { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
   .proposal-claim .word { font-family: var(--font-target); font-size: var(--fs-sm); font-weight: 700; }
   .proposal-claim .source-word { font-family: var(--font-greek); }

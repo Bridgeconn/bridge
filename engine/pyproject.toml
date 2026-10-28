@@ -80,6 +80,7 @@ markers = [
     "resources: reads the bundled engine/resources trees (original-language packs, translationHelps)",
     "stage3db: needs the gitignored Stage 3 semantic-source SQLite (a release asset, see ci.yml)",
     "external: imports scripts/*.py or reads schemas/** from outside engine/",
+    "live_ai: sends a real request to the configured AI provider; opt-in via BRIDGE_LIVE_OPENAI_API_KEY, never in CI (#214)",
 ]
 
 [build-system]

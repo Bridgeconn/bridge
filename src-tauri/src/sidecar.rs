@@ -147,8 +147,12 @@ fn request_timeout_seconds(method: &str) -> u64 {
         // corpus pass first and then makes one such call, so it belongs to this
         // class and not to its interactive sibling alignment.crossVerse.propose,
         // which must keep the default 30s.
+        //
+        // alignment.window.aiPropose (#214) is one such call over a window of up
+        // to five verses with every token offered; same class.
         "alignment.aiPropose"
         | "alignment.crossVerse.aiPropose"
+        | "alignment.window.aiPropose"
         | "correction.createProposal"
         | "correction.regenerateProposal" => 260,
         // A whole-Bible report payload (tens of thousands of rows) takes a
@@ -542,6 +546,8 @@ mod tests {
         // 30s mid-request, the offline one would hang the UI for four minutes.
         assert_eq!(request_timeout_seconds("alignment.crossVerse.aiPropose"), 260);
         assert_eq!(request_timeout_seconds("alignment.crossVerse.propose"), 30);
+        // #214: the window pass is a provider call too.
+        assert_eq!(request_timeout_seconds("alignment.window.aiPropose"), 260);
         assert_eq!(request_timeout_seconds("alignment.crossVerse.link"), 30);
     }
 

@@ -12,9 +12,11 @@ import type {
 const {
   getAlignmentRange, realignWords, unalignWords, runVerseChecks, getLexiconEntry, crossVerseLink, crossVerseUnlink,
   analysisJobGetScopeStatus, semanticLocationGetRange, targetSemanticGetRange, crossVersePropose,
-  crossVerseAiPropose, getSettings,
+  crossVerseAiPropose, getSettings, windowAiPropose, aiApplyAlignmentProposal,
 } = vi.hoisted(() => ({
   crossVerseAiPropose: vi.fn(),
+  windowAiPropose: vi.fn(),
+  aiApplyAlignmentProposal: vi.fn(),
   getSettings: vi.fn(),
   getAlignmentRange: vi.fn(),
   realignWords: vi.fn(),
@@ -33,7 +35,7 @@ vi.mock("../../api/bridgeClient", () => ({
   bridge: {
     getAlignmentRange, realignWords, unalignWords, runVerseChecks, getLexiconEntry, crossVerseLink, crossVerseUnlink,
     analysisJobGetScopeStatus, semanticLocationGetRange, targetSemanticGetRange, crossVersePropose,
-    crossVerseAiPropose, getSettings,
+    crossVerseAiPropose, getSettings, windowAiPropose, aiApplyAlignmentProposal,
   },
 }));
 
@@ -607,6 +609,128 @@ describe("CrossVerseAlignmentModal", () => {
 
       expect(await screen.findByText(/No OpenAI-compatible API key is configured/)).toBeInTheDocument();
       expect(crossVerseLink).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Align with AI: the window pass (#214)", () => {
+    /** A per-verse proposal as `alignment.window.aiPropose` returns it: λόγος
+     *  (1:2 H001) compiled onto "word" (1:2 T001); ἦν left unresolved. */
+    function verseProposal(overrides: Record<string, unknown> = {}) {
+      return {
+        verse: "2",
+        expectedOriginal: V2.alignment,
+        edges: 1, compiledGroups: 1, implicit: 0, targetOnly: 0, conflicts: 0,
+        proposal: {
+          groups: [
+            { top_ids: ["H001"], bottom_ids: ["T001"], confidence: 0.4, reason: "the Word", origin: "ai_compiled", relation: "one-to-one" },
+            { top_ids: ["H002"], bottom_ids: [], confidence: 0, reason: "", origin: "unresolved", relation: "unresolved" },
+          ],
+          links: [{ top_id: "H001", bottom_id: "T001", confidence: 0.4, reason: "the Word" }],
+          uncertain_links: [], implicit_top_ids: [], target_only_ids: [], review_notes: [],
+          diagnostics: [], conflicts: [], requires_human_review: false,
+          compiler_version: "x", mode: "gap_fill", lock_policy: "protected", thresholds: { auto: 0, review: 0 },
+        },
+        ...overrides,
+      };
+    }
+
+    function windowResult(overrides: Record<string, unknown> = {}) {
+      return {
+        chapter: "1", verses: ["1", "2", "3-4"],
+        verseProposals: [], crossVerseProposals: [], reviewNotes: [],
+        calibrationVersion: "window-ai-uncalibrated-v1", modelConsulted: true,
+        ...overrides,
+      };
+    }
+
+    async function clickAlign() {
+      await fireEvent.click(await screen.findByRole("button", { name: /Align with AI/ }));
+    }
+
+    beforeEach(() => {
+      windowAiPropose.mockResolvedValue(windowResult());
+    });
+
+    it("sends nothing until the reviewer clicks, then asks about the whole current range", async () => {
+      await renderPage("2");
+      expect(windowAiPropose).not.toHaveBeenCalled();
+      await clickAlign();
+      await waitFor(() => expect(windowAiPropose).toHaveBeenCalledWith("1", ["1", "2", "3-4"]));
+    });
+
+    it("shows a per-verse card as words, and applies it only on its own click through aiApplyAlignmentProposal", async () => {
+      windowAiPropose.mockResolvedValue(windowResult({ verseProposals: [verseProposal()] }));
+      aiApplyAlignmentProposal.mockResolvedValue({ ...V2, status: "partial" });
+      await renderPage("2");
+      await clickAlign();
+
+      expect(await screen.findByText("Verse 2")).toBeInTheDocument();
+      expect(screen.getByText("λόγος")).toBeInTheDocument();      // the group, by word, not by id
+      // Nothing written by the request itself.
+      expect(aiApplyAlignmentProposal).not.toHaveBeenCalled();
+      expect(realignWords).not.toHaveBeenCalled();
+
+      await fireEvent.click(screen.getByRole("button", { name: /Apply to verse 2/ }));
+      await waitFor(() => expect(aiApplyAlignmentProposal).toHaveBeenCalledTimes(1));
+      const [chapter, verse, proposal, expectedOriginal] = aiApplyAlignmentProposal.mock.calls[0];
+      expect([chapter, verse]).toEqual(["1", "2"]);
+      // The proposal and the alignment it was compiled against round-trip unchanged.
+      expect(proposal).toEqual(verseProposal().proposal);
+      expect(expectedOriginal).toEqual(V2.alignment);
+      expect(await screen.findByText(/AI alignment applied to 1:2/)).toBeInTheDocument();
+      // Applied cards leave the list; local checks rerun as after any save.
+      await waitFor(() => expect(screen.queryByRole("button", { name: /Apply to verse 2/ })).not.toBeInTheDocument());
+      expect(runVerseChecks).toHaveBeenCalledWith("1", "2", ["alignment", "greekroom"]);
+    });
+
+    it("puts its cross-verse picks in the suggestions strip as acceptable 'AI only' rows and never auto-links", async () => {
+      windowAiPropose.mockResolvedValue(windowResult({
+        crossVerseProposals: [proposal({
+          agreesWithCorpus: false, autoLinkable: false,
+          evidence: [{ kind: "MODEL_PICK", rawScore: 0.9, weight: 1, weightedScore: 0.9, modelConfidence: 90, reason: "v.2 carries it" }],
+        })],
+      }));
+      crossVerseLink.mockResolvedValue(linked());
+      await renderPage("2");
+      await clickAlign();
+
+      expect(await screen.findByText("AI only")).toBeInTheDocument();
+      expect(screen.getByText(/the AI says: v\.2 carries it/)).toBeInTheDocument();
+      expect(crossVerseLink).not.toHaveBeenCalled();          // no automatic write, however confident
+      await fireEvent.click(screen.getByRole("button", { name: "Accept" }));
+      await waitFor(() => expect(crossVerseLink).toHaveBeenCalledTimes(1));
+      // A human Accept: the default origin, never "ai-auto".
+      expect(crossVerseLink.mock.calls[0][2]).toBeUndefined();
+    });
+
+    it("a refused apply leaves the card on screen with the error", async () => {
+      windowAiPropose.mockResolvedValue(windowResult({ verseProposals: [verseProposal()] }));
+      aiApplyAlignmentProposal.mockRejectedValue(new Error("The alignment file changed on disk after it was loaded."));
+      await renderPage("2");
+      await clickAlign();
+      await fireEvent.click(await screen.findByRole("button", { name: /Apply to verse 2/ }));
+
+      expect(await screen.findByText(/changed on disk/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Apply to verse 2/ })).toBeInTheDocument();
+    });
+
+    it("offers no Align with AI button without an API key, and reports an unavailable provider", async () => {
+      getSettings.mockResolvedValue({ hasApiKey: false });
+      await renderPage("2");
+      await waitFor(() => expect(screen.getByText(/add an API key in Settings/)).toBeInTheDocument());
+      expect(screen.queryByRole("button", { name: /Align with AI/ })).not.toBeInTheDocument();
+    });
+
+    it("shows the engine's review notes and the summary count", async () => {
+      windowAiPropose.mockResolvedValue(windowResult({
+        verseProposals: [verseProposal()],
+        reviewNotes: ["1:2 “was” was also linked within its own verse; the cross-verse pick was dropped in its favour."],
+      }));
+      await renderPage("2");
+      await clickAlign();
+
+      expect(await screen.findByText(/proposed alignments for 1 verse and 0 cross-verse links/)).toBeInTheDocument();
+      expect(screen.getByText(/dropped in its favour/)).toBeInTheDocument();
     });
   });
 });

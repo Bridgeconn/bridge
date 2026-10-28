@@ -105,7 +105,8 @@ from tc_ai_bridge.usfm_parser import UsfmParseError, parse_usfm, read_usfm_text
 from tc_ai_bridge import versification as versification_tool
 from tc_ai_bridge import alignment_gaps
 from tc_ai_bridge import alignment_statistics as corpus_stats_tool
-from tc_ai_bridge import cross_verse_proposals, cross_verse_ai_proposals
+from tc_ai_bridge import cross_verse_proposals, cross_verse_ai_proposals, window_ai_alignment
+from tc_ai_bridge.plugins import PluginRegistry
 from tc_ai_bridge.reporting import LANGUAGE_QA_MEDIUM_ADVISORY, ReportService, publication_gate
 from tc_ai_bridge.qa_report import (
     aggregate_qa_report,
@@ -393,6 +394,7 @@ class Methods:
     ALIGNMENT_GAP_SCAN = "alignment.gapScan"
     ALIGNMENT_CROSS_VERSE_PROPOSE = "alignment.crossVerse.propose"
     ALIGNMENT_CROSS_VERSE_AI_PROPOSE = "alignment.crossVerse.aiPropose"
+    ALIGNMENT_WINDOW_AI_PROPOSE = "alignment.window.aiPropose"
     ALIGNMENT_CROSS_VERSE_LINK = "alignment.crossVerse.link"
     ALIGNMENT_CROSS_VERSE_UNLINK = "alignment.crossVerse.unlink"
     ALIGNMENT_STATUS = "alignment.status"
@@ -2047,6 +2049,103 @@ class BridgeEngine:
         result["corpusProposals"] = offline.get("proposals", [])
         if offline.get("unavailable"):
             result["corpusUnavailable"] = offline["unavailable"]
+        return result
+
+    def propose_window_ai_alignment(self, chapter: str, verses: list[str]) -> dict[str, Any]:
+        """alignment.window.aiPropose (#214): one model request over a short window
+        of verses, every token offered, same-verse picks compiled per verse and
+        cross-verse picks returned for the suggestions strip.
+
+        Read-only. A same-verse proposal is written only by
+        `alignment.aiApplyProposal`, one verse per click; a cross-verse proposal
+        only by `alignment.crossVerse.link`, one pair per Accept. Nothing here is
+        `autoLinkable` -- on a cold project there is no second method to agree
+        with, and the maintainer's 2026-10-07 decision is that every pick is a
+        proposal (see `window_ai_alignment`'s module docstring).
+
+        No API key returns a structured `unavailable`, the shape its #146 sibling
+        and `start_triage` use: an offline project is a supported state.
+        """
+        self._require_project()
+        chapter = str(chapter)
+        if not isinstance(verses, list) or not verses:
+            raise ProjectError("A window alignment needs at least one verse.")
+        if chapter not in self.project.chapters():
+            raise ProjectError(f"Chapter {chapter} does not exist in this project.")
+        order = [str(v) for v in self.project.verses(chapter)]
+        wanted: list[str] = []
+        for raw in verses:
+            verse = str(raw)
+            if verse not in order:
+                raise ProjectError(f"Verse {chapter}:{verse} does not exist in this project.")
+            if verse not in wanted:
+                wanted.append(verse)
+        # Reading order is the whole basis on which the model can see a clause
+        # move to the next verse, so the window is the caller's set in chapter order.
+        wanted.sort(key=order.index)
+        if len(wanted) > window_ai_alignment.MAX_WINDOW_VERSES:
+            raise ProjectError(
+                f"A window is at most {window_ai_alignment.MAX_WINDOW_VERSES} verses; "
+                f"{len(wanted)} were requested. Narrow the range."
+            )
+        try:
+            client = self._ai_client()
+        except AIError as exc:
+            return {
+                "chapter": chapter, "verses": wanted,
+                "verseProposals": [], "crossVerseProposals": [], "reviewNotes": [],
+                "calibrationVersion": window_ai_alignment.WINDOW_CALIBRATION_VERSION,
+                "unavailable": {"reason": "no-api-key", "message": str(exc)},
+            }
+
+        window: list[tuple[str, VerseAlignment, str]] = []
+        glosses: dict[str, str] = {}
+        for verse in wanted:
+            alignment = self.project.load_verse_alignment(chapter, verse)
+            try:
+                text = strip_usfm(self.project.target_verse_text(chapter, verse))
+            except Exception:
+                text = ""
+            window.append((verse, alignment, text))
+            for group in alignment.alignments:
+                for token in group.top_words:
+                    strong = str(token.strong or "")
+                    if strong and strong not in glosses:
+                        try:
+                            glosses[strong] = self._gloss_for_strong(strong, str(token.morph or ""))
+                        except Exception:
+                            glosses[strong] = ""
+        first_alignment = window[0][1]
+        language = PluginRegistry().detect_project(self.project, first_alignment, window[0][2])
+        reference = (
+            f"{self.project.book_id.upper()} {chapter}:{wanted[0]}"
+            if len(wanted) == 1 else
+            f"{self.project.book_id.upper()} {chapter}:{wanted[0]}-{wanted[-1]}"
+        )
+
+        def call_model(instructions: str, input_text: str) -> dict[str, Any]:
+            return client.propose_window_alignment(
+                instructions, input_text, window_ai_alignment.SCHEMA,
+            )
+
+        result = window_ai_alignment.propose_window(
+            window, call_model,
+            chapter=chapter, reference=reference,
+            source_name=language.source_name, target_name=language.target_name,
+            language_guidance=language.prompt_guidance, glosses=glosses,
+            error=AIError,
+        )
+        if result.get("modelConsulted"):
+            usage = getattr(client, "last_usage", None)
+            total_tokens = getattr(usage, "total_tokens", 0) or 0
+            cost = getattr(client, "last_cost_usd", 0.0) or 0.0
+            self.settings.record_ai_usage(total_tokens, cost)
+            result["usage"] = {"totalTokens": total_tokens, "estimatedCostUSD": round(cost, 6)}
+        # Each verse proposal carries the alignment it was compiled against, so the
+        # frontend can hand it back as `expectedOriginal` and a save races nothing.
+        by_verse = {verse: alignment for verse, alignment, _ in window}
+        for item in result.get("verseProposals", []):
+            item["expectedOriginal"] = by_verse[item["verse"]].to_dict()
         return result
 
     def _cross_verse_annotations(self, chapter: str, verse: str, inventory) -> dict[str, Any]:
@@ -4808,6 +4907,10 @@ class BridgeEngine:
                 ))
             if m == Methods.ALIGNMENT_CROSS_VERSE_AI_PROPOSE:
                 return EngineResponse.ok(request.id, result=self.ai_propose_cross_verse(
+                    p["chapter"], p.get("verses", []),
+                ))
+            if m == Methods.ALIGNMENT_WINDOW_AI_PROPOSE:
+                return EngineResponse.ok(request.id, result=self.propose_window_ai_alignment(
                     p["chapter"], p.get("verses", []),
                 ))
             if m == Methods.ALIGNMENT_CROSS_VERSE_LINK:

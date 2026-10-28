@@ -14327,3 +14327,118 @@ the maintainer decided: the 15 s import smoke budget.
 
 **Verified.** Export and parser tests; full engine suite, `npm run check`/`test`/
 `build` and the frozen smoke in the commit.
+
+## 2026-10-07 — Passage-level AI alignment for cold-start projects (#214)
+
+**Gist.** On a freshly imported book, "Suggest with AI" found nothing (#188,
+#208). The corpus scorer has no completed alignments to learn from, and the #146
+prompt hands the model *gap* tokens only, forbids same-verse pairs, and truncates
+at 40/60 handles — on a cold book every word is a gap and nearly every word
+belongs in its own verse, so a careful model correctly returns nothing. A new
+method asks one question over a short window with every token offered; same-verse
+picks are compiled per verse, cross-verse picks go to the strip; every pick is a
+proposal behind a human click. Nothing auto-applies, no schema, golden or
+threshold change, same optional key.
+
+### Why the existing passes could not be tuned into this
+
+Three things compound, and none is a bug in the provider:
+
+1. `cross_verse_proposals.py` reports `no-completed-alignments` on a cold book, so
+   the #146 agreement gate can never fire there — by design (its docstring says
+   so).
+2. `cross_verse_ai_proposals.build_menu` offers *gap* tokens and `_decode_links`
+   drops a same-verse pair. On a cold book that is the whole inventory and the
+   wrong question: the right home for ~all of it is its own verse.
+3. `MAX_MENU_SOURCES = 40` / `MAX_MENU_TARGETS = 60`, filled in verse order. Three
+   unaligned Greek verses exceed it (1:3–5 alone are 36 source tokens), so the
+   last verse of a range often never reached the model. The rows carried no
+   sentence order and no per-language guidance.
+
+The #146 design is a gap filler for a mostly aligned chapter. It is left exactly
+as it was; the new pass sits beside it.
+
+### What was built
+
+- `tc_ai_bridge/window_ai_alignment.py` — `build_window` (every token of each
+  verse in chapter order, opaque `S*`/`T*` handles, each remembering its verse's
+  positional `H001`/`T001` id), `decode_reply` (invented id raises; percent
+  confidences scaled; duplicates keep the first), `route` (same-verse edges →
+  `alignment_reliability.compile_link_proposal` in gap-fill mode with both
+  thresholds at 0, one proposal per verse; cross-verse edges → strip proposals
+  with `status: PROPOSED`, `agreesWithCorpus: false`, `autoLinkable: false`; a
+  same-verse claim on a word beats a cross-verse pick onto it, noted), and
+  `propose_window`. `MAX_WINDOW_VERSES = 5`; the bound is verses, not tokens.
+- `alignment.window.aiPropose` in `bridge_service.py`: validates and chapter-orders
+  the verses, builds glosses through `_gloss_for_strong`, takes the per-language
+  prompt guidance from `PluginRegistry().detect_project` (the single-verse prompt
+  always had it; the #146 one did not), records usage, and attaches each verse
+  proposal's `expectedOriginal` (`VerseAlignment.to_dict()`, the same shape the
+  frontend sends for every save). No key → structured `unavailable`.
+- `OpenAIResponsesClient.propose_window_alignment`: a thin structured call, like
+  its #146 sibling.
+- `sidecar.rs`: the method joins the 260 s provider-call class, with a test.
+- Frontend: `bridge.windowAiPropose`, `WindowAiProposalResult` /
+  `WindowVerseProposal`, and in `CrossVerseAlignmentModal.svelte` an **Align with
+  AI** button beside **Suggest with AI**; per-verse cards show the compiled groups
+  *as words* with **Apply to verse N** → the existing `aiApplyAlignmentProposal`
+  (then the usual recheck) and Dismiss; cross-verse picks join the strip as "AI
+  only" rows that Accept through `crossVerseLink` with the default human origin.
+
+### Two things worth knowing about the existing code, found on the way
+
+- **The strip offers Accept only on `status: PROPOSED`.** #146's `compose` sets
+  `AMBIGUOUS` on every uncorroborated model pick, so an "AI only" row there has
+  *Show the gap*, not Accept. For the window pass the maintainer's decision is
+  that every pick is acceptable, so its cross-verse proposals are `PROPOSED` with
+  `autoLinkable: false` — composed in `window_ai_alignment`, not by reusing
+  `compose`.
+- **Positional ids renumber after a save.** An aligned word leaves the word bank,
+  so `T005` can become `T001`. The protocol test proves the apply by *word*, and
+  the frontend already re-reads the context after every mutation, so nothing
+  user-facing keys on a stale id.
+
+### The gate, stated once more
+
+Decided by the maintainer in session, 2026-10-07: on a cold project every pick is
+a proposal. There is no second independent method to agree with, and asking the
+model twice is not independence in the sense CLAUDE.md means. The #146 agreement
+gate is unchanged and begins to fire on its own once accepted alignments warm the
+corpus table. The compiler's 0.72/0.5 thresholds are therefore passed as 0 for
+this pass: a threshold on the model's own number would have been a second,
+uncalibrated gate between the model and the reviewer's click.
+
+### The fixture
+
+`engine/tests/fixtures/51PHPIRVTam.SFM` (copied from
+`resources/semantic_mapping/regression/`, which #109 deletes; `conftest.py`'s
+`tamil_php_usfm` now points here) has no alignment markup, so `project.import`
+against the bundled UGNT yields a genuinely cold project: 9 blank groups in 1:3,
+13 in 1:4, full word banks, no completed verse. `tests/support/cold_start.py`
+writes three variants — `natural` (the IRV itself puts Greek 1:3 "I thank my God"
+in Tamil 1:6 and Greek 1:5 in Tamil 1:3), `swap34` (Tamil 1:3 ↔ 1:4, every word
+of each Greek verse now realized in the other), `spill34` (the last three words of
+Tamil 1:3 moved to the front of 1:4) — and `moved_words` is the answer key, built
+with the project's own tokeniser so it matches the word bank.
+
+### Verified
+
+- `tests/alignment/test_window_ai_alignment.py` (12) and
+  `tests/service/test_window_ai_alignment_protocol.py` (8): pass, fake transport,
+  including the apply round-trip through `alignment.aiApplyProposal` and the
+  link round-trip through `alignment.crossVerse.link`, and byte/row-compared
+  writes-nothing. `test_usfm_parser.py` passes on the moved fixture.
+- `tests/ai/test_window_ai_alignment_live.py` (marker `live_ai`, registered in
+  `pyproject.toml`): skips without `BRIDGE_LIVE_OPENAI_API_KEY`. **Not run.** It
+  is the first real-provider measurement in the repository and the answer to
+  #131 and matrix row D15; its report should be pasted into the matrix when run.
+- Frontend and shell gates: see the commit message for what ran.
+
+### Not done
+
+Chapter-wide windows as a background job (next slice, on the AI-review job
+pattern); persisted dismissals (#140); phrase-level scoring (#141). Not seen in
+the real desktop app — jsdom does not lay out, so five verses of cards at
+1366×768 is D15 work. #109 is re-scoped, not done: it keeps
+`alignment_reliability.py` and the two alignment methods minus the Stage 3 guard,
+and moves the Luke SFM.
