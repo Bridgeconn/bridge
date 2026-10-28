@@ -177,11 +177,11 @@ describe("ImportScreen projects list (#238)", () => {
       await fireEvent.mouseLeave(button);
       expect(screen.queryByRole("tooltip")).toBeNull();
     }
-    // Delete is offered only for a managed project; the order is Open, Rename, Archive, Delete.
+    // Delete is offered only for a managed project; the order is Open, Add books, Rename, Archive, Delete.
     expect(screen.queryByRole("button", { name: "Delete IRV Tamil" })).toBeNull();
     const row = screen.getByText("NT review").closest(".project-row") as HTMLElement;
     expect([...row.querySelectorAll("button")].map((b) => b.getAttribute("aria-label")))
-      .toEqual(["Open NT review", "Rename NT review", "Archive NT review", "Delete NT review"]);
+      .toEqual(["Open NT review", "Add books to NT review", "Rename NT review", "Archive NT review", "Delete NT review"]);
     await fireEvent.click(open);
     await waitFor(() => expect(openProject).toHaveBeenCalled());
   });

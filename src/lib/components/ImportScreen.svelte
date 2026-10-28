@@ -18,6 +18,7 @@
   import { onDestroy, onMount, tick } from "svelte";
   import UiIcon from "./UiIcon.svelte";
   import DuplicateImportDialog, { type RelatedImportProject } from "./DuplicateImportDialog.svelte";
+  import AddBooksDialog from "./AddBooksDialog.svelte";
   import { tooltip } from "../tooltip";
   import { iso6393 } from "iso-639-3";
   import { bridge } from "../api/bridgeClient";
@@ -101,6 +102,9 @@
     !metadata.bibleName.trim() ? "Bible / translation name" : "",
   ].filter(Boolean);
   let confirmingId = "";
+  // Project Home > Add books: the project whose dialog is open. The dialog
+  // owns the pickers, the inspection and the job; the list reloads after it.
+  let addBooksTarget: RegisteredProject | null = null;
   // #238: the list's management. Archived rows stay behind a filter; a
   // rename is a display name in the registry, never the folder.
   let showArchived = false;
@@ -314,6 +318,10 @@
   async function inspect(path: string) {
     if (duplicateDialogOpen) {
       error = "Choose an existing project or create a new project before importing another source.";
+      return;
+    }
+    if (addBooksTarget) {
+      error = "Finish adding books to the open project before importing another source.";
       return;
     }
     if (loading || importing) {
@@ -595,6 +603,7 @@
                 <button class="small-button" on:click={() => (confirmingId = "")} disabled={loading}>Cancel</button>
               {:else}
                 <button class="small-button action-icon primary" aria-label={`Open ${displayName(item)}`} use:tooltip={`Open ${displayName(item)}`} on:click={() => openPath(item.path, item.projectId)} disabled={loading}><UiIcon name="open" /></button>
+                <button class="small-button action-icon" aria-label={`Add books to ${displayName(item)}`} use:tooltip={`Add books to ${displayName(item)}`} on:click={() => (addBooksTarget = item)} disabled={loading}><UiIcon name="addBooks" /></button>
                 <button class="small-button action-icon" aria-label={`Rename ${displayName(item)}`} use:tooltip={`Rename ${displayName(item)}`} on:click={() => startRename(item)} disabled={loading}><UiIcon name="rename" /></button>
                 {#if item.archivedAt}
                   <button class="small-button action-icon" aria-label={`Unarchive ${displayName(item)}`} use:tooltip={`Unarchive ${displayName(item)}`} on:click={() => setArchived(item, false)} disabled={loading}><UiIcon name="unarchive" /></button>
@@ -724,6 +733,10 @@
     </div>
   {/if}
 </div>
+
+{#if addBooksTarget}
+  <AddBooksDialog project={addBooksTarget} onClose={() => (addBooksTarget = null)} onAdded={() => void loadProjects()} />
+{/if}
 
 {#if duplicateDialogOpen && preview}
   <DuplicateImportDialog projects={matchedGroups} exact={preview.duplicates.classification === "exactDuplicate"} busy={loading || importing} {error} onOpen={openRelatedProject} onCreate={chooseNewProject} />

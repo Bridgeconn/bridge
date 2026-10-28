@@ -978,6 +978,38 @@ export interface RegisteredProject {
   conflict?: { message: string; projectId: string; collectionId: string; registeredPath: string };
 }
 
+/** One book found in the files or folders chosen for Project Home > Add
+ * books (`project.inspectAddBooks`). `exists` says the project already has
+ * it; the reviewer then skips or replaces it. */
+export interface AddBooksBook extends ImportBook {
+  exists: boolean;
+  existingPath: string;
+  existingLazy: boolean;
+}
+
+export interface AddBooksPreview {
+  projectId: string;
+  projectPath: string;
+  projectName: string;
+  bibleName: string;
+  sourcePaths: string[];
+  existingBookIds: string[];
+  books: AddBooksBook[];
+  warnings: string[];
+}
+
+/** The result of an add-books job (`project.addBooks.start`, polled through
+ * `project.import.status`): what was added, replaced and skipped, and the
+ * collection's full book list afterwards. */
+export interface AddBooksResult {
+  projectPath: string;
+  collectionId: string;
+  added: ImportedProject[];
+  replaced: ImportedProject[];
+  skipped: string[];
+  projects: ImportedProject[];
+}
+
 export interface ImportedProject {
   projectId?: string;
   collectionId?: string;

@@ -137,7 +137,7 @@ def action_for_method(method: str) -> Action:
 _READ = (
     "ping", "engine.info",
     "project.open", "project.list", "project.listBookProgress", "project.scan", "project.report",
-    "project.collectionReport", "project.inspectImport", "project.import.status",
+    "project.collectionReport", "project.inspectImport", "project.import.status", "project.inspectAddBooks",
     "report.generate", "report.status", "report.get", "report.cancel", "report.export",
     "triage.status", "triage.results",
     "chapter.verses", "chapter.verseData",
@@ -229,7 +229,7 @@ _WRITE = (
 )
 
 _MANAGE_PROJECTS = (
-    "project.import", "project.import.start", "project.import.cancel",
+    "project.import", "project.import.start", "project.import.cancel", "project.addBooks.start",
     "project.forget", "project.delete", "project.rename", "project.archive", "project.unarchive",
     # #240: who works on what is the project admin's call.
     "assignments.set", "assignments.clear",

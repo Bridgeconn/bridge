@@ -36,6 +36,7 @@ export interface ExportResult {
   unalignedVerses?: { reference: string; chapter: string; verse: string; reason: string; detail: string }[];
 }
 import type {
+  AddBooksPreview,
   AIReviewChapterResponse,
   AIReviewJobSnapshot,
   AlignmentAiProposal,
@@ -426,6 +427,8 @@ export type EngineMethod =
   | "project.archive"
   | "project.unarchive"
   | "project.inspectImport"
+  | "project.inspectAddBooks"
+  | "project.addBooks.start"
   | "project.list"
   | "project.listBookProgress"
   | "project.open"
@@ -734,6 +737,12 @@ export const bridge = {
     return invoke<string | null>("pick_import_file");
   },
 
+  /** Several Scripture files at once (Project Home > Add books); empty when
+   *  the dialog was cancelled. */
+  async pickImportFiles(): Promise<string[]> {
+    return (await invoke<string[] | null>("pick_import_files")) ?? [];
+  },
+
   /** Open a book. A lazy sibling of a collection (never opened since the
    *  import) is prepared first as a background job (#210): the engine answers
    *  `{state: "preparing", jobId}` at once, this polls `project.import.status`
@@ -966,6 +975,19 @@ export const bridge = {
 
   importStatus(jobId: string): Promise<ImportJobSnapshot> {
     return call("project.import.status", { jobId });
+  },
+
+  /** Project Home > Add books: read-only, the books the chosen files or
+   *  folders hold, each flagged when the project already has it. */
+  inspectAddBooks(projectId: string, paths: string[]): Promise<AddBooksPreview> {
+    return call("project.inspectAddBooks", { projectId, paths });
+  },
+
+  /** Adds the books as an import job (the snapshot's `result` is an
+   *  AddBooksResult once it has succeeded); polled with `importStatus`. An
+   *  existing book is skipped unless it is named in `replaceBookIds`. */
+  addBooksStart(projectId: string, paths: string[], replaceBookIds: string[]): Promise<ImportJobSnapshot> {
+    return call("project.addBooks.start", { projectId, paths, replaceBookIds });
   },
 
   importCancel(jobId: string): Promise<ImportJobSnapshot> {

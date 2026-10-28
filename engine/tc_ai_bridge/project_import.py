@@ -1217,6 +1217,25 @@ def _reidentify_copy(work: Path, final: Path, source: Path, identity: dict[str, 
     return project_id
 
 
+def _stage_lazy_book(work: Path, source_file: Path, book_id: str, book_name: str,
+                     metadata: dict[str, Any]) -> None:
+    """Write the lightweight placeholder a collection import leaves for every
+    book but the first: the source copied into `.bridge/`, and the descriptor
+    materialize_lazy_project reads on first open."""
+    suffix = source_file.suffix.lower() or ".usfm"
+    source_copy = Path(".bridge") / f"source{suffix}"
+    (work / source_copy).parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_file, work / source_copy)
+    _write_json_atomic(work / _LAZY_IMPORT_PATH, {
+        "schemaVersion": 1,
+        "sourceCopy": source_copy.as_posix(),
+        "originalSourceFile": str(source_file),
+        "bookId": book_id,
+        "bookName": book_name,
+        "metadata": metadata,
+    })
+
+
 def import_source(source_path: str | Path, destination_root: str | Path, metadata: dict[str, Any], *,
                   progress: ImportProgress | None = None,
                   cancel: ImportCancel | None = None,
@@ -1337,18 +1356,7 @@ def import_source(source_path: str | Path, destination_root: str | Path, metadat
                     _write_imported_book(work, book, book_metadata, progress=progress, cancel=cancel)
                     entry["chapters"] = list(book.chapters)
                 else:
-                    suffix = source_file.suffix.lower() or ".usfm"
-                    source_copy = Path(".bridge") / f"source{suffix}"
-                    (work / source_copy).parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(source_file, work / source_copy)
-                    _write_json_atomic(work / _LAZY_IMPORT_PATH, {
-                        "schemaVersion": 1,
-                        "sourceCopy": source_copy.as_posix(),
-                        "originalSourceFile": str(source_file),
-                        "bookId": entry["bookId"],
-                        "bookName": entry["bookName"],
-                        "metadata": book_metadata,
-                    })
+                    _stage_lazy_book(work, source_file, entry["bookId"], entry["bookName"], book_metadata)
                 _write_json_atomic(work / _COLLECTION_PATH, collection)
                 staged.append((work, Path(entry["path"])))
             # The last cancel point. From here the whole set lands or none of
@@ -1373,4 +1381,268 @@ def import_source(source_path: str | Path, destination_root: str | Path, metadat
     return {
         "sourcePath": str(source), "kind": preview["kind"], "projectName": combined["projectName"],
         "bibleName": combined["bibleName"], "projects": imported, "primaryProjectPath": imported[0]["path"],
+    }
+
+
+# -- Adding books to an existing project --------------------------------------
+#
+# A project is one book; a collection is several sibling book folders under
+# one parent, each carrying the same `.bridge/collection.json`. Adding a book
+# writes a new sibling the way a multi-book import writes every book but the
+# first (a lazy placeholder, normalised on first open) and appends it to every
+# sibling's collection record. A single-book project becomes a collection the
+# first time a book is added to it. Replacing a book swaps its whole folder:
+# the book's Bridge-private workbench goes with it, which the UI says before
+# the reviewer confirms. Nothing is written until the last checkpoint, and a
+# failure past it moves the old folders back.
+
+CANONICAL_BOOK_ORDER: tuple[str, ...] = (
+    "gen", "exo", "lev", "num", "deu", "jos", "jdg", "rut", "1sa", "2sa", "1ki", "2ki", "1ch", "2ch",
+    "ezr", "neh", "est", "job", "psa", "pro", "ecc", "sng", "isa", "jer", "lam", "ezk", "dan", "hos",
+    "jol", "amo", "oba", "jon", "mic", "nam", "hab", "zep", "hag", "zec", "mal",
+    "mat", "mrk", "luk", "jhn", "act", "rom", "1co", "2co", "gal", "eph", "php", "col", "1th", "2th",
+    "1ti", "2ti", "tit", "phm", "heb", "jas", "1pe", "2pe", "1jn", "2jn", "3jn", "jud", "rev",
+)
+_BOOK_RANK = {book_id: index for index, book_id in enumerate(CANONICAL_BOOK_ORDER)}
+
+
+def _book_rank(book_id: str) -> tuple[int, str]:
+    key = str(book_id or "").lower()
+    return (_BOOK_RANK.get(key, len(CANONICAL_BOOK_ORDER)), key)
+
+
+def _book_chapters(root: Path, book_id: str) -> list[str]:
+    folder = root / book_id
+    if not folder.is_dir():
+        return []
+    chapters = [path.stem for path in folder.glob("*.json") if path.stem.isdigit()]
+    return sorted(chapters, key=int)
+
+
+def _project_book_identity(root: Path) -> dict[str, Any]:
+    """bookId, bookName, projectId and the import metadata of one book folder,
+    materialised or still lazy."""
+    manifest = _read_json(root / "manifest.json")
+    lazy = _read_json(root / _LAZY_IMPORT_PATH)
+    identity = _read_json(root / ".bridge" / "project.json")
+    project = manifest.get("project") if isinstance(manifest.get("project"), dict) else {}
+    target = manifest.get("target_language") if isinstance(manifest.get("target_language"), dict) else {}
+    resource = manifest.get("resource") if isinstance(manifest.get("resource"), dict) else {}
+    bridge_project = manifest.get("bridge_project") if isinstance(manifest.get("bridge_project"), dict) else {}
+    lazy_metadata = lazy.get("metadata") if isinstance(lazy.get("metadata"), dict) else {}
+    book_id = str(project.get("id") or lazy.get("bookId") or "").lower()
+    return {
+        "bookId": book_id,
+        "bookName": str(project.get("name") or lazy.get("bookName") or book_id.upper()),
+        "projectId": str(identity.get("projectId") or ""),
+        "lazy": (root / _LAZY_IMPORT_PATH).is_file(),
+        "metadata": {
+            "languageId": str(target.get("id") or lazy_metadata.get("languageId") or ""),
+            "languageName": str(target.get("name") or lazy_metadata.get("languageName") or ""),
+            "languageDirection": str(target.get("direction") or lazy_metadata.get("languageDirection") or "ltr"),
+            "projectName": str(bridge_project.get("name") or lazy_metadata.get("projectName") or ""),
+            "bibleName": str(resource.get("name") or lazy_metadata.get("bibleName") or ""),
+            "resourceId": str(resource.get("id") or lazy_metadata.get("resourceId") or ""),
+        },
+    }
+
+
+def _existing_books(root: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """The collection record this project belongs to (empty for a single
+    book) and one entry per existing book, each with its absolute `path`."""
+    collection = _read_json(root / _COLLECTION_PATH)
+    members = _collection_projects(root)
+    if members:
+        return collection, members
+    own = _project_book_identity(root)
+    return collection, [{
+        "path": str(root), "directoryName": root.name, "bookId": own["bookId"], "bookName": own["bookName"],
+        "chapters": _book_chapters(root, own["bookId"]),
+        "checkIndexStatus": "deferred" if own["lazy"] else "requires-resource-index",
+        "lazy": own["lazy"], "projectId": own["projectId"],
+    }]
+
+
+def inspect_add_books(project_root: str | Path, source_paths: list[str]) -> dict[str, Any]:
+    """Read-only: which books the chosen files/folders hold, and which of them
+    the project already has. A translationCore project or archive is a project
+    of its own and is refused here, with the reason."""
+    root = Path(project_root).resolve()
+    if not root.is_dir():
+        raise ProjectError(f"Project folder is missing: {root}")
+    paths = [str(path).strip() for path in (source_paths or []) if str(path or "").strip()]
+    if not paths:
+        raise ProjectError("Choose at least one file or folder to add.")
+    own = _project_book_identity(root)
+    _, existing = _existing_books(root)
+    existing_by_id = {str(entry.get("bookId") or "").lower(): entry for entry in existing}
+    books: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    seen: dict[str, str] = {}
+    for path in dict.fromkeys(paths):
+        preview = inspect_import(path)
+        if preview["kind"] in {"translationCore", "translationCoreArchive"}:
+            raise ProjectError(
+                f"{Path(path).name} is a translationCore project. Import it from Projects as a project of its own; "
+                "only USFM/SFM Scripture files and folders can be added to an existing project."
+            )
+        for warning in preview.get("warnings") or []:
+            if not re.match(r"^\d+ books will be imported", warning) and warning not in warnings:
+                warnings.append(warning)
+        for book in preview["books"]:
+            book_id = str(book["bookId"]).lower()
+            if book_id in seen:
+                raise ProjectError(
+                    f"More than one chosen source identifies the same book ({book_id.upper()}): "
+                    f"{Path(seen[book_id]).name} and {Path(str(book['sourceFile'])).name}."
+                )
+            seen[book_id] = str(book["sourceFile"])
+            current = existing_by_id.get(book_id)
+            books.append({
+                **book, "bookId": book_id,
+                "exists": current is not None,
+                "existingPath": str(current.get("path") or "") if current else "",
+                "existingLazy": bool(current.get("lazy")) if current else False,
+            })
+    books.sort(key=lambda book: _book_rank(book["bookId"]))
+    return {
+        "projectPath": str(root),
+        "projectName": own["metadata"]["projectName"],
+        "bibleName": own["metadata"]["bibleName"],
+        "sourcePaths": paths,
+        "existingBookIds": sorted(existing_by_id, key=_book_rank),
+        "books": books,
+        "warnings": warnings,
+    }
+
+
+def add_books(project_root: str | Path, source_paths: list[str], *,
+              replace_book_ids: list[str] | None = None,
+              progress: ImportProgress | None = None,
+              cancel: ImportCancel | None = None) -> dict[str, Any]:
+    """Add the books in ``source_paths`` to the project at ``project_root``.
+
+    A book the project already has is skipped unless its id is in
+    ``replace_book_ids``, in which case its folder is replaced wholesale (the
+    reviewer has confirmed that). New and replacing books are staged beside
+    the project and moved into place at the last checkpoint; every sibling's
+    `.bridge/collection.json` is then rewritten with the merged, canonically
+    ordered book list. A failure after the move puts the replaced folders back.
+    """
+    root = Path(project_root).resolve()
+    import_checkpoint(progress, cancel, phase="inspect")
+    preview = inspect_add_books(root, source_paths)
+    replace = {str(book_id).lower() for book_id in (replace_book_ids or [])}
+    own = _project_book_identity(root)
+    metadata = dict(own["metadata"])
+    missing = [key for key in ("languageId", "languageName", "bibleName") if not metadata.get(key)]
+    if missing:
+        raise ProjectError(f"The project's metadata is incomplete ({', '.join(missing)}); books cannot be added to it.")
+    if not metadata.get("projectName"):
+        metadata["projectName"] = metadata["bibleName"]
+    if metadata.get("languageDirection") not in {"ltr", "rtl"}:
+        metadata["languageDirection"] = "ltr"
+    resource_id = _slug(metadata.get("resourceId") or metadata["bibleName"], "bible")[:24]
+    metadata["resourceId"] = resource_id
+
+    collection, existing = _existing_books(root)
+    existing_by_id = {str(entry.get("bookId") or "").lower(): entry for entry in existing}
+    to_add = [book for book in preview["books"] if not book["exists"]]
+    to_replace = [book for book in preview["books"] if book["exists"] and book["bookId"] in replace]
+    skipped = [book["bookId"] for book in preview["books"] if book["exists"] and book["bookId"] not in replace]
+    if not to_add and not to_replace:
+        raise ProjectError("Every chosen book is already in the project and none was marked to be replaced.")
+
+    collection_id = str(collection.get("collectionId") or "")
+    if not collection_id:
+        collection_id = str(uuid.uuid4())
+        for entry in existing:
+            entry.setdefault("collectionId", collection_id)
+    destination = root.parent
+    planned: list[dict[str, Any]] = []
+    for book in to_add:
+        name = _slug(f"{metadata['languageId']}_{resource_id}_{book['bookId']}", book["bookId"])
+        final = _available_destination(destination, name)
+        planned.append({
+            "book": book, "final": final, "replacing": None,
+            "entry": {
+                "path": str(final), "bookId": book["bookId"], "bookName": str(book["bookName"]), "chapters": [],
+                "checkIndexStatus": "deferred", "lazy": True, "projectId": str(uuid.uuid4()),
+                "collectionId": collection_id, "directoryName": final.name,
+            },
+        })
+    for book in to_replace:
+        current = existing_by_id[book["bookId"]]
+        final = Path(str(current["path"]))
+        planned.append({
+            "book": book, "final": final, "replacing": current,
+            "entry": {
+                **{key: value for key, value in current.items() if key not in {"lazy", "chapters", "checkIndexStatus"}},
+                "path": str(final), "bookId": book["bookId"], "bookName": str(book["bookName"]), "chapters": [],
+                "checkIndexStatus": "deferred", "lazy": True,
+                "projectId": str(current.get("projectId") or uuid.uuid4()),
+                "collectionId": collection_id, "directoryName": final.name,
+            },
+        })
+
+    merged: dict[str, dict[str, Any]] = {str(e.get("bookId") or "").lower(): dict(e) for e in existing}
+    for plan in planned:
+        merged[plan["entry"]["bookId"]] = plan["entry"]
+    ordered = [merged[key] for key in sorted(merged, key=_book_rank)]
+    record = {key: value for key, value in collection.items() if key != "projects"}
+    record.update({
+        "schemaVersion": 2, "collectionId": collection_id,
+        "projectName": record.get("projectName") or metadata["projectName"],
+        "bibleName": record.get("bibleName") or metadata["bibleName"],
+        "projects": [{key: value for key, value in entry.items() if key != "path"} for entry in ordered],
+    })
+    record.setdefault("sourcePath", str(root))
+    replaced_ids = {plan["entry"]["bookId"] for plan in planned if plan["replacing"] is not None}
+    if replaced_ids and isinstance(record.get("qaRuns"), list):
+        record["qaRuns"] = [run for run in record["qaRuns"]
+                            if not (isinstance(run, dict) and str(run.get("bookId") or "").lower() in replaced_ids)]
+
+    staging = Path(tempfile.mkdtemp(prefix=".bridge-add-", dir=str(destination)))
+    try:
+        book_count = len(planned)
+        for index, plan in enumerate(planned):
+            entry = plan["entry"]
+            import_checkpoint(progress, cancel, phase="stage", bookId=entry["bookId"], bookIndex=index, bookCount=book_count)
+            work = staging / f"book-{index:03d}-{entry['bookId']}"
+            work.mkdir(parents=True)
+            _stage_lazy_book(work, Path(str(plan["book"]["sourceFile"])), entry["bookId"], entry["bookName"], dict(metadata))
+            _write_json_atomic(work / _COLLECTION_PATH, record)
+            plan["work"] = work
+        import_checkpoint(progress, cancel, phase="commit", bookCount=book_count)
+        moved: list[tuple[Path, Path | None]] = []
+        try:
+            for index, plan in enumerate(planned):
+                final: Path = plan["final"]
+                parked: Path | None = None
+                if plan["replacing"] is not None and final.exists():
+                    parked = staging / f"replaced-{index:03d}-{plan['entry']['bookId']}"
+                    os.replace(final, parked)
+                os.replace(plan["work"], final)
+                moved.append((final, parked))
+            for entry in existing:
+                folder = Path(str(entry.get("path") or ""))
+                if str(entry.get("bookId") or "").lower() in replaced_ids or not folder.is_dir():
+                    continue
+                _write_json_atomic(folder / _COLLECTION_PATH, record)
+        except BaseException:
+            for final, parked in reversed(moved):
+                shutil.rmtree(final, ignore_errors=True)
+                if parked is not None and parked.exists():
+                    os.replace(parked, final)
+            raise
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+    return {
+        "projectPath": str(root), "collectionId": collection_id,
+        "added": [plan["entry"] for plan in planned if plan["replacing"] is None],
+        "replaced": [plan["entry"] for plan in planned if plan["replacing"] is not None],
+        "skipped": skipped,
+        "projects": ordered,
+        "existing": [entry for entry in existing if str(entry.get("bookId") or "").lower() not in replaced_ids],
     }

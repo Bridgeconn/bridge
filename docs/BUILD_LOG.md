@@ -22252,3 +22252,50 @@ passed. Batch B (#339, #352): `pytest -n auto` 5652 passed, 3 xfailed, 3 timing 
 Bridge export (#339, confirmed against tC's source only), a real `eng`-versified import (#352), a real
 damaged `%LOCALAPPDATA%\Bridge\data\workspace.sqlite3` on an installed build (#338; QA matrix PRJ-007
 still to re-walk).
+
+## 2026-10-27 — Add books to an existing project from Project Home (branch `addBook`, Joel)
+
+**Ask.** The project list could import a file or folder as a new project, but a book could not be
+added to a project that already existed. A new row action (an "add file" glyph, between Open and
+Rename) opens a dialog that takes one file, several files or a folder, and asks skip-or-replace
+for a book the project already has, with a "do this for all" checkbox like a file copy.
+
+**Engine.** `project_import.inspect_add_books(root, paths)` (read-only) runs the same
+`inspect_import` the import screen uses on each chosen path, refuses a translationCore project or
+archive (a project of its own; only Scripture files/folders can be added) and a book named by two
+sources, and flags each book `exists` with its `existingPath`. `project_import.add_books(root,
+paths, replace_book_ids)` writes every new book and every existing book named to be replaced as a
+lazy placeholder beside the project (`_stage_lazy_book`, lifted out of `import_source` so both paths
+write the same shape; the book is normalised on first open as any collection sibling is), under one
+staging directory moved into place at the last checkpoint. A replaced folder is parked in staging
+first and moved back if anything after the move fails. A single-book project becomes a collection
+(new `collectionId`, the original keeps its `projectId`). Every sibling's `.bridge/collection.json`
+is rewritten with the merged list in canonical book order (`CANONICAL_BOOK_ORDER`), and a replaced
+book's `qaRuns` entry is dropped. Metadata (language, Bible name, resource id) comes from the
+project's own manifest or lazy descriptor, never from the user again. RPCs: `project.inspectAddBooks`
+(read) and `project.addBooks.start` (manage_projects), the latter on `ImportJobManager` under the
+import lock, polled and cancelled through `project.import.status`/`.cancel`; on success the engine
+registers every book of the collection and forgets a replaced book's progress and assignment cache,
+closing the open project's handles first when its folder is the one replaced (#113).
+
+**Replace is wholesale.** A replaced book's folder goes with its workbench database: decisions,
+alignment links, check results. The dialog says so before the button and again on the row. Keeping
+the workbench across a replace (re-keying decisions to new text) was not attempted; raise it with
+the maintainer if a team wants it.
+
+**Shell / client / UI.** `pick_import_files` (tauri-plugin-dialog `pick_files`, same filter as
+`pick_import_file`; empty vector on cancel). `bridge.pickImportFiles`, `inspectAddBooks`,
+`addBooksStart`. `AddBooksDialog.svelte`: a native `<dialog>` like `DuplicateImportDialog`, five
+steps (choose files/folder with the Project Home choice cards → inspect → one conflict at a time,
+Skip / Replace, "Do this for all N books already in the project" → the list with a Skip/Replace
+segmented control per existing book and the count → progress bar → outcome). Escape cancels except
+while the job runs. `ImportScreen` refuses a drop while the dialog is open and reloads the list after it.
+
+**Gates.** `pytest tests/service/test_add_books.py` 6 passed (files, folder, skip/replace, nothing
+to add, reporter refused); `test_authorize_roles.py` pins the two methods; `pytest -n auto` over
+`project_io`, `service/test_bridge_service.py`, `test_assignments.py`, `support` 290 passed; the full
+suite is in this session's handoff. `npm run check` 0/0, `npm run test` 100 files 1038 passed,
+`npm run build` ok; `cargo check` ok, `cargo test` 15 passed. **Not verified:** the installed app
+(sidecars not rebuilt in this session; `build-sidecars.ps1` + `smoke_sidecars.py` still to run), the
+native multi-select dialog on a real desktop, and the 1366x768 rendering of the dialog.
+

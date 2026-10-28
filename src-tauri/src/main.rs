@@ -69,6 +69,7 @@ fn main() {
             commands::reveal_main_window,
             commands::pick_project_folder,
             commands::pick_import_file,
+            commands::pick_import_files,
             commands::pick_json_file,
             commands::pick_save_path,
         ])
