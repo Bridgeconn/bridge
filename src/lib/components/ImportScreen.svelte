@@ -548,7 +548,7 @@
       </div>
 
       <p class="drop-hint">Or drop a file or folder anywhere in this window.</p>
-      <button class="link-button" on:click={openExisting} disabled={loading} title="Open a Bridge or translationCore project in its current location, without copying it">Open an existing project</button>
+      <button class="link-button" on:click={openExisting} disabled={loading} use:tooltip={"Open a Bridge or translationCore project in its current location, without copying it"}>Open an existing project</button>
       {#if loading}<p class="working">Reading, validating, or opening the selected project…</p>{/if}
       {#if importNotice}<p class="working">{importNotice}</p>{/if}
       {#if error && !duplicateDialogOpen}
@@ -884,11 +884,13 @@
   .archived-filter input { width: 18px; height: 18px; accent-color: var(--accent); }
   .project-home { background: var(--bg); overflow: hidden; padding-bottom: 0; }
   .project-home .header, .project-home .list-area, .project-home .footer { max-width: 1200px; padding-left: 32px; padding-right: 32px; }
-  .project-home .header { padding-top: 28px; padding-bottom: 20px; border: 0; }
+  .project-home .header { padding-top: 20px; padding-bottom: 12px; border: 0; }
   .project-home .list-area { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; padding-top: 0; padding-bottom: 0; }
   .project-results { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; scrollbar-gutter: stable; padding: 3px 4px 20px 3px; }
   .project-results:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 10px; }
-  .project-home .footer { border: 0; background: transparent; padding-top: 0; padding-bottom: 24px; }
+  .project-home .section-heading { margin-bottom: 10px; }
+  .project-home .drop-hint { margin-top: 10px; }
+  .project-home .footer { border: 0; background: transparent; padding-top: 0; padding-bottom: 16px; }
   .project-toolbar { flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; margin-bottom: 16px; }
   .project-search { display: flex; align-items: center; gap: 8px; flex: 1 1 320px; min-width: 0; padding: 0 12px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface); }
   .project-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-bg); }
@@ -918,12 +920,12 @@
   .project-home .small-button.primary { background: var(--accent); color: white; }
   .project-home .small-button.primary:hover:not(:disabled) { filter: brightness(.92); }
   .project-home .choice-grid { gap: 16px; }
-  .project-home .choice { display: flex; align-items: center; gap: 14px; min-width: 0; min-height: 92px; padding: 16px; border-radius: 12px; border-color: var(--border); transition: background .15s, border-color .15s; }
+  .project-home .choice { display: flex; align-items: center; gap: 14px; min-width: 0; min-height: 76px; padding: 12px 16px; border-radius: 12px; border-color: var(--border); transition: background .15s, border-color .15s; }
   .project-home .choice-title { font-size: var(--fs-sm); margin-bottom: 3px; }
   .project-home .choice-copy > span:last-child { font-size: var(--fs-2xs); }
   .project-home .choice:hover:not(:disabled) { border-color: var(--accent); }
   .project-home .choice:hover:not(:disabled) .choice-arrow { color: var(--accent); }
-  .project-home .link-button { min-height: 32px; padding: 6px 10px; margin-top: 6px; line-height: 1.5; text-decoration: underline; text-underline-offset: 3px; }
+  .project-home .link-button { min-height: 28px; padding: 4px 10px; margin-top: 2px; line-height: 1.5; text-decoration: underline; text-underline-offset: 3px; }
   .action-icon { display: grid; place-items: center; width: 34px; height: 34px; min-height: 34px; padding: 0; flex-shrink: 0; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); color: var(--text-2); cursor: pointer; }
   .project-home .action-icon.danger { color: var(--danger); }
   .import-review { background: var(--bg); }

@@ -22729,3 +22729,22 @@ answers nothing during project.report. A true per-chapter percentage needs
 the build to become an engine job (start/status, worker thread, the same
 shape as the check job); raised for the maintainer as its own issue, which
 would also stop the sidecar freezing during a build.
+
+## 2026-10-29 — #409: a reading area in Align Words (Joel)
+
+**Ask.** Keyigumpeule Thou and Amos want to read the selected target verse as continuous text,
+with its punctuation, while aligning — translationCore's "Step 1. Read", target language only.
+
+**Done** (`AlignmentModal.svelte`). A "Read" section above the interlinear: the reference and the
+target language as its label, then the verse's `display.plain` — the engine's one USFM reader
+(gotcha 14), never a sentence rebuilt from the cards, so moving a card cannot change the wording or
+order. The editor has already read the open chapter into `verseDisplay`; a verse not there yet is
+read once with `verse.get`, and a failed read leaves the cards usable with a one-line notice. Set
+in the editor's verse type (`--font-target`, `--verse-scale`), `dir`/`lang` from the project, on a
+quiet surface so it reads as text, not as a drop target. No engine, writer or token change.
+
+**Tests.** `AlignmentModal.test.ts`: the text (Tamil, with its full stop) is shown from the store
+and unchanged after a pick-up; the engine fallback is read once when the store is empty. Gates:
+`npm run check` 0/0, `npm run test` 104 files 1078 passed, `npm run build` ok. **Not verified:** the
+desktop at 1366x768 with a long verse (the section wraps and the interlinear below keeps its
+max-height, so the bank and footer should stay on screen, but that is a visual check).
