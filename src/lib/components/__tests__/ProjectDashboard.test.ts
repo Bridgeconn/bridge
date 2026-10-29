@@ -3,6 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/svelte";
 
 import ProjectDashboard from "../ProjectDashboard.svelte";
 import { collectionQa, stopCollectionQa } from "../../collectionQa";
+import { checkingProgress } from "../../stores";
 import type { ExceptionQueueRow, ProjectReport } from "../../types/finding";
 import type { CollectionQaSnapshot } from "../../types/collectionQa";
 
@@ -66,18 +67,178 @@ function mount(rows: ExceptionQueueRow[] = []) {
 }
 
 describe("ProjectDashboard", () => {
-  it("draws the four progress meters on a checked book's row", () => {
+  it("keeps a checked book's four meters behind the Progress toggle", async () => {
     mount();
+    expect(screen.queryByText(/chapters checked/)).toBeNull();
+    expect(screen.queryByText("Checked 2/4 chapters")).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Show progress of Ruth" }));
     expect(screen.getByText("Checked 2/4 chapters")).toBeInTheDocument();
     expect(screen.getByText("Reviewed 10/85")).toBeInTheDocument();
     expect(screen.getByText("Aligned 7/40")).toBeInTheDocument();
     expect(screen.getByText("Language QA clean 31/40")).toBeInTheDocument();
   });
 
-  it("opens and assigns through icon actions named for the screen reader", () => {
-    mount();
+  // Third pass (2026-10-30): a row is not clickable. Its first icon is the
+  // book's QA state -- View QA report once something has checked it, Run QA
+  // before -- then Assign and Open.
+  it("offers View QA report on a checked book, which previews and never runs a check", async () => {
+    const onRunBookQa = vi.fn();
+    const onPreviewBook = vi.fn();
+    render(ProjectDashboard, { props: {
+      projectName: "Ruth", books, loading: false, error: "", onSelectBook: () => {}, onPreviewBook, onRetry: () => {},
+      report: null, reportLoading: false, reportError: "", onRunBookQa,
+    } });
     expect(screen.getByRole("button", { name: "Open" }).classList.contains("ui-icon-btn")).toBe(true);
     expect(screen.queryByRole("button", { name: "Assign…" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Run QA" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Open" }).closest(".book-row")?.getAttribute("role")).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "View QA report" }));
+    expect(onPreviewBook).toHaveBeenCalledWith("/projects/rut");
+    expect(onRunBookQa).not.toHaveBeenCalled();
+  });
+
+  const checkedBook = (books as unknown as { progress: Record<string, unknown> }[])[0];
+  const unchecked = [{ ...checkedBook, progress: { ...checkedBook.progress, checkedChapterCount: 0 } }] as never;
+
+  it("offers Run QA on a book nothing has checked", async () => {
+    const onRunBookQa = vi.fn();
+    render(ProjectDashboard, { props: {
+      projectName: "Ruth", books: unchecked, loading: false, error: "", onSelectBook: () => {}, onPreviewBook: () => {}, onRetry: () => {},
+      report: null, reportLoading: false, reportError: "", onRunBookQa,
+    } });
+    expect(screen.queryByRole("button", { name: "View QA report" })).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Run QA" }));
+    expect(onRunBookQa).toHaveBeenCalledWith("/projects/rut");
+  });
+
+  it("disables Run QA while a job runs", () => {
+    render(ProjectDashboard, { props: {
+      projectName: "Ruth", books: unchecked, loading: false, error: "", onSelectBook: () => {}, onPreviewBook: () => {}, onRetry: () => {},
+      report: null, reportLoading: false, reportError: "", qaBusy: true,
+    } });
+    expect(screen.getByRole("button", { name: "Run QA" })).toBeDisabled();
+  });
+
+  it("offers Run QA, not a report, on a never-opened book, and says so in the report card", async () => {
+    const onRunBookQa = vi.fn();
+    const lazy = [{ path: "/projects/gen", bookId: "gen", bookName: "Genesis", missing: false, lazy: true, progress: null }] as never;
+    render(ProjectDashboard, { props: {
+      projectName: "Ruth", books: lazy, loading: false, error: "", onSelectBook: () => {}, onPreviewBook: () => {}, onRetry: () => {},
+      report: null, reportLoading: false, reportError: "", openBookName: "Genesis", openBookPath: "/projects/gen", onRunBookQa,
+    } });
+    expect(screen.getByText("Not yet opened")).toBeInTheDocument();
+    expect(screen.getByText("Genesis has not been checked yet.")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Run QA on Genesis" }));
+    expect(onRunBookQa).toHaveBeenCalledWith("/projects/gen");
+    await fireEvent.click(screen.getByRole("button", { name: "Run QA" }));
+    expect(onRunBookQa).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows the dashboard's own check job in the report card, with Cancel, and spins the row", async () => {
+    const onCancelQa = vi.fn();
+    checkingProgress.set({ running: true, percent: 40, label: "tN · tW · 2:3", jobId: "j1", state: "running", error: "", scope: "book" });
+    try {
+      render(ProjectDashboard, { props: {
+        projectName: "Ruth", books, loading: false, error: "", onSelectBook: () => {}, onPreviewBook: () => {}, onRetry: () => {},
+        report: report([]), reportLoading: false, reportError: "", qaBusy: true, qaRunningPath: "/projects/rut", onCancelQa,
+      } });
+      expect(screen.getByText("Checking Ruth…")).toBeInTheDocument();
+      expect(screen.getByText("tN · tW · 2:3 · 40%")).toBeInTheDocument();
+      expect(screen.queryByText("Verses needing attention")).toBeNull();
+      expect(screen.getByRole("status", { name: "Checking Ruth" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "View QA report" })).toBeNull();
+      await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(onCancelQa).toHaveBeenCalledTimes(1);
+    } finally {
+      checkingProgress.set({ running: false, percent: 0, label: "", jobId: "", state: "idle", error: "", scope: "chapter" });
+    }
+  });
+
+  it("shows a book being opened in the report card, not the old report", () => {
+    render(ProjectDashboard, { props: {
+      projectName: "Ruth", books, loading: false, error: "", onSelectBook: () => {}, onPreviewBook: () => {}, onRetry: () => {},
+      report: report([]), reportLoading: false, reportError: "", qaBusy: true, openingPath: "/projects/rut", openingDetail: "preparing chapter 2 of 4",
+    } });
+    expect(screen.getByText("Opening Ruth…")).toBeInTheDocument();
+    expect(screen.getByText("preparing chapter 2 of 4")).toBeInTheDocument();
+    expect(screen.queryByText("Verses needing attention")).toBeNull();
+    expect(screen.getByRole("status", { name: "Opening Ruth" })).toBeInTheDocument();
+  });
+
+  it("keeps a failed dashboard job on the card with Run QA again", async () => {
+    const onRunBookQa = vi.fn();
+    checkingProgress.set({ running: false, percent: 40, label: "", jobId: "j1", state: "failed", error: "sidecar died", scope: "book" });
+    try {
+      render(ProjectDashboard, { props: {
+        projectName: "Ruth", books, loading: false, error: "", onSelectBook: () => {}, onPreviewBook: () => {}, onRetry: () => {},
+        report: null, reportLoading: false, reportError: "", qaRunningPath: "/projects/rut", onRunBookQa,
+      } });
+      expect(screen.getByText("sidecar died")).toBeInTheDocument();
+      await fireEvent.click(screen.getByRole("button", { name: "Run QA again" }));
+      expect(onRunBookQa).toHaveBeenCalledWith("/projects/rut");
+    } finally {
+      checkingProgress.set({ running: false, percent: 0, label: "", jobId: "", state: "idle", error: "", scope: "chapter" });
+    }
+  });
+
+  it("shows when the report was built, with Rebuild and Run QA again as icons", async () => {
+    const onLoadReport = vi.fn();
+    const onRunBookQa = vi.fn();
+    render(ProjectDashboard, { props: {
+      projectName: "Ruth", books, loading: false, error: "", onSelectBook: () => {}, onPreviewBook: () => {}, onRetry: () => {},
+      report: report([]), reportLoading: false, reportError: "", reportBuiltAt: "2026-10-29T08:03:00Z", onLoadReport, onRunBookQa,
+      openBookPath: "/projects/rut",
+    } });
+    expect(screen.getByText(/^built /)).toBeInTheDocument();
+    const rebuild = screen.getByRole("button", { name: "Rebuild" });
+    expect(rebuild.classList.contains("ui-icon-btn")).toBe(true);
+    await fireEvent.click(rebuild);
+    expect(onLoadReport).toHaveBeenCalledTimes(1);
+    await fireEvent.click(screen.getByRole("button", { name: "Run QA again" }));
+    expect(onRunBookQa).toHaveBeenCalledWith("/projects/rut");
+  });
+
+  it("filters the queue by chapter from a dropdown, and clears it", async () => {
+    mount([
+      row({ chapter: "1", verse: "1", critical: 1 }),
+      row({ chapter: "2", verse: "1", high: 1 }),
+      row({ chapter: "2", verse: "5", high: 1 }),
+    ]);
+    expect(screen.getAllByText(/RUT \d:\d/)).toHaveLength(3);
+    await fireEvent.click(screen.getByRole("button", { name: "All chapters" }));
+    await fireEvent.click(screen.getByRole("option", { name: "2" }));
+    expect(screen.getAllByText(/RUT \d:\d/)).toHaveLength(2);
+    expect(screen.queryByText("RUT 1:1")).toBeNull();
+    expect(screen.getByRole("button", { name: "Chapter 2" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "critical 1" })).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Clear chapter filter" }));
+    expect(screen.getAllByText(/RUT \d:\d/)).toHaveLength(3);
+  });
+
+  it("filters the queue by what a row carries and pages the filtered list", async () => {
+    mount([
+      row({ chapter: "1", verse: "1", critical: 2 }),
+      row({ chapter: "1", verse: "2", high: 1 }),
+      row({ chapter: "1", verse: "3", high: 1, discussions: 1 }),
+    ]);
+    expect(screen.getByText("Verses needing attention").nextElementSibling).toHaveTextContent("3");
+    await fireEvent.click(screen.getByRole("button", { name: "high 2" }));
+    expect(screen.getAllByText(/RUT 1:\d/)).toHaveLength(2);
+    expect(screen.queryByText("RUT 1:1")).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "high 2" }));
+    expect(screen.getAllByText(/RUT 1:\d/)).toHaveLength(3);
+  });
+
+  it("shows the open counts as tiles", () => {
+    const base = report([]);
+    base.publicationGate = { ...base.publicationGate, readyForHumanPublicationSignoff: false, checkHighFindings: 18705, openDiscussions: 2 } as never;
+    render(ProjectDashboard, { props: {
+      projectName: "Ruth", books, loading: false, error: "", onSelectBook: () => {}, onPreviewBook: () => {}, onRetry: () => {},
+      report: base, reportLoading: false, reportError: "",
+    } });
+    expect(screen.getByText("18.7k")).toBeInTheDocument();
+    expect(screen.getByText("Check findings")).toBeInTheDocument();
+    expect(screen.getByText("Discussions")).toBeInTheDocument();
   });
 
   // The Collection QA table is gone (dashboard restyle, 2026-10-28): each
@@ -99,8 +260,9 @@ describe("ProjectDashboard", () => {
     }
   });
 
-  it("labels the checked-chapters bar without the AI prefix", () => {
+  it("labels the checked-chapters bar without the AI prefix", async () => {
     mount();
+    await fireEvent.click(screen.getByRole("button", { name: "Show progress of Ruth" }));
     expect(screen.getByText("Checked 2/4 chapters")).toBeInTheDocument();
     expect(screen.queryByText(/AI-checked/)).not.toBeInTheDocument();
   });
@@ -194,30 +356,20 @@ describe("ProjectDashboard", () => {
       return { ...utils, onLoadReport };
     }
 
-    it("prompts for a book instead of building a report nobody asked for", () => {
-      mountWithoutReport();
-      expect(screen.getByText("Select a book on the left to check it for errors.")).toBeInTheDocument();
+    it("explains the row icons instead of building a report nobody asked for", () => {
+      const { onLoadReport } = mountWithoutReport();
+      expect(onLoadReport).not.toHaveBeenCalled();
+      expect(screen.queryByRole("button", { name: /Build the QA report/ })).not.toBeInTheDocument();
+      expect(screen.getByText("Pick a book on the left to see its QA report.")).toBeInTheDocument();
+      expect(screen.getByRole("list", { name: "What the book icons do" })).toHaveTextContent(/Run QA.*View QA report.*Open/);
       expect(screen.getByText(/takes a couple of minutes/)).toBeInTheDocument();
     });
 
-    it("builds the report only on an explicit click", async () => {
-      const { onLoadReport } = mountWithoutReport();
-      expect(onLoadReport).not.toHaveBeenCalled();
-
-      await fireEvent.click(screen.getByRole("button", { name: /Build the QA report for Genesis/ }));
-
-      expect(onLoadReport).toHaveBeenCalledTimes(1);
-    });
-
-    it("offers no build action when no book is open", () => {
-      mountWithoutReport({ openBookName: "" });
-      expect(screen.queryByRole("button", { name: /Build the QA report/ })).not.toBeInTheDocument();
-      expect(screen.getByText("Select a book on the left to check it for errors.")).toBeInTheDocument();
-    });
-
-    it("says the wait is expected while it builds", () => {
-      mountWithoutReport({ reportLoading: true });
-      expect(screen.getByText("Building the QA report…")).toBeInTheDocument();
+    it("counts the build against its estimate while it builds, and says it is one", () => {
+      mountWithoutReport({ reportLoading: true, reportEstimateSeconds: 90 });
+      expect(screen.getByText("Building the QA report for Genesis…")).toBeInTheDocument();
+      expect(screen.getByText("0 s elapsed · about 1 min 30 s left")).toBeInTheDocument();
+      expect(screen.getByText(/an estimate from the book's length \(about 1 min 30 s in all\)/)).toBeInTheDocument();
       expect(screen.getByText(/the rest of the app waits for it/)).toBeInTheDocument();
     });
 
@@ -233,6 +385,8 @@ describe("ProjectDashboard", () => {
     });
   });
 
+  // #322 asked that a key on a row's button never also preview the row; the
+  // row is no longer clickable at all (2026-10-30), so only the buttons act.
   describe("keyboard on a book row (#322)", () => {
     function mountRow(canAssign = false) {
       const onSelectBook = vi.fn();
@@ -272,13 +426,12 @@ describe("ProjectDashboard", () => {
       expect(onPreviewBook).not.toHaveBeenCalled();
     });
 
-    it("Enter or Space on the row itself still previews", async () => {
+    it("a click or key on the row itself does nothing", async () => {
       const { onSelectBook, onPreviewBook } = mountRow();
       const bookRow = screen.getByRole("button", { name: "Open" }).closest(".book-row") as HTMLElement;
-      expect(await fireEvent.keyDown(bookRow, { key: "Enter" })).toBe(false);
-      await fireEvent.keyDown(bookRow, { key: " " });
-      expect(onPreviewBook).toHaveBeenCalledTimes(2);
-      expect(onPreviewBook).toHaveBeenCalledWith("/projects/rut");
+      await fireEvent.click(bookRow);
+      await fireEvent.keyDown(bookRow, { key: "Enter" });
+      expect(onPreviewBook).not.toHaveBeenCalled();
       expect(onSelectBook).not.toHaveBeenCalled();
     });
   });

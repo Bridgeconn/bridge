@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { bridge } from "../api/bridgeClient";
   import { recheckVerse } from "../verseChecks";
+  import { perfAbort, perfBegin, perfEnd, perfResponded } from "../perf";
   import {
     alignmentStatusByVerse, checkStatusByVerse, noteAlignmentChanged, project, targetLang,
     verseKey,
@@ -181,9 +182,15 @@
     }
   }
 
-  async function mutate(action: () => Promise<AlignmentContext>, message: string) {
+  // `perfAction`: a PERF_ACTIONS name to time this mutation under (#412):
+  // begun now, responded at the busy state, ended once the saved placement
+  // and its re-check are in and the next operation is accepted; a failure
+  // records no sample.
+  async function mutate(action: () => Promise<AlignmentContext>, message: string, perfAction = "") {
     if (busy) return;
+    if (perfAction) perfBegin(perfAction);
     busy = true;
+    if (perfAction) perfResponded(perfAction);
     error = "";
     notice = "";
     try {
@@ -192,6 +199,9 @@
       error = value instanceof Error ? value.message : String(value);
     } finally {
       busy = false;
+      if (perfAction) {
+        if (error) perfAbort(perfAction); else void perfEnd(perfAction);
+      }
     }
   }
 
@@ -210,6 +220,7 @@
     void mutate(
       () => bridge.realignWords(chapter, verse, topIds, bottomIds, context!.alignment),
       moved > 1 ? `${moved} words placed together.` : "Alignment saved.",
+      "alignment.drop",
     );
   }
 

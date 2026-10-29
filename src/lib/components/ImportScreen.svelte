@@ -38,6 +38,15 @@
 
   let projects: RegisteredProject[] = [];
   let error: string | null = null;
+  // A message about a rejected drop or a failed action stays until the
+  // reviewer dismisses it or for a short while, whichever is first; it
+  // used to sit there until the next action. A new message restarts the clock.
+  const ERROR_AUTO_HIDE_MS = 12_000;
+  let errorHideTimer: ReturnType<typeof setTimeout> | undefined;
+  $: {
+    clearTimeout(errorHideTimer);
+    if (error) errorHideTimer = setTimeout(() => { error = null; }, ERROR_AUTO_HIDE_MS);
+  }
   let loading = false;
   // True until the first project.list response comes back. Distinct from
   // `loading` (which gates the import/open action buttons) because an
@@ -73,7 +82,7 @@
   };
 
   onMount(() => { void loadProjects(); });
-  onDestroy(() => { importGeneration += 1; clearTimeout(importPollTimer); });
+  onDestroy(() => { importGeneration += 1; clearTimeout(importPollTimer); clearTimeout(errorHideTimer); });
 
   $: importing = importJob !== null && !IMPORT_TERMINAL.has(importJob.state);
 
@@ -171,7 +180,14 @@
   function progressLine(item: RegisteredProject): string {
     const p = item.progress;
     if (!p) return "no progress recorded yet";
-    const parts = [`checked ${p.checkedChapterCount}/${p.chapterCount} ch`, `reviewed ${p.reviewedVerseCount}/${p.verseCount}`];
+    // The totals cover only the collection's books that have a progress
+    // rollup (opened or checked at least once); a never-opened book adds
+    // nothing to either side of a fraction. That coverage leads the line,
+    // or "436/436 ch" on a 66-book Bible reads as everything checked.
+    const parts: string[] = [];
+    const total = item.bookCount ?? 1;
+    if (total > 1 && p.booksWithProgress < total) parts.push(`${p.booksWithProgress} of ${total} books`);
+    parts.push(`checked ${p.checkedChapterCount}/${p.chapterCount} ch`, `reviewed ${p.reviewedVerseCount}/${p.verseCount}`);
     if ((p.alignedKnownVerseCount ?? 0) > 0) parts.push(`aligned ${p.alignedVerseCount ?? 0}/${p.alignedKnownVerseCount}`);
     if ((p.languageQaCheckedVerseCount ?? 0) > 0) parts.push(`LQA clean ${p.languageQaCleanVerseCount ?? 0}/${p.languageQaCheckedVerseCount}`);
     return parts.join(" · ");
@@ -513,7 +529,7 @@
   {/if}
   {#if preview === null}
     <div class="header">
-      <div class="page-title"><h1>Projects</h1><span class="project-count">{activeProjects.length}</span></div>
+      <div class="page-title"><h1>Projects</h1><span class="ui-chip accent project-count" aria-label={`${activeProjects.length} projects`}>{activeProjects.length}</span></div>
     </div>
 
     <div class="footer">
@@ -535,7 +551,12 @@
       <button class="link-button" on:click={openExisting} disabled={loading} title="Open a Bridge or translationCore project in its current location, without copying it">Open an existing project</button>
       {#if loading}<p class="working">Reading, validating, or opening the selected project…</p>{/if}
       {#if importNotice}<p class="working">{importNotice}</p>{/if}
-      {#if error && !duplicateDialogOpen}<p class="error" role="alert">{error}</p>{/if}
+      {#if error && !duplicateDialogOpen}
+        <div class="error" role="alert">
+          <span class="error-text">{error}</span>
+          <button type="button" class="error-dismiss" aria-label="Dismiss message" use:tooltip={"Dismiss"} on:click={() => (error = null)}>✕</button>
+        </div>
+      {/if}
     </div>
 
     <div class="list-area">
@@ -554,8 +575,16 @@
             Show archived ({archivedProjects.length})
           </label>
         {/if}
-        {#if projectSearchTerms.length > 0 && !projectsLoading}
-          <span class="search-count" role="status">{filteredProjects.length} of {visibleProjects.length} projects</span>
+        {#if !projectsLoading}
+          <!-- Always shown: the list's size at rest ("5 projects"), the match
+               count while searching ("3 of 5 projects"). -->
+          <span class="search-count" class:filtering={projectSearchTerms.length > 0} role="status">
+            {#if projectSearchTerms.length > 0}
+              <strong>{filteredProjects.length}</strong> of <strong>{visibleProjects.length}</strong> projects
+            {:else}
+              <strong>{visibleProjects.length}</strong> {visibleProjects.length === 1 ? "project" : "projects"}
+            {/if}
+          </span>
         {/if}
       </div>
       {/if}
@@ -736,7 +765,12 @@
 
       {#if loading}<p class="working">Checking the source…</p>{/if}
       {#if importNotice}<p class="working">{importNotice}</p>{/if}
-      {#if error && !duplicateDialogOpen}<p class="error" role="alert">{error}</p>{/if}
+      {#if error && !duplicateDialogOpen}
+        <div class="error" role="alert">
+          <span class="error-text">{error}</span>
+          <button type="button" class="error-dismiss" aria-label="Dismiss message" use:tooltip={"Dismiss"} on:click={() => (error = null)}>✕</button>
+        </div>
+      {/if}
     </div>
   {/if}
 </div>
@@ -823,7 +857,10 @@
   .required, .working, .error { font-size: var(--fs-2xs); margin: 0; }
   .required, .working { color: var(--text-2); }
   .working { margin-top: 15px; }
-  .error { color: var(--danger); margin-top: 13px; line-height: 1.45; }
+  .error { display: flex; align-items: flex-start; gap: 10px; margin-top: 13px; padding: 9px 8px 9px 12px; border: 1px solid #F5C2C2; border-left: 3px solid var(--danger); border-radius: 8px; background: var(--danger-bg); color: var(--danger); line-height: 1.45; }
+  .error-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+  .error-dismiss { display: grid; place-items: center; width: 24px; height: 24px; flex-shrink: 0; margin-top: -2px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--danger); font-size: var(--fs-2xs); line-height: 1; cursor: pointer; }
+  .error-dismiss:hover, .error-dismiss:focus-visible { background: rgba(220, 38, 38, .12); }
   .project-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
   .section-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 14px; }
   .section-heading h2 { margin: 0; font-size: var(--fs-lg); }
@@ -832,7 +869,7 @@
   .choice-copy { flex: 1; min-width: 0; }
   .choice-arrow { color: var(--text-2); font-size: 20px; }
   .page-title { display: flex; align-items: center; gap: 10px; }
-  .project-count { display: grid; place-items: center; min-width: 26px; height: 24px; padding: 0 6px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 7px; color: var(--text-2); background: var(--surface); font-size: var(--fs-2xs); }
+  .project-count { min-width: 30px; height: 28px; padding: 0 10px; box-sizing: border-box; justify-content: center; font-size: var(--fs-sm); font-weight: 700; line-height: 1; }
   .project-details { grid-column: 2 / -1; min-width: 0; color: var(--text-2); font-size: var(--fs-2xs); }
   .project-details summary { width: fit-content; cursor: pointer; padding: 4px 0; border-radius: 4px; user-select: none; }
   .project-details summary:hover { color: var(--accent); }
@@ -860,7 +897,10 @@
   .project-search input::placeholder { color: var(--text-2); opacity: 1; }
   .clear-search { border: 0; border-radius: 4px; background: transparent; color: var(--accent); font-size: var(--fs-2xs); padding: 6px; cursor: pointer; }
   .project-toolbar .archived-filter { margin: 0; flex-shrink: 0; }
-  .search-count { font-size: var(--fs-2xs); color: var(--text-2); }
+  .search-count { display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 12px; flex-shrink: 0; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--text-2); font-size: var(--fs-2xs); white-space: nowrap; }
+  .search-count strong { color: var(--text); font-weight: 700; }
+  .search-count.filtering { border-color: transparent; background: var(--accent-bg); color: var(--accent); }
+  .search-count.filtering strong { color: var(--accent); }
   @media (max-width: 480px) {
     .project-search { flex-basis: 100%; }
     .project-search input { font-size: var(--fs-2xs); }

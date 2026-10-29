@@ -201,18 +201,32 @@ describe("TopBar window controls", () => {
     expect(closeWindow).toHaveBeenCalledOnce();
   });
 
-  it("keeps settings and sync accessible and releases its resize listener", async () => {
+  it("keeps settings accessible, hides the sync indicator, and releases its resize listener", async () => {
     const onOpenSettings = vi.fn();
     const onOpenConnections = vi.fn();
     const view = mount({ screen: "home", onOpenSettings, onOpenConnections });
     await fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-    await fireEvent.click(screen.getByRole("button", { name: /Sync/ }));
     expect(onOpenSettings).toHaveBeenCalledOnce();
-    expect(onOpenConnections).toHaveBeenCalledOnce();
+    // No current verse to follow on the home screen or the dashboard, so no
+    // sync indicator there; it is on the editor, review and validation screens.
+    expect(screen.queryByRole("button", { name: /Sync/ })).toBeNull();
+    expect(onOpenConnections).not.toHaveBeenCalled();
     expect(screen.queryByRole("navigation")).toBeNull();
     await waitFor(() => expect(onResized).toHaveBeenCalledOnce());
     view.unmount();
     expect(stopResize).toHaveBeenCalledOnce();
+  });
+
+  it("shows the sync indicator on the screens that have a current verse", async () => {
+    for (const where of ["editor", "review", "validation"] as const) {
+      const onOpenConnections = vi.fn();
+      const view = mount({ screen: where, onOpenConnections });
+      await fireEvent.click(screen.getByRole("button", { name: /Sync/ }));
+      expect(onOpenConnections).toHaveBeenCalledOnce();
+      view.unmount();
+    }
+    mount({ screen: "dashboard" });
+    expect(screen.queryByRole("button", { name: /Sync/ })).toBeNull();
   });
 
   it("hides desktop window controls when viewed in a browser", () => {

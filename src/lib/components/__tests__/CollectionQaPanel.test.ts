@@ -44,31 +44,34 @@ describe("CollectionQaPanel", () => {
     stopCollectionQa();
   });
 
-  it("is one bar: the last runs' summary, the Checks menu and the Run buttons, no table", async () => {
+  it("is one bar: the last runs' summary, the Checks menu and one Run button, no table", async () => {
     render(CollectionQaPanel, { props: { bookCount: 2 } });
-    expect(await screen.findByText(/1 done · last run/)).toBeInTheDocument();
+    expect(await screen.findByText(/1 of 2 books checked · last run/)).toBeInTheDocument();
     expect(screen.queryByRole("table")).toBeNull();
     expect(screen.getByRole("button", { name: "Run QA on all 2 books" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Run all again" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Run all again" })).toBeNull();
     expect(screen.getByRole("button", { name: /^Checks/ })).toHaveAttribute("aria-expanded", "false");
     expect(collectionRunChecks).not.toHaveBeenCalled();
   });
 
-  it("opens the checks as a menu and keeps at least one ticked", async () => {
+  it("opens the checks as a menu, with the re-check option that was Run all again", async () => {
+    collectionRunChecks.mockResolvedValue(snapshot());
     render(CollectionQaPanel, { props: { bookCount: 2 } });
-    await screen.findByText(/1 done/);
+    await screen.findByText(/1 of 2 books checked/);
     await fireEvent.click(screen.getByRole("button", { name: /^Checks/ }));
     const menu = screen.getByRole("group", { name: "Checks to run" });
     expect(menu).toBeInTheDocument();
     expect(screen.getByLabelText("Greek Room")).toBeChecked();
     expect(screen.getByText(/meant to be left alone/)).toBeInTheDocument();
+    await fireEvent.click(screen.getByLabelText("Also re-check books unchanged since their last run"));
+    await fireEvent.click(screen.getByRole("button", { name: "Run QA on all 2 books" }));
+    expect(collectionRunChecks).toHaveBeenCalledWith(["tN", "tW", "alignment", "text", "languageQa", "greekroom"], true);
   });
 
   it("says never run when no book has a recorded run", async () => {
     collectionQaStatus.mockResolvedValue(snapshot());
     render(CollectionQaPanel, { props: { bookCount: 2 } });
     expect(await screen.findByText("never run")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Run all again" })).toBeNull();
   });
 
   it("shows the running book, the progress bar, Pause and Cancel while a run is active", async () => {
@@ -94,7 +97,7 @@ describe("CollectionQaPanel", () => {
     collectionQaStatus.mockResolvedValue(snapshot({ jobId: "j1", state: "succeeded",
       books: [book("rut", { state: "done", completedAt: "2026-09-24T10:00:00Z" }), book("gen", { state: "skipped" })] }));
     await waitFor(() => expect(get(collectionQaRunning)).toBe(false), { timeout: 3000 });
-    expect(await screen.findByText(/1 done · 1 unchanged · last run/)).toBeInTheDocument();
+    expect(await screen.findByText(/2 of 2 books checked · last run/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Run QA on all 2 books" })).toBeEnabled();
   });
 

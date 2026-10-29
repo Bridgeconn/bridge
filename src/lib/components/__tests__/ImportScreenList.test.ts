@@ -48,7 +48,7 @@ describe("ImportScreen projects list (#238)", () => {
     render(ImportScreen, { props: { onOpened: vi.fn() } });
     await screen.findByText("NT review");
     expect(screen.getByText(/2-book collection · Test Bible · English/)).toBeInTheDocument();
-    expect(screen.getByText("checked 3/50 ch · reviewed 40/1533 · aligned 20/90 · LQA clean 70/90")).toBeInTheDocument();
+    expect(screen.getByText("1 of 2 books · checked 3/50 ch · reviewed 40/1533 · aligned 20/90 · LQA clean 70/90")).toBeInTheDocument();
     expect(screen.getByText(/opened .* by Revant/)).toBeInTheDocument();
   });
 
@@ -60,10 +60,20 @@ describe("ImportScreen projects list (#238)", () => {
     expect(screen.getByRole("button", { name: "Open NT review" })).toBeVisible();
     await fireEvent.click(screen.getByText("Project details"));
     expect(details.open).toBe(true);
-    expect(screen.getByText("checked 3/50 ch · reviewed 40/1533 · aligned 20/90 · LQA clean 70/90")).toBeVisible();
+    // Only one of the collection's two books has a rollup, and the line says so.
+    expect(screen.getByText("1 of 2 books · checked 3/50 ch · reviewed 40/1533 · aligned 20/90 · LQA clean 70/90")).toBeVisible();
     expect(screen.getByText("C:/projects/eng_bible_gen")).toBeVisible();
     await fireEvent.click(screen.getByText("Project details"));
     expect(details.open).toBe(false);
+  });
+
+  it("omits the book coverage once every book of the collection is counted", async () => {
+    const base = project();
+    listProjects.mockResolvedValue({ projects: [project({ progress: { ...base.progress!, booksWithProgress: 2 } })] });
+    render(ImportScreen, { props: { onOpened: vi.fn() } });
+    await screen.findByText("NT review");
+    await fireEvent.click(screen.getByText("Project details"));
+    expect(screen.getByText("checked 3/50 ch · reviewed 40/1533 · aligned 20/90 · LQA clean 70/90")).toBeVisible();
   });
 
   it("says when nothing has been recorded or opened", async () => {

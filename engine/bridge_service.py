@@ -2997,15 +2997,19 @@ class BridgeEngine:
         chapters = [str(chapter)] if chapter else project_chapters
         counts = {"complete": 0, "complete_cross_verse": 0, "partial": 0, "untouched": 0, "invalid": 0}
         verses: dict[str, str] = {}
-        for ch in chapters:
-            if ch not in project_chapters:
-                raise ProjectError(f"Chapter {ch} does not exist in this project.")
-            for verse in self.project.verses(ch):
-                if verse == "front":
-                    continue
-                status = self._alignment_verse_status(self.project, ch, verse)
-                counts[status] += 1
-                verses[f"{ch}:{verse}"] = status
+        # One verification of each chapter file for the whole scan (#412): the
+        # per-verse status reads the chapter up to three times per verse, and a
+        # chapter Bridge saved seconds ago is otherwise re-verified every time.
+        with self.project.chapter_snapshot():
+            for ch in chapters:
+                if ch not in project_chapters:
+                    raise ProjectError(f"Chapter {ch} does not exist in this project.")
+                for verse in self.project.verses(ch):
+                    if verse == "front":
+                        continue
+                    status = self._alignment_verse_status(self.project, ch, verse)
+                    counts[status] += 1
+                    verses[f"{ch}:{verse}"] = status
         return {"chapter": str(chapter), "counts": counts, "verses": verses}
 
     def _alignment_context(
@@ -3018,8 +3022,19 @@ class BridgeEngine:
         every verse rescan the whole chapter (alignment.getRange does this
         once for N verses). Left as None, the chapter is scanned here exactly
         as before.
+
+        The whole build runs in one chapter snapshot (#412): the verse's
+        alignment, its work state and the chapter-wide status all read the
+        same chapter file, and right after a save that file is inside the
+        cache's distrust window.
         """
         self._require_project()
+        with self.project.chapter_snapshot():
+            return self._alignment_context_in_snapshot(chapter, verse, chapter_counts=chapter_counts)
+
+    def _alignment_context_in_snapshot(
+        self, chapter: str, verse: str, *, chapter_counts: dict[str, int] | None = None,
+    ) -> dict[str, Any]:
         alignment = self.project.load_verse_alignment(chapter, verse)
         inventory = make_inventory(alignment)
         expected_bottom = self._target_token_inventory(
@@ -4610,20 +4625,34 @@ class BridgeEngine:
         self.project.mark_word_alignment_pending(chapter, verse)
         self._corpus_stats_by_book.pop(str(self.project.path), None)
         self._consistency_findings_by_book.pop(str(self.project.path), None)
-        context = self._alignment_context(chapter, verse)
-        if context["canComplete"] and context["completionState"] != "completed":
-            self.project.mark_word_alignment_completed(
-                chapter, verse, username=self.settings.reviewer_name or "Bridge Reviewer",
-            )
-            context = self._alignment_context(chapter, verse)
-        # V11-000a: the alignment content is already written by this point
-        # (save_verse_alignment / restore_verse_alignment_history ran before
-        # this shared tail), so this picks up the fresh book-wide digest and
-        # stales any Stage 6B/7/8 record that depends on it -- in this same
-        # session, not only after a restart.
-        if self.passage_semantic_runtime is not None:
-            self.passage_semantic_runtime.synchronize_alignment_state()
-        self._refresh_progress_alignment(chapter)
+        # #412: the chapter was written moments ago, so every read below
+        # falls inside the cache's two-second distrust window. One snapshot
+        # for the whole tail verifies it against disk once; the context, the
+        # completion re-check, the semantic digest and the progress recount
+        # then share that parse instead of each verse re-decoding the file.
+        # The completion marker is not a chapter file, so the snapshot holds
+        # across it.
+        with self.project.chapter_snapshot():
+            # The chapter is scanned once here and its counts handed to the
+            # context and to the progress recount, which each used to walk
+            # every verse again (#412). The scan after a completion marker
+            # is the one scan that must repeat: one verse's status changed.
+            counts = self.alignment_status(chapter)["counts"]
+            context = self._alignment_context(chapter, verse, chapter_counts=counts)
+            if context["canComplete"] and context["completionState"] != "completed":
+                self.project.mark_word_alignment_completed(
+                    chapter, verse, username=self.settings.reviewer_name or "Bridge Reviewer",
+                )
+                counts = self.alignment_status(chapter)["counts"]
+                context = self._alignment_context(chapter, verse, chapter_counts=counts)
+            # V11-000a: the alignment content is already written by this point
+            # (save_verse_alignment / restore_verse_alignment_history ran before
+            # this shared tail), so this picks up the fresh book-wide digest and
+            # stales any Stage 6B/7/8 record that depends on it -- in this same
+            # session, not only after a restart.
+            if self.passage_semantic_runtime is not None:
+                self.passage_semantic_runtime.synchronize_alignment_state()
+            self._refresh_progress_alignment(chapter, chapter_counts=counts)
         return context
 
     def _save_alignment(
@@ -7210,27 +7239,38 @@ class BridgeEngine:
             and self._alignment_verse_status(project, chapter_key, str(verse)) in {"complete", "complete_cross_verse"}
         )
 
-    def _refresh_progress_alignment(self, chapter: str) -> None:
+    def _refresh_progress_alignment(
+        self, chapter: str, *, chapter_counts: dict[str, int] | None = None,
+    ) -> None:
         """#239: an alignment writer (a tC save, auto-align, undo, a cross-verse
         link or null decision, an edit that invalidates) changed what the
         chapter's ✓ count would be. Recount that one chapter, write it to its
         progress row and the totals, which also refreshes the workspace cache
         the dashboard reads. Best-effort, as the decision path is: the
-        alignment itself is already written."""
+        alignment itself is already written.
+
+        `chapter_counts`, when the caller already holds the chapter's
+        `alignment_status(...)["counts"]` for the current state, spares the
+        recount: the ✓ count is its complete + complete_cross_verse (#412)."""
         project = self.project
         if project is None:
             return
         try:
-            chapter_key = str(chapter)
-            if chapter_key not in project.chapters():
-                return
-            project.update_progress_chapter_alignment(
-                chapter_key, self._aligned_verse_count(project, chapter_key),
-                verse_count=len(project.verses(chapter_key)),
-            )
-            rollup = project.load_progress_rollup()
-            self._recompute_progress_totals(project, rollup)
-            project.save_progress_totals(rollup["totals"])
+            with project.chapter_snapshot():  # #412: one verification per chapter file
+                chapter_key = str(chapter)
+                if chapter_key not in project.chapters():
+                    return
+                aligned = (
+                    chapter_counts["complete"] + chapter_counts["complete_cross_verse"]
+                    if chapter_counts is not None
+                    else self._aligned_verse_count(project, chapter_key)
+                )
+                project.update_progress_chapter_alignment(
+                    chapter_key, aligned, verse_count=len(project.verses(chapter_key)),
+                )
+                rollup = project.load_progress_rollup()
+                self._recompute_progress_totals(project, rollup)
+                project.save_progress_totals(rollup["totals"])
         except Exception:  # noqa: BLE001 -- bookkeeping never fails the write
             pass
 

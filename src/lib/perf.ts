@@ -26,13 +26,17 @@ export type PerfTier = "A" | "B";
 /** The actions requirement 1 names, with the tier each belongs to. "word.select"
  *  is marked in VerseList.svelte: begun at the mousedown in a verse's text,
  *  ended at the mouseup that leaves a word under the pointer or a selection
- *  inside the verse, or at the verse menu that names a word (#260). */
+ *  inside the verse, or at the verse menu that names a word (#260).
+ *  "alignment.drop" is marked in AlignmentModal.svelte (#412): begun at the
+ *  drop, responded when the modal shows busy, ended when the saved placement
+ *  and its re-check are in and the next drop is accepted. */
 export const PERF_ACTIONS: Record<string, { tier: PerfTier; label: string }> = {
   "verse.navigate": { tier: "A", label: "Navigate to a verse" },
   "word.select": { tier: "A", label: "Select a word" },
   "menu.open": { tier: "A", label: "Open a menu" },
   "panel.toggle": { tier: "A", label: "Toggle a side panel" },
   "decision.record": { tier: "A", label: "Record a decision" },
+  "alignment.drop": { tier: "A", label: "Drop a word onto a source column" },
   "project.open": { tier: "B", label: "Open a project" },
   "chapter.open": { tier: "B", label: "Open a chapter" },
   "book.report": { tier: "B", label: "Generate a book report" },

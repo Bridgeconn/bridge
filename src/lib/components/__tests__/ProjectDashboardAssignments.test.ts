@@ -43,10 +43,10 @@ describe("ProjectDashboard assignments (#240)", () => {
     mount({ myUserId: "u-1" });
     expect(screen.getByText("book: Rina · ch 3: Revant")).toBeInTheDocument();
     expect(screen.getByText("book: Rina")).toBeInTheDocument();
-    expect(screen.getByText("3 of 3")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("3 of 3");
 
     await fireEvent.click(screen.getByLabelText("My work (1)"));
-    expect(screen.getByText("1 of 3")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("1 of 3");
     expect(screen.getByText("Genesis")).toBeInTheDocument();
     expect(screen.queryByText("Exodus")).toBeNull();
     expect(screen.queryByText("Leviticus")).toBeNull();

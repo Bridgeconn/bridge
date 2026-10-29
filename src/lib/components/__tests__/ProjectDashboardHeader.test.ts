@@ -88,7 +88,7 @@ describe("ProjectDashboard header", () => {
 
   it("names the previewed book in the report card's heading", () => {
     mount([book("rut", "ரூத்")]);
-    expect(screen.getByRole("heading", { level: 2, name: "QA report" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "QA Report" })).toBeInTheDocument();
     expect(screen.getByTitle("ரூத்")).toBeInTheDocument();
   });
 });

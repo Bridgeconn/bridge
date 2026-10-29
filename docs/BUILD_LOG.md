@@ -22407,7 +22407,8 @@ fail this time.
 **The installer for the installed-build walks** was built from a detached worktree at c2bd236
 (`C:\code\bridge-installer`, the day's edits kept out of it; the frozen sidecars and
 `src-tauri/resources` copied in from the main checkout since both are git-ignored):
-`C:debridge-installersrc-tauri	argeteleasebundle
+`C:debridge-installersrc-tauri	arget
+eleasebundle
 sisBridge_0.21.0_x64-setup.exe`, 85,265,216 bytes, `npm run tauri build` 6m 21s for the release profile. Version 0.21.0 is unchanged; the file is identified by the commit
 only. Nothing was tagged or released; 0.22.0 is Thursday's or Friday's cut in a separate session,
 0.21.0 (4cd22bf) stays the fallback demo build. Every walk this week records that hash.
@@ -22578,3 +22579,153 @@ separator; both now emit it inside the block.
 **Gates.** `npm run check` 0/0, `npm run test` 102 files 1055 passed, `npm run build` ok. No
 engine or shell change. **Not verified:** the desktop app at 1366x768 (frontend only, so
 `npm run tauri dev` with the 0.22.0 sidecars shows it).
+
+**Second pass (2026-10-29), from Joel's walk of the first.** The top strip (#399) and the Language
+QA launcher said the same thing as the new bar and the row meters on the dashboard: the strip is
+hidden while the dashboard shows a Collection QA run (every other screen keeps it) and the floating
+Language QA panel is not mounted on the dashboard. "Run all again" is gone: one Run button, and
+"Also re-check books unchanged since their last run" in the Checks menu (the `force` flag); the idle
+summary reads "12 of 66 books checked · 1 failed · last run …". The book rows did not move during
+a run because `bookProgress` was read once: `App.svelte` re-reads it when a run finishes a book
+and when it ends, and when any check job ends. The QA report is kept per book for the session
+(`reportCache`; "built 2:03 pm · Rebuild" on the card) since the build reads every verse; an entry
+goes when a check job, a Collection QA book or a new project touches it. Three report states now:
+no book chosen ("Select a book on the left"), the open book without a report ("No QA report built
+yet for X" and the Build button, so the text and the button agree), and a never-opened book, which
+is no longer prepared and reported on as 0% checked: the row selects it and the card offers Open and
+Run QA. Run QA per row (`onRunBookQa` → `beginChecks("book", …)` with the Collection QA selection,
+the book opened in the engine without leaving the dashboard, the strip showing it; disabled while any
+job runs). Rows: a one-line summary ("50/50 chapters checked · 458/1533 Language QA clean") with the
+four meters behind a Progress toggle, a rule before the actions, counts as "18.7k". The breadcrumb
+has a close icon after the project name (TopBar, "Close project"); the bar's Cancel is an X. The
+report: six tiles (check findings, AI findings, Language QA, discussions, stale reviews, unchecked
+verses), filter chips over the queue (critical, high, tN, tW, alignment, discussion; one at a time,
+paging resets), the queue heading sticky while it scrolls. Gates: `npm run check` 0/0, `npm run
+test` 103 files 1068 passed, `npm run build` ok.
+
+## 2026-10-29 — #412: 2–3 s per target-word drop on a long Hebrew chapter (Joel)
+
+**Report.** Keyigumpeule Thou waits 2–3 s after every drop in Align Words on a Hebrew source.
+The issue's own diagnosis held up in the code: `_cached_file_json` serves a cached chapter parse
+only when the file's mtime is older than `_RACY_NS` (2 s). A chapter Bridge has just saved is
+therefore re-read and JSON-decoded on *every* accessor call for the next two seconds, and the
+save tail (`_finish_alignment_mutation`) walks the whole chapter twice — `_alignment_context`'s
+`chapterStatus` through `alignment_status`, then `_refresh_progress_alignment` through
+`_aligned_verse_count` — with three chapter reads per verse (`word_alignment_state`,
+`alignment_work_state`, `load_verse_alignment`). ~90 decodes of the chapter per drop, scaling
+with its size.
+
+**Fix, engine only, the freshness guard kept.**
+
+1. `tc_project.py`: a cache entry is now `(signature, sha1 of the bytes, parse)`. Inside the
+   two-second window a signature match is verified by reading the bytes and comparing the digest,
+   not by decoding again: the same bytes are the same JSON. An in-place rewrite inside one
+   timestamp tick is still read (the digest differs); `test_a_change_inside_one_timestamp_tick_is_still_read`
+   is unchanged and passes. `_read_json` now goes through `_parse_json_bytes(path, raw)`, which
+   is also the one place the test fixtures count decodes.
+2. `TranslationCoreProject.chapter_snapshot()`: a thread-local scope in which each chapter file
+   (and the chapter listing) is verified against disk once and then trusted for the rest of the
+   scope. `_forget_chapter_files` clears the thread's scope too, so Bridge's own write inside a
+   scope ends the trust. `alignment_status`, `_alignment_context`, `_refresh_progress_alignment`
+   and the whole `_finish_alignment_mutation` tail run in one. Conflict detection is untouched:
+   `save_verse_alignment` still does its own fresh `load_alignment_chapter` and compares
+   `expected_original` (`test_a_conflicting_edit_is_still_refused`).
+3. `_finish_alignment_mutation` scans the chapter once (`alignment_status`) and hands the counts
+   to `_alignment_context(chapter_counts=...)` and to a new
+   `_refresh_progress_alignment(chapter_counts=...)`; the ✓ count is complete +
+   complete_cross_verse, the same rule `_aligned_verse_count` applies. Only a drop that completes
+   the verse rescans, after the marker is written.
+
+**Evidence** (`alignment.realign` RPC round trip, 20 drops alternating one target word between two
+Hebrew source columns, 25 source + 25 target tokens per verse, dev machine, idle, source not
+frozen):
+
+| Fixture | HEAD median / p95 | After median / p95 |
+| --- | --- | --- |
+| 1 chapter × 40 verses | 517 ms / 553 ms | 148 ms / 279 ms |
+| 1 chapter × 176 verses | 2225 ms / 2250 ms | 279 ms / 316 ms |
+
+Reads and decodes of the alignment chapter per drop, counted in
+`tests/service/test_alignment_drop_chapter_reads.py` (new): ≤6 decodes and ≤10 byte reads at
+both sizes, against ~90 decodes before; the status scan of a just-written chapter decodes it 0
+times (one digest verification). What remains per drop is the writer itself (its fresh load,
+the atomic write's validation of the temp file, the read-back validation, the backup copy, the
+history row and the journal) plus one per-verse status walk; a profile shows no single hot spot
+left of that shape.
+
+**Frontend.** `alignment.drop` added to `PERF_ACTIONS` (Tier A), bracketed in
+`AlignmentModal.svelte`'s `mutate` for a drop: begun at the drop, responded at the busy state,
+ended when the saved placement and its alignment re-check are in and the next drop is accepted;
+a failed save records no sample. Nothing else in the modal changed; the save → recheck gate is
+as before (the recheck measured 2–5 ms in the issue's runs).
+
+**Gates.** Engine: `pytest -n auto -m "not slow"` 5448 passed, 19 failed — the same 14 fail on
+unpatched HEAD on this machine (`test_semantic_mapping_stage3.py` needs
+`resources/semantic_mapping/bridge_semantic_source_v0.3.sqlite`, which is not checked out here;
+`test_correction_acceptance_queue_visibility` hits Windows MAX_PATH under pytest's tmp dir) and
+the other 5 pass serially with and without the patch (contention under `-n auto`). The new
+test file: 6 passed. Frontend: `npm run check` 0/0, `npm run test` 103 files 1068 passed,
+`npm run build` ok.
+
+**Not verified:** the frozen build, the desktop app at 1366×768, pointer-to-paint timings on a
+real machine, and Keyigumpeule's own environment (build, project, hardware were not supplied). The
+issue's acceptance list still needs the field retest and the `alignment.drop` p95 from a
+measurement session (`scripts/perf_table.py`).
+
+### 2026-10-30 -- Dashboard third pass: the row's icon is the book's QA state
+
+Maintainer review of the second pass (screenshots at 1366x768 and narrower):
+the summary line made a row three lines deep and truncated; the rule before
+the actions looked wrong on a tall row; the grey Run QA and Assign icons read
+as disabled; the chips were too quiet; the collection Run button, Rebuild and
+the queue wanted icons and a chapter filter. And a design question: what does
+clicking a row do, versus the play icon? Clicking built (or showed) the report;
+play ran the checks and stopped, so after a per-book run the reviewer still had
+to click the row and wait for the build.
+
+Decided with the maintainer: a row is not clickable. Its first icon is the
+book's QA state. A book nothing has checked (no checked chapter in its
+progress, no finished Collection QA run) shows Run QA (play, green): it opens
+the book in the engine, runs the whole book as a normal check job with the
+Collection QA checks, then builds and shows the report. Once checked it shows
+View QA report (blue): the session's copy if there is one, else a build; never
+a check. While that book's own job runs the icon is a spinner. Assign and Open
+stay. The report card carries the job (label, verse, percent, Cancel) in place
+of the top strip, which is now hidden on the dashboard for every job; a failed
+or cancelled job stays on the card with Run QA again. The report head has two
+icons: Run QA again (checks, then the fresh report) and Rebuild (the stored
+findings only, after editing in the editor). The old "has not been opened"
+state became "has not been checked yet" with one Run QA button; a checked
+book with no session copy keeps the Build button.
+
+Styling from the review: the progress summary line is gone (the four meters
+stay behind Progress); no rule before the actions; `.ui-icon-btn.success`
+(Run QA), `.assign` (Assign, --term) and `.filled` (the collection Run, an
+accent-filled play icon with the same aria-label as before) in index.css; the
+header's language and book-count chips, the Books count and the "n of m"
+number use the accent colour. The queue head gained a chapter dropdown
+(`All chapters` / `Chapter n` with a clear icon): a five-column grid of the
+chapters the queue has rows in, capped at 176px with a scrollbar, and a number
+search box once there are more than twelve, so a 150-chapter Psalms is not a
+list. The severity pill counts are over the chosen chapter. App keeps
+`dashboardQaPath` for the job the dashboard started; `monitorJob`'s finally
+builds that book's report on success. Gates: svelte-check 0/0, Vitest 103
+files / 1072, build. Not yet run in the desktop window.
+
+Follow-ups the same day, each tested in the desktop window by the maintainer:
+the report card's idle state is a three-line legend of the row icons, no
+Build button; the collection Run is a round green play; both numbers of
+"n of m" are accent. An open started from a row icon (View, Run QA) shows
+"Opening X…" with the prepare detail in the report card, the top strip
+hidden for it. View on a book whose report the session kept shows it with no
+engine call at all: project.open costs the same every time, so the open is
+deferred to Rebuild, Run QA again or a verse click, which switch books
+themselves (`rebuildDashboardReport`, `navigateFromDashboardReport`,
+`shownReportPath`). And the build wait has a clock: `reportEstimate.ts`
+estimates the build from the verse count at a seconds-per-verse rate learned
+from finished builds (localStorage), the card shows elapsed, "about N left"
+and a bar that holds at 95% -- labelled an estimate, because the sidecar
+answers nothing during project.report. A true per-chapter percentage needs
+the build to become an engine job (start/status, worker thread, the same
+shape as the check job); raised for the maintainer as its own issue, which
+would also stop the sidecar freezing during a build.

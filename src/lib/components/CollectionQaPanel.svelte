@@ -28,6 +28,9 @@
   let error = "";
   let busy = false;
   let checksOpen = false;
+  // Off by default: a run skips a book unchanged since its last run of these
+  // checks. On, every book is checked again (what "Run all again" used to be).
+  let recheckUnchanged = false;
 
   onMount(() => {
     void refreshCollectionQa().catch((e) => { error = e instanceof Error ? e.message : String(e); });
@@ -35,18 +38,18 @@
 
   $: snapshot = $collectionQa;
   $: active = snapshot ? ["queued", "running", "cancelling"].includes(snapshot.state) : false;
-  $: lastRun = snapshot?.books.some((b) => b.completedAt) ?? false;
-  $: summary = snapshot ? idleSummary(snapshot.books) : "";
+  $: summary = snapshot ? idleSummary(snapshot.books, bookCount) : "";
   $: runningBook = snapshot?.books.find((b) => b.state === "running") ?? null;
 
-  /** One line while idle: how the books last ended and when the latest finished. */
-  function idleSummary(books: CollectionQaBook[]): string {
-    const count = (state: string) => books.filter((b) => b.state === state).length;
-    const parts: string[] = [];
-    for (const [state, label] of [["done", "done"], ["skipped", "unchanged"], ["failed", "failed"]] as const) {
-      if (count(state)) parts.push(`${count(state)} ${label}`);
-    }
+  /** One line while idle: how many books have a finished run, how many of
+   *  those failed, and when the latest finished. */
+  function idleSummary(books: CollectionQaBook[], total: number): string {
+    const checked = books.filter((b) => b.state === "done" || b.state === "skipped").length;
+    const failed = books.filter((b) => b.state === "failed").length;
     const latest = books.map((b) => b.completedAt).filter((at): at is string => Boolean(at)).sort().pop();
+    if (!latest && checked === 0 && failed === 0) return "never run";
+    const parts = [`${checked} of ${total || books.length} books checked`];
+    if (failed) parts.push(`${failed} failed`);
     parts.push(latest ? `last run ${new Date(latest).toLocaleString()}` : "never run");
     return parts.join(" · ");
   }
@@ -88,7 +91,7 @@
       {#if active}
         <button class="ui-btn" on:click={() => act(() => pauseCollectionQa(!snapshot?.paused))} disabled={busy || snapshot?.state === "cancelling"}>
           <UiIcon name={snapshot?.paused ? "play" : "pause"} />{snapshot?.paused ? "Resume" : "Pause after this book"}</button>
-        <button class="ui-btn danger" on:click={() => act(cancelCollectionQa)} disabled={busy || snapshot?.state === "cancelling"}><UiIcon name="stop" />Cancel</button>
+        <button class="ui-btn danger" on:click={() => act(cancelCollectionQa)} disabled={busy || snapshot?.state === "cancelling"}><UiIcon name="close" />Cancel</button>
       {:else}
         <div class="checks-control" on:focusout={closeChecks}>
           <button class="ui-btn" aria-haspopup="true" aria-expanded={checksOpen} aria-controls="collection-qa-checks"
@@ -106,17 +109,18 @@
                   {box.label}
                 </label>
               {/each}
-              <p>A run checks every book in turn and is meant to be left alone: editing, switching books and Greek Room pause until it ends. A book unchanged since its last run of these checks is skipped.</p>
+              <label class="recheck">
+                <input type="checkbox" bind:checked={recheckUnchanged} />
+                Also re-check books unchanged since their last run
+              </label>
+              <p>A run checks every book in turn and is meant to be left alone: editing, switching books and Greek Room pause until it ends.</p>
             </div>
           {/if}
         </div>
-        <button class="ui-btn primary" on:click={() => act(() => startCollectionQa(false))} disabled={busy}
-          use:tooltip={`Checks every book in turn (${checkListLabel($selectedCollectionChecks)}); books unchanged since their last run are skipped`}>
-          <UiIcon name="play" />Run QA on all {bookCount} {bookCount === 1 ? "book" : "books"}</button>
-        {#if lastRun}
-          <button class="ui-btn" on:click={() => act(() => startCollectionQa(true))} disabled={busy}
-            use:tooltip={"Check every book again, including unchanged ones"}>Run all again</button>
-        {/if}
+        <button class="ui-icon-btn run-all" aria-label={`Run QA on all ${bookCount} ${bookCount === 1 ? "book" : "books"}`}
+          on:click={() => act(() => startCollectionQa(recheckUnchanged))} disabled={busy}
+          use:tooltip={`Run QA on all ${bookCount} ${bookCount === 1 ? "book" : "books"} (${checkListLabel($selectedCollectionChecks)}); ${recheckUnchanged ? "every book is checked again" : "books unchanged since their last run are skipped"}`}>
+          <UiIcon name="play" /></button>
       {/if}
     </div>
   </div>
@@ -146,11 +150,16 @@
   .active .status { color: var(--accent); font-weight: 600; }
   .actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }
   .checks-control { position: relative; }
+  /* The one primary action of the bar: a round green play, the rows' Run QA colour, larger and filled. */
+  .run-all { width: 38px; height: 38px; border-radius: 50%; background: var(--success); color: #fff; box-shadow: 0 2px 6px rgba(22, 163, 74, .35); }
+  .run-all :global(svg) { width: 20px; height: 20px; margin-left: 2px; }
+  .run-all:hover:not(:disabled), .run-all:focus-visible { background: var(--success); color: #fff; filter: brightness(.92); box-shadow: 0 3px 8px rgba(22, 163, 74, .45); }
   .count { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--accent-bg); color: var(--accent); font-size: var(--fs-3xs); }
   .checks-menu { position: absolute; z-index: var(--z-dropdown); right: 0; top: calc(100% + 6px); width: 300px; display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface); box-shadow: 0 10px 25px rgba(25, 35, 55, .16); }
   .checks-menu label { display: flex; align-items: center; gap: 8px; font-size: var(--fs-2xs); color: var(--text); cursor: pointer; }
   .checks-menu input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
-  .checks-menu p { margin: 4px 0 0; padding-top: 8px; border-top: 1px solid var(--border); color: var(--text-2); font-size: var(--fs-3xs); line-height: 1.5; }
+  .checks-menu .recheck { margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--border); }
+  .checks-menu p { margin: 0; padding-top: 8px; border-top: 1px solid var(--border); color: var(--text-2); font-size: var(--fs-3xs); line-height: 1.5; }
   .track { height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
   .fill { height: 100%; background: var(--accent); transition: width .3s linear; }
   .error { margin: 0; color: var(--danger); font-size: var(--fs-3xs); }
