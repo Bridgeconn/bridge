@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { bridge } from "./lib/api/bridgeClient";
-  import { workspaceRecoveryNotice } from "./lib/workspaceRecovery";
+  import { workspaceRecoverySummary, type RecoverySummary } from "./lib/workspaceRecovery";
+  import WorkspaceRecoveryDialog from "./lib/components/WorkspaceRecoveryDialog.svelte";
   import { bridgeReference } from "./lib/navigationReference";
   import {
     formatPerfLine, observeLongTasks, perfAbort, perfBegin, perfEnd, perfInFlight, perfResponded, registerPerfRunner,
@@ -121,10 +122,11 @@
   let triagePollGeneration = 0;
   let engineNotice = "";
   let engineNoticeTimer: ReturnType<typeof setTimeout> | undefined;
-  // #338: the one-time notice that workspace.sqlite3 was damaged at startup
+  // #338: the one-time report that workspace.sqlite3 was damaged at startup
   // and what recovery did. Read once from engine.info after the first ping;
-  // dismissed for the session with the button.
-  let workspaceRecoveryNoticeText = "";
+  // shown as a modal (WorkspaceRecoveryDialog) until Continue, then gone for
+  // the session.
+  let workspaceRecovery: RecoverySummary | null = null;
   let settingsInitialPane: "ai" | "quality" | "connections" | "resources" | "terminology" | "languageQa" | "security" = "ai";
   let navigationPollInFlight = false;
   let handlingNavigationRequest = "";
@@ -477,7 +479,7 @@
       startupDone = true;
       try {
         const info = await bridge.engineInfo();
-        workspaceRecoveryNoticeText = workspaceRecoveryNotice(info.workspaceRecovery);
+        workspaceRecovery = workspaceRecoverySummary(info.workspaceRecovery);
       } catch (error) {
         console.error("Could not read engine info", error);
       }
@@ -1462,13 +1464,6 @@
     bookSwitching={Boolean(openingBook)}
   />
 
-  {#if workspaceRecoveryNoticeText}
-    <div class="progress-row check-notice recovery-notice" role="status" aria-label="Workspace database recovered">
-      <span class="check-message">{workspaceRecoveryNoticeText}</span>
-      <span class="grow" />
-      <button class="progress-action" on:click={() => (workspaceRecoveryNoticeText = "")}>Dismiss</button>
-    </div>
-  {/if}
   {#if openingBook || $prepareProgress}
     <!-- The book switch's strip; a Home-screen open that prepares a lazy
          book shows here too (#400), through the prepareProgress store. -->
@@ -1730,6 +1725,7 @@
 
   <!-- #372: the in-app confirmation (chapter/book AI review, Remove key).
        Outside the project block: Settings can ask with no project open. -->
+  {#if workspaceRecovery}<WorkspaceRecoveryDialog summary={workspaceRecovery} onClose={() => (workspaceRecovery = null)} />{/if}
   {#if $confirmRequest}<ConfirmDialog />{/if}
 
   {#if $diagnosticsOpen}
@@ -1763,8 +1759,6 @@
   .cancel-action { width: 84px; }
   .progress-action:disabled { opacity: 0.55; cursor: wait; }
   .check-notice { color: var(--danger); height: auto; min-height: 32px; max-height: 96px; align-items: flex-start; padding-top: 7px; padding-bottom: 7px; }
-  /* #338: a recovery is a report, not a failure: warning colour, room for its paragraph. */
-  .recovery-notice { color: var(--warning); max-height: 160px; overflow-y: auto; }
   .check-message { flex: 1; min-width: 0; max-height: 78px; overflow: auto; white-space: normal; overflow-wrap: anywhere; line-height: 1.35; }
   .body { flex: 1; display: flex; overflow: hidden; }
   /* A 66-book table must not push the dashboard off screen: it scrolls. */
