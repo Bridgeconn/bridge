@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/svelte";
 
 import ProjectDashboard from "../ProjectDashboard.svelte";
+import { collectionQa, stopCollectionQa } from "../../collectionQa";
 import type { ExceptionQueueRow, ProjectReport } from "../../types/finding";
+import type { CollectionQaSnapshot } from "../../types/collectionQa";
 
 const books = [{
   path: "/projects/rut",
@@ -64,6 +66,39 @@ function mount(rows: ExceptionQueueRow[] = []) {
 }
 
 describe("ProjectDashboard", () => {
+  it("draws the four progress meters on a checked book's row", () => {
+    mount();
+    expect(screen.getByText("Checked 2/4 chapters")).toBeInTheDocument();
+    expect(screen.getByText("Reviewed 10/85")).toBeInTheDocument();
+    expect(screen.getByText("Aligned 7/40")).toBeInTheDocument();
+    expect(screen.getByText("Language QA clean 31/40")).toBeInTheDocument();
+  });
+
+  it("opens and assigns through icon actions named for the screen reader", () => {
+    mount();
+    expect(screen.getByRole("button", { name: "Open" }).classList.contains("ui-icon-btn")).toBe(true);
+    expect(screen.queryByRole("button", { name: "Assign…" })).toBeNull();
+  });
+
+  // The Collection QA table is gone (dashboard restyle, 2026-10-28): each
+  // book's last result sits on its own row, from the same store the bar reads.
+  it("shows a book's last Collection QA result on its row", () => {
+    const snapshot: CollectionQaSnapshot = {
+      jobId: "", state: "idle", paused: false, collectionPath: "/projects", checks: [], totalBooks: 1, completedBooks: 0,
+      percent: 0, currentBook: null, finalStage: null, elapsedSeconds: 0, estimatedRemainingSeconds: null,
+      error: null, createdAt: null, finishedAt: null,
+      books: [{ bookId: "rut", bookName: "Ruth", path: "/projects/rut", state: "done", elapsedSeconds: 40, jobId: null,
+        findingsByCategory: { languageQa: 3, alignment: 1 }, checkedVerses: 85, error: null, completedAt: "2026-09-24T10:00:00Z" }],
+    };
+    collectionQa.set(snapshot);
+    try {
+      mount();
+      expect(screen.getByRole("button", { name: "Open" }).closest(".book-row")).toHaveTextContent(/QA done · 4 findings/);
+    } finally {
+      stopCollectionQa();
+    }
+  });
+
   it("labels the checked-chapters bar without the AI prefix", () => {
     mount();
     expect(screen.getByText("Checked 2/4 chapters")).toBeInTheDocument();

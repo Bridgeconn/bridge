@@ -244,6 +244,40 @@ mark.reveal-flash { animation: reveal-flash 1.2s ease-out; }
   .print-root { position: absolute; left: 0; top: 0; width: 100%; }
 }
 
+/* Shared controls (dashboard restyle, 2026-10-28). One button, one icon
+   button, one chip and one card for every page, so a screen says which kind
+   of control it has instead of restyling <button> itself. Project Home and
+   the add-books dialog drew these shapes first; the dashboard uses the
+   classes, and the other pages can move over without a visual change. */
+.ui-btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 34px; padding: 6px 12px; box-sizing: border-box; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: var(--fs-2xs); font-weight: 600; line-height: 1.2; cursor: pointer; white-space: nowrap; transition: color .15s, background .15s, border-color .15s; }
+.ui-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.ui-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.ui-btn.primary:hover:not(:disabled) { color: #fff; filter: brightness(.94); }
+.ui-btn.danger { color: var(--danger); }
+.ui-btn.danger:hover:not(:disabled) { border-color: var(--danger); background: var(--danger-bg); color: var(--danger); }
+.ui-btn.quiet { border-color: transparent; background: transparent; color: var(--text-2); }
+.ui-btn.quiet:hover:not(:disabled) { background: var(--accent-bg); color: var(--accent); }
+.ui-btn.small { min-height: 28px; padding: 3px 9px; font-size: var(--fs-3xs); }
+.ui-btn:disabled { opacity: .55; cursor: not-allowed; }
+.ui-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* A 34px glyph-only action (UiIcon inside, aria-label outside). */
+.ui-icon-btn { display: grid; place-items: center; width: 34px; height: 34px; min-height: 34px; padding: 0; flex-shrink: 0; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); cursor: pointer; transition: color .15s, background .15s; }
+.ui-icon-btn.primary { color: var(--accent); }
+.ui-icon-btn.danger { color: var(--danger); }
+.ui-icon-btn:hover:not(:disabled), .ui-icon-btn:focus-visible { background: var(--accent-bg); color: var(--accent); }
+.ui-icon-btn.danger:hover:not(:disabled), .ui-icon-btn.danger:focus-visible { background: var(--danger-bg); color: var(--danger); }
+.ui-icon-btn:disabled { opacity: .45; cursor: not-allowed; }
+.ui-icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* A small labelled status: neutral by default, or one of the meaning colours. */
+.ui-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2); color: var(--text-2); font-size: var(--fs-3xs); font-weight: 600; line-height: 1.3; white-space: nowrap; }
+.ui-chip.accent { border-color: transparent; background: var(--accent-bg); color: var(--accent); }
+.ui-chip.pass { border-color: transparent; background: var(--pass-bg); color: var(--pass); }
+.ui-chip.warning { border-color: transparent; background: var(--warning-bg); color: var(--warning); }
+.ui-chip.danger { border-color: transparent; background: var(--danger-bg); color: var(--danger); }
+/* A content card, as the project rows on Project Home are drawn. */
+.ui-card { border: 1px solid var(--border); border-radius: 14px; background: var(--surface); box-shadow: 0 2px 4px rgb(0 0 0 / 2%); }
+@media (prefers-reduced-motion: reduce) { .ui-btn, .ui-icon-btn { transition: none; } }
+
 [data-bridge-tooltip] {
   position: fixed; z-index: var(--z-startup); pointer-events: none;
   max-width: min(320px, calc(100vw - 16px)); box-sizing: border-box;

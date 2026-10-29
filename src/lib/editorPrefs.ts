@@ -217,16 +217,6 @@ export function toggleSidePanel(id: SidePanelId): void {
   sidePanels.update((all) => ({ ...all, [id]: { ...all[id], open: !all[id].open } }));
 }
 
-/** The dashboard's Collection QA panel folded to its header row. Folded by
- * default (#380); a saved choice wins, and a run in progress always shows
- * its table, whatever this says. */
-export const collectionQaCollapsed = persisted("bridge.dashboard.collectionQaCollapsed.v1", true, isBoolean);
-
-/** The dashboard's project details block (eyebrow, book heading, Paratext
- * strip) folded to one row: the name and the subtitle (#374). Open by
- * default; remembered per device. */
-export const projectDetailsCollapsed = persisted("bridge.dashboard.projectDetailsCollapsed.v1", false, isBoolean);
-
 /** The verse text exactly as stored, USFM markers and all, instead of the
  * reader's clean text. Marks stay on the same characters. */
 export const rawView = persisted("bridge.editor.rawView.v1", false, isBoolean);

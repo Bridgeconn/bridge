@@ -74,7 +74,6 @@
   import { collectionQaRunning, stopCollectionQa } from "./lib/collectionQa";
   import { bindCollectionStrip, cancelStripJob } from "./lib/collectionStrip";
   import { prepareDetail, prepareProgress } from "./lib/openProgress";
-  import CollectionQaPanel from "./lib/components/CollectionQaPanel.svelte";
 
   let opened = false;
   let engineStatus: "checking" | "ready" | "error" = "checking";
@@ -1510,11 +1509,6 @@
   {#if screen === "home"}
     <ImportScreen onOpened={handleOpened} {droppedPath} {dropSequence} />
   {:else if screen === "dashboard"}
-    {#if bookProgress.length > 1}
-      <div class="collection-qa-host">
-        <CollectionQaPanel bookCount={bookProgress.length} onOpenBook={enterBookFromDashboard} />
-      </div>
-    {/if}
     <ProjectDashboard
       {projectName}
       subtitle={dashboardSubtitle}
@@ -1774,7 +1768,6 @@
   .check-message { flex: 1; min-width: 0; max-height: 78px; overflow: auto; white-space: normal; overflow-wrap: anywhere; line-height: 1.35; }
   .body { flex: 1; display: flex; overflow: hidden; }
   /* A 66-book table must not push the dashboard off screen: it scrolls. */
-  .collection-qa-host { flex-shrink: 0; max-height: 40vh; overflow: auto; padding: 12px 16px 0; background: var(--bg); }
   .work-col { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
   .work-row { flex: 1; min-height: 0; display: flex; overflow: hidden; }
   .editor-col { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }

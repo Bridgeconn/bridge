@@ -1,6 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/svelte";
 
+// Three books make a collection, so the dashboard mounts the Collection QA
+// bar and the Paratext chip; both read the engine, which is not here.
+vi.mock("../../api/bridgeClient", () => ({
+  bridge: {
+    collectionQaStatus: vi.fn(async () => ({ jobId: "", state: "idle", paused: false, collectionPath: "", checks: [],
+      totalBooks: 3, completedBooks: 0, percent: 0, currentBook: null, books: [], finalStage: null,
+      elapsedSeconds: 0, estimatedRemainingSeconds: null, error: null, createdAt: null, finishedAt: null })),
+    paratextLinkStatus: vi.fn(async () => ({ state: "notParatext" })),
+  },
+}));
+
 import ProjectDashboard from "../ProjectDashboard.svelte";
 import type { Assignment, BookProgressEntry } from "../../types/finding";
 

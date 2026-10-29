@@ -5,6 +5,8 @@
   // the collection at the right folder (the engine refuses a different Guid).
   import { onDestroy } from "svelte";
   import { bridge } from "../api/bridgeClient";
+  import UiIcon from "./UiIcon.svelte";
+  import { tooltip } from "../tooltip";
   import type { ParatextLinkStatus } from "../types/paratext";
 
   /** Changes when another book opens, so the status is read again. */
@@ -77,31 +79,40 @@
 
 {#if status && status.state !== "notParatext"}
   <div class="paratext-link" class:problem={status.state !== "linked"} data-testid="paratext-link-status">
+    <span class="ui-chip" class:warning={status.state !== "linked"} class:pass={status.state === "linked"}
+      use:tooltip={status.state === "linked" ? `Linked to the Paratext project ${status.name} at ${status.folder} · ${notesText(status)}` : ""}>
+      <UiIcon name={status.state === "linked" ? "link" : "warning"} />
+      {#if status.state === "linked"}
+        Paratext · {status.name} · linked
+      {:else if status.state === "folderMoved"}
+        Paratext · {status.name} · folder moved
+      {:else if status.state === "guidMismatch"}
+        Paratext · {status.name} · different project in folder
+      {:else}
+        Paratext · {status.name} · folder not found
+      {/if}
+    </span>
     {#if status.state === "linked"}
-      <span>Paratext <strong>{status.name}</strong> · linked · {notesText(status)}</span>
-      <button type="button" on:click={() => run(() => bridge.paratextRefresh())} disabled={busy}>Refresh</button>
+      <span class="detail">{notesText(status)}</span>
+      <button type="button" class="ui-btn small quiet" on:click={() => run(() => bridge.paratextRefresh())} disabled={busy}>Refresh</button>
     {:else if status.state === "folderMoved"}
-      <span>Paratext <strong>{status.name}</strong> is no longer at {status.folder}; the same project is at {status.candidate}.</span>
-      <button type="button" on:click={() => status?.candidate && run(() => bridge.paratextRelink(status?.candidate ?? ""))} disabled={busy}>Relink</button>
-      <button type="button" on:click={chooseFolder} disabled={busy}>Choose folder…</button>
+      <span class="detail">No longer at {status.folder}; the same project is at {status.candidate}.</span>
+      <button type="button" class="ui-btn small" on:click={() => status?.candidate && run(() => bridge.paratextRelink(status?.candidate ?? ""))} disabled={busy}>Relink</button>
+      <button type="button" class="ui-btn small quiet" on:click={chooseFolder} disabled={busy}>Choose folder…</button>
     {:else if status.state === "guidMismatch"}
-      <span>{status.folder} now holds a different Paratext project, not <strong>{status.name}</strong>. Paratext data is not used until it is relinked.</span>
-      <button type="button" on:click={chooseFolder} disabled={busy}>Relink…</button>
+      <span class="detail">{status.folder} now holds a different Paratext project. Paratext data is not used until it is relinked.</span>
+      <button type="button" class="ui-btn small" on:click={chooseFolder} disabled={busy}>Relink…</button>
     {:else}
-      <span>Paratext folder for <strong>{status.name}</strong> not found ({status.folder}). Paratext data is not used until it is relinked.</span>
-      <button type="button" on:click={chooseFolder} disabled={busy}>Relink…</button>
+      <span class="detail">Not found at {status.folder}. Paratext data is not used until it is relinked.</span>
+      <button type="button" class="ui-btn small" on:click={chooseFolder} disabled={busy}>Relink…</button>
     {/if}
     {#if error}<span class="error" role="alert">{error}</span>{/if}
   </div>
 {/if}
 
 <style>
-  .paratext-link { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 0 0 10px; padding: 6px 10px;
-    border: 1px solid var(--border); border-radius: 7px; background: var(--surface-2); color: var(--text-2); font-size: var(--fs-2xs); }
-  .paratext-link.problem { border-color: var(--warning); background: var(--warning-bg); }
-  .paratext-link span { overflow-wrap: anywhere; }
-  .paratext-link button { border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); color: var(--text);
-    padding: 3px 9px; font-size: var(--fs-2xs); cursor: pointer; }
-  .paratext-link button:disabled { opacity: .6; cursor: default; }
-  .error { color: var(--danger); }
+  .paratext-link { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; }
+  .detail { color: var(--text-2); font-size: var(--fs-3xs); overflow-wrap: anywhere; }
+  .problem .detail { color: var(--warning); }
+  .error { color: var(--danger); font-size: var(--fs-3xs); }
 </style>

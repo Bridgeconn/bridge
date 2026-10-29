@@ -22527,3 +22527,54 @@ suite is in this session's handoff. `npm run check` 0/0, `npm run test` 100 file
 `npm run build` ok; `cargo check` ok, `cargo test` 15 passed. **Not verified:** the installed app
 (sidecars not rebuilt in this session; `build-sidecars.ps1` + `smoke_sidecars.py` still to run), the
 native multi-select dialog on a real desktop, and the 1366x768 rendering of the dialog.
+
+## 2026-10-28 — Project dashboard restyled to the Project Home design (branch `dashboardUi`, Joel)
+
+**Ask.** The screen a project opens on had grown by accretion: a Collection QA card with its own
+fold, policy paragraph, checks fieldset and 7-column table; a second header row repeating the
+breadcrumb's name behind a "PROJECT" eyebrow and another fold; a Paratext strip; book rows whose
+four progress bars made a checked book three times the height of its neighbours; text buttons in
+five local styles; and a right panel that opened empty with two sentences of explanation. Joel
+asked for the same modern shape Project Home and the add-books dialog now have, with common
+button and icon styles, and agreed that the Collection QA table should merge into the book rows.
+
+**Shared controls.** `index.css` gains `.ui-btn` (primary / danger / quiet / small), `.ui-icon-btn`
+(the 34px glyph action Project Home drew locally), `.ui-chip` (accent / pass / warning / danger)
+and `.ui-card`. The dashboard, the Collection QA bar and the Paratext status use them; the other
+pages still carry their local copies and can move over without a visual change. `UiIcon` gains
+assign, play, pause, stop, check, chevronDown, link, warning, folder and report.
+
+**Layout** (`ProjectDashboard.svelte`, rewritten). One header card: the name once, the language
+and book count as chips, the Paratext link as a chip with its Refresh / Relink actions beside it
+(`ParatextLinkStatus.svelte`, same states and buttons, chip shape), and for a collection the
+Collection QA bar under a rule. Below, two cards: Books (search, My work, count, rows) and QA
+report (named for the previewed book). Each card body scrolls on its own. Book rows: badge, name,
+the book's last Collection QA result as a chip, the progress stages as compact two-column meters
+(same labels as before, so #239's wording and the tests hold), the assignee line, and two icon
+actions, Assign and Open, with tooltips; aria-labels stay "Assign…" and "Open". The report keeps
+every element (#337 gate, coverage bar with its legend and percent, exception queue with #144's
+paging) restyled; the empty state is one line, one hint and the Build button; building shows a
+spinner.
+
+**Collection QA** (`CollectionQaPanel.svelte`, rewritten as a bar). Idle: the summary ("1 done ·
+2 unchanged · last run …" or "never run"), a Checks menu (the same six boxes and the one-ticked
+floor, with the policy text, in a dropdown) and Run QA on all N books / Run all again. Active: the
+running book, books done, elapsed and remaining, a progress bar, Pause after this book and
+Cancel. The per-book table is gone: `ProjectDashboard` reads the same `collectionQa` store and
+draws each book's state, finding count and (on hover) verses checked, categories and last run on
+its row. The whole-collection stage stays folded under the bar. The two fold preferences
+(`collectionQaCollapsed`, #380; `projectDetailsCollapsed`, #374) are removed with the rows they
+folded: the header is one row now, which is what both folds were for. `App.svelte` no longer
+hosts the panel above the dashboard; the dashboard mounts it for a collection.
+
+**Tests.** `CollectionQaPanel.test.ts` rewritten for the bar (6); `ProjectDashboardFold.test.ts`
+replaced by `ProjectDashboardHeader.test.ts` (5: chips, Paratext linked and moved, the bar only
+for a collection, the report heading); `ProjectDashboard.test.ts` gains the meters, the icon
+actions and the row's QA chip; `ProjectDashboardAssignments.test.ts` mocks the engine its three
+books now reach; `ParatextLinkStatus.test.ts` wording. Found on the way: Svelte trims the space
+before an `{#if}` block, so "elapsed · about 30 s left" and "QA done · 4 findings" lost their
+separator; both now emit it inside the block.
+
+**Gates.** `npm run check` 0/0, `npm run test` 102 files 1055 passed, `npm run build` ok. No
+engine or shell change. **Not verified:** the desktop app at 1366x768 (frontend only, so
+`npm run tauri dev` with the 0.22.0 sidecars shows it).

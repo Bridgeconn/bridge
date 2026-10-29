@@ -25,6 +25,24 @@ export function mergeStage(stages: EngineStartupStage[], stage: EngineStartupSta
   return [...stages, stage].sort((a, b) => a.seq - b.seq);
 }
 
+/** The stages a normal start passes through, in order, as sidecar.rs and
+ * main.py name them. The splash's progress track is positioned by the latest
+ * known one; a stage not in this list (`failed`, `exited`, or a future name)
+ * leaves the track where it was rather than guessing. */
+export const STARTUP_STAGE_ORDER = ["spawning", "spawned", "modules", "engine", "ready"] as const;
+
+/** 0..1: how far along the ordered startup stages the latest known one is.
+ * 0 before anything arrives, 1 on `ready`. Unknown stage names are skipped,
+ * so a `failed` after `modules` still reports the `modules` position. */
+export function startupProgress(stages: EngineStartupStage[]): number {
+  let furthest = -1;
+  for (const stage of stages) {
+    const index = STARTUP_STAGE_ORDER.indexOf(stage.stage as (typeof STARTUP_STAGE_ORDER)[number]);
+    if (index > furthest) furthest = index;
+  }
+  return (furthest + 1) / STARTUP_STAGE_ORDER.length;
+}
+
 /** The status line: the latest stage's own label, never an invented one. */
 export function currentStageLabel(stages: EngineStartupStage[], fallback = "Starting Bridge"): string {
   const last = stages[stages.length - 1];
