@@ -47,6 +47,7 @@ ACTIONS: dict[str, tuple[str, str]] = {
     "menu.open": ("A", "Open a menu"),
     "panel.toggle": ("A", "Toggle a side panel"),
     "decision.record": ("A", "Record a decision"),
+    "alignment.drop": ("A", "Drop a word onto a source column"),
     "project.open": ("B", "Open a project"),
     "chapter.open": ("B", "Open a chapter"),
     "book.report": ("B", "Generate a book report"),
