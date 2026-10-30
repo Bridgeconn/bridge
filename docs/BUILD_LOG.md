@@ -23015,6 +23015,68 @@ review-packet preparation are complete; native confirmation and installed
 desktop acceptance remain pending. The installed app was not replaced.
 
 
+### Team workflow recording review and follow-up issues (2026-10-30)
+
+Benz requested detailed issues after testing team/assignment functions with
+Robin and Amos, then clarified the intended workflow: distribute a shared
+Bible project across computers, with administrators, translators/editors
+and proofreaders contributing to the same book. No implementation was
+requested or performed in this follow-up.
+
+Evidence: timestamped visual samples of the 21:17 recording
+`Call with Amos and 1 other-20261030_120655-Meeting Recording.mp4`, showing
+Bridge 0.23.0. An existing hub timeout is visible around 01:15; Amos's
+attempts to reach Robin's desktop hub time out around 03:30-07:00; Robin
+joins his own hub but the book remains unlinked around 14:50-16:00; Amos
+tries 127.0.0.1:8765 around 16:40-17:00 and receives connection refused.
+Loopback targets the joining computer. The initial failure's cause is not
+established: firewall, name resolution and separate networks remain
+possibilities. No audio transcript, fresh hardware reproduction, successful
+shared-assignment test or cross-computer text-edit test is claimed.
+
+Source inspection distinguishes these setup observations from product gaps:
+`hub_sync.SYNCED_TABLES` carries selected workbench records, not Scripture
+or the translationCore project files; `BridgeEngine.hub_link` requires a
+local book with matching import provenance and safe identity adoption.
+`authorization.py` makes reporter read-only and groups flags/notes with
+broader writes; hub push also requires WRITE. `tc_project.set_assignment`
+and both assignment UIs represent one assignee per book/chapter scope,
+without independent translation/proofreading categories. Per-project roles
+already exist and should not be reimplemented. Inspected workspace HEAD:
+`5782999714664ec1f146b9df0b44bd69b66667c9`, with unrelated local changes;
+this is not verification of a clean installed release.
+
+Searched open and closed issues, then filed these Idea-template follow-ups:
+
+- [#418: Diagnose unreachable hubs and guide hosting, joining and linking](https://github.com/Bridgeconn/bridge/issues/418).
+  Includes actionable connection states, loopback guidance and verification
+  of the intended lower-role onboarding route.
+- [#419: Obtain/open an authorized shared book on a teammate's computer](https://github.com/Bridgeconn/bridge/issues/419).
+  Initial project provisioning is separate from ongoing text synchronization.
+- [#420: Design safe synchronization of Scripture edits](https://github.com/Bridgeconn/bridge/issues/420).
+  Explicit maintainer decision required before changing the current
+  Scripture-exclusion/authorized-write boundary; preserve lineage,
+  dependency staleness, audit history, recovery and offline operation.
+- [#421: Proofreader feedback without Scripture-write permission](https://github.com/Bridgeconn/bridge/issues/421).
+  Requires narrow permissions and hub-side enforcement, not merely UI changes.
+- [#422: Separate translation and proofreading assignments](https://github.com/Bridgeconn/bridge/issues/422).
+  Proposed responsibility categories; edit locking is not assumed or approved.
+
+Each issue records current behavior, affected people, smallest useful slice,
+decisions needed, concrete acceptance checks, risks and verification limits.
+Linked the follow-ups in existing collaboration issue #46 and hardware
+verification issue #309; the latter remains open for measured real-computer
+acceptance. Do not treat the recorded setup failure as an assignment-engine
+bug or the source-inspected capability gaps as reproduced recording defects.
+
+The GitHub connector could read but returned 403 on issue creation. The
+configured GitHub CLI confirmed WRITE access and created the issues instead.
+Issue bodies/creation receipts are also saved under ignored
+`engine/build/team-review-20261030/`. No recording, join code, token or
+project text was uploaded. This was issue/documentation work only; no
+application tests, fix, installer replacement, commit or push is claimed.
+
+
 ### Main integration and issue completion (#414, #417, 2026-10-30)
 
 At Benz's request, committed the spelling expansion as e1bb08c and the
