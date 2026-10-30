@@ -22790,6 +22790,88 @@ Historical status: the #412 investigation above predates the upstream fix in
 435ef6d and its perf-table follow-up in 7786d39, now included in main. It is
 retained as measurement evidence, not a claim that the old defect is unfixed.
 
+## 2026-10-30 — #413 Windows release signing and Defender gates
+
+Benz's official v0.23.0 installation failed before engine startup. Defender's
+Protection History identified `Trojan:Win32/Bearfoos.A!ml` and quarantined
+`%LOCALAPPDATA%/Bridge/bridge-engine.exe` (OS error 225, previously error 2 when
+missing). `D:/Bridge_0.23.0_x64-setup.exe` matches the GitHub release digest
+`9d5b5fdd4d349005417a61d97f38f2306b17560e0ba497ff35db0e0ac346a6cb` and is
+unsigned. This is provenance evidence, not proof that the detection is false.
+Benz authorized implementing the prevention work and confirmed no known signing
+certificate/service. Filed [#413](https://github.com/Bridgeconn/bridge/issues/413)
+using the Idea fields; the connector returned 403, but GitHub CLI succeeded.
+
+**Prepared locally.** `WindowsRelease.psm1` plus signing/scan wrappers:
+structured provider-neutral signer command, trusted timestamped Authenticode
+verification, active Defender checks, definition updates/freshness, custom scans
+with `-DisableRemediation`, JSON diagnostics, and exact file-set/hash checks
+before upload. `release.yml` refuses public Windows upload without signing
+configuration, signs sidecars before packaging, supplies a Tauri sign-command
+overlay for the shell/installer, scans final binaries/installer, smokes the final
+packaged sidecars, and rechecks hashes. It publishes per-platform checksum
+manifests with final bundles. Artifact-only internal builds may remain unsigned;
+there is no unsigned public fallback. macOS/Linux keep their existing build/sign
+behavior and gain checksum manifests. A separate path-filtered workflow tests
+the release failure handling using Windows' bundled Pester 3.4.0. The security
+runbook records signing prerequisites, Microsoft submission text and the separate
+clean-Windows installed-acceptance procedure; linked it from setup/the doc map.
+
+**Verified.** 19 Pester tests pass, including detection/scan errors, unavailable
+Defender, stale definitions, disabled protection, unsigned/untimestamped files,
+failed/no-op signers, omitted/changed artifacts, stale reports and unsigned-build
+promotion. The test signatures/scanner are mocked; these tests are not malware
+verdicts. PowerShell parses the scripts and all 19 workflow PowerShell blocks
+(GitHub expression placeholders substituted for parsing); both YAMLs parse.
+The generated signing overlay validates against the installed Tauri CLI JSON
+schema. `git diff --check` passes.
+
+**Real local scans.** Elevated custom scans, with protection settings unchanged,
+reported no threats in the matching installer and subsequently in the restored
+installed engine, USFM checker, shell and installer. Defender definitions
+`1.463.31.0`, updated 2026-10-29 16:50:56 UTC; every scan exit code 0; hashes
+unchanged across scanning. Installed engine SHA-256:
+`6b2da6f2e34ed833e66bdd7fdaae8f18815abfde9f5990479df4ea2b5702c651`.
+Reports are in ignored `.test-temp-windows-release/`. All four files are unsigned;
+the real installer is correctly rejected by the gate with `-RequireSignature`.
+The engine had become present again before its scan; this session did not
+restore it, allow a detection, set exclusions or disable protection.
+
+**Still pending.** A publisher signing identity/service and its CI authentication;
+actual trusted signing/timestamp validation on newly built artifacts; Microsoft
+submission/sign-in and its final determination (the computer-use Node runtime
+could not start, so no submission was made); a release workflow run and clean-VM
+installed acceptance. This is a local implementation, not a published fix or a
+guarantee against later antivirus detections. No commit, push or replacement
+release was made. Frontend/engine/Rust suites and a new frozen build were not run:
+no application, engine, Rust, spec or vendor source changed. The existing local
+checkout is v0.21.0, so its older build output was not substituted for v0.23.0.
+The pre-existing #412 build-log changes were retained.
+
+### #413 follow-up — publisher confirmed; Azure eligibility checked
+
+Benz confirmed the exact publisher as **Bridge Connectivity Solutions Pvt.
+Ltd.**, registered in **India**, and confirmed an existing Azure subscription.
+Added that legal name as `bundle.publisher` in `tauri.conf.json`; it is installer
+metadata, not a certificate or trusted signature. The configuration validates
+against the installed Tauri CLI schema; `git diff --check` passes. The change is
+metadata/docs only, so the 19 previously passing signing/scan tests were not
+repeated.
+
+Checked Microsoft's current [Artifact Signing setup
+requirements](https://learn.microsoft.com/en-us/azure/artifact-signing/quickstart):
+India is not in the supported Public Trust organization jurisdictions as of
+30 Oct 2026. Existing Azure billing does not establish signing eligibility.
+Private Trust/Public Trust Test profiles are not publicly trusted substitutes
+([trust models](https://learn.microsoft.com/en-us/azure/artifact-signing/concept-trust-models)).
+Retained the provider-neutral integration instead of adding an ineligible Azure
+Artifact Signing deployment. No Azure resource/account, role assignment, paid
+order or signing credential was created. The next prerequisite is a public
+organization code-signing certificate with a supported hardware/cloud signing
+service whose issuer confirms it can validate this Indian entity. Supplier
+selection, cost approval and identity validation remain pending.
+
+
 ## 2026-10-30 — Twelve-language spelling expansion, existing grammar reused (#414)
 
 User requested Hindi, Marathi, Bengali, Assamese, Punjabi, Gujarati, Odia,
@@ -23014,7 +23096,6 @@ benchmark/human are unchanged. All requested import implementation and
 review-packet preparation are complete; native confirmation and installed
 desktop acceptance remain pending. The installed app was not replaced.
 
-
 ### Team workflow recording review and follow-up issues (2026-10-30)
 
 Benz requested detailed issues after testing team/assignment functions with
@@ -23101,3 +23182,29 @@ Issues #414 and #417 are implementation-complete; #416 remains open for
 native confirmation, adjudication and held-out evaluation. No release,
 installer replacement, new grammar activation or native certification is
 claimed. The separate coverage defect #415 remains open.
+
+
+### Remaining-work commit review (#413, 2026-10-30)
+
+At Benz's request, reviewed all eleven remaining pending files. Retained the
+release signing/Defender gates, publisher metadata and runbook as one #413
+change; separated the historical #412 investigation and #418-#422 team
+workflow issue record into documentation commits. No unfinished work was
+deleted to obtain a clean status. The earlier Language QA main CI run
+41050511377 has now completed successfully.
+
+Reran the Windows bundled-Pester gate: 19 passed, 0 failed. Both workflow
+YAML files parse with duplicate keys rejected; all 19 PowerShell run blocks
+and four source/test scripts parse. Publisher and structured sign-command
+fields match the installed Tauri configuration schema. Diff whitespace
+checks pass. These are script/configuration checks, not actual signing or
+Defender verdicts. Frontend, engine and Rust source are unchanged; their
+application suites were not rerun for this release-only work. No installer
+or frozen build was produced by this commit review.
+
+Issue #413 remains open: a trusted publisher signing identity, provider
+authentication, actual release signing/scan execution, Microsoft submission
+and determination, and clean-Windows installed acceptance are still pending.
+Public Windows release uploads intentionally fail until signing is configured;
+unsigned internal artifact-only builds remain available. No credential, paid
+service, tag, release or installer replacement was created.
