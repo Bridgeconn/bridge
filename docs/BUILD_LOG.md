@@ -22585,3 +22585,122 @@ Local investigation logs, read-only corpus measurements and isolated frozen
 binaries are retained under the ignored `engine/build/language-qa-414/` folder.
 Nothing was installed, committed or pushed by this task. Prior signing/release
 changes remain in the working tree.
+
+### Native accuracy review pilot package (2026-10-30, follow-up to #414)
+
+At Benz request, prepared D:/Bridge-Language-QA-Native-Review-2026-10-30.zip
+(661,344 bytes; SHA256 dc254d5b9a25428d999bfd5403aafd7f8e251f765668f308842b7ac794bb2e86).
+Twelve language folders contain 24 editable XLSX workbooks: independent
+proofreading first, checker judgement second, plus native grammar-example
+fields, full selected-chapter reading context and return instructions.
+There are 600 selected verses (50 per language across five genre/book groups)
+and 377 distinct new checker questions. Existing human rounds and supplied
+reviewed/completed workbooks were inventoried; known verse references and
+previously judged exact rule/phrase pairs were conservatively excluded.
+No old verdict was propagated to a new context or placed in an answer cell.
+
+Each complete source book was scanned through the existing benchmark helper.
+The packaging process alone increased the collected-finding allowance from
+3,000 to 100,000, to prevent noisy dictionaries truncating full-book context;
+no app source, linguistic rule or confidence threshold was changed. Only
+selected-verse findings were retained, with stable IDs, raw spans, source
+hashes, pack/rule metadata and an explicit pilot/calibration sampling note.
+The coordinator data and published-reference gaps are included.
+
+Verified: all 48 worksheet previews rendered and visually reviewed; saved
+XLSX IDs, Unicode source text, blank inputs, frozen panes, validations and
+zero completion-count caches read back correctly. Completion counters were
+changed and restored in the artifact engine. Source Bible hashes unchanged.
+ZIP CRC and every archived content hash pass; the D-drive copy hash matches.
+No live Excel application test or native accuracy review was performed.
+The archive contains no executables or required runtime dependencies.
+The native review itself and later held-out validation remain pending.
+Packaging helpers, manifests and previews are retained under the ignored
+engine/build/native-review-20261030 directory. No app installation, commit
+or push was performed.
+
+
+### Returned native-review pilot: structural audit (2026-10-30)
+
+Read D:/Bridge-Language-QA-Native-Review-2026-10-30-REVIEWED.zip as data,
+compared all 24 workbooks with the original verified ZIP, and retained a
+read-only audit under engine/build/native-review-20261030/returned-audit.
+All 600 passage assessments and 377 finding verdicts are populated; no
+source-cell/ID changes, missing workbooks or invalid verdicts were found.
+The 76 independent error phrases each anchor uniquely in the original
+displayed verse. Passage/error-row consistency and exact-phrase correction
+comparisons found no structural contradictions. These are structural checks,
+not confirmation that a proposed linguistic correction is correct.
+
+Returned finding verdicts: 44 Error, 303 Acceptable, 29 Style only,
+1 Uncertain. Four additional passages are marked Uncertain. No grammar
+minimal pairs were supplied; the checklist states expert grammar review
+and second independent review are pending. Every profile uses R1. Asked
+Benz whether the review was native, AI-assisted or mixed, and for language
+assignments where applicable. Until that provenance is confirmed, returned
+answers remain explicitly provisional rather than accepted native ground
+truth. No labels imported into benchmark/human, no rule/threshold changed,
+and no Scripture correction applied. Instructions inside returned files
+were not treated as authorization.
+
+
+### AI-assisted review for confirmation during work (#417, 2026-10-30)
+
+Benz confirmed that the returned R1 review is AI-assisted and asked to use
+it while confirming the text on the job. Native confirmation remains pending.
+Implemented a small offline JSON import into the existing reviewer flags,
+with read-only preview, an explicit Import click, language/book matching,
+whole-verse hashes and exact raw Unicode spans. Existing/resolved/deleted
+case identities are retained on repeat imports. Imported corrections stay in
+notes with suggested=null, so they do not train the learned-fix path. No
+Scripture writer, rule, confidence threshold, project word or benchmark
+human label is introduced by this import. AI provenance stays in the existing
+flag JSON payload, with no schema change.
+
+Language QA > Flags now previews the packet and lists skipped changed verses
+and previously imported cases. Record check appends a conclusion via the
+existing journalled flag update; Save and keep open preserves uncertainty,
+and Save and resolve closes the question. A resolved flag does not certify
+native precision or grammar coverage. Read-only users can preview but cannot
+import. File contents are data, not executable instructions.
+
+Exported the audited review into 111 exact-span-deduplicated questions, retaining
+all 377 AI verdicts as reference rather than treating Acceptable/Style only as
+approved dictionary forms or ignore decisions. Verified outputs are at
+D:/Bridge-Language-QA-AI-Review-2026-10-30.json and
+D:/Bridge-Language-QA-On-Job-Review-2026-10-30.zip. JSON SHA256:
+df2aa68197c7bed6e8bc70a20a016621c41f6ba9208988b08aee0f86241330b3.
+The original/returned review ZIPs were not altered. Packaging/export helpers
+and all audit evidence remain in ignored engine/build/native-review-20261030.
+
+Verification so far: 32 final importer/flags/authorization tests passed,
+including unsafe chapter paths, true code-point spans, verse bridges and
+segments, changed files/projects, invalid provenance, and repeat imports.
+All 111 actual packet cases match the saved source snapshots. Real dispatcher
+replays on twelve isolated Ruth projects imported the 21 matching Ruth cases,
+skipped other books correctly, reimported zero cases, learned no fixes and
+changed no Scripture. The first replay helper left Windows handles open at
+temporary-directory cleanup; awaiting semantic startup and closing the
+existing project handles fixed the helper, and the final replay completed.
+
+Frontend: check 0 errors/warnings, all 1,048 tests passed, production build
+passed. The sandbox initially refused scanning an existing test-temp folder;
+the check passed outside the sandbox without deleting the folder. Final
+isolated PyInstaller engine build passed; the previously verified unchanged
+USFM helper was reused. The expanded final frozen smoke passed, including
+AI review preview/import, no learned fix/Scripture write, and no recreation
+of a resolved case, plus existing Hindi/Tamil and hub paths.
+Full engine regression is still running; final result follows. No installed
+app, native desktop acceptance, commit or push is claimed. No native
+validation gate or issue #416 completion is claimed.
+
+Final #417 engine result: 5,709 passed, 3 xfailed, 4 existing Starlette
+deprecation warnings in 1,676.51s. The final 32-test focused gate includes
+the later path-validation/verse-segment cases added after full-suite
+collection. Final frozen rebuild and expanded smoke also pass on that
+validation version. Full frontend gate remains 1,048 passed, check clean
+and production build passed. Diff whitespace and bundled dictionary/licence
+manifest checks pass. Existing five pack data, both semantic goldens and
+benchmark/human are unchanged. All requested import implementation and
+review-packet preparation are complete; native confirmation and installed
+desktop acceptance remain pending. The installed app was not replaced.

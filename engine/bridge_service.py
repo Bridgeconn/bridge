@@ -554,6 +554,8 @@ class Methods:
     LANGUAGE_QA_FLAGS_ADD = "languageQa.flags.add"
     LANGUAGE_QA_FLAGS_UPDATE = "languageQa.flags.update"
     LANGUAGE_QA_FLAGS_DELETE = "languageQa.flags.delete"
+    LANGUAGE_QA_REVIEW_PREVIEW = "languageQa.reviewImport.preview"
+    LANGUAGE_QA_REVIEW_APPLY = "languageQa.reviewImport.apply"
     LANGUAGE_QA_WORDS_ADD = "languageQa.words.add"
     LANGUAGE_QA_WORDS_LIST = "languageQa.words.list"
     LANGUAGE_QA_BOOK_WORDS = "languageQa.bookWords"
@@ -7577,6 +7579,28 @@ class BridgeEngine:
     FLAG_STATUSES = ("open", "resolved", "deleted")
     FLAG_NOTE_MAX = 4000
 
+    def language_qa_review_import(self, apply: bool, params: dict[str, Any]) -> dict[str, Any]:
+        from tc_ai_bridge import language_qa_review_import as importer
+        try:
+            packet, digest = importer.read_packet(params.get("filePath"))
+            if apply and params.get("expectedSha256") != digest:
+                raise ValueError("Review file changed or was not previewed; preview it again before importing")
+            summary, ready = importer.plan(self.project, packet)
+            if apply:
+                for case in ready:
+                    flag = self._valid_flag({"chapter": case["chapter"], "verse": case["verse"],
+                        "start": case["start"], "end": case["end"], "text": case["originalText"],
+                        "type": case["type"], "note": importer.flag_note(packet, case)})
+                    flag["aiReview"] = {"packetId": packet["packetId"], "caseId": case["id"],
+                        "sourceArchiveSha256": packet["sourceArchiveSha256"], "provenance": importer.PROVENANCE}
+                    # Use the existing flag writer, with no suggested field:
+                    # unconfirmed AI wording must not train learned fixes.
+                    self.project.record_language_qa_flag(flag, reviewer="AI-assisted review (native pending)")
+                summary["imported"] = len(ready)
+            return {**summary, "sha256": digest}
+        except (OSError, ValueError, KeyError) as exc:
+            raise ProjectError(f"Cannot import AI review: {exc}") from exc
+
     def language_qa_flags(self, action: str, params: dict[str, Any]) -> dict[str, Any]:
         """languageQa.flags.list | .add | .update | .delete."""
         self._require_project()
@@ -8432,6 +8456,7 @@ class BridgeEngine:
                      Methods.LANGUAGE_QA_SCOPE_APPLY, Methods.LANGUAGE_QA_BATCH_UNDO, Methods.LANGUAGE_QA_BATCHES,
                      Methods.LANGUAGE_QA_FLAGS_LIST, Methods.LANGUAGE_QA_FLAGS_ADD, Methods.LANGUAGE_QA_FLAGS_UPDATE,
                      Methods.LANGUAGE_QA_FLAGS_DELETE, Methods.LANGUAGE_QA_WORDS_ADD, Methods.LANGUAGE_QA_WORDS_LIST,
+                     Methods.LANGUAGE_QA_REVIEW_PREVIEW, Methods.LANGUAGE_QA_REVIEW_APPLY,
                      Methods.LANGUAGE_QA_BOOK_WORDS, Methods.LANGUAGE_QA_OCCURRENCES, Methods.LANGUAGE_QA_REFERENCE,
                      Methods.LANGUAGE_QA_SET_REFERENCE,
                      Methods.LANGUAGE_QA_RELATED, Methods.LANGUAGE_QA_CHECKER_SETTINGS_GET,
@@ -8465,6 +8490,8 @@ class BridgeEngine:
                 elif m in {Methods.LANGUAGE_QA_FLAGS_LIST, Methods.LANGUAGE_QA_FLAGS_ADD,
                            Methods.LANGUAGE_QA_FLAGS_UPDATE, Methods.LANGUAGE_QA_FLAGS_DELETE}:
                     result = self.language_qa_flags(m.rsplit(".", 1)[1], p)
+                elif m in {Methods.LANGUAGE_QA_REVIEW_PREVIEW, Methods.LANGUAGE_QA_REVIEW_APPLY}:
+                    result = self.language_qa_review_import(m == Methods.LANGUAGE_QA_REVIEW_APPLY, p)
                 elif m == Methods.LANGUAGE_QA_SCOPE_FIND:
                     result = self.language_qa_scope_find(p)
                 elif m == Methods.LANGUAGE_QA_SCOPE_APPLY:

@@ -90,7 +90,7 @@ a = Analysis(
     # string, so those are named too. The frozen smoke's --serve step is the
     # proof this list is complete.
     hiddenimports=[
-        'regex', 'usfmtc', 'bridge_server', 'spylls.hunspell',
+        'regex', 'usfmtc', 'bridge_server', 'spylls.hunspell', 'tc_ai_bridge.language_qa_review_import',
         'uvicorn.logging', 'uvicorn.loops.auto', 'uvicorn.protocols.http.auto',
         'uvicorn.protocols.http.h11_impl', 'uvicorn.protocols.websockets.auto',
         'uvicorn.lifespan.on', 'uvicorn.lifespan.off', 'fastapi.staticfiles',

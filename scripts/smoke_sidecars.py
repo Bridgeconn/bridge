@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import hashlib
 import json
 import os
 import queue
@@ -665,6 +666,42 @@ def main() -> int:
                     or len(misses) != 1 or misses[0].get("originalText") != unknown):
                 raise SystemExit(f"Frozen Marathi dictionary failed: {lqa}")
             print(f"Frozen Marathi Hunspell dictionary passed in {time.monotonic() - started:.2f}s.")
+
+            # #417: proposals become questions, without learning a fix or
+            # writing Scripture; a second import must not resurrect a review.
+            review_path = Path(temp) / "ai-review.json"
+            review_text = f"देव {unknown}"
+            _write_json(review_path, {
+                "schema": "bridge-language-qa-provisional-review-v1", "packetId": "frozen-review",
+                "provenance": "ai-assisted-native-pending", "sourceArchiveSha256": "b" * 64,
+                "cases": [{"id": "frozen-case", "language": "mr", "book": "rut", "chapter": "1", "verse": "1",
+                           "start": len("देव "), "end": len(review_text), "originalText": unknown,
+                           "textHash": hashlib.sha256(review_text.encode("utf-8")).hexdigest(),
+                           "type": "spelling", "proposedCorrection": "माणूस", "sourceIds": ["mr-E-001"],
+                           "reason": "Unconfirmed test proposal", "reportedVerdict": "AI-proposed issue"}],
+            })
+            params = {"projectPath": str(marathi), "filePath": str(review_path)}
+            preview = request("ai-review-preview", "languageQa.reviewImport.preview", params)
+            if not preview.get("success") or preview["result"]["ready"] != 1:
+                raise SystemExit(f"Frozen AI review preview failed: {preview}")
+            before_review = (marathi / "rut" / "1.json").read_bytes()
+            applied = request("ai-review-import", "languageQa.reviewImport.apply",
+                              {**params, "expectedSha256": preview["result"]["sha256"]})
+            flags = request("ai-review-flags", "languageQa.flags.list", {"projectPath": str(marathi)})
+            learned = request("ai-review-learned", "languageQa.learned.list", {"projectPath": str(marathi)})
+            rows = flags.get("result", {}).get("flags", [])
+            if (not applied.get("success") or applied["result"]["imported"] != 1 or len(rows) != 1
+                    or rows[0].get("suggested") is not None or rows[0].get("status") != "open"
+                    or learned.get("result", {}).get("fixes") != []
+                    or (marathi / "rut" / "1.json").read_bytes() != before_review):
+                raise SystemExit(f"Frozen AI review import changed more than flags: {applied}, {flags}, {learned}")
+            request("ai-review-resolve", "languageQa.flags.update", {"projectPath": str(marathi),
+                    "flagId": rows[0]["flagId"], "patch": {"status": "resolved", "note": "Test review only"}})
+            again = request("ai-review-repeat", "languageQa.reviewImport.apply",
+                            {**params, "expectedSha256": preview["result"]["sha256"]})
+            if not again.get("success") or again["result"]["imported"] != 0 or again["result"]["existing"] != 1:
+                raise SystemExit(f"Frozen AI review import repeated a resolved question: {again}")
+            print("Frozen provisional AI review import passed: no learned fix, no Scripture write, no duplicate.")
 
             # ta-irv's indic-qa layer: the Tamil profile over the OV dictionary,
             # beside the pack's own rules. GEN 1:27 as the IRV has it carries the

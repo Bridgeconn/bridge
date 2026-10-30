@@ -252,6 +252,42 @@ shows ⚑ after the flagged span. The panel's Flags tab lists the book's flags;
 flags are created from a Language QA mark, the Review panel, a text selection
 or the whole verse.
 
+### Provisional AI review imports (#417)
+
+Language QA → Flags → **Import AI review…** accepts the offline JSON packet
+exported from the audited review pilot. Preview is read-only; importing needs
+write permission and the previewed file digest. Only cases for the current
+language/book whose whole-verse hash and raw Unicode span still match become
+open flags. Changed text is skipped, not re-anchored by guessing. Imported,
+resolved and deleted cases are recognised on repeat imports; a prior human
+conclusion is never overwritten or reopened by an import.
+
+These are explicitly **AI-assisted questions with native confirmation pending**,
+not new grammar rules or native accuracy labels. The 2026-10-30 returned pilot
+has 111 actionable, exact-span-deduplicated questions; all 377 AI verdicts remain
+reference data in the packet. AI verdicts of Acceptable/Style only do not become
+ignore decisions or project words. Proposed corrections stay in the flag note,
+with `suggested: null`, because an ordinary one-word flag suggestion trains the
+existing learned-fix mechanism. Importing never edits Scripture or trains it.
+
+An imported flag carries `aiReview` provenance in the existing JSON payload:
+packet/case identifiers, source archive SHA-256 and
+`ai-assisted-native-pending`. There is no new table or schema migration.
+**Record check…** appends the user's conclusion through the existing journalled
+flag update. **Save and keep open** preserves uncertainty; **Save and resolve**
+closes the question. Corrections use the normal editor. A resolved flag is not
+native certification and never feeds `benchmark/human` automatically.
+
+The packet contract is `schema: bridge-language-qa-provisional-review-v1`,
+`provenance: ai-assisted-native-pending`, `packetId`,
+`sourceArchiveSha256` and `cases`. Each case has a stable `id`, language, book,
+chapter, verse, textHash, start/end, originalText, flag type, optional proposed
+correction, reported verdict, reason and source row IDs. The importer bounds
+files at 8 MiB and cases at 5,000, validates the complete packet before writes,
+and rejects unknown provenance or duplicate case IDs. Feedback reference data
+is not executed or imported as decisions. A partial import interrupted by an
+I/O failure can be repeated safely using the existing case identities.
+
 ### Project words, Book words, occurrences (every pack)
 
 - `languageQa.words.add {words, scope: book|project}` records house-style

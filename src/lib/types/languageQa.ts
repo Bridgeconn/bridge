@@ -210,6 +210,8 @@ export type FlagStatus = "open" | "resolved" | "deleted";
 
 /** A reviewer's question on a passage (workbench v6). Never a Scripture write. */
 export interface LanguageQaFlag {
+  /** Imported proposal provenance; resolving it never creates benchmark labels. */
+  aiReview?: { packetId: string; caseId: string; sourceArchiveSha256: string; provenance: "ai-assisted-native-pending" };
   flagId: string;
   chapter: string;
   verse: string;
@@ -228,6 +230,20 @@ export interface LanguageQaFlag {
   status: FlagStatus;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AiReviewImportPreview {
+  packetId: string;
+  provenance: "ai-assisted-native-pending";
+  sha256: string;
+  book: string;
+  language: string;
+  ready: number;
+  existing: number;
+  stale: number;
+  otherScope: number;
+  imported?: number;
+  examples: { id: string; chapter: string; verse: string; text: string; note: string }[];
 }
 
 export interface FlagInput {

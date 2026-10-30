@@ -877,3 +877,33 @@ confirm the selected pack/coverage, inspect marks and raw Unicode spans, add an
 accepted word to Dictionary, Ignore a candidate and reopen, and confirm that
 existing Hindi/Tamil checks still appear. No new linguistic accuracy sign-off:
 each language still needs native-labelled correct and incorrect examples.
+
+
+### 2026-10-30 — #417 provisional AI review during normal work
+
+Source: 32 importer/flags/authorization tests passed on the final importer;
+true code-point spans, verse bridges/segments, unsafe chapter keys,
+source/project changes, untrusted provenance and repeat imports covered.
+The actual review packet has 111 matching source questions; real dispatcher
+Ruth replays across 12 languages imported 21 matching cases, reimported
+none, and wrote no Scripture or learned fixes. Full engine result is recorded
+in BUILD_LOG. Frontend: check 0 errors/warnings, 1,048 tests passed,
+production build passed.
+
+Frozen: isolated final engine built and expanded smoke passed, including
+preview/import and no learned fix/Scripture write/recreated resolved case.
+Desktop NOT RUN: open a matching book, go to Language QA > Flags, preview
+the D-drive AI review JSON, check scope/staleness counts, import, inspect
+inline flags, record a conclusion, keep an uncertain question open, resolve
+and reopen another, and repeat import without resurrecting deleted cases.
+The installed app was not replaced.
+
+Native accuracy remains PENDING. R1 was confirmed AI-assisted; neither the
+44 reported errors nor the other AI verdicts are native ground truth. No new
+grammar rule, precision promotion, approved dictionary word, ignored finding
+or automatic Scripture correction was introduced. A resolved flag is only
+a recorded review outcome, not linguistic certification.
+
+Final #417 full engine gate: 5,709 passed and 3 xfailed; the final targeted
+32-test gate covers the later import validation cases. Frozen final rebuild
+and smoke pass. Native and installed desktop rows remain pending as above.

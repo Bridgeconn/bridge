@@ -10,7 +10,8 @@
   import type { BookWordRow, LanguageQaFlag, LanguageQaStatus, LanguageQaView, LearnedFix } from "../types/languageQa";
   import type { HouseStyleEntry } from "../types/houseStyle";
   import { addProjectWords } from "../projectWords";
-  import { deleteFlag, setFlagStatus } from "../flags";
+  import { deleteFlag, setFlagStatus, publishBookFlags, recordFlagCheck } from "../flags";
+  import type { AiReviewImportPreview } from "../types/languageQa";
   import LanguageQaHistoryList from "./LanguageQaHistoryList.svelte";
   import type { VerseHistoryEntry } from "../types/finding";
   import { graphemeDiff } from "../utils/unicodeDiff";
@@ -127,6 +128,14 @@
   let projectWords: HouseStyleEntry[] = [];
   let flags: LanguageQaFlag[] = [];
   let flagsLoaded = false;
+  let reviewImport: AiReviewImportPreview | null = null;
+  let reviewFile = "";
+  let reviewProject = "";
+  let reviewBusy = false;
+  let reviewNotice = "";
+  let checkingFlag = "";
+  let checkConclusion = "";
+  let checkProject = "";
   let flagsError = "";
   let showResolved = false;
   $: listedFlags = showResolved ? flags : flags.filter((f) => f.status === "open");
@@ -485,14 +494,62 @@
 
   /** The whole book's flags, fetched when the tab opens. */
   async function loadFlags(): Promise<void> {
+    const requestedPath = projectPath;
     flagsError = "";
     try {
-      flags = (await bridge.languageQaFlagsList(projectPath)).flags;
+      const result = await bridge.languageQaFlagsList(requestedPath);
+      if (requestedPath !== projectPath) return;
+      flags = result.flags;
+      publishBookFlags(flags);
     } catch (cause) {
       flagsError = cause instanceof Error ? cause.message : String(cause);
     } finally {
-      flagsLoaded = true;
+      if (requestedPath === projectPath) flagsLoaded = true;
     }
+  }
+
+  async function previewReview(): Promise<void> {
+    const requestedPath = projectPath;
+    reviewImport = null;
+    reviewNotice = "";
+    flagsError = "";
+    reviewBusy = true;
+    try {
+      const file = await bridge.pickJsonFile();
+      if (!file || requestedPath !== projectPath) return;
+      const preview = await bridge.languageQaReviewPreview(requestedPath, file);
+      if (requestedPath !== projectPath) return;
+      reviewFile = file;
+      reviewProject = requestedPath;
+      reviewImport = preview;
+    } catch (cause) {
+      if (requestedPath === projectPath) flagsError = cause instanceof Error ? cause.message : String(cause);
+    } finally { reviewBusy = false; }
+  }
+
+  async function importReview(): Promise<void> {
+    if (!reviewImport || reviewProject !== projectPath) return;
+    const requestedPath = projectPath;
+    reviewBusy = true;
+    flagsError = "";
+    try {
+      const result = await bridge.languageQaReviewImport(requestedPath, reviewFile, reviewImport.sha256);
+      if (requestedPath !== projectPath) return;
+      reviewNotice = `Imported ${result.imported ?? 0} open questions. ${result.stale} changed verses skipped; ${result.existing} already imported.`;
+      reviewImport = null;
+      await loadFlags();
+    } catch (cause) {
+      if (requestedPath === projectPath) flagsError = cause instanceof Error ? cause.message : String(cause);
+    } finally { reviewBusy = false; }
+  }
+
+  async function saveFlagCheck(flag: LanguageQaFlag, resolve = true): Promise<void> {
+    if (checkProject !== projectPath) return;
+    const error = await recordFlagCheck(projectPath, flag, checkConclusion, resolve);
+    if (error) { flagsError = error; return; }
+    checkingFlag = "";
+    checkConclusion = "";
+    await loadFlags();
   }
 
   async function flagAction(flag: LanguageQaFlag, action: "resolved" | "open" | "delete"): Promise<void> {
@@ -820,6 +877,22 @@
         {:else if panelTab === "flags"}
           <section aria-label="Flags" class="flags">
             <p class="muted">Reviewers' questions on the text (⚑).</p>
+            <button on:click={previewReview} disabled={reviewBusy}>Import AI review…</button>
+            {#if reviewBusy}<p role="status">Preparing review questions…</p>{/if}
+            {#if reviewNotice}<p role="status">{reviewNotice}</p>{/if}
+            {#if reviewImport && reviewProject === projectPath}
+              <div role="region" aria-label="AI review import preview">
+                <p>AI-assisted review — native confirmation pending.</p>
+                <p>{reviewImport.ready} questions match this book. {reviewImport.existing} already imported;
+                  {reviewImport.stale} have changed text; {reviewImport.otherScope} belong to other books or languages.</p>
+                <p class="muted">Import creates open flags for checking in context. Proposed corrections stay in the notes.</p>
+                <ul>{#each reviewImport.examples as example (example.id)}
+                  <li>{example.chapter}:{example.verse} — {example.text}</li>
+                {/each}</ul>
+                <button on:click={importReview} disabled={reviewBusy || !reviewImport.ready}>Import {reviewImport.ready} questions</button>
+                <button on:click={() => (reviewImport = null)} disabled={reviewBusy}>Cancel</button>
+              </div>
+            {/if}
             <label class="toggle"><input type="checkbox" bind:checked={showResolved} /> Show resolved</label>
             {#if flagsError}<p role="alert">{flagsError}</p>{/if}
             {#if !flagsLoaded}
@@ -840,7 +913,20 @@
                     {#if flag.suggested}<p>Suggested: <b>{flag.suggested}</b></p>{/if}
                     <p class="muted">{flag.reviewer} · {new Date(flag.createdAt).toLocaleDateString()}</p>
                     {#if flag.status === "open"}
-                      <button on:click={() => flagAction(flag, "resolved")}>Resolve</button>
+                      {#if flag.aiReview}
+                        <p class="muted">AI-assisted proposal. Check the text and record your conclusion.</p>
+                        {#if checkingFlag === flag.flagId && checkProject === projectPath}
+                          <label>Human check
+                            <textarea maxlength="500" bind:value={checkConclusion} placeholder="Issue confirmed, acceptable wording, style choice, or still uncertain — explain what you checked." /></label>
+                          <button on:click={() => saveFlagCheck(flag)} disabled={!checkConclusion.trim()}>Save and resolve</button>
+                          <button on:click={() => saveFlagCheck(flag, false)} disabled={!checkConclusion.trim()}>Save and keep open</button>
+                          <button on:click={() => (checkingFlag = "")}>Cancel check</button>
+                        {:else}
+                          <button on:click={() => { checkingFlag = flag.flagId; checkConclusion = ""; checkProject = projectPath; }}>Record check…</button>
+                        {/if}
+                      {:else}
+                        <button on:click={() => flagAction(flag, "resolved")}>Resolve</button>
+                      {/if}
                     {:else}
                       <button on:click={() => flagAction(flag, "open")}>Reopen</button>
                     {/if}

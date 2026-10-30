@@ -2,7 +2,7 @@ import type {
   LanguageQaDecisionIssue, LanguageQaHistory, LanguageQaInline, LanguageQaStatus, LanguageQaVerse, LanguageQaView,
   LearnedFix, LearnedFixesResponse, VerseEditLearned,
   BatchUndoResult, LanguageQaScope, ScopeAcceptResult, ScopeFindResult, ScopeIgnoreResult,
-  FlagInput, FlagStatus, FlagType, LanguageQaFlag, BookWordsResult, OccurrencesResult,
+  FlagInput, FlagStatus, FlagType, LanguageQaFlag, BookWordsResult, OccurrencesResult, AiReviewImportPreview,
   ReferenceChapter, ReferenceChoice, RelatedWordsResult, CheckerSettings, CheckerSettingsPatch, CheckerSettingsUnavailable,
 } from "../types/languageQa";
 import type { CollectionQaSnapshot } from "../types/collectionQa";
@@ -297,6 +297,8 @@ export type EngineMethod =
   | "languageQa.flags.add"
   | "languageQa.flags.update"
   | "languageQa.flags.delete"
+  | "languageQa.reviewImport.preview"
+  | "languageQa.reviewImport.apply"
   | "languageQa.words.add"
   | "languageQa.words.list"
   | "languageQa.bookWords"
@@ -633,6 +635,13 @@ export const bridge = {
     const params: Record<string, unknown> = { projectPath };
     if (chapter !== undefined) params.chapter = chapter;
     return call("languageQa.flags.list", params);
+  },
+
+  languageQaReviewPreview(projectPath: string, filePath: string): Promise<AiReviewImportPreview> {
+    return call("languageQa.reviewImport.preview", { projectPath, filePath });
+  },
+  languageQaReviewImport(projectPath: string, filePath: string, expectedSha256: string): Promise<AiReviewImportPreview> {
+    return call("languageQa.reviewImport.apply", { projectPath, filePath, expectedSha256 });
   },
 
   languageQaFlagAdd(projectPath: string, flag: FlagInput): Promise<{ flag: LanguageQaFlag; learned?: { old: string; new: string } }> {
