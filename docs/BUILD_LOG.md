@@ -22972,3 +22972,29 @@ manifest checks pass. Existing five pack data, both semantic goldens and
 benchmark/human are unchanged. All requested import implementation and
 review-packet preparation are complete; native confirmation and installed
 desktop acceptance remain pending. The installed app was not replaced.
+
+
+### Main integration and issue completion (#414, #417, 2026-10-30)
+
+At Benz's request, committed the spelling expansion as e1bb08c and the
+provisional AI review importer as ddd6049, then merged the nine upstream main
+commits at 8ab1b1b. The build-log append conflict preserved both histories;
+shared protocol/dependency changes merged without code conflicts. Unrelated
+release/security work and recording-review files were excluded and preserved.
+
+Reverified the combined main source: 52 spelling/import/flags/authorization
+tests passed; dictionary/licence manifests passed; Svelte check reported
+0 errors/warnings; all 1,081 frontend tests passed (104 files); production
+build passed. Rebuilt the isolated frozen engine and passed the expanded
+sidecar smoke, including Marathi and provisional import with no Scripture
+write, learned fix or duplicate resolved question. Installed desktop and
+native linguistic accuracy acceptance remain pending.
+
+Pushed the implementation and merge to main. GitHub CI run 41050511377 has
+passed its frontend job; its full Windows engine job is still running at
+this entry. The earlier pre-merge full engine result remains 5,709 passed,
+3 xfailed, with the later final validation covered by focused checks.
+Issues #414 and #417 are implementation-complete; #416 remains open for
+native confirmation, adjudication and held-out evaluation. No release,
+installer replacement, new grammar activation or native certification is
+claimed. The separate coverage defect #415 remains open.
