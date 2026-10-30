@@ -29,6 +29,7 @@ code inside a pack.
 | `reduplication-allowlist` | word pair | `allow`: repeats that are grammatical |
 | `lexicon-lookup` | pair (`check: known-split`) or book (`known-misspelling`, `rare-near-common`) | the pack's lexicon; `rare-near-common` also uses the pack's confusion set and thresholds |
 | `wordlist-variant` | book | thresholds; runs only when the pack has no lexicon |
+| `dictionary-lookup` | verse | `script`; a pack's pinned Hunspell `.aff`/`.dic` data, through the shared offline Spylls adapter (#414) |
 
 Order inside a scan: the common rules first. Then, for each whitespace-separated
 word pair, the pair kinds followed by the token-context rules. Then the verse
@@ -502,3 +503,138 @@ Re-vendoring: steps 1–4 of "Updating" above, plus
 `build_indic_qa_packs.py --ta-layer` and `--irv-state ta`. If a change to
 `langs/ta.py`, `tamil_grammar.py` or `checker.py` alters matching, bump the
 affected `revision`s in `indic_qa_rules.json`.
+
+
+## Twelve-language spelling coverage (#414, 2026-10-30)
+
+The registry now includes all twelve requested languages. Existing five packs
+and their rule identities are reused, not regenerated or copied:
+
+| Language | Pack | Dedicated checks |
+|---|---|---|
+| Hindi | hi-irv | Existing indic-qa spelling and seven bounded grammar leads |
+| Marathi | mr-irv | New affix-aware dictionary spelling candidates |
+| Bengali | bn-irv | New affix-aware dictionary spelling candidates |
+| Assamese | as-irv | New dictionary spelling candidates |
+| Punjabi | pa-irv | Existing indic-qa spelling and two bounded grammar leads |
+| Gujarati | gu-irv | New dictionary spelling candidates |
+| Odia | or-irv | Existing indic-qa spelling and three bounded grammar leads |
+| Tamil | ta-irv | Existing Tamil rules, sandhi and OV spelling layer |
+| Telugu | te-irv | New dictionary spelling candidates |
+| Kannada | kn-irv | New affix-aware dictionary spelling candidates |
+| Malayalam | ml-irv | Existing indic-qa spelling and five bounded grammar leads |
+| Nepali | ne-irv | New affix-aware dictionary spelling candidates |
+
+All languages also reuse the common technical checks, terminology, project
+dictionary/house style, review decisions, original Unicode spans and the one
+existing Scripture correction path. The new packs do not introduce grammar
+claims. In particular, they do not copy Hindi grammar onto Marathi/Nepali or
+Bengali onto Assamese just because the scripts are shared. Metadata/aliases
+select those languages; shared-script fallback never guesses them.
+
+### The dictionary adapter
+
+`language_packs/spelling.py` implements the generic `dictionary-lookup` verse
+kind, with the pure-Python **Spylls 0.1.7** Hunspell implementation. A new pack
+contains only data and one `spelling.dictionary-miss` rule. The existing
+hi/ml/or/pa/ta paths do not call this adapter.
+
+The pack's `spellingDictionary` object names a base path (without `.aff`/`.dic`)
+and a manifest. The loader verifies SHA-256 digests and runs the rule's examples
+through the real scanner; missing/corrupt data refuses the pack with an explicit
+coverage limitation. Manifest and file signatures participate in scan-cache
+invalidation. The adapter keeps one resident dictionary and a bounded 20,000-word
+lookup memo. It normalizes lookup keys to NFC without rewriting source text or
+offsets, uses the shared tokenizer, and preserves joiner-linked words as one
+spelling unit. Foreign/mixed-script words are not judged by the wrong dictionary.
+Notes/markup remain the existing parser's responsibility.
+
+The source data are the seven locale dictionaries in
+[LibreOffice/dictionaries](https://github.com/LibreOffice/dictionaries/tree/4f1df64b2e8e14751aa7c2205d170ca016071315),
+pinned at `4f1df64b2e8e14751aa7c2205d170ca016071315`. Each pack has its own
+upstream copyright/licence notice and manifest. Complete GPL/LGPL/MPL texts and
+the Spylls notice ship in `engine/language_packs/LICENSES/`. Spylls' actual
+distributed licence is MPL-2.0, despite its wheel's MIT classifier.
+
+Build/update: `python scripts/sync_hunspell_packs.py` fetches those pinned data;
+`--cache <folder>` rebuilds from previously fetched bytes without network;
+`--check` verifies the bundled hashes. Neither operation is a runtime download.
+Normal checks remain entirely offline. These dictionaries ship through the
+existing external pack resource path; the frozen exe contains Spylls and its
+distribution notice, not the large dictionaries.
+
+### Findings are dictionary misses, not verified errors
+
+The new rule has low severity/confidence and no reviewed-inline flag. Existing
+reviewer display thresholds apply unchanged. A miss says explicitly that the
+dictionary does not recognise the word, requires review, and offers **no inferred
+replacement**. Valid names, inflections, dialect, compounds and Bible vocabulary
+may be absent. Add accepted forms to the project dictionary or record Ignore;
+the shared review/house-style flow applies. An unknown form is not evidence of
+bad grammar. Synthetic embedded examples test membership, not linguistic accuracy.
+
+Actual read-only scans of the local IRV Genesis 1 (2026-10-30) produced:
+
+| New language | Verse entries | Dictionary-miss findings |
+|---|---:|---:|
+| Assamese | 31 | 36 |
+| Bengali | 31 | 21 |
+| Gujarati | 31 | 165 |
+| Kannada | 31 | 166 |
+| Marathi | 30 | 15 |
+| Nepali | 31 | 211 |
+| Telugu | 31 | 170 |
+
+These are **not verified spelling-error counts, precision or recall**. They
+expose substantial coverage gaps, especially in the last four high-count packs.
+Nepali's upstream word list even omits `र` and `परमेश्वर`. No source text or
+human labels were altered to make a dictionary look better. Native review and
+language-specific labelled positives/negatives are still required before any
+accuracy claim; no new grammar rule was fabricated to fill a matrix.
+
+Two integration defects were reproduced before writing the adapter: Bengali's
+affix file has six numeric SFX table counts with an extraneous `$`, which Spylls
+cannot parse; Assamese's UTF-8 BOM is misread as a dictionary entry by the stock
+reader. The wrapper reads UTF-8-sig and normalizes only those six Bengali counts
+in memory. It preserves the original data byte-for-byte and never edits an
+upstream code tree or changes an affix condition.
+
+Clause-level agreement, source meaning and publication certification retain the
+existing boundary. Adding further grammar requires a bounded sourced rule spec,
+exceptions and native-labelled examples; registering a language does not claim
+that all its grammar is implemented.
+
+### Published grammar research before native review (2026-10-30)
+
+Benz requested published references first, with native review later. This is a
+research inventory for the seven new packs, **not enabled grammar rules**.
+The five existing language checkers above remain the implementation to reuse.
+Sources were checked online on 2026-10-30; access failures are explicit below.
+No PDF, textbook, parser model or new linguistic runtime dependency is bundled.
+
+| Language | Primary published reference and what was inspected | Research result / next bounded candidate |
+|---|---|---|
+| Marathi | [Rajya Marathi Vikas Sanstha, MayMarathi banking course](https://rmvs.marathi.gov.in/wp-content/uploads/2022/02/MayMarathi-Short-Bank.pdf), lesson 3, located through the publisher's indexed text; full PDF retrieval failed (502/DNS). [Chaudhary et al., 2023, Teacher Perception of Automatically Extracted Grammar Concepts](https://arxiv.org/html/2310.18417v1), §§3, 5–6, was accessible. | The course is a reference lead for present-copula person/number contrasts, but its paradigm and exceptions need full-page verification before a rule spec is accepted. The research paper evaluates extracted teaching material with teachers; it does not establish that corpus patterns are error labels. Do not turn majority suffix/word-order patterns into prohibitions. |
+| Bengali | [University of Texas at Austin, Bangla Grammar](https://bangla.la.utexas.edu/resources/bangla-grammar/), verb template and person-agreement table, read directly. | Person endings depend on tense and honorific status; an inflected verb can stand without an explicit subject. Candidate: a small, fully enumerated finite-verb paradigm in an explicit, unambiguous pronoun construction, with tense and honorific variants accepted. No missing-subject rule and no suffix-only generalisation. |
+| Assamese | [Gitanjali Bez, 2022, Non-finite verbs in Assamese, Himalayan Linguistics 21(2)](https://escholarship.org/content/qt1w6749j5/qt1w6749j5.pdf), printed pp. 1, 6–8 and 45; DOI 10.5070/H921253900. | Non-finite forms lack subject-person indexation, and one affix can serve several functions. Present nominal/adjectival predicates can lack a copula, while locative/existential constructions differ. This evidence rules out a blanket suffix-agreement or missing-copula check. A finite-only candidate still needs a separate sourced paradigm and construction-level exceptions. |
+| Gujarati | [University of Pennsylvania, Gujarati auxiliary verbs](https://ccat.sas.upenn.edu/plc/gujarati/auxiliaryverbs.htm), publisher page located but retrieval timed out; direct fetch also failed certificate validation. | Reference located, substantive paradigm **not verified**. No Gujarati agreement forms are inferred from Hindi or from legacy-font search snippets. Next step: obtain an accessible publisher copy, verify encoding and present/past auxiliary paradigms, then draft a small construction-specific spec. |
+| Telugu | [Troy Messick, On apparent pronominal feature contradictions: Shifty agreement in Telugu](https://sites.rutgers.edu/troy-messick/wp-content/uploads/sites/515/2022/03/telugu.agreement.syntax.final_.pdf), author-hosted manuscript, §1.1 tables 1–3 and opening embedded-clause examples, read directly. [CIIL, An intensive course in Telugu, Parimi Ramanarasimham (2006)](https://sanchika.ciil.org/items/c3d94a94-4c61-410f-aea5-0ea684dcfac9) was located, but its download exposed only a one-page PDF, not the full course. | The manuscript supplies agreement/pronoun paradigms and attested apparent person mismatches in embedded speech/attitude clauses. Predicate-nominal agreement is also distinct from verbal agreement. Candidate scope must exclude those embedded environments and honorific ambiguities; no nearest-pronoun or last-suffix rule. The course catalogue alone is not evidence for a particular grammatical rejection. |
+| Kannada | [Kannada Language Chair, JNU, Kannaḍa Kalike, The Present Tense](https://kannadakalike.org/grammar/the-present-tense), government-sponsored course, present/progressive paradigms and verbless examples, read directly. | Candidate: exact pronoun + present `iru` form agreement in a tightly bounded construction. The same lesson explicitly permits verbless nominal sentences and illustrates honorific use; absence of a verb is not an error. Written/spoken variants and singular honorific readings must be accepted before activation. |
+| Nepali | [UCSB, Aspects of Nepali Grammar, Santa Barbara Papers in Linguistics vol. 6](https://www.linguistics.ucsb.edu/sites/default/files/sitefiles/research/papers/Working%20Papers%20Vol%206.pdf), introduction, abbreviation inventory and description of dative constructions; [UD for Nepali](https://universaldependencies.org/ne/index.html), morphology and copula sections, read directly. | The volume distinguishes present h-/ch-copula series and honorific grades. UD separately describes grammatical function, case marking and agreement, and explicitly notes that its current annotations lack a separate politeness feature. Candidate: an explicitly sourced copula/pronoun micro-paradigm with honorific and dative-subject exceptions. Treebank feature absence cannot establish grammatical impossibility. |
+
+These are implementation inferences from the cited descriptions, not claims
+that the sources endorse Bridge rules. For each candidate, the review packet
+must contain the exact source section/page, a closed list of accepted forms,
+the precise trigger and abstention conditions, and independently reviewed
+correct/incorrect examples in the intended Bible register. Source examples
+start as attested acceptances; changing an ending does not manufacture an
+expert-labelled error. Include honorifics, omitted subjects, quotations,
+coordination, embedded clauses, legitimate variants, and cross-verse boundaries.
+
+Only after those examples are labelled should a bounded rule be implemented
+using the existing shared scanner/pack system and evaluated for false positives.
+No grammar placeholder is added to the catalogue, no corpus frequency becomes
+a correctness label, and no new-language grammar rule was enabled by this
+research. Marathi/Gujarati full-reference access and the Assamese finite
+paradigm remain explicit research gaps; native review remains pending for all
+seven. Full clause-level grammar stays outside the offline QA boundary.

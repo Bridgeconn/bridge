@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, copy_metadata
 
 
 # Wildebeest is optional in development but its package data must accompany
@@ -75,6 +75,9 @@ a = Analysis(
         # does not read them today, but a grammar or reference call that did
         # would fail only in the frozen build, so they are collected anyway.
         *collect_data_files('usfmtc'),
+        # Spylls' distributed LICENSE is MPL-2.0 (its MIT classifier is
+        # incorrect). Preserve the installed notice with the frozen module.
+        *copy_metadata('spylls'),
         *wildebeest_datas,
     ],
     # usfmtc is imported on first parse inside tc_ai_bridge/usfm_parser.py so
@@ -87,7 +90,7 @@ a = Analysis(
     # string, so those are named too. The frozen smoke's --serve step is the
     # proof this list is complete.
     hiddenimports=[
-        'regex', 'usfmtc', 'bridge_server',
+        'regex', 'usfmtc', 'bridge_server', 'spylls.hunspell',
         'uvicorn.logging', 'uvicorn.loops.auto', 'uvicorn.protocols.http.auto',
         'uvicorn.protocols.http.h11_impl', 'uvicorn.protocols.websockets.auto',
         'uvicorn.lifespan.on', 'uvicorn.lifespan.off', 'fastapi.staticfiles',

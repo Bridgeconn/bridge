@@ -12,6 +12,7 @@ import itertools
 import json
 import threading
 import time
+import unicodedata
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -1007,7 +1008,7 @@ class LanguageQaManager:
         indic_qa_adapter.release(keep=rule_pack.name if book_checker else None)
         coverage_categories = (sorted({meta.category for meta in COMMON_RULES.values() if meta.enabled}
                                       | {r.category for r in rule_pack.rules if r.enabled})
-                               if profile else None)
+                               if profile or (rule_pack is not None and rule_pack.meta.get("spellingDictionary")) else None)
         with self._lock:
             if self._cancelled(generation) and cancelled is None:
                 return None
@@ -1033,6 +1034,10 @@ class LanguageQaManager:
         checked = skipped = reused = scanned_verses = 0
         book_counts: dict[str, int] = {}
         book_first_seen: dict[str, tuple[str, str, int, int, str, str]] = {}
+        dictionary_counts: dict[str, int] = {}
+        dictionary_first: dict[str, tuple[str, str]] = {}
+        dictionary_rules = ({r.name for r in rule_pack.rules if r.match_type == "dictionary-lookup"}
+                            if rule_pack is not None else set())
         book_text: dict[str, dict[str, Any]] = {}  # chapter -> verses, for a profile pack's book step
         # A layer also reads the section headings (#180), and its findings are
         # dropped where the pack or the common rules already flagged the same
@@ -1107,6 +1112,14 @@ class LanguageQaManager:
                     chapter_skipped += 1
                     continue
                 checked += 1
+                # Book words reuses these raw lookup results, before decisions
+                # or house style hide them. This preserves joiner-linked words
+                # and never loads/runs a dictionary in a foreground request.
+                for finding in entry.get("findings", []):
+                    if finding.get("rule") in dictionary_rules:
+                        word = unicodedata.normalize("NFC", finding["originalText"])
+                        dictionary_counts[word] = dictionary_counts.get(word, 0) + 1
+                        dictionary_first.setdefault(word, (chapter, verse))
                 if layer:
                     flagged[f"{chapter}:{verse}"] = [
                         (int(f.get("start", 0)), int(f.get("end", 0)), str(f.get("category") or ""),
@@ -1320,7 +1333,9 @@ class LanguageQaManager:
             if cancelled is None and self._cancelled(generation):
                 return None
             self._by_verse = by_verse
-            self._book_words = {"counts": dict(book_counts), "first": dict(book_first_seen),
+            self._book_words = {"counts": dictionary_counts if dictionary_rules else dict(book_counts),
+                                "first": dictionary_first if dictionary_rules else dict(book_first_seen),
+                                "dictionaryMisses": bool(dictionary_rules),
                                 "pack": rule_pack.name if rule_pack is not None else None,
                                 "checker": bool(book_checker), "lexicon": lexicon,
                                 "projectWords": frozenset(style.lists.get("housestyle.projectWords", frozenset())),
@@ -1447,7 +1462,11 @@ class LanguageQaManager:
             return {"ready": False, "reason": "Language QA has not finished a pass yet.", "words": [], "total": 0}
         counts, first = basis["counts"], basis["first"]
         words = [w for w, n in counts.items() if n >= max(1, int(min_count))]
-        if basis["checker"] and basis["pack"]:
+        if basis.get("dictionaryMisses"):
+            # These dictionaries have no IRV/OV corpus snapshot. Missing counts
+            # are not zero counts (the word demonstrably occurs in this book).
+            statuses = {w: ("unknown", None, None) for w in words}
+        elif basis["checker"] and basis["pack"]:
             statuses = indic_qa_adapter.word_statuses(basis["pack"], words)
             if statuses is None:
                 return {"ready": False, "reason": "The pack's checker is not loaded; run a pass first.",
@@ -1463,7 +1482,7 @@ class LanguageQaManager:
             chapter, verse, *_rest = first.get(word, ("", "", 0, 0, "", ""))
             rows.append({"word": word, "status": "added" if word in added else status, "countBook": counts[word],
                          "countIrv": irv, "countOv": ov, "firstRef": {"chapter": chapter, "verse": verse}})
-        rows.sort(key=lambda r: (-r["countBook"], -r["countIrv"], r["word"]))
+        rows.sort(key=lambda r: (-r["countBook"], -(r["countIrv"] or 0), r["word"]))
         return {"ready": True, "generation": basis["generation"], "total": len(rows), "words": rows[:max(1, int(limit))]}
 
     def scope_findings(self, chapter: str, verse: str, finding_id: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:

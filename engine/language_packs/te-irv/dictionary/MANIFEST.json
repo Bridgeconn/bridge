@@ -1,0 +1,12 @@
+{
+ "source": "https://github.com/LibreOffice/dictionaries",
+ "commit": "4f1df64b2e8e14751aa7c2205d170ca016071315",
+ "directory": "te_IN",
+ "license": "GPL-2.0-or-later",
+ "files": {
+  "te_IN.aff": "24883e46a03ebb381f40ce2c0ae59c30c6e3e14808de224c0005935bf3565b1e",
+  "te_IN.dic": "d8f2eb5301199b1e8874545c9ffc5058fc1d2cc76ea1fdf0765338501906b719",
+  "README_te_IN.txt": "453104723d3b16c749737c504644d44765c3d6cb5a9a01596dda317737e979d3"
+ },
+ "normalizations": []
+}

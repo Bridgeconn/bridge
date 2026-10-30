@@ -22480,3 +22480,108 @@ decisions of 26 Oct; its deferred QA inputs are unchanged. Proposed follow-ups
 remain in the consolidated #353 comment for Benz to tick; none was filed. The
 intermittent progress-count failure and semantic-runtime trace are not claimed
 fixed, and M20's separate automatic-recheck recovery remains NOT RUN.
+
+## 2026-10-30 — Twelve-language spelling expansion, existing grammar reused (#414)
+
+User requested Hindi, Marathi, Bengali, Assamese, Punjabi, Gujarati, Odia,
+Tamil, Telugu, Kannada, Malayalam and Nepali, explicitly without duplicate work.
+After being shown LQA-3's whole-clause grammar boundary, the user selected
+"Expand spelling and narrowly evidenced grammar checks". No boundary, calibrated
+threshold, Scripture writer, schema or semantic golden was changed.
+
+Audit: the registry shipped only hi/ml/or/pa/ta; their existing catalogues have
+41/43/38/30/38 rules respectively (Tamil includes its indic-qa layer). They were
+not regenerated. Existing bounded grammar leads remain in Hindi (7), Malayalam
+(5), Odia (3), Punjabi (2), and Tamil retains its sandhi/participle rules. The
+seven missing languages had common technical checks only.
+
+Implementation: seven data-only packs share a new generic `dictionary-lookup`
+kind (`language_packs/spelling.py`) using offline Spylls 0.1.7. Affixes are
+evaluated rather than discarding flags and pretending a stem list is a full
+dictionary. New rules report low-confidence dictionary-miss review candidates,
+not grammatical errors; they infer no replacement. Registry aliases include
+ISO-3 forms and npi for Nepali. Existing decisions, house style, caches, Unicode
+coordinates, metadata/script safety and correction paths are reused. Coverage
+lists the actual enabled categories instead of claiming Tamil sandhi for the
+new packs. The old five packs' data and finding identities are untouched.
+
+Data: pinned LibreOffice/dictionaries commit
+`4f1df64b2e8e14751aa7c2205d170ca016071315`, ~13.6 MB, with original per-pack
+licence notices, SHA-256 manifests and complete GPL/LGPL texts. Spylls' actual
+LICENSE is MPL-2.0 despite its incorrect MIT wheel classifier; that notice and
+its source URL are retained. No runtime download, server or new vendor tree.
+`scripts/sync_hunspell_packs.py` is the build-time fetch/check path; PyInstaller
+includes the module and its distribution notice. The dictionaries use the
+existing external `language_packs` packaging path.
+
+Real-resource investigation: stock Spylls fails loading Bengali on numeric SFX
+counts such as `2$`; there are SIX malformed headers (the initial issue notes
+said four before the complete header scan). The wrapper normalizes those count
+suffixes in memory only. It also removes UTF-8 BOMs (stock reader treated the
+Assamese count line as a stem) and canonicalizes lookup keys without changing
+original Scripture offsets. Whole joiner-linked words stay together; no second
+USFM parser or independent word tokenizer was introduced.
+
+Read-only local IRV Genesis 1 scans: Assamese 36 misses/31 verse entries,
+Bengali 21/31, Gujarati 165/31, Kannada 166/31, Marathi 15/30, Nepali 211/31,
+Telugu 170/31. These are unreviewed dictionary misses, NOT error counts or
+accuracy measurements. Gujarati/Kannada/Telugu/Nepali have substantial gaps;
+Nepali omits elementary vocabulary such as र and परमेश्वर. This limitation is
+documented, not patched by accepting unreviewed IRV vocabulary as truth.
+
+Verified so far: all twelve packs load and run embedded examples; 33 focused
+tests pass (affixes in two scripts, canonical equivalence, raw spans after
+notes/emoji, joiners, foreign text, stable ids, overrides, corrupt/missing/path
+escape data, fingerprints, real dictionaries/aliases and the real Marathi
+decision/rescan flow). Manifest verification passes. Full engine regression and
+an isolated frozen pair build are running; results follow below. No installed
+desktop acceptance or new native-language accuracy benchmark has been run.
+
+The original GitHub connector could read but not create the required issue
+(403); the authenticated gh CLI created #414. The prior signing/release work
+already present in BUILD_LOG, tauri.conf.json and workflows was preserved.
+
+Follow-up verification and research: Benz requested published grammar references
+first and native review later. LANGUAGE_QA_PACKS.md now records primary published
+sources for the seven new languages, the portions actually inspected, bounded
+candidate scopes and abstention requirements. Marathi/Gujarati full-reference
+retrieval failed; Assamese still needs a sourced finite-verb paradigm. Telugu's
+published embedded-clause agreement exceptions specifically rule out a naive
+pronoun/ending mismatch rule. No new grammar rule is enabled and no constructed
+negative is passed off as a native label.
+
+Final focused source gate: 43 passed in 58.25s. After the final Book words change,
+8 service/word-flow tests passed in 38.93s. New packs expose missing IRV/OV corpus
+counts as null, displayed as dashes; corpus-frequency bulk selection is hidden
+when counts are unavailable, while manual project-dictionary selection remains.
+The empty result now says no words outside the dictionary in this check rather
+than asserting every word in the book is recognised. Frontend final gate:
+`npm run check` 0 errors/warnings, `npm run test` 1,046 passed (101 files),
+`npm run build` passed (existing large-chunk warning). Manifest check passed.
+
+The isolated final PyInstaller engine/checker pair built successfully and
+`scripts/smoke_sidecars.py` passed: engine ready 6.56s, Hindi 5.33s, new Marathi
+dictionary 2.28s, Tamil layer 8.24s, hub health 8.59s. No installed app was replaced
+and desktop acceptance remains NOT RUN. The full engine regression result follows.
+
+Adjacent existing defect filed separately as #415: Language QA coverage displays
+Tamil glosses/headings for other-language profile packs because shared coverage
+rows always carry labelTa and the panel uses its presence as the bilingual gate.
+It was confirmed in source, not desktop-tested or fixed in #414.
+
+Full engine regression: 5,696 passed, 3 xfailed, 2 failed in 1,834.79s.
+Both failures were old registration expectations in test_language_qa.py:
+`mar` now resolves to canonical `mr` with mr-irv, and declared Bengali now
+selects bn-irv. The Bengali expectation was changed while the full run still
+held the old collected function; the Marathi expectation was then updated.
+The whole service test module was rerun against the final source: **298 passed
+in 134.05s**, including metadata conflicts and both shared-script safeguards.
+No production change was needed to resolve these failures; the full suite was
+not repeated after the test-only updates. The focused new-pack and final
+Book words gates above also passed. Existing five-pack data and both semantic
+goldens have no diff. Final diff whitespace check and dictionary manifests pass.
+
+Local investigation logs, read-only corpus measurements and isolated frozen
+binaries are retained under the ignored `engine/build/language-qa-414/` folder.
+Nothing was installed, committed or pushed by this task. Prior signing/release
+changes remain in the working tree.

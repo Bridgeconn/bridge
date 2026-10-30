@@ -326,7 +326,11 @@ class RulePack:
         """Changes whenever anything that affects findings changes, including
         a project's overrides; folded into the scan's per-chapter cache key."""
         state = [(r.id, r.version, r.enabled, r.inline, len(r.abstain)) for r in self.rules]
-        return hashlib.sha1(json.dumps([self.pack_version, state]).encode()).hexdigest()
+        values = [self.pack_version, state]
+        if self.meta.get("spellingDictionary"):
+            from . import spelling
+            values.append(spelling.fingerprint(self))
+        return hashlib.sha1(json.dumps(values).encode()).hexdigest()
 
     # -- evaluation ---------------------------------------------------------
 
@@ -389,6 +393,9 @@ class RulePack:
         for rule in self.verse_rules:
             if rule.match_type == "regex":
                 out.extend(self._regex_candidates(rule, visible, raw))
+            elif rule.match_type == "dictionary-lookup":
+                from . import spelling
+                out.extend(spelling.candidates(rule, self, visible))
             else:
                 out.extend(indic_kinds.verse_candidates(rule, visible))
         return out
@@ -677,6 +684,12 @@ def load_pack(name: str = "", *, directory: Path | None = None) -> RulePack:
         from . import indic_qa_adapter
         return indic_qa_adapter.build_pack({k: v for k, v in meta.items() if k != "rules"}, directory)
     pack = _build(meta, raws, directory=directory)
+    if any(r.match_type == "dictionary-lookup" and r.enabled for r in pack.rules):
+        from . import spelling
+        try:
+            spelling.dictionary(pack)
+        except (ImportError, OSError, ValueError, KeyError) as exc:
+            raise PackError(f"{name or directory.name}: spelling dictionary unavailable: {exc}") from exc
     run_examples(pack)
     if meta.get("indicQa"):
         # A second, book-stage layer: indic-qa's checker over the pack's

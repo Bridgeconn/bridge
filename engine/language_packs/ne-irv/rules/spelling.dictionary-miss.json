@@ -1,0 +1,43 @@
+{
+ "id": "spelling.dictionary-miss",
+ "version": 1,
+ "enabled": true,
+ "category": "typo",
+ "layer": "lexicon",
+ "severity": "low",
+ "confidence": "low",
+ "inline": false,
+ "message": {
+  "en": "Not recognised by the bundled Nepali spelling dictionary; review this word."
+ },
+ "rationale": "Dictionary coverage is incomplete. Names, inflections, dialect and Bible-specific vocabulary may be valid. No replacement is inferred. Use the project dictionary or Ignore for accepted forms. This is not a grammar judgement.",
+ "match": {
+  "type": "dictionary-lookup",
+  "script": "Deva"
+ },
+ "examples": {
+  "correct": [
+   {
+    "text": "मानिस",
+    "origin": "Accepted by the pinned dictionary; not a human precision label"
+   },
+   {
+    "text": "श्री",
+    "origin": "Accepted by the pinned dictionary; not a human precision label"
+   },
+   {
+    "text": "श्रीमती",
+    "origin": "Accepted by the pinned dictionary; not a human precision label"
+   }
+  ],
+  "incorrect": [
+   {
+    "text": "मानिसमानिसमानिसमानिस",
+    "span": "मानिसमानिसमानिसमानिस",
+    "fix": null,
+    "origin": "Synthetic out-of-dictionary concatenation; tests lookup only"
+   }
+  ]
+ },
+ "provenance": "https://github.com/LibreOffice/dictionaries/tree/4f1df64b2e8e14751aa7c2205d170ca016071315/ne_NP; affix-aware Spylls 0.1.7 lookup. No human-labelled precision measurement yet. See dictionary/MANIFEST.json."
+}

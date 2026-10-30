@@ -854,3 +854,26 @@ passed the full Windows Python suite (5,655 passed, 2 skipped, 3 xfailed), front
 foreground latency and both human-label accuracy gates. #132, #358 and #353 are
 closed; the #358 and #353 board items are Done. This does not change the NOT RUN
 status of M20's separate automatic-recheck recovery scenario.
+
+
+### 2026-10-30 — #414 spelling packs for the seven additional languages
+
+Source: 43 focused tests passed; the final Book words/review flow gate passed
+8 tests after the missing-corpus-count UI integration. All twelve packs load
+through the real scanner. Frontend: check 0 errors/warnings, 1,046 tests passed,
+production build passed.
+Full engine run: 5,696 passed, 3 xfailed, 2 failures from pre-registration
+assertions (Marathi canonical code and Bengali pack availability). Both
+expectations are updated; the complete Language QA service module rerun passed
+298 tests. The full suite was not repeated after these test-only updates.
+Genesis 1 was scanned read-only in Assamese, Bengali, Gujarati, Kannada,
+Marathi, Nepali and Telugu. The measured dictionary-miss counts and substantial
+coverage gaps are in LANGUAGE_QA_PACKS.md; these are not native-labelled errors.
+
+Frozen: isolated PyInstaller pair built; expanded smoke passed, including the
+new Marathi dictionary plus existing Hindi/Tamil checks. Desktop **NOT RUN**:
+open each new-language project,
+confirm the selected pack/coverage, inspect marks and raw Unicode spans, add an
+accepted word to Dictionary, Ignore a candidate and reopen, and confirm that
+existing Hindi/Tamil checks still appear. No new linguistic accuracy sign-off:
+each language still needs native-labelled correct and incorrect examples.

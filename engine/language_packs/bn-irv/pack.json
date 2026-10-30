@@ -1,0 +1,14 @@
+{
+ "pack": "bn-irv",
+ "version": "1.0.0",
+ "language": "bn",
+ "script": "Beng",
+ "description": "Bengali offline dictionary spelling candidates from LibreOffice/Hunspell. An absent word is not proof of an error. No clause grammar or meaning assessment.",
+ "spellingDictionary": {
+  "path": "dictionary/bn_BD",
+  "manifest": "dictionary/MANIFEST.json"
+ },
+ "rules": [
+  "rules/spelling.dictionary-miss.json"
+ ]
+}

@@ -1,0 +1,14 @@
+{
+ "source": "https://github.com/LibreOffice/dictionaries",
+ "commit": "4f1df64b2e8e14751aa7c2205d170ca016071315",
+ "directory": "bn_BD",
+ "license": "GPL-2.0-only",
+ "files": {
+  "bn_BD.aff": "6beeacefab0f691cb415c9ab8de227091a3be65510c3d8c0479513b261e61b97",
+  "bn_BD.dic": "cfc78b361861a726d22f0654d7c4e0b47f843c4a9e8b605c4c99e91ea683e116",
+  "COPYING": "204d8eff92f95aac4df6c8122bc1505f468f3a901e5a4cc08940e0ede1938994"
+ },
+ "normalizations": [
+  "bengali-affix-header-counts"
+ ]
+}

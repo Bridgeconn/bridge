@@ -166,7 +166,8 @@ def coverage(categories: Any = None) -> dict[str, Any]:
     keeps the Tamil/common statement (DEFAULT_COVERAGE)."""
     profile = categories is not None
     shown = [c for c in CATEGORIES if c in set(categories)] if profile else list(DEFAULT_COVERAGE)
-    out_of_scope = [_PROFILE_AGREEMENT if row[0] == "agreement" and profile else row for row in _OUT_OF_SCOPE]
+    out_of_scope = [_PROFILE_AGREEMENT if row[0] == "agreement" and "grammar" in shown else row
+                    for row in _OUT_OF_SCOPE]
     return {
         "inScope": [{"category": c, "label": _IN_SCOPE_LABELS[c][0], "labelTa": _IN_SCOPE_LABELS[c][1]}
                     for c in shown],
@@ -323,6 +324,9 @@ def pack_message(language: str, pack: str) -> str:
     that is switched on adds the general word list (#246). Grammar and meaning
     are never checked (DECISIONS 2026-09-24)."""
     meta = _pack_meta(str(packs_dir() / pack / "pack.json"))
+    if meta.get("spellingDictionary"):
+        return (f"{language_name(language)} affix-aware spelling dictionary candidates; "
+                "dictionary coverage is incomplete. Grammar and meaning are not checked.")
     has_dictionary = meta.get("engine") == "indic-qa" or bool(meta.get("indicQa"))
     corpus = meta.get("generalCorpus") or {}
     has_corpus = (bool(corpus) and bool(corpus.get("enabled", True))
@@ -358,7 +362,7 @@ def detect_language(sample: str, declared: str = "") -> dict[str, Any]:
     total = sum(counts.values())
     script, count = counts.most_common(1)[0] if counts else ("UNKNOWN", 0)
     dominant = total >= 20 and count / total >= .8
-    expected = LANGUAGE_SCRIPTS.get(code)
+    expected = LANGUAGE_SCRIPTS.get(code) or LANGUAGE_SCRIPTS.get(language_code(code))
     # BCP-47 explicit scripts take precedence over the usual script for a language.
     explicit = {"taml": "TAMIL", "latn": "LATIN", "deva": "DEVANAGARI",
                 "arab": "ARABIC", "beng": "BENGALI", "guru": "GURMUKHI"}

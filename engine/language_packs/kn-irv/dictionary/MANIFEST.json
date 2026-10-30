@@ -1,0 +1,12 @@
+{
+ "source": "https://github.com/LibreOffice/dictionaries",
+ "commit": "4f1df64b2e8e14751aa7c2205d170ca016071315",
+ "directory": "kn_IN",
+ "license": "GPL-2.0-or-later",
+ "files": {
+  "kn_IN.aff": "fb798ef1d1a23718694c03793fd5b74cfc41c2009f242f0394d8764501d0935a",
+  "kn_IN.dic": "9c02e401a4aa26bec76bca045af4a58d322c371a4267e8f1b062450001b29f51",
+  "README-kn_IN.txt": "78be476566faa3d07e62335fd4ea23a6f1a1146d4aa98137de690fce96a9b471"
+ },
+ "normalizations": []
+}

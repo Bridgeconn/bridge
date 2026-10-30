@@ -249,8 +249,9 @@ export interface BookWordRow {
   /** The checker's view (irv_ok: the IRV uses it; unknown: neither), or "added" to the project word list. */
   status: "unknown" | "irv_ok" | "inflected_ok" | "compound" | "rare_near_common" | "added";
   countBook: number;
-  countIrv: number;
-  countOv: number;
+  /** Null when the spelling pack has no corresponding corpus snapshot. */
+  countIrv: number | null;
+  countOv: number | null;
   firstRef: { chapter: string; verse: string };
 }
 

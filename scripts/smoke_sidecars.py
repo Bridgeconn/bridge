@@ -637,6 +637,35 @@ def main() -> int:
                                  f"limitations={lqa.get('limitations')}")
             print(f"Frozen indic-qa Hindi pack passed in {time.monotonic() - lqa_started:.2f}s.")
 
+            # #414: a data-only Hunspell pack exercises the new dependency in
+            # the exe and its external dictionary, independently of indic-qa.
+            marathi = Path(temp) / "marathi"
+            unknown = "माणूसमाणूसमाणूसमाणूस"
+            _write_json(marathi / "manifest.json", {
+                "project": {"id": "rut", "name": "Ruth"},
+                "target_language": {"id": "mar", "name": "Marathi"}, "tc_version": "8",
+            })
+            _write_json(marathi / "rut" / "1.json", {"1": f"देव {unknown}"})
+            _write_json(marathi / ".apps" / "translationCore" / "alignmentData" / "rut" / "1.json",
+                        {"1": {"alignments": [], "wordBank": []}})
+            (marathi / "rut.usfm").write_text(f"\\id RUT\n\\c 1\n\\v 1 देव {unknown}\n", encoding="utf-8")
+            opened_marathi = request("open-marathi", "project.open", {"path": str(marathi)})
+            if not opened_marathi.get("success"):
+                raise SystemExit(f"Frozen Marathi project open failed: {opened_marathi}")
+            started = time.monotonic()
+            lqa = {}
+            while time.monotonic() - started < 90:
+                lqa = request(f"lqa-marathi-{int((time.monotonic() - started) * 10)}", "languageQa.status",
+                              {"projectPath": str(marathi), "limit": 100}).get("result") or {}
+                if lqa.get("state") in {"completed", "failed"}:
+                    break
+                time.sleep(0.2)
+            misses = [f for f in lqa.get("findings", []) if f.get("ruleId") == "mr-irv/spelling.dictionary-miss"]
+            if (lqa.get("state") != "completed" or lqa.get("rulePack") != "mr-irv@1.0.0"
+                    or len(misses) != 1 or misses[0].get("originalText") != unknown):
+                raise SystemExit(f"Frozen Marathi dictionary failed: {lqa}")
+            print(f"Frozen Marathi Hunspell dictionary passed in {time.monotonic() - started:.2f}s.")
+
             # ta-irv's indic-qa layer: the Tamil profile over the OV dictionary,
             # beside the pack's own rules. GEN 1:27 as the IRV has it carries the
             # ஒற்று the reviewer's house style removes before தேவ- (no_theva); the

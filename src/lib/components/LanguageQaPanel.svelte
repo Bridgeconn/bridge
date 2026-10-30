@@ -441,7 +441,7 @@
 
   /** indic-qa's "tick words used at least N times in the IRV". */
   function tickFrequent(): void {
-    ticked = new Set(bookWords.filter((w) => w.status !== "added" && w.countIrv >= tickAtLeast).map((w) => w.word));
+    ticked = new Set(bookWords.filter((w) => w.status !== "added" && (w.countIrv ?? 0) >= tickAtLeast).map((w) => w.word));
   }
 
   function toggleTick(word: string): void {
@@ -777,12 +777,14 @@
             {:else if bookWordsReason}
               <p class="muted">{bookWordsReason}</p>
             {:else if !bookWords.length}
-              <p class="muted">Every word of this book is in the dictionary.</p>
+              <p class="muted">No words outside the dictionary in this check.</p>
             {:else}
               <div class="tick-row">
+                {#if bookWords.some((w) => w.countIrv !== null)}
                 <label>Tick words used at least
                   <input type="number" min="1" bind:value={tickAtLeast} aria-label="Minimum uses in the IRV" /> times in the IRV</label>
                 <button on:click={tickFrequent}>Tick</button>
+                {/if}
                 <button on:click={() => (ticked = new Set())}>Untick all</button>
               </div>
               <div class="table-box">
@@ -797,7 +799,7 @@
                           <button class="link" on:click={() => onNavigate(status?.book ?? "", row.firstRef.chapter, row.firstRef.verse)}
                             title="Open its first verse">{row.word}</button>
                         </td>
-                        <td>{row.countBook}</td><td>{row.countIrv}</td><td>{row.countOv}</td>
+                        <td>{row.countBook}</td><td>{row.countIrv ?? "—"}</td><td>{row.countOv ?? "—"}</td>
                         <td>{row.status === "added" ? "in dictionary" : row.status === "irv_ok" ? "IRV word" : row.status}</td>
                       </tr>
                     {/each}
