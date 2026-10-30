@@ -22749,6 +22749,47 @@ and unchanged after a pick-up; the engine fallback is read once when the store i
 desktop at 1366x768 with a long verse (the section wraps and the interlinear below keeps its
 max-height, so the bank and footer should stay on screen, but that is a visual check).
 
+## 2026-10-29 — #412 urgent manual-alignment drop latency investigation
+
+Keyigumpeule Thou reports a 2–3 second wait after dragging a target word onto a
+Hebrew source word. Filed [#412](https://github.com/Bridgeconn/bridge/issues/412)
+with source references, measured evidence and acceptance criteria; linked it from
+the existing translationCore alignment request #411. At Benz's request it carries
+`urgent`, `important`, `priority:highest` and `severity:P1`, and is Ready at the top
+of Bridge board 40. The board's Priority field currently has no options; its
+configuration was left alone. No implementation fix or release is claimed.
+
+**Confirmed cause at 5782999.** After an alignment save, `_cached_file_json` refuses
+to reuse a chapter parse for `_RACY_NS = 2_000_000_000` after the file's mtime.
+`_alignment_context` scans the chapter for counts, and `_refresh_progress_alignment`
+scans it again; each verse accessor can therefore re-read/decode the entire fresh
+chapter. The modal awaits this save and a separate alignment-only recheck before
+clearing `busy`. Book-wide invalidation and journal writes add costs, but the
+repeated parsing dominated the controlled long-chapter reproduction.
+
+**Ran.** Windows/Python 3.12.4 engine venv, disposable synthetic Hebrew-source/
+English-target projects with isolated app data, 25 tokens per side per verse,
+production journal/database settings. Unbound Language QA and waited for its pass
+lock before controlled measurements. Twenty save-plus-recheck calls: p95 818.6 ms
+for 1 x 40 verses, 1,492.8 ms for 50 x 40. A separate read-count run found 93 chapter
+reads/parses per drop at 40 verses (461.8–497.6 ms in reads/parsing). Five drops at
+176 verses took 2,296.5–2,360.7 ms for the save, with 85–92 reads/parses taking
+1,707.7–1,763.0 ms; the recheck took 2.1–5.4 ms. No production caching or durability
+guard was changed. Initial exploratory profiles had background Language QA active;
+the controlled measurements above exclude it.
+
+**Not verified.** The reporter's installed version, project/reference, target
+language or hardware; pointer-to-paint latency; the frozen or installed desktop.
+#412 requires same-environment before/after evidence, Tier A p95 100/300 ms over
+at least 20 drops per scenario, bounded chapter reads, external-edit safety,
+identity/history/completion/staleness/progress preservation, and reporter retest.
+Only this investigation log changed in tracked source; implementation gates were
+not run because no application code changed.
+
+Historical status: the #412 investigation above predates the upstream fix in
+435ef6d and its perf-table follow-up in 7786d39, now included in main. It is
+retained as measurement evidence, not a claim that the old defect is unfixed.
+
 ## 2026-10-30 — Twelve-language spelling expansion, existing grammar reused (#414)
 
 User requested Hindi, Marathi, Bengali, Assamese, Punjabi, Gujarati, Odia,
