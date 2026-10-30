@@ -1,6 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/svelte";
 
+// Three books make a collection, so the dashboard mounts the Collection QA
+// bar and the Paratext chip; both read the engine, which is not here.
+vi.mock("../../api/bridgeClient", () => ({
+  bridge: {
+    collectionQaStatus: vi.fn(async () => ({ jobId: "", state: "idle", paused: false, collectionPath: "", checks: [],
+      totalBooks: 3, completedBooks: 0, percent: 0, currentBook: null, books: [], finalStage: null,
+      elapsedSeconds: 0, estimatedRemainingSeconds: null, error: null, createdAt: null, finishedAt: null })),
+    paratextLinkStatus: vi.fn(async () => ({ state: "notParatext" })),
+  },
+}));
+
 import ProjectDashboard from "../ProjectDashboard.svelte";
 import type { Assignment, BookProgressEntry } from "../../types/finding";
 
@@ -32,10 +43,10 @@ describe("ProjectDashboard assignments (#240)", () => {
     mount({ myUserId: "u-1" });
     expect(screen.getByText("book: Rina · ch 3: Revant")).toBeInTheDocument();
     expect(screen.getByText("book: Rina")).toBeInTheDocument();
-    expect(screen.getByText("3 of 3")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("3 of 3");
 
     await fireEvent.click(screen.getByLabelText("My work (1)"));
-    expect(screen.getByText("1 of 3")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("1 of 3");
     expect(screen.getByText("Genesis")).toBeInTheDocument();
     expect(screen.queryByText("Exodus")).toBeNull();
     expect(screen.queryByText("Leviticus")).toBeNull();

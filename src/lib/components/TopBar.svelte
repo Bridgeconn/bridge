@@ -45,7 +45,6 @@
   export let onOpenConnections: () => void;
   export let onOpenExport: () => void;
   // Project (dashboard) screen only: opens the whole-collection QA report.
-  export let onGenerateReport: () => void = () => {};
   export let onGotoVerse: (verse: string) => void;
   export let onChapterChange: (chapter: string) => void;
   export let onBookChange: (path: string) => void;
@@ -128,6 +127,7 @@
         <span class="crumb current">QA report</span>
       {:else}
         <span class="crumb current">{projectName}</span>
+        <button class="crumb-close" aria-label="Close project" use:tooltip={"Close project and return to Projects"} on:click={onGoHome} disabled={bookSwitching}><UiIcon name="close" /></button>
       {/if}
     {:else if screen === "editor"}
       <span class="crumb-sep">›</span>
@@ -187,6 +187,12 @@
   {/if}
 
   <div class="grow" data-tauri-drag-region />
+  <!-- Navigation sync (Paratext / Logos following the current verse) only
+       means something where there is a current verse: the editor, Alignment
+       Review and validation. Home and the dashboard have none, so the
+       indicator is not shown there; Settings > Connections stays reachable
+       from every screen. -->
+  {#if screen === "editor" || screen === "review" || screen === "validation"}
   <button
     class="sync-status"
     class:enabled={$navigationStatus.enabled}
@@ -198,8 +204,6 @@
     <UiIcon name="sync" />
     <span class="sync-dot" class:connected={$navigationStatus.enabled} aria-hidden="true"></span>
   </button>
-  {#if screen === "dashboard"}
-    <button class="btn primary" on:click={onGenerateReport}>Generate report</button>
   {/if}
   {#if screen === "editor"}
     <button class="btn primary" disabled={!exportEnabled} on:click={onOpenExport}>Export</button>
@@ -227,6 +231,10 @@
   .crumb.current { color: var(--text); cursor: default; }
   .crumb.current:hover { background: transparent; }
   .crumb-sep { color: var(--text-3); font-size: var(--fs-sm); flex-shrink: 0; }
+  .crumb-close { display: grid; place-items: center; width: 26px; height: 26px; margin-left: 2px; padding: 0; flex-shrink: 0; border: 0; border-radius: 6px; background: transparent; color: var(--text-3); cursor: pointer; transition: color .15s, background .15s; }
+  .crumb-close :global(svg) { width: 15px; height: 15px; }
+  .crumb-close:hover:not(:disabled), .crumb-close:focus-visible { background: var(--danger-bg); color: var(--danger); }
+  .crumb-close:disabled { opacity: .5; cursor: not-allowed; }
   .project-role { margin-left: 6px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--text-2); font-size: var(--fs-2xs); font-weight: 650; white-space: nowrap; flex-shrink: 0; }
   .crumb-select { height: 28px; border: 1px solid transparent; border-radius: 6px; font-size: var(--fs-sm); font-weight: 600; padding: 0 4px; background: transparent; color: var(--text); max-width: 200px; }
   .crumb-select:hover { background: var(--surface-2); }

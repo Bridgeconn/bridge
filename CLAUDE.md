@@ -363,6 +363,13 @@ linked via `.bridge/collection.json` on every sibling. Only the first book
 is normalized eagerly; the rest carry `.bridge/lazy-import.json` and
 normalize on first open (this is why a 66-book import is ~5s, not minutes).
 
+Books can be added to an existing project from Project Home (the "Add books" row action,
+2026-10-27): `project.inspectAddBooks` / `project.addBooks.start` in `project_import.py`'s
+`inspect_add_books` / `add_books`. New books land as lazy siblings beside the project, a single
+book becomes a collection, every sibling's `collection.json` is rewritten in canonical order, and
+a book the project already has is skipped unless the reviewer chose Replace -- which swaps the
+whole folder, workbench database included.
+
 The dashboard's **Collection QA** panel (`collection.runChecks`, Benz, 2026-09-24,
 documented in #215) checks every book of a collection in turn, unattended, with the
 ordinary check job: local tN/tW/alignment, Greek Room and Language QA. It is never

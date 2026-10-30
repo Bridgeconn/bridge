@@ -5,13 +5,14 @@ import AlignmentModal from "../AlignmentModal.svelte";
 // @ts-expect-error Vite's test-only raw loader is not part of the app tsconfig.
 import alignmentModalSource from "../AlignmentModal.svelte?raw";
 import { get } from "svelte/store";
-import { alignmentRevisionByVerse, project } from "../../stores";
+import { alignmentRevisionByVerse, project, verseDisplay, verseKey } from "../../stores";
 import type { AlignmentContext, AlignmentToken, ProjectInfo } from "../../types/finding";
 
 const {
-  getAlignment, realignWords, unalignWords, undoAlignment, restoreAlignment, runVerseChecks, getLexiconEntry,
+  getAlignment, realignWords, unalignWords, undoAlignment, restoreAlignment, runVerseChecks, getLexiconEntry, getVerse,
 } = vi.hoisted(() => ({
   getAlignment: vi.fn(),
+  getVerse: vi.fn(),
   realignWords: vi.fn(),
   unalignWords: vi.fn(),
   undoAlignment: vi.fn(),
@@ -22,7 +23,7 @@ const {
 
 vi.mock("../../api/bridgeClient", () => ({
   bridge: {
-    getAlignment, realignWords, unalignWords, undoAlignment, restoreAlignment, runVerseChecks, getLexiconEntry,
+    getAlignment, realignWords, unalignWords, undoAlignment, restoreAlignment, runVerseChecks, getLexiconEntry, getVerse,
   },
 }));
 
@@ -89,8 +90,30 @@ describe("AlignmentModal", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     project.set(projectInfo());
+    verseDisplay.set({});
     getLexiconEntry.mockResolvedValue({ segments: [] });
     runVerseChecks.mockResolvedValue([]);
+    getVerse.mockResolvedValue({ chapter: "1", verse: "1", text: "", display: { plain: "", notes: [], removed: [], styles: [], warnings: [] } });
+  });
+
+  // #409: the reading area shows the verse's display text, continuous and
+  // with its punctuation, and a drop does not change it.
+  it("reads the full target verse with its punctuation from the display text", async () => {
+    verseDisplay.set({ [verseKey("1", "1")]: { plain: "ஆதியிலே தேவன் வானத்தையும் பூமியையும் சிருஷ்டித்தார்.", notes: [], removed: [], styles: [], warnings: [] } });
+    await open();
+    const reading = screen.getByRole("region", { name: "Read Genesis (GEN) 1:1" });
+    expect(reading).toHaveTextContent("ஆதியிலே தேவன் வானத்தையும் பூமியையும் சிருஷ்டித்தார்.");
+    expect(getVerse).not.toHaveBeenCalled();
+    realignWords.mockResolvedValue(context());
+    await fireEvent.click(screen.getByRole("button", { name: "Pick up आदि from בְּרֵאשִׁית" }));
+    expect(reading).toHaveTextContent("ஆதியிலே தேவன் வானத்தையும் பூமியையும் சிருஷ்டித்தார்.");
+  });
+
+  it("reads the verse once from the engine when the chapter has not been loaded", async () => {
+    getVerse.mockResolvedValue({ chapter: "1", verse: "1", text: "In the beginning, God created.", display: { plain: "In the beginning, God created.", notes: [], removed: [], styles: [], warnings: [] } });
+    await open();
+    await waitFor(() => expect(screen.getByRole("region", { name: "Read Genesis (GEN) 1:1" })).toHaveTextContent("In the beginning, God created."));
+    expect(getVerse).toHaveBeenCalledWith("1", "1");
   });
 
   it("names the book and its code in the title", async () => {

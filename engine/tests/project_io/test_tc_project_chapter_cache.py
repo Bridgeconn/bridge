@@ -41,15 +41,17 @@ def _age(root, seconds: int = 60) -> None:
 
 @pytest.fixture
 def parses(monkeypatch):
-    """Paths parsed through tc_project._read_json, in order."""
+    """Paths JSON-decoded through tc_project._parse_json_bytes, in order
+    (every read, cached or not, decodes there; #412 made the cache verify a
+    recently written file by digest instead of decoding it again)."""
     seen: list[str] = []
-    real = tc_project._read_json
+    real = tc_project._parse_json_bytes
 
-    def counting(path):
+    def counting(path, raw):
         seen.append(path.name if path.parent.name != "php" else f"{path.parent.parent.name}:{path.name}")
-        return real(path)
+        return real(path, raw)
 
-    monkeypatch.setattr(tc_project, "_read_json", counting)
+    monkeypatch.setattr(tc_project, "_parse_json_bytes", counting)
     return seen
 
 

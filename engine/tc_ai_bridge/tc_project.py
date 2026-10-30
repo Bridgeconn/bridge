@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import copy
 import hashlib
 import json
@@ -61,9 +62,21 @@ def _racy(mtime_ns: int) -> bool:
     return time.time_ns() - mtime_ns < _RACY_NS
 
 
+def _parse_json_bytes(path: Path, raw: bytes) -> Any:
+    """`raw`, the bytes of `path`, parsed as JSON (`path` names the file in
+    errors). The chapter cache reads a file's bytes once and parses them here
+    only when their digest is new; every other JSON read goes through
+    `_read_json`, which is this on a fresh read."""
+    try:
+        return json.loads(raw.decode('utf-8-sig'))
+    except UnicodeDecodeError as e:
+        raise ValueError(f'{path}: {e}') from e
+    except json.JSONDecodeError as e:
+        raise json.JSONDecodeError(f'{e.msg} ({path})', e.doc, e.pos) from e
+
+
 def _read_json(path: Path) -> Any:
-    with path.open('r', encoding='utf-8-sig') as f:
-        return json.load(f)
+    return _parse_json_bytes(path, path.read_bytes())
 
 
 def _replace_retrying(temp_name: str, path: Path, *, seconds: float = 2.0) -> None:
@@ -203,9 +216,14 @@ class TranslationCoreProject:
         # clear it (_forget_chapter_files), which covers a filesystem with coarse
         # timestamps. The loaders writers use (load_alignment_chapter,
         # target_chapter) stay uncached: writers mutate what those return.
-        self._chapter_file_cache: dict[tuple[str, str], tuple[tuple[int, int, int], Any]] = {}
+        # (signature, sha1 of the bytes, parse). A cached file whose mtime is
+        # within _RACY_NS is verified by digest instead of parsed again (#412).
+        self._chapter_file_cache: dict[tuple[str, str], tuple[tuple[int, int, int], str, Any]] = {}
         self._chapter_list_cache: tuple[int, list[str]] | None = None
         self._chapter_file_lock = threading.Lock()
+        # Per-thread chapter snapshot (#412): inside `chapter_snapshot()`, a
+        # file verified once in that scope is trusted for the rest of it.
+        self._chapter_pin = threading.local()
         self.journal = TransactionJournal(self.path, self.companion_dir())
         # The siblings' learned fixes, read once (collection_learned_fixes).
         self._collection_learned: list[tuple[str, list[dict[str, Any]]]] | None = None
@@ -361,21 +379,49 @@ class TranslationCoreProject:
             str(self.manifest.get('tc_edit_version', '')),
         )
 
+    @contextlib.contextmanager
+    def chapter_snapshot(self):
+        """A scope in which each chapter file (and the chapter listing) is
+        verified against disk once, then served from the cache for the rest
+        of the scope on this thread -- including a file written in the last
+        two seconds, which `_cached_file_json` otherwise re-verifies on every
+        access (#412: an alignment save's status scan, completion check and
+        progress recount read the just-written chapter 90 times per drop).
+        The scope is one request's bookkeeping; a write by anyone, including
+        this thread's own (`_forget_chapter_files`), ends the trust in
+        whatever it changed, and the next scope verifies from disk again.
+        Nested scopes share the outermost one's verifications."""
+        outer = getattr(self._chapter_pin, 'keys', None)
+        self._chapter_pin.keys = outer if outer is not None else {}
+        try:
+            yield
+        finally:
+            self._chapter_pin.keys = outer
+
+    def _pinned(self) -> dict[Any, Any] | None:
+        return getattr(self._chapter_pin, 'keys', None)
+
     def chapters(self) -> list[str]:
         # A file added or removed (or a writer's temp file) changes the
         # directory's mtime; only then is it listed again (#239). A listing
-        # from within the last two seconds is never trusted (_racy).
+        # from within the last two seconds is never trusted (_racy) -- except
+        # inside a chapter_snapshot that already listed it (#412).
         try:
             stamp = self.alignment_dir.stat().st_mtime_ns
         except FileNotFoundError:
             stamp = -1
+        pinned = self._pinned()
         with self._chapter_file_lock:
             cached = self._chapter_list_cache
-            if cached is not None and cached[0] == stamp and not _racy(stamp):
+            if cached is not None and cached[0] == stamp and (
+                not _racy(stamp) or (pinned is not None and pinned.get('chapters') == stamp)
+            ):
                 return list(cached[1])
         chapters = sorted((x.stem for x in self.alignment_dir.glob('*.json') if x.stem.isdigit()), key=int)
         with self._chapter_file_lock:
             self._chapter_list_cache = (stamp, chapters)
+        if pinned is not None:
+            pinned['chapters'] = stamp
         return list(chapters)
 
     def chapter_path(self, chapter: str | int) -> Path:
@@ -397,30 +443,60 @@ class TranslationCoreProject:
         when the file does not exist. Callers must not mutate the result. A
         miss reads between two stats and keeps the parse only when they agree:
         a write landing mid-read is never cached under a signature it does not
-        have (#239)."""
+        have (#239).
+
+        A file written within the last two seconds matches its signature but
+        is not trusted on that alone (`_racy`: an in-place rewrite inside one
+        timestamp tick keeps id, mtime and size). It used to be parsed again on
+        every access, which made the alignment save path re-decode its own
+        chapter once per verse of every status scan, 2-3 s per drop on a long
+        Hebrew chapter (#412). Now the bytes are read and their digest compared
+        with the cached parse's: the same bytes are the same JSON, so the parse
+        is served; different bytes are parsed. The change is still read, as
+        before; only the decode of an unchanged file is gone. Inside a
+        `chapter_snapshot` that has already verified the file, not even the
+        bytes are read again."""
         key = (kind, str(chapter))
         signature = self._file_signature(path)
         if signature is None:
             with self._chapter_file_lock:
                 self._chapter_file_cache.pop(key, None)
             return None
+        pinned = self._pinned()
         with self._chapter_file_lock:
             cached = self._chapter_file_cache.get(key)
-            if cached is not None and cached[0] == signature and not _racy(signature[1]):
-                return cached[1]
+        if cached is not None and cached[0] == signature:
+            if not _racy(signature[1]) or (pinned is not None and pinned.get(key) == signature):
+                return cached[2]
+            with check_timing.current().step("project.chapter_verify"):
+                raw = path.read_bytes()
+            digest = hashlib.sha1(raw).hexdigest()
+            if digest == cached[1] and self._file_signature(path) == signature:
+                if pinned is not None:
+                    pinned[key] = signature
+                return cached[2]
+        else:
+            raw = path.read_bytes()
+            digest = hashlib.sha1(raw).hexdigest()
         with check_timing.current().step("project.chapter_parse"):
-            data = _read_json(path)
+            data = _parse_json_bytes(path, raw)
         if self._file_signature(path) == signature:
             with self._chapter_file_lock:
-                self._chapter_file_cache[key] = (signature, data)
+                self._chapter_file_cache[key] = (signature, digest, data)
+            if pinned is not None:
+                pinned[key] = signature
         return data
 
     def _forget_chapter_files(self) -> None:
         """Drop every cached chapter parse; Bridge's own writers call this
-        after writing or rolling back a chapter file (#239)."""
+        after writing or rolling back a chapter file (#239). This thread's
+        chapter_snapshot, if any, forgets its verifications too (#412)."""
         with self._chapter_file_lock:
             self._chapter_file_cache.clear()
             self._chapter_list_cache = None
+        pinned = self._pinned()
+        if pinned is not None:
+            pinned.clear()
 
     def load_alignment_chapter(self, chapter: str | int) -> dict[str, Any]:
         """A fresh, mutable parse: writers change it and write it back, so it

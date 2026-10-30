@@ -43,7 +43,7 @@ describe("ParatextLinkStatus (#356)", () => {
     paratextRefresh.mockResolvedValue(status({ files: { ...status().files, notes: { count: 3, users: [] } } }));
     render(ParatextLinkStatus, { props: { projectKey: "a" } });
     const line = await screen.findByTestId("paratext-link-status");
-    expect(line).toHaveTextContent("Paratext TSTP · linked · 2 notes files · 2 note threads");
+    expect(line).toHaveTextContent("Paratext · TSTP · linked 2 notes files · 2 note threads");
 
     await fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     await waitFor(() => expect(line).toHaveTextContent("3 notes files"));
@@ -79,7 +79,7 @@ describe("ParatextLinkStatus (#356)", () => {
     pickFolder.mockResolvedValue("C:/elsewhere/TSTP");
     paratextRelink.mockRejectedValue(new Error("holds the Paratext project OTHER"));
     render(ParatextLinkStatus, { props: { projectKey: "a" } });
-    await screen.findByText(/not found \(C:\/PT\/TSTP\)/);
+    await screen.findByText(/Not found at C:\/PT\/TSTP/);
 
     await fireEvent.click(screen.getByRole("button", { name: "Relink…" }));
     await waitFor(() => expect(paratextRelink).toHaveBeenCalledWith("C:/elsewhere/TSTP"));

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { STARTUP_TIMEOUT_MS, buildDiagnosticsText, currentStageLabel, mergeStage } from "../startup";
+import { STARTUP_TIMEOUT_MS, buildDiagnosticsText, currentStageLabel, mergeStage, startupProgress } from "../startup";
 import type { EngineStartupStage } from "../api/bridgeClient";
 
 const stage = (seq: number, name: string, label: string): EngineStartupStage => ({
@@ -21,6 +21,14 @@ describe("startup stages (#233)", () => {
     expect(currentStageLabel([])).toBe("Starting Bridge");
     expect(currentStageLabel([stage(1, "spawning", "Starting the engine process"), stage(2, "engine", "Starting the engine")]))
       .toBe("Starting the engine");
+  });
+
+  it("positions the splash progress track by the furthest known stage, ignoring names it does not know", () => {
+    expect(startupProgress([])).toBe(0);
+    expect(startupProgress([stage(1, "spawning", "Starting the engine process")])).toBeCloseTo(0.2);
+    expect(startupProgress([stage(1, "spawning", "Starting"), stage(3, "modules", "Loading engine modules")])).toBeCloseTo(0.6);
+    expect(startupProgress([stage(3, "modules", "Loading"), stage(4, "failed", "The engine process exited")])).toBeCloseTo(0.6);
+    expect(startupProgress([stage(5, "ready", "Engine ready")])).toBe(1);
   });
 
   it("gives the engine 30 seconds, the same as the ping request timeout", () => {

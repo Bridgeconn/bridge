@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { bridge } from "./lib/api/bridgeClient";
-  import { workspaceRecoveryNotice } from "./lib/workspaceRecovery";
+  import { workspaceRecoverySummary, type RecoverySummary } from "./lib/workspaceRecovery";
+  import WorkspaceRecoveryDialog from "./lib/components/WorkspaceRecoveryDialog.svelte";
   import { bridgeReference } from "./lib/navigationReference";
   import {
     formatPerfLine, observeLongTasks, perfAbort, perfBegin, perfEnd, perfInFlight, perfResponded, registerPerfRunner,
@@ -71,10 +72,11 @@
   import { editingChapter, editingVerse, editSaving } from "./lib/verseEditor";
   import { languageQaChannel, nudgeLanguageQa, startLanguageQaInline } from "./lib/languageQaInline";
   import { toggleLanguageQaPanel } from "./lib/languageQaPanelUi";
-  import { collectionQaRunning, stopCollectionQa } from "./lib/collectionQa";
+  import { collectionQa, collectionQaRunning, stopCollectionQa } from "./lib/collectionQa";
+  import { selectedCollectionChecks } from "./lib/checkSelection";
+  import { estimateReportSeconds, recordReportBuild } from "./lib/reportEstimate";
   import { bindCollectionStrip, cancelStripJob } from "./lib/collectionStrip";
   import { prepareDetail, prepareProgress } from "./lib/openProgress";
-  import CollectionQaPanel from "./lib/components/CollectionQaPanel.svelte";
 
   let opened = false;
   let engineStatus: "checking" | "ready" | "error" = "checking";
@@ -99,6 +101,23 @@
   let report: ProjectReport | null = null;
   let reportLoading = false;
   let reportError = "";
+  // The dashboard's report per book, for the session: a click on a book
+  // whose report was built shows it at once (the build reads every verse,
+  // minutes on a long book). An entry goes when a check job, a Collection QA
+  // book or a new project touches it; Rebuild on the card always rebuilds.
+  const reportCache = new Map<string, { report: ProjectReport; builtAt: string }>();
+  let reportBuiltAt = "";
+  let lastCollectionTick = "";
+  // The build in progress: the engine's open book's verse count gives the
+  // card its time estimate; the measured time teaches the next estimate.
+  let reportEstimateSeconds = 0;
+  // The book whose check job the dashboard's Run QA started: its row spins
+  // and the report card shows the job; when it succeeds the report is built
+  // and shown. Cleared by the next Run QA, View or project open.
+  let dashboardQaPath = "";
+  // The book a dashboard icon is opening in the engine (a View or a Run QA):
+  // the report card shows "Opening X…" instead of the top strip.
+  let dashboardOpeningPath = "";
   // Whole-collection QA report (TopBar "Generate report" on the project
   // screen). Built by a background sidecar job (report.generate) that is
   // polled here; the finished payload is fetched once and kept for the
@@ -122,10 +141,11 @@
   let triagePollGeneration = 0;
   let engineNotice = "";
   let engineNoticeTimer: ReturnType<typeof setTimeout> | undefined;
-  // #338: the one-time notice that workspace.sqlite3 was damaged at startup
+  // #338: the one-time report that workspace.sqlite3 was damaged at startup
   // and what recovery did. Read once from engine.info after the first ping;
-  // dismissed for the session with the button.
-  let workspaceRecoveryNoticeText = "";
+  // shown as a modal (WorkspaceRecoveryDialog) until Continue, then gone for
+  // the session.
+  let workspaceRecovery: RecoverySummary | null = null;
   let settingsInitialPane: "ai" | "quality" | "connections" | "resources" | "terminology" | "languageQa" | "security" = "ai";
   let navigationPollInFlight = false;
   let handlingNavigationRequest = "";
@@ -478,7 +498,7 @@
       startupDone = true;
       try {
         const info = await bridge.engineInfo();
-        workspaceRecoveryNoticeText = workspaceRecoveryNotice(info.workspaceRecovery);
+        workspaceRecovery = workspaceRecoverySummary(info.workspaceRecovery);
       } catch (error) {
         console.error("Could not read engine info", error);
       }
@@ -646,6 +666,9 @@
     showingDashboard = true;
     report = null;
     reportError = "";
+    reportBuiltAt = "";
+    reportCache.clear();
+    dashboardQaPath = "";
     void loadAssignments();
     // #232: "open a project" ends when the dashboard it lands on has painted.
     void loadDashboard().then(() => perfEnd("project.open"));
@@ -670,12 +693,19 @@
   }
 
   async function loadReport(): Promise<void> {
+    const path = $project?.path ?? "";
+    const verseCount = bookProgress.find((book) => book.path === path)?.progress?.verseCount ?? 0;
+    reportEstimateSeconds = estimateReportSeconds(verseCount);
+    const started = Date.now();
     perfBegin("book.report", $project?.bookId ?? "");
     reportLoading = true;
     reportError = "";
     perfResponded("book.report");
     try {
       report = await bridge.projectReport();
+      reportBuiltAt = new Date().toISOString();
+      if (path) reportCache.set(path, { report, builtAt: reportBuiltAt });
+      recordReportBuild(verseCount, (Date.now() - started) / 1000);
     } catch (error) {
       reportError = error instanceof Error ? error.message : String(error);
     } finally {
@@ -902,13 +932,119 @@
     showingDashboard = false;
   }
 
-  // Clicking a book row (not its Open button) previews that book's report in
-  // the dashboard's right panel without leaving the dashboard — the
-  // switchBook(path, false) seam activates a sibling book with no editor
-  // navigation.
+  // The row's View QA report shows that book's report in the dashboard's
+  // right panel without leaving the dashboard. A report kept from earlier
+  // in the session is shown at once, with no engine call: the book is not
+  // opened until something needs it open (Rebuild, Run QA again, a verse
+  // click), because project.open costs the same every time and the engine
+  // holds one book. Without a kept copy the book is opened, then built.
+  // Never runs a check.
   async function previewBookOnDashboard(path: string): Promise<void> {
-    if ($project && path === $project.path) return;
-    if (await switchBook(path, false)) void loadReport();
+    if (activeJobId) return;
+    dashboardQaPath = "";
+    const cached = reportCache.get(path);
+    if (cached) {
+      report = cached.report;
+      reportBuiltAt = cached.builtAt;
+      reportError = "";
+      return;
+    }
+    if ($project && path === $project.path) {
+      if (!reportLoading) { report = null; reportBuiltAt = ""; void loadReport(); }
+      return;
+    }
+    report = null;
+    reportBuiltAt = "";
+    reportError = "";
+    dashboardOpeningPath = path;
+    try {
+      if (await switchBook(path, false)) void loadReport();
+    } finally {
+      dashboardOpeningPath = "";
+    }
+  }
+
+  /** The report card's Rebuild: the shown report's book, opened first when
+   *  the engine has another one open (a kept copy was shown without it). */
+  async function rebuildDashboardReport(): Promise<void> {
+    const path = shownReportPath();
+    if (!path || activeJobId) return;
+    if (!$project || path !== $project.path) {
+      report = null;
+      reportBuiltAt = "";
+      dashboardOpeningPath = path;
+      try {
+        if (!(await switchBook(path, false))) return;
+      } finally {
+        dashboardOpeningPath = "";
+      }
+    }
+    await loadReport();
+  }
+
+  /** The path of the book whose report the dashboard shows, which may not
+   *  be the engine's open book. */
+  function shownReportPath(): string {
+    const wanted = (report?.bookId ?? "").toLowerCase();
+    if (!wanted) return $project?.path ?? "";
+    return bookProgress.find((book) => (book.bookId ?? "").toLowerCase() === wanted)?.path
+      ?? $project?.importedProjects?.find((book) => book.bookId.toLowerCase() === wanted)?.path
+      ?? $project?.path ?? "";
+  }
+
+  /** A verse row of the dashboard's report: open its book first when the
+   *  report shown is a kept copy of another book's. */
+  async function navigateFromDashboardReport(chapter: string, verse: string): Promise<void> {
+    const bookId = report?.bookId ?? $project?.bookId ?? "";
+    await navigateToReportRow(bookId, chapter, verse);
+  }
+
+  /** The dashboard row's Run QA: the whole book, with the Collection QA
+   *  check selection, as a normal check job shown in the report card (not
+   *  the top strip), then that book's report. The book is opened in the
+   *  engine without leaving the dashboard; a lazy book is prepared first. */
+  async function runBookQaFromDashboard(path: string): Promise<void> {
+    if (activeJobId || $collectionQaRunning || !path) return;
+    report = null;
+    reportBuiltAt = "";
+    reportError = "";
+    if (!$project || path !== $project.path) {
+      dashboardOpeningPath = path;
+      try {
+        if (!(await switchBook(path, false))) return;
+      } finally {
+        dashboardOpeningPath = "";
+      }
+    }
+    reportCache.delete(path);
+    dashboardQaPath = path;
+    try {
+      await beginChecks("book", [], [...$selectedCollectionChecks]);
+    } catch (error) {
+      dashboardQaPath = "";
+      bookOpenError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  async function cancelDashboardQa(): Promise<void> {
+    if (!activeJobId) return;
+    applyJobSnapshot(await bridge.cancelChecks(activeJobId));
+  }
+
+  // A Collection QA run writes a book's progress as it finishes each book:
+  // the dashboard's rows re-read it then, and once more when the run ends,
+  // and every cached report is let go (its findings changed).
+  $: {
+    const snapshot = $collectionQa;
+    const tick = snapshot ? `${snapshot.jobId}:${snapshot.completedBooks}:${$collectionQaRunning}` : "";
+    if (tick !== lastCollectionTick) {
+      const wasRun = lastCollectionTick !== "";
+      lastCollectionTick = tick;
+      if (wasRun && snapshot && opened) {
+        reportCache.clear();
+        if (showingDashboard) void loadDashboard();
+      }
+    }
   }
 
   // Shared by initial open and book switching: land on the first chapter
@@ -1126,7 +1262,19 @@
         scope: snapshot.scope,
       });
     } finally {
-      if (generation === monitorGeneration) activeJobId = "";
+      if (generation === monitorGeneration) {
+        activeJobId = "";
+        // The book's findings changed: its cached report is stale, and the
+        // dashboard's row re-reads its progress.
+        if ($project) reportCache.delete($project.path);
+        if (showingDashboard) void loadDashboard();
+        // A dashboard Run QA ends in that book's report; a failed or
+        // cancelled one stays on the card with Run QA again.
+        if (dashboardQaPath && $project && dashboardQaPath === $project.path && snapshot.state === "succeeded") {
+          dashboardQaPath = "";
+          void loadReport();
+        }
+      }
     }
   }
 
@@ -1455,7 +1603,6 @@
     onOpenSettings={() => openSettings("ai")}
     onOpenConnections={() => openSettings("connections")}
     onOpenExport={() => exportOpen.set(true)}
-    onGenerateReport={openReportScreen}
     onGotoVerse={gotoVerse}
     onChapterChange={switchChapter}
     onBookChange={switchBook}
@@ -1463,16 +1610,10 @@
     bookSwitching={Boolean(openingBook)}
   />
 
-  {#if workspaceRecoveryNoticeText}
-    <div class="progress-row check-notice recovery-notice" role="status" aria-label="Workspace database recovered">
-      <span class="check-message">{workspaceRecoveryNoticeText}</span>
-      <span class="grow" />
-      <button class="progress-action" on:click={() => (workspaceRecoveryNoticeText = "")}>Dismiss</button>
-    </div>
-  {/if}
-  {#if openingBook || $prepareProgress}
+  {#if (openingBook && !(screen === "dashboard" && dashboardOpeningPath)) || $prepareProgress}
     <!-- The book switch's strip; a Home-screen open that prepares a lazy
-         book shows here too (#400), through the prepareProgress store. -->
+         book shows here too (#400), through the prepareProgress store. An
+         open started from a dashboard icon shows in the report card instead. -->
     <div class="progress-row checking-row" role="status" aria-label="Opening progress">
       <div class="spin" />
       <span class="progress-label">Opening {openingBook || $prepareProgress?.name}…{openingBook
@@ -1487,7 +1628,10 @@
       <span class="grow" />
       <button class="progress-action" on:click={() => (bookOpenError = "")}>Dismiss</button>
     </div>
-  {:else if $checkingProgress.running}
+  {:else if $checkingProgress.running && screen !== "dashboard"}
+    <!-- The dashboard shows a run in its own cards: Collection QA in the
+         header bar, a book's job in the report card. Every other screen
+         keeps the strip. -->
     <div class="progress-row checking-row">
       <div class="spin" />
       <span class="progress-label" title={$checkingProgress.label}>
@@ -1498,7 +1642,7 @@
         {$checkingProgress.state === "cancelling" ? "Cancelling…" : "Cancel"}
       </button>
     </div>
-  {:else if $checkingProgress.state === "failed" || $checkingProgress.state === "cancelled"}
+  {:else if ($checkingProgress.state === "failed" || $checkingProgress.state === "cancelled") && !(screen === "dashboard" && dashboardQaPath)}
     <div class="progress-row check-notice">
       <span class="check-message" title={$checkingProgress.error}>{$checkingProgress.error || ($checkingProgress.state === "cancelled" ? "Checking was cancelled." : "Checking failed.")}</span>
       <span class="grow" />
@@ -1510,11 +1654,6 @@
   {#if screen === "home"}
     <ImportScreen onOpened={handleOpened} {droppedPath} {dropSequence} />
   {:else if screen === "dashboard"}
-    {#if bookProgress.length > 1}
-      <div class="collection-qa-host">
-        <CollectionQaPanel bookCount={bookProgress.length} onOpenBook={enterBookFromDashboard} />
-      </div>
-    {/if}
     <ProjectDashboard
       {projectName}
       subtitle={dashboardSubtitle}
@@ -1528,11 +1667,21 @@
       reportLoading={reportLoading}
       reportError={reportError}
       openBookName={$project?.bookName || $project?.bookId?.toUpperCase() || ""}
-      onLoadReport={loadReport}
-      onNavigateToFinding={navigateToFinding}
+      openBookPath={$project?.path ?? ""}
+      {reportBuiltAt}
+      {reportEstimateSeconds}
+      onLoadReport={() => void rebuildDashboardReport()}
+      onRunBookQa={(path) => void runBookQaFromDashboard(path)}
+      qaBusy={Boolean(activeJobId) || $collectionQaRunning || Boolean(openingBook)}
+      qaRunningPath={dashboardQaPath}
+      openingPath={dashboardOpeningPath}
+      openingDetail={dashboardOpeningPath ? openingDetail : ""}
+      onCancelQa={() => void cancelDashboardQa()}
+      onNavigateToFinding={(chapter, verse) => void navigateFromDashboardReport(chapter, verse)}
       myUserId={$localUserId}
       canAssign={localUserRole === "project_admin"}
       onAssign={(path) => void openAssignments(path)}
+      onGenerateReport={openReportScreen}
     />
   {:else if screen === "report"}
     <ProjectReportScreen
@@ -1703,9 +1852,11 @@
   {/if}
 
   {#if $project && opened}
-    {#if screen !== "editor"}
-      <!-- The editor docks Language QA in a side column; the other screens
-           keep the floating panel and its launcher. -->
+    {#if screen !== "editor" && screen !== "dashboard"}
+      <!-- The editor docks Language QA in a side column; the review and
+           report screens keep the floating panel and its launcher. The
+           dashboard has no verse to navigate to, and its rows already carry
+           the Language QA meter, so it shows neither. -->
       {#key $project.path}
         <LanguageQaPanel projectPath={$project.path} onNavigate={navigateToReportRow} />
       {/key}
@@ -1736,6 +1887,7 @@
 
   <!-- #372: the in-app confirmation (chapter/book AI review, Remove key).
        Outside the project block: Settings can ask with no project open. -->
+  {#if workspaceRecovery}<WorkspaceRecoveryDialog summary={workspaceRecovery} onClose={() => (workspaceRecovery = null)} />{/if}
   {#if $confirmRequest}<ConfirmDialog />{/if}
 
   {#if $diagnosticsOpen}
@@ -1769,12 +1921,9 @@
   .cancel-action { width: 84px; }
   .progress-action:disabled { opacity: 0.55; cursor: wait; }
   .check-notice { color: var(--danger); height: auto; min-height: 32px; max-height: 96px; align-items: flex-start; padding-top: 7px; padding-bottom: 7px; }
-  /* #338: a recovery is a report, not a failure: warning colour, room for its paragraph. */
-  .recovery-notice { color: var(--warning); max-height: 160px; overflow-y: auto; }
   .check-message { flex: 1; min-width: 0; max-height: 78px; overflow: auto; white-space: normal; overflow-wrap: anywhere; line-height: 1.35; }
   .body { flex: 1; display: flex; overflow: hidden; }
   /* A 66-book table must not push the dashboard off screen: it scrolls. */
-  .collection-qa-host { flex-shrink: 0; max-height: 40vh; overflow: auto; padding: 12px 16px 0; background: var(--bg); }
   .work-col { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
   .work-row { flex: 1; min-height: 0; display: flex; overflow: hidden; }
   .editor-col { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }

@@ -22407,7 +22407,8 @@ fail this time.
 **The installer for the installed-build walks** was built from a detached worktree at c2bd236
 (`C:\code\bridge-installer`, the day's edits kept out of it; the frozen sidecars and
 `src-tauri/resources` copied in from the main checkout since both are git-ignored):
-`C:debridge-installersrc-tauri	argeteleasebundle
+`C:debridge-installersrc-tauri	arget
+eleasebundle
 sisBridge_0.21.0_x64-setup.exe`, 85,265,216 bytes, `npm run tauri build` 6m 21s for the release profile. Version 0.21.0 is unchanged; the file is identified by the commit
 only. Nothing was tagged or released; 0.22.0 is Thursday's or Friday's cut in a separate session,
 0.21.0 (4cd22bf) stays the fallback demo build. Every walk this week records that hash.
@@ -22480,6 +22481,273 @@ decisions of 26 Oct; its deferred QA inputs are unchanged. Proposed follow-ups
 remain in the consolidated #353 comment for Benz to tick; none was filed. The
 intermittent progress-count failure and semantic-runtime trace are not claimed
 fixed, and M20's separate automatic-recheck recovery remains NOT RUN.
+
+
+## 2026-10-27 — Add books to an existing project from Project Home (branch `addBook`, Joel)
+
+**Ask.** The project list could import a file or folder as a new project, but a book could not be
+added to a project that already existed. A new row action (an "add file" glyph, between Open and
+Rename) opens a dialog that takes one file, several files or a folder, and asks skip-or-replace
+for a book the project already has, with a "do this for all" checkbox like a file copy.
+
+**Engine.** `project_import.inspect_add_books(root, paths)` (read-only) runs the same
+`inspect_import` the import screen uses on each chosen path, refuses a translationCore project or
+archive (a project of its own; only Scripture files/folders can be added) and a book named by two
+sources, and flags each book `exists` with its `existingPath`. `project_import.add_books(root,
+paths, replace_book_ids)` writes every new book and every existing book named to be replaced as a
+lazy placeholder beside the project (`_stage_lazy_book`, lifted out of `import_source` so both paths
+write the same shape; the book is normalised on first open as any collection sibling is), under one
+staging directory moved into place at the last checkpoint. A replaced folder is parked in staging
+first and moved back if anything after the move fails. A single-book project becomes a collection
+(new `collectionId`, the original keeps its `projectId`). Every sibling's `.bridge/collection.json`
+is rewritten with the merged list in canonical book order (`CANONICAL_BOOK_ORDER`), and a replaced
+book's `qaRuns` entry is dropped. Metadata (language, Bible name, resource id) comes from the
+project's own manifest or lazy descriptor, never from the user again. RPCs: `project.inspectAddBooks`
+(read) and `project.addBooks.start` (manage_projects), the latter on `ImportJobManager` under the
+import lock, polled and cancelled through `project.import.status`/`.cancel`; on success the engine
+registers every book of the collection and forgets a replaced book's progress and assignment cache,
+closing the open project's handles first when its folder is the one replaced (#113).
+
+**Replace is wholesale.** A replaced book's folder goes with its workbench database: decisions,
+alignment links, check results. The dialog says so before the button and again on the row. Keeping
+the workbench across a replace (re-keying decisions to new text) was not attempted; raise it with
+the maintainer if a team wants it.
+
+**Shell / client / UI.** `pick_import_files` (tauri-plugin-dialog `pick_files`, same filter as
+`pick_import_file`; empty vector on cancel). `bridge.pickImportFiles`, `inspectAddBooks`,
+`addBooksStart`. `AddBooksDialog.svelte`: a native `<dialog>` like `DuplicateImportDialog`, five
+steps (choose files/folder with the Project Home choice cards → inspect → one conflict at a time,
+Skip / Replace, "Do this for all N books already in the project" → the list with a Skip/Replace
+segmented control per existing book and the count → progress bar → outcome). Escape cancels except
+while the job runs. `ImportScreen` refuses a drop while the dialog is open and reloads the list after it.
+
+**Gates.** `pytest tests/service/test_add_books.py` 6 passed (files, folder, skip/replace, nothing
+to add, reporter refused); `test_authorize_roles.py` pins the two methods; `pytest -n auto` over
+`project_io`, `service/test_bridge_service.py`, `test_assignments.py`, `support` 290 passed; the full
+suite is in this session's handoff. `npm run check` 0/0, `npm run test` 100 files 1038 passed,
+`npm run build` ok; `cargo check` ok, `cargo test` 15 passed. **Not verified:** the installed app
+(sidecars not rebuilt in this session; `build-sidecars.ps1` + `smoke_sidecars.py` still to run), the
+native multi-select dialog on a real desktop, and the 1366x768 rendering of the dialog.
+
+## 2026-10-28 — Project dashboard restyled to the Project Home design (branch `dashboardUi`, Joel)
+
+**Ask.** The screen a project opens on had grown by accretion: a Collection QA card with its own
+fold, policy paragraph, checks fieldset and 7-column table; a second header row repeating the
+breadcrumb's name behind a "PROJECT" eyebrow and another fold; a Paratext strip; book rows whose
+four progress bars made a checked book three times the height of its neighbours; text buttons in
+five local styles; and a right panel that opened empty with two sentences of explanation. Joel
+asked for the same modern shape Project Home and the add-books dialog now have, with common
+button and icon styles, and agreed that the Collection QA table should merge into the book rows.
+
+**Shared controls.** `index.css` gains `.ui-btn` (primary / danger / quiet / small), `.ui-icon-btn`
+(the 34px glyph action Project Home drew locally), `.ui-chip` (accent / pass / warning / danger)
+and `.ui-card`. The dashboard, the Collection QA bar and the Paratext status use them; the other
+pages still carry their local copies and can move over without a visual change. `UiIcon` gains
+assign, play, pause, stop, check, chevronDown, link, warning, folder and report.
+
+**Layout** (`ProjectDashboard.svelte`, rewritten). One header card: the name once, the language
+and book count as chips, the Paratext link as a chip with its Refresh / Relink actions beside it
+(`ParatextLinkStatus.svelte`, same states and buttons, chip shape), and for a collection the
+Collection QA bar under a rule. Below, two cards: Books (search, My work, count, rows) and QA
+report (named for the previewed book). Each card body scrolls on its own. Book rows: badge, name,
+the book's last Collection QA result as a chip, the progress stages as compact two-column meters
+(same labels as before, so #239's wording and the tests hold), the assignee line, and two icon
+actions, Assign and Open, with tooltips; aria-labels stay "Assign…" and "Open". The report keeps
+every element (#337 gate, coverage bar with its legend and percent, exception queue with #144's
+paging) restyled; the empty state is one line, one hint and the Build button; building shows a
+spinner.
+
+**Collection QA** (`CollectionQaPanel.svelte`, rewritten as a bar). Idle: the summary ("1 done ·
+2 unchanged · last run …" or "never run"), a Checks menu (the same six boxes and the one-ticked
+floor, with the policy text, in a dropdown) and Run QA on all N books / Run all again. Active: the
+running book, books done, elapsed and remaining, a progress bar, Pause after this book and
+Cancel. The per-book table is gone: `ProjectDashboard` reads the same `collectionQa` store and
+draws each book's state, finding count and (on hover) verses checked, categories and last run on
+its row. The whole-collection stage stays folded under the bar. The two fold preferences
+(`collectionQaCollapsed`, #380; `projectDetailsCollapsed`, #374) are removed with the rows they
+folded: the header is one row now, which is what both folds were for. `App.svelte` no longer
+hosts the panel above the dashboard; the dashboard mounts it for a collection.
+
+**Tests.** `CollectionQaPanel.test.ts` rewritten for the bar (6); `ProjectDashboardFold.test.ts`
+replaced by `ProjectDashboardHeader.test.ts` (5: chips, Paratext linked and moved, the bar only
+for a collection, the report heading); `ProjectDashboard.test.ts` gains the meters, the icon
+actions and the row's QA chip; `ProjectDashboardAssignments.test.ts` mocks the engine its three
+books now reach; `ParatextLinkStatus.test.ts` wording. Found on the way: Svelte trims the space
+before an `{#if}` block, so "elapsed · about 30 s left" and "QA done · 4 findings" lost their
+separator; both now emit it inside the block.
+
+**Gates.** `npm run check` 0/0, `npm run test` 102 files 1055 passed, `npm run build` ok. No
+engine or shell change. **Not verified:** the desktop app at 1366x768 (frontend only, so
+`npm run tauri dev` with the 0.22.0 sidecars shows it).
+
+**Second pass (2026-10-29), from Joel's walk of the first.** The top strip (#399) and the Language
+QA launcher said the same thing as the new bar and the row meters on the dashboard: the strip is
+hidden while the dashboard shows a Collection QA run (every other screen keeps it) and the floating
+Language QA panel is not mounted on the dashboard. "Run all again" is gone: one Run button, and
+"Also re-check books unchanged since their last run" in the Checks menu (the `force` flag); the idle
+summary reads "12 of 66 books checked · 1 failed · last run …". The book rows did not move during
+a run because `bookProgress` was read once: `App.svelte` re-reads it when a run finishes a book
+and when it ends, and when any check job ends. The QA report is kept per book for the session
+(`reportCache`; "built 2:03 pm · Rebuild" on the card) since the build reads every verse; an entry
+goes when a check job, a Collection QA book or a new project touches it. Three report states now:
+no book chosen ("Select a book on the left"), the open book without a report ("No QA report built
+yet for X" and the Build button, so the text and the button agree), and a never-opened book, which
+is no longer prepared and reported on as 0% checked: the row selects it and the card offers Open and
+Run QA. Run QA per row (`onRunBookQa` → `beginChecks("book", …)` with the Collection QA selection,
+the book opened in the engine without leaving the dashboard, the strip showing it; disabled while any
+job runs). Rows: a one-line summary ("50/50 chapters checked · 458/1533 Language QA clean") with the
+four meters behind a Progress toggle, a rule before the actions, counts as "18.7k". The breadcrumb
+has a close icon after the project name (TopBar, "Close project"); the bar's Cancel is an X. The
+report: six tiles (check findings, AI findings, Language QA, discussions, stale reviews, unchecked
+verses), filter chips over the queue (critical, high, tN, tW, alignment, discussion; one at a time,
+paging resets), the queue heading sticky while it scrolls. Gates: `npm run check` 0/0, `npm run
+test` 103 files 1068 passed, `npm run build` ok.
+
+## 2026-10-29 — #412: 2–3 s per target-word drop on a long Hebrew chapter (Joel)
+
+**Report.** Keyigumpeule Thou waits 2–3 s after every drop in Align Words on a Hebrew source.
+The issue's own diagnosis held up in the code: `_cached_file_json` serves a cached chapter parse
+only when the file's mtime is older than `_RACY_NS` (2 s). A chapter Bridge has just saved is
+therefore re-read and JSON-decoded on *every* accessor call for the next two seconds, and the
+save tail (`_finish_alignment_mutation`) walks the whole chapter twice — `_alignment_context`'s
+`chapterStatus` through `alignment_status`, then `_refresh_progress_alignment` through
+`_aligned_verse_count` — with three chapter reads per verse (`word_alignment_state`,
+`alignment_work_state`, `load_verse_alignment`). ~90 decodes of the chapter per drop, scaling
+with its size.
+
+**Fix, engine only, the freshness guard kept.**
+
+1. `tc_project.py`: a cache entry is now `(signature, sha1 of the bytes, parse)`. Inside the
+   two-second window a signature match is verified by reading the bytes and comparing the digest,
+   not by decoding again: the same bytes are the same JSON. An in-place rewrite inside one
+   timestamp tick is still read (the digest differs); `test_a_change_inside_one_timestamp_tick_is_still_read`
+   is unchanged and passes. `_read_json` now goes through `_parse_json_bytes(path, raw)`, which
+   is also the one place the test fixtures count decodes.
+2. `TranslationCoreProject.chapter_snapshot()`: a thread-local scope in which each chapter file
+   (and the chapter listing) is verified against disk once and then trusted for the rest of the
+   scope. `_forget_chapter_files` clears the thread's scope too, so Bridge's own write inside a
+   scope ends the trust. `alignment_status`, `_alignment_context`, `_refresh_progress_alignment`
+   and the whole `_finish_alignment_mutation` tail run in one. Conflict detection is untouched:
+   `save_verse_alignment` still does its own fresh `load_alignment_chapter` and compares
+   `expected_original` (`test_a_conflicting_edit_is_still_refused`).
+3. `_finish_alignment_mutation` scans the chapter once (`alignment_status`) and hands the counts
+   to `_alignment_context(chapter_counts=...)` and to a new
+   `_refresh_progress_alignment(chapter_counts=...)`; the ✓ count is complete +
+   complete_cross_verse, the same rule `_aligned_verse_count` applies. Only a drop that completes
+   the verse rescans, after the marker is written.
+
+**Evidence** (`alignment.realign` RPC round trip, 20 drops alternating one target word between two
+Hebrew source columns, 25 source + 25 target tokens per verse, dev machine, idle, source not
+frozen):
+
+| Fixture | HEAD median / p95 | After median / p95 |
+| --- | --- | --- |
+| 1 chapter × 40 verses | 517 ms / 553 ms | 148 ms / 279 ms |
+| 1 chapter × 176 verses | 2225 ms / 2250 ms | 279 ms / 316 ms |
+
+Reads and decodes of the alignment chapter per drop, counted in
+`tests/service/test_alignment_drop_chapter_reads.py` (new): ≤6 decodes and ≤10 byte reads at
+both sizes, against ~90 decodes before; the status scan of a just-written chapter decodes it 0
+times (one digest verification). What remains per drop is the writer itself (its fresh load,
+the atomic write's validation of the temp file, the read-back validation, the backup copy, the
+history row and the journal) plus one per-verse status walk; a profile shows no single hot spot
+left of that shape.
+
+**Frontend.** `alignment.drop` added to `PERF_ACTIONS` (Tier A), bracketed in
+`AlignmentModal.svelte`'s `mutate` for a drop: begun at the drop, responded at the busy state,
+ended when the saved placement and its alignment re-check are in and the next drop is accepted;
+a failed save records no sample. Nothing else in the modal changed; the save → recheck gate is
+as before (the recheck measured 2–5 ms in the issue's runs).
+
+**Gates.** Engine: `pytest -n auto -m "not slow"` 5448 passed, 19 failed — the same 14 fail on
+unpatched HEAD on this machine (`test_semantic_mapping_stage3.py` needs
+`resources/semantic_mapping/bridge_semantic_source_v0.3.sqlite`, which is not checked out here;
+`test_correction_acceptance_queue_visibility` hits Windows MAX_PATH under pytest's tmp dir) and
+the other 5 pass serially with and without the patch (contention under `-n auto`). The new
+test file: 6 passed. Frontend: `npm run check` 0/0, `npm run test` 103 files 1068 passed,
+`npm run build` ok.
+
+**Not verified:** the frozen build, the desktop app at 1366×768, pointer-to-paint timings on a
+real machine, and Keyigumpeule's own environment (build, project, hardware were not supplied). The
+issue's acceptance list still needs the field retest and the `alignment.drop` p95 from a
+measurement session (`scripts/perf_table.py`).
+
+### 2026-10-30 -- Dashboard third pass: the row's icon is the book's QA state
+
+Maintainer review of the second pass (screenshots at 1366x768 and narrower):
+the summary line made a row three lines deep and truncated; the rule before
+the actions looked wrong on a tall row; the grey Run QA and Assign icons read
+as disabled; the chips were too quiet; the collection Run button, Rebuild and
+the queue wanted icons and a chapter filter. And a design question: what does
+clicking a row do, versus the play icon? Clicking built (or showed) the report;
+play ran the checks and stopped, so after a per-book run the reviewer still had
+to click the row and wait for the build.
+
+Decided with the maintainer: a row is not clickable. Its first icon is the
+book's QA state. A book nothing has checked (no checked chapter in its
+progress, no finished Collection QA run) shows Run QA (play, green): it opens
+the book in the engine, runs the whole book as a normal check job with the
+Collection QA checks, then builds and shows the report. Once checked it shows
+View QA report (blue): the session's copy if there is one, else a build; never
+a check. While that book's own job runs the icon is a spinner. Assign and Open
+stay. The report card carries the job (label, verse, percent, Cancel) in place
+of the top strip, which is now hidden on the dashboard for every job; a failed
+or cancelled job stays on the card with Run QA again. The report head has two
+icons: Run QA again (checks, then the fresh report) and Rebuild (the stored
+findings only, after editing in the editor). The old "has not been opened"
+state became "has not been checked yet" with one Run QA button; a checked
+book with no session copy keeps the Build button.
+
+Styling from the review: the progress summary line is gone (the four meters
+stay behind Progress); no rule before the actions; `.ui-icon-btn.success`
+(Run QA), `.assign` (Assign, --term) and `.filled` (the collection Run, an
+accent-filled play icon with the same aria-label as before) in index.css; the
+header's language and book-count chips, the Books count and the "n of m"
+number use the accent colour. The queue head gained a chapter dropdown
+(`All chapters` / `Chapter n` with a clear icon): a five-column grid of the
+chapters the queue has rows in, capped at 176px with a scrollbar, and a number
+search box once there are more than twelve, so a 150-chapter Psalms is not a
+list. The severity pill counts are over the chosen chapter. App keeps
+`dashboardQaPath` for the job the dashboard started; `monitorJob`'s finally
+builds that book's report on success. Gates: svelte-check 0/0, Vitest 103
+files / 1072, build. Not yet run in the desktop window.
+
+Follow-ups the same day, each tested in the desktop window by the maintainer:
+the report card's idle state is a three-line legend of the row icons, no
+Build button; the collection Run is a round green play; both numbers of
+"n of m" are accent. An open started from a row icon (View, Run QA) shows
+"Opening X…" with the prepare detail in the report card, the top strip
+hidden for it. View on a book whose report the session kept shows it with no
+engine call at all: project.open costs the same every time, so the open is
+deferred to Rebuild, Run QA again or a verse click, which switch books
+themselves (`rebuildDashboardReport`, `navigateFromDashboardReport`,
+`shownReportPath`). And the build wait has a clock: `reportEstimate.ts`
+estimates the build from the verse count at a seconds-per-verse rate learned
+from finished builds (localStorage), the card shows elapsed, "about N left"
+and a bar that holds at 95% -- labelled an estimate, because the sidecar
+answers nothing during project.report. A true per-chapter percentage needs
+the build to become an engine job (start/status, worker thread, the same
+shape as the check job); raised for the maintainer as its own issue, which
+would also stop the sidecar freezing during a build.
+
+## 2026-10-29 — #409: a reading area in Align Words (Joel)
+
+**Ask.** Keyigumpeule Thou and Amos want to read the selected target verse as continuous text,
+with its punctuation, while aligning — translationCore's "Step 1. Read", target language only.
+
+**Done** (`AlignmentModal.svelte`). A "Read" section above the interlinear: the reference and the
+target language as its label, then the verse's `display.plain` — the engine's one USFM reader
+(gotcha 14), never a sentence rebuilt from the cards, so moving a card cannot change the wording or
+order. The editor has already read the open chapter into `verseDisplay`; a verse not there yet is
+read once with `verse.get`, and a failed read leaves the cards usable with a one-line notice. Set
+in the editor's verse type (`--font-target`, `--verse-scale`), `dir`/`lang` from the project, on a
+quiet surface so it reads as text, not as a drop target. No engine, writer or token change.
+
+**Tests.** `AlignmentModal.test.ts`: the text (Tamil, with its full stop) is shown from the store
+and unchanged after a pick-up; the engine fallback is read once when the store is empty. Gates:
+`npm run check` 0/0, `npm run test` 104 files 1078 passed, `npm run build` ok. **Not verified:** the
+desktop at 1366x768 with a long verse (the section wraps and the interlinear below keeps its
+max-height, so the bank and footer should stay on screen, but that is a visual check).
 
 ## 2026-10-30 — Twelve-language spelling expansion, existing grammar reused (#414)
 

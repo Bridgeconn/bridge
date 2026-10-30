@@ -2,9 +2,10 @@
   import { onMount } from "svelte";
   import { bridge } from "../api/bridgeClient";
   import { recheckVerse } from "../verseChecks";
+  import { perfAbort, perfBegin, perfEnd, perfResponded } from "../perf";
   import {
-    alignmentStatusByVerse, checkStatusByVerse, noteAlignmentChanged, project, targetLang,
-    verseKey,
+    alignmentStatusByVerse, checkStatusByVerse, noteAlignmentChanged, project, targetDir, targetLang,
+    verseDisplay, verseKey,
   } from "../stores";
   import { alignmentStatusLabel } from "../alignmentStatus";
   import { bookDisplayName } from "../utils/reportStats";
@@ -23,6 +24,23 @@
   export let onClose: () => void;
 
   let context: AlignmentContext | null = null;
+  // #409: the verse as continuous text, with its punctuation, to read while
+  // aligning (translationCore's "Step 1. Read", target language only). It is
+  // the verse's `display.plain` -- the engine's one USFM reader, never a
+  // sentence rebuilt from the cards -- so moving a card cannot change it. The
+  // editor has already read the open chapter into `verseDisplay`; a verse not
+  // there yet (opened before the chapter finished loading) is read once.
+  let readingFallback = "";
+  let readingFallbackKey = "";
+  $: readingText = $verseDisplay[verseKey(chapter, verse)]?.plain ?? (readingFallbackKey === verseKey(chapter, verse) ? readingFallback : "");
+  $: if (!$verseDisplay[verseKey(chapter, verse)] && readingFallbackKey !== verseKey(chapter, verse)) {
+    const key = verseKey(chapter, verse);
+    readingFallbackKey = key;
+    readingFallback = "";
+    void Promise.resolve().then(() => bridge.getVerse(chapter, verse)).then((data) => {
+      if (readingFallbackKey === key) readingFallback = data?.display?.plain ?? data?.text ?? "";
+    }).catch(() => { /* the cards still work without the reading line */ });
+  }
   let lexiconToken: AlignmentToken | null = null;
   let loading = true;
   let busy = false;
@@ -181,9 +199,15 @@
     }
   }
 
-  async function mutate(action: () => Promise<AlignmentContext>, message: string) {
+  // `perfAction`: a PERF_ACTIONS name to time this mutation under (#412):
+  // begun now, responded at the busy state, ended once the saved placement
+  // and its re-check are in and the next operation is accepted; a failure
+  // records no sample.
+  async function mutate(action: () => Promise<AlignmentContext>, message: string, perfAction = "") {
     if (busy) return;
+    if (perfAction) perfBegin(perfAction);
     busy = true;
+    if (perfAction) perfResponded(perfAction);
     error = "";
     notice = "";
     try {
@@ -192,6 +216,9 @@
       error = value instanceof Error ? value.message : String(value);
     } finally {
       busy = false;
+      if (perfAction) {
+        if (error) perfAbort(perfAction); else void perfEnd(perfAction);
+      }
     }
   }
 
@@ -210,6 +237,7 @@
     void mutate(
       () => bridge.realignWords(chapter, verse, topIds, bottomIds, context!.alignment),
       moved > 1 ? `${moved} words placed together.` : "Alignment saved.",
+      "alignment.drop",
     );
   }
 
@@ -397,6 +425,15 @@
 
       {#if notice}<div class="notice">✓ {notice}</div>{/if}
       {#if error}<div class="error">{error}</div>{/if}
+
+      <section class="reading" aria-label={`Read ${reference}`}>
+        <div class="panel-title"><span class="panel-label">Read <small>{reference} · {$project?.targetLanguage || "target language"}</small></span></div>
+        {#if readingText}
+          <p class="reading-text" dir={$targetDir} lang={$targetLang}>{readingText}</p>
+        {:else}
+          <p class="reading-empty">The verse text is not available to read.</p>
+        {/if}
+      </section>
 
       <div class="workspace">
         <section class="source-bank">
@@ -620,6 +657,13 @@
   .notice { background: #EAF7EF; color: var(--success); }
   .error { background: #FFF0F0; color: var(--danger); }
   .workspace { display: flex; flex-direction: column; gap: 14px; }
+  /* #409: the reading area. The editor's verse type (font, size, leading), on
+     a quiet surface so it reads as text to read, not a card to drag. Wraps at
+     any width; `dir`/`lang` come from the project, as in the editor. */
+  .reading { padding: 10px 14px 12px; margin-bottom: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
+  .reading .panel-title { margin-bottom: 4px; }
+  .reading-text { margin: 0; font-family: var(--font-target); font-size: calc(var(--fs-lg) * var(--verse-scale, 1)); line-height: 1.8; color: var(--text); overflow-wrap: anywhere; white-space: normal; }
+  .reading-empty { margin: 0; font-size: var(--fs-xs); color: var(--text-3); }
   /* #72: the columns flow left-to-right and wrap, the way a printed interlinear
      reads, instead of sitting on one line behind a horizontal scrollbar. Each
      source word still sits directly above its own target chips -- only the

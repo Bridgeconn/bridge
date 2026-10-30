@@ -97,6 +97,30 @@ pub async fn pick_import_file(app: tauri::AppHandle) -> Result<Option<String>, S
         .map_err(|e| format!("file picker cancelled unexpectedly: {e}"))
 }
 
+/// Several Scripture files at once, for adding books to an existing project
+/// (Project Home > Add books). Same filter as `pick_import_file`; an empty
+/// vector means the dialog was cancelled.
+#[tauri::command]
+pub async fn pick_import_files(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .add_filter(
+            "Bible translation projects",
+            &["usfm", "sfm", "txt", "tcore", "tstudio", "zip"],
+        )
+        .pick_files(move |files| {
+            let paths = files
+                .unwrap_or_default()
+                .into_iter()
+                .map(|f| f.to_string())
+                .collect::<Vec<_>>();
+            let _ = tx.send(paths);
+        });
+    rx.await
+        .map_err(|e| format!("file picker cancelled unexpectedly: {e}"))
+}
+
 /// A JSON file to read, e.g. a house-style export from another book
 /// (layered-rules Phase 6.4, housestyle.import).
 #[tauri::command]
