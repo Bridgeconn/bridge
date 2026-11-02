@@ -92,6 +92,13 @@ desktop rows.
 
 Open an issue and get an answer first:
 
+The Paratext notes exception approved on 2026-11-02 (#423) already permits
+human-confirmed Scripture writes through Paratext and automatic closure of a
+linked Bridge QA record following a verified Paratext resolution. See
+`docs/DECISIONS.md` for the scope and safeguards, and
+`docs/PARATEXT_HOST_ACCEPTANCE_CHECKLIST.md` for the implemented, verified subset
+and remaining work. The list below applies outside that approved scope.
+
 - schema changes (the companion database is at v14)
 - re-baselining a golden
 - anything adding a network dependency, an account or a login to a runtime path

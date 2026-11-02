@@ -1365,3 +1365,91 @@ pending state shown, drafts kept). See BUILD_LOG 2026-11-02.
 **If approved:** amend the two 2026-10-26 entries (do not delete them), then the "Rules out"
 lines there, then this entry's status. The implementation order in #423 (#424 spike first, on a
 real Paratext 9.5 host) still holds; this machine has no Paratext installation.
+
+## 2026-11-02 — Paratext Scripture writes and automatic linked QA closure approved (Benz, #423–#436)
+
+**Decision:** at Benz's explicit request, reverse two restrictions in the
+2026-10-26 Paratext write-back decision and its one-click follow-up:
+
+1. **Bridge may write Scripture through Paratext.** The Paratext notes workflow
+   may submit human-confirmed corrections through the companion and Paratext's
+   supported Scripture editing APIs. This is an approved extension of the
+   correction workflow, including the supported text regions and limited marker
+   operations planned in #429 and #430. The former blanket prohibition on
+   `PutUSFM`/`PutUSX` or equivalent supported Scripture APIs no longer applies.
+2. **Resolving a Paratext thread may automatically close its linked Bridge QA
+   record.** A second "Mark resolved in Bridge" click is no longer required.
+   Implement this for verified links to QA records, not only the existing
+   translation-help issue resolutions (#425, #433). Record the external
+   resolution, actor, thread/comment identity and time in append-only history;
+   repeated refreshes must not create duplicate closure events or sync loops.
+
+**Required behavior:** validate the linked project, current permissions, locks,
+source discussion and current Scripture before writing; verify saved USFM and
+refresh Bridge from the result. Specify text ownership, concurrent-change
+checks and partial-save recovery in #424 before implementing #429. Never
+overwrite intervening edits or report an uncertain save as verified. Do not
+write Paratext project files directly or use private host data layers.
+
+Automatic QA closure records "resolved in Paratext"; it does not invent an
+Apply/Reject decision, assert a Scripture change occurred, or establish semantic
+verification. The existing positive-verification and human acknowledgement
+requirements for Stage 9B's `CORRECTED` remain. Define a separate closure state
+or event where the QA model needs one, with a forward migration as required.
+Missing/ambiguous links and conflicting record revisions require reconciliation
+rather than guessing which record to close. Handle offline/reconnect delivery
+durably and do not silently reopen a record on unrelated note activity.
+
+**Because:** the requested round trip treats Paratext as a supported Scripture
+editing host and allows a reviewer's resolution there to complete linked work
+in Bridge without repeating the same action.
+
+**Scope:** this supersedes only the Scripture-write ban and mandatory local
+closure click in the two 2026-10-26 entries. Other restrictions, including direct
+project-file writes and unapproved note delete/reopen actions, remain. Automatic
+resolution of a Paratext source thread after all Bridge proposals have terminal
+decisions still needs its own completion rules in #433.
+
+**Status when recorded:** policy and planning only. Subsequent merged work and
+live-host evidence are recorded in PARATEXT_HOST_ACCEPTANCE_CHECKLIST.md;
+the remaining acceptance criteria stay tracked under #423.
+
+## 2026-11-02 — Bridge save ownership, named attribution and resolution scope confirmed (Benz, #423, #437)
+
+**Decision:** Benz answered the remaining questions on the Paratext notes plan:
+
+1. **Bridge initiates and saves the reviewed changes.** Keep one Bridge-owned,
+   human-confirmed correction workflow. For a linked Paratext project it submits
+   the save through Paratext's supported APIs, permissions and locks, verifies
+   the saved result and refreshes Bridge. This is not a choice to replace Bridge's
+   workflow with a separate Paratext-only editing workflow. Define concurrent
+   changes and partial-save recovery without silently overwriting either copy.
+2. **Name the Bridge user who changed and saved the text.** Persist the actual
+   authenticated Bridge actor's id and display name with the edit, save and
+   resolution history. Surface that name in the linked discussion/audit evidence
+   and reports. A resolution initiated there records "resolved in Bridge". If
+   Paratext's API records the logged-in Paratext user as native author, retain that
+   real author too and distinguish "changed/saved by <Bridge user> through Bridge"
+   rather than impersonating another native account. Inspect API support for
+   attribution in #424; any host limitation must be visible.
+3. **Automatic external closure covers findings, correction proposals and issue
+   resolutions.** A verified resolution in Paratext closes the explicitly linked
+   work record and records "resolved in Paratext", the external actor and source
+   evidence. Keep the underlying proposal, prior decisions and lifecycle events;
+   closure does not imply that a proposal was applied or positively verified.
+   Stage 9B's separate `CORRECTED` requirements remain. Bridge-origin resolution
+   retains its Bridge origin when its echo returns from Paratext.
+4. **Reference reuse permission:** Benz states that
+   `selvabenz/Paratext-sug-in-context-menu` is his repository and explicitly permits
+   its use and redistribution for this work. A fresh repository/API check still
+   finds no licence file, no licence text in README and `license: null`. Record
+   the owner's grant rather than inventing a standard licence identifier. This
+   entry does not claim that the upstream repository's files were changed or
+   that third-party material has been relicensed.
+5. **Real-host acceptance:** Benz will test Paratext. Prepare the disposable-project
+   round-trip checks and evidence checklist under #424/#436; live compatibility
+   remains NOT RUN until his results are recorded.
+
+**Status:** confirmed product decisions, not a fresh proposal awaiting the same
+approval. API capability checks, safe synchronization design and implementation
+remain tasks. No runtime code or Scripture was changed in recording this answer.

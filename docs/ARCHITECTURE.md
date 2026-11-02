@@ -333,7 +333,11 @@ survive re-running checks.
 - No neural retraining; "human approvals become corpus evidence" means local statistics.
 - No dependency on an AI API for core QA; Greek Room checks and the Stage 4 to 8 pipeline
   run with zero connectivity.
-- No second Scripture writer, no server or login on a translator's runtime path.
+- Paratext Scripture writes and automatic linked QA closure are approved
+  extensions (DECISIONS 2026-11-02, #423). The connector supports body-text writes;
+  see PARATEXT_HOST_ACCEPTANCE_CHECKLIST.md for closure evidence and remaining
+  region/recovery work. Other additional Scripture writers need a decision. No
+  server or login on a translator's runtime path.
 
 ## 9. Where the direction is recorded
 

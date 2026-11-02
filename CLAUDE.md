@@ -757,6 +757,16 @@ to an AI-assisted session specifically:
 
 ## Stop and ask before writing any code
 
+**Approved Paratext exception (2026-11-02, #423):** Benz reversed the blanket
+Paratext Scripture-write ban and the mandatory local closure click. Bridge may
+write human-confirmed Scripture corrections through Paratext's supported APIs,
+and a verified Paratext resolution may automatically close its linked Bridge QA
+record. See `docs/DECISIONS.md`'s 2026-11-02 entry for safeguards and the distinction
+between external closure and Stage 9B's `CORRECTED`. These capabilities are approved
+policy. The merged implementation supports body-text writes and linked closure;
+see `docs/PARATEXT_HOST_ACCEPTANCE_CHECKLIST.md` for verified scope and remaining
+work. Other new writers and auto-apply changes still need a decision below.
+
 These are cheap to start and expensive to undo. If a task appears to require one,
 raise it as a question in the issue rather than deciding it in a commit:
 

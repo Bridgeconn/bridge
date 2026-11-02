@@ -23408,6 +23408,100 @@ in the engine, but only issue-resolution cards could create a thread. Now:
   suites; svelte-check 0/0; ParatextNotesPanel 12, VerseList 115 (menu label list updated),
   CorrectionReviewPanel 66, ThreadPanel 7. Full gates below.
 
+### Paratext notes policy reversal (#423–#436, 2026-11-02)
+
+Benz explicitly approved Bridge writing Scripture through Paratext and a
+Paratext thread resolution automatically closing its linked Bridge QA record.
+Appended the superseding decision in DECISIONS.md, preserving the historical
+2026-10-26 decisions. Updated contributor/agent guidance and the Paratext notes
+plan to distinguish these approved capabilities from implementation work still
+needed: API inspection, ownership/concurrency checks, supported locked writes,
+saved-USFM verification, durable external-resolution history and recovery.
+
+Automatic external closure does not fabricate a correction decision or bypass
+Stage 9B's positive verification and human CORRECTED acknowledgement. No source
+code, schema, project data, Scripture, connector installation or runtime behavior
+was changed. Verification is documentation diff/whitespace review and issue
+readback; application tests and real-host acceptance were not run for this work.
+
+### Paratext notes follow-up answers and pull (#423, #437, 2026-11-02)
+
+At Benz's request ran `git pull --ff-only --autostash origin main`: already up
+to date at c6f3bb1; existing local policy documentation was preserved. PR #437
+is not merged by this command. Recorded that Bridge owns the reviewed save
+workflow, the actual Bridge user must be named for changes/saves, and resolution
+origin is "resolved in Bridge" or "resolved in Paratext". Automatic external
+closure covers findings, correction proposals and issue resolutions without
+discarding their history or claiming a verified correction.
+
+Benz explicitly granted use and redistribution of his reference plugin. A fresh
+GitHub repository/root/README check still showed no licence file/text and
+`license: null`; documented the owner's grant without claiming an upstream
+licence change. Benz will perform real-Paratext testing; live acceptance remains
+NOT RUN. Updated planning issues and the PR discussion with these answers.
+No application implementation, merge, release, installer or Scripture edit was
+performed. Documentation whitespace checks and GitHub readback are the checks
+for this follow-up.
+
+### Live Paratext walkthrough and connector API blocker (#423, #424, #429, #436, #438, 2026-11-02)
+
+At Benz's request, exercised the actual local Paratext 9.5.110.1 host and
+installed connector 0.8.1. Used only NSTest ("Note Suggestions Disposable Test")
+for native writes, with synthetic notes. The working translation's active
+project/reference was preserved. Created two test threads in total, both left
+resolved; no native note was deleted and no Scripture was edited.
+
+Live connector checks passed: requested-project targeting while another project
+was active; native create/list/reply/resolve and disk-index readback; rejection
+of invalid project, unmatched selection, genuinely repeated Unicode selection
+and stale thread key; idempotent repeated resolution. Paratext 9.5 persisted
+resolution as Status `deleted`. The disposable Scripture file's SHA-256 matched
+before/after all writes.
+
+Fetched PR #437 and created an isolated detached checkout of d5da598 under the
+ignored `engine/build/paratext-walk-20261102/` directory; did not merge it or
+change the current main checkout. With isolated settings and an import of
+NSTest (Tamil metadata supplied explicitly), the PR's real Bridge RPCs passed
+create/native readback, named Bridge actor attribution, reply/native readback,
+and resolve/native readback with `closure.origin = bridge` and status "resolved
+in Bridge". Resolve initially queued behind the freshly written attribution
+comment until the notes index refreshed; flushing the existing intent completed
+it with one resolve row. This was correct outbox safety behavior, not a failed
+resolution or a reason to create another intent.
+
+The PR's four focused parser/panel/policy/review suites passed: **80 passed in
+30.54 s**. A sandboxed attempt could not create pytest files; reran outside the
+sandbox with isolated temporary storage. A separate native external-closure
+attempt could not surface its synthetic check fixture and stopped before
+creating any native note: automatic closure of findings/proposals/issue
+resolutions is therefore **not live-host verified** by this walk. Stand-in
+policy tests passing must not be presented as real-host closure acceptance.
+
+Reflected the actual installed public interfaces (assembly version 2.0.100.0):
+`IProject` exposes `CanEdit`, chapter/book locks, GetUSFM, PutUSFM,
+PutUSFMTokens and PutUSX; `IProjectNote` exposes AddNewComment/Resolve and
+read-only author/assignment/status evidence. `SyncReferenceGroup` includes
+None and A–E; `IPluginHost.SetReferenceForSyncGroup` is present. API presence is
+not proof of live writes/navigation. The inspected note interface has no
+reopen/delete or native author setter; preserve true native author and include
+Bridge actor attribution in comment/audit content.
+
+Compiling connector 0.9.0 against this installed host failed, without deployment:
+`AiBridgeConnectorPlugin.cs(246,23): CS1501: No overload for method 'PutUSFM'
+takes 4 arguments`. The source calls
+`PutUSFM(writeLock, bookNum, newUsfm, chapterNum)`; reflected signature is
+`PutUSFM(IWriteLock, String, Int32)`. Filed #438 with reproduction and a required
+write-scope preservation check; do not simply drop an argument and risk replacing
+other chapter content. This blocks the real Scripture-write walk in #429/#436.
+Paratext was not restarted and its installed connector was not replaced.
+
+Local receipts: `engine/build/paratext-walk-20261102/note-roundtrip.json`,
+`pr437-live-roundtrip.json`, `api-inventory.json` (ignored; no real-project
+notes or identities uploaded). Installed Bridge UI capture timed out waiting for
+app approval; desktop layout, UI clicks, connector 0.9.0 loading, real Scripture
+writes/revert/export/Send-Receive, offline application restart and multi-device
+closure remain NOT RUN. Updated the issue/PR discussions with this separation of
+observed results and remaining work for Joel. No application code was changed.
 
 ### Connector 0.9.0 host compatibility and live acceptance (#438, 2026-11-02)
 
@@ -23441,6 +23535,7 @@ checks; non-body/marker operations remain review-only. An isolated acceptance
 app build excludes the unrelated unfinished updater changes.
 
 
+
 ### Completed native and build verification after #438 (2026-11-02)
 
 Published the focused connector fix and first host record as 23497c0; GitHub CI
@@ -23470,3 +23565,12 @@ Issue results distinguish real native writes/record closure, synthetic
 finding/proposal link closure, and the unverified screens/lock-revocation/
 Send-Receive/multi-device checks. Bridge-only revert and the outstanding
 non-body/marker/multi-book queue requirements remain open follow-ups.
+
+### Commit readiness and Paratext issue audit (2026-11-02)
+
+Reviewed the full acceptance criteria for #423?#436. #427 and #438 are already
+closed with evidence; remaining issues retain incomplete scope. Published the
+completion audit on #423 (issuecomment-6577967177). No additional issue was
+closed on the strength of the merged PR alone. Prepared the previously local
+owner decisions and walkthrough history for publication; updated current-state
+guidance to point to the merged body-write implementation and acceptance limits.
