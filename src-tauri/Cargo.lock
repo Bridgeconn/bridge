@@ -4168,7 +4168,7 @@ dependencies = [
 
 [[package]]
 name = "translationcore-ai-bridge"
-version = "0.24.2"
+version = "0.24.3"
 dependencies = [
  "serde",
  "serde_json",
