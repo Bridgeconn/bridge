@@ -23663,3 +23663,77 @@ engine suite and frozen rebuild were not repeated during this commit-only pass.
 
 Both production Vite builds and the signed-feed manifest fixture passed. The
 existing large-chunk advisory remains; no installer or release was published.
+
+## 2026-11-03 — #423 batch 4: every remaining Paratext child built in source (branch `paratext-finish`, Joel)
+
+Benz's completion audit of 2026-11-02 left #424–#426 and #428–#436 open with
+named remaining scope. This batch builds all of it that can be built without a
+Paratext host and leaves the host walk to Benz (checklist sections E–G).
+
+**Engine (`tc_ai_bridge/paratext_review.py`, `bridge_service.py`):**
+- `locate(raw, original, region=…)`: body as before; `footnote` / `crossReference`
+  inside one of the verse's notes of that kind (raw text, unique across them);
+  `locate_heading` over `<chapter>.headings.json` entries. A region never falls
+  back into another. `apply_proposal` edits notes through the verse writer;
+  `apply_heading_proposal` through `TranslationCoreProject.apply_heading_edit`
+  (new: journal label `headingEdit`, `expected_old_text` check, rollback).
+- Introduction and marker rename (`marker_rename` allowlist) are Paratext-only:
+  `paratext_review_decide` requires `write_paratext`, records `bridgeCopy`, and
+  takes `verified` from Paratext's read-back. A rename also updates the Bridge
+  heading's `tag` (`new_tag` on the heading writer).
+- `reverse_write(decision)`: the exact Paratext reverse (replace → swap with
+  context words; delete → replace the window around the gap). `revert_latest`
+  reverts headings too; the engine queues the reverse as `put_verse_text`
+  (`bridge-ptrev-…`) and comments on the thread.
+- `classify_apply` / `reconcile` / `uncertain_decisions`;
+  `paratextReview.reconcile` (outcomes verified / notApplied / conflict /
+  paratextChecked), `paratextReview.uncertain`; `_review_require_reconciled`
+  blocks an apply on a verse with an unreconciled interrupted apply.
+- `thread_completion` now blocks on a queued / refused / unverified Paratext
+  write and on a recorded conflict; `_review_completion_gate` in
+  `paratext_resolve_thread` reloads the thread's proposals before a resolve.
+  `pendingResolves` lists queued / refused `resolve` rows; `paratext.flushOutbox`
+  is the retry.
+- Multi-book: `queue_items(threads, status, start_book)` orders across books by
+  canon from the starting book and flags `wrapped`; `_review_scope_books` from
+  `collection_projects` (lazy siblings included, never materialized);
+  `peek_review_decisions` (read-only sibling workbench); `_review_item` refuses
+  a non-open book with `OPEN_BOOK:<code>`. Queue state moved to
+  `AppSettings.paratext_review_queues[guid]` (`normalize_state`,
+  `prune_drafts` drops stale drafts and reports them).
+- Evidence: CSV columns (region, bridgeUserId/Name, paratextWrite/Verified/
+  Author, reconciled, resolutionOrigin, resolvedBy); HTML names the same;
+  `paratextReview.report(since, outputPath, cumulative)`,
+  `paratextReview.reports` (lists, clears `.html.tmp` leftovers),
+  `paratextReview.latestReport(path)` restricted to the book's folder.
+- Connector client: `put_verse_text(..., region=)`, `rename_marker(...)`; outbox
+  `OP_RENAME_MARKER`, `SCRIPTURE_OPS`, a region write needs capability
+  `text_regions` (0.10.0) or waits with that reason.
+
+**Plugin 0.10.0 (`paratext_plugin/AiBridgeConnectorPlugin.cs`, not compiled here):**
+`Parts()` region mapping copied from the reference plugin's `TokenMapping.Parts`;
+`put_verse_text` takes `region` (introduction = chapter 0 to the token API;
+heading tokens may sit on `firstVerse - 1`); `rename_marker` as the reference
+plugin's `ApplyMarkerRename` with `ChangedMarkerToken` (the member set that
+compiled on the host) and the `ConvertToUSFMTokens` round trip; capabilities
+`text_regions`, `rename_marker`.
+
+**Frontend:** `ParatextReviewQueue.svelte` rewritten (Books… scope picker with
+start book, wraparound notice, read-only sibling items with "Open <book>",
+region labels, Paratext-only applies, "Show in Paratext", Alt+letter keyboard
+commands, Reports / recovery: saved reports list, Open in browser via the new
+Tauri `open_path` command, Save report as…, cumulative report, new session,
+reconciliation buttons, pending resolves retry). The queue is mounted once by
+`App.svelte` (`paratextReviewQueueOpen`) so it survives a book switch.
+Notes-panel composer drafts persist in localStorage (`bridge.paratextNoteDrafts.v1`).
+VerseList: `N` on a focused verse is the keyboard route to the Paratext note
+command. Rust: `tauri-plugin-window-state` (remembered placement, #435) and
+`open_path` (file must exist and be html/htm/csv/txt).
+
+**Verified:** engine `-k paratext` 241 passed (new: regions 6, recovery 6,
+scope 3, closure recovery 4; `tests/support/paratext_review.py` holds the
+shared helpers, no cross-test imports); full engine suite 3697 passed with the
+stage-3 DB test deselected (environmental, as on 2026-11-02); svelte-check 0/0;
+Vitest 1102 + 11 new; `npm run build`; `cargo check` + `cargo test` 18 passed.
+Frozen sidecars: rebuilt and smoked before the release (recorded below when
+done). **Not verified:** anything on a real Paratext (checklist E–G).

@@ -74,8 +74,8 @@ Bridge record; every Bridge write names its Bridge user; Benz runs this walk.
 - [ ] A proposal with `Suggested: (delete)`: expect the confirmation dialog naming
       the exact text; after confirming, exactly that span is gone in both.
 - [ ] Reports / recovery › **Revert latest verified correction…**: Bridge's verse is
-      restored; Paratext is **not** reverted (the revert is Bridge-side only, by
-      design); record this limitation.
+      restored. (Connector 0.9.0: Paratext is not reverted. Connector 0.10.0,
+      2026-11-03: the exact reverse is written there too; see section F.)
 - [ ] Reports / recovery › Save session report; open the file in a browser.
       Export CSV; open in a spreadsheet: Tamil text intact, no formula executes.
 
@@ -87,6 +87,72 @@ Bridge record; every Bridge write names its Bridge user; Benz runs this walk.
       closure on the record, not two.
 - [ ] 1366×768: the review queue dialog fits; Apply and navigation stay visible with
       a long Tamil discussion.
+
+## E. Connector 0.10.0: regions (2026-11-03, NOT RUN)
+
+Install 0.10.0 (Bridge Settings › Connections › Update, Paratext closed). Record:
+did `build.ps1` compile 0.10.0? `get_state` lists `text_regions` and `rename_marker`.
+
+- [ ] A QA note with `Location: footnote` whose Original is a word in the verse's
+      footnote. Review queue: the current text shows the footnote (`\f …\f*`),
+      Apply with "Also write to Paratext". Expect both copies changed inside the
+      footnote only; the same word in the verse body untouched.
+- [ ] The same with `Location: cross-reference` (`\x …\x*`).
+- [ ] `Location: heading` on the verse a `\s1` heading introduces. Expect Bridge's
+      `<chapter>.headings.json` changed (the verse map not), Paratext's heading
+      changed, the verse before it untouched.
+- [ ] `Location: book introduction`. Expect Apply disabled until "Also write to
+      Paratext" is ticked; then Paratext's `\ip` text changed; Bridge shows
+      "Written in Paratext only" and verified.
+- [ ] A heading proposal whose Original repeats in two headings at the verse:
+      refused on both sides, nothing changed.
+- [ ] Each of the four with connector 0.9.0 still installed: Bridge applies its
+      copy, Paratext "queued … needs connector 0.10.0".
+
+## F. Connector 0.10.0: marker rename and the two-sided revert (NOT RUN)
+
+- [ ] A note with category `USFM marker`, `Original: \s1 <exact heading>`,
+      `Suggested: \s2 <same heading>`. Review queue: "Rename marker and next"
+      with "Also write to Paratext". Expect Paratext's marker changed, text
+      unchanged, Bridge's heading tag `s2`; chapter USFM otherwise byte-identical.
+- [ ] `Suggested: \q1 <same heading>` (outside the allowlist): refused, nothing changed.
+- [ ] A rename whose heading text appears twice in the chapter: refused.
+- [ ] Apply a body correction with "Also write to Paratext", then Reports /
+      recovery › **Revert latest verified correction…**. Expect Bridge's verse
+      restored, Paratext's verse restored ("Paratext reversed and read back"),
+      and a comment "Correction … reverted in Bridge" on the thread.
+- [ ] The same for a deletion (`Suggested: (delete)`): the reverse restores the
+      deleted word in Paratext too.
+- [ ] Change the verse by hand in Paratext after the apply, then Revert. Expect
+      Bridge reverts its copy and Paratext refuses the reverse ("was not found");
+      the notice says so; nothing in Paratext changed.
+- [ ] Lock revocation: hold the chapter in Paratext's own editor mid-edit (or
+      another plugin's lock) and Apply. Expect "WRITE_LOCK failed" / "withdrawn",
+      Bridge's copy applied and verified, Paratext queued/refused, no partial write.
+
+## G. Interrupted applies, queue scope, two devices, Send/Receive (NOT RUN)
+
+- [ ] Kill Bridge (Task Manager) right after "Apply and next" on a verse. Reopen.
+      Reports / recovery lists the verse under Uncertain edits with its class;
+      "Mark verified" when the text reads right; the next apply on that verse is
+      blocked until then.
+- [ ] Books…: tick two books, start at the second. Expect the list begins with
+      it and shows "After <last> the queue wraps around to <first>"; a proposal
+      of the other book shows "not open"; **Open <book>** switches books and the
+      queue keeps its place and drafts; Bridge restarted keeps the scope.
+- [ ] **Show in Paratext** with the active Paratext window in group A: Paratext
+      moves; with no group: the plugin's message is shown, nothing else.
+- [ ] Reports / recovery › Save session report › **Open in browser**: the default
+      browser shows the report; **Save report as…** to another folder works;
+      a report of the project folder made read-only reports the write error.
+- [ ] Two PCs on one hub, both linked to the same disposable Paratext project:
+      resolve a linked thread in Paratext on PC 1; after sync, PC 2 shows the
+      record closed once (one closure, one event), and resolving the same
+      thread from PC 2 is refused as already resolved.
+- [ ] Send/Receive after a region write and a rename, disposable project only:
+      record whether the chapter survives the merge byte-for-byte.
+- [ ] Window placement: move/resize Bridge, close, reopen: same place; unplug the
+      second monitor it was on, reopen: the window is on screen.
 
 ## Result
 
