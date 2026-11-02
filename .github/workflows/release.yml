@@ -325,6 +325,18 @@ jobs:
           $lines += "BUNDLE_PATHS"
           $lines | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
+      # GitHub's hosted Windows images ship with Defender real-time protection
+      # switched off, so the #413 scan gate (which refuses to run without it)
+      # had never passed in CI. Switch it on for this job and show the state;
+      # the scan still fails honestly if the service cannot be brought up.
+      - name: Enable Defender real-time protection on the runner
+        if: runner.os == 'Windows'
+        run: |
+          try { Set-MpPreference -DisableRealtimeMonitoring $false -ErrorAction Stop } catch { "Set-MpPreference: $($_.Exception.Message)" }
+          try { Update-MpSignature -ErrorAction Stop } catch { "Update-MpSignature: $($_.Exception.Message)" }
+          Start-Sleep -Seconds 10
+          Get-MpComputerStatus | Select-Object AMServiceEnabled, AntivirusEnabled, RealTimeProtectionEnabled, AMRunningMode, AntivirusSignatureLastUpdated | Format-List
+
       - name: Scan final Windows executables and installer
         if: runner.os == 'Windows'
         env:
