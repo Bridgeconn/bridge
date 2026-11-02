@@ -16,6 +16,7 @@
   // parsed by the engine) are shown read-only with what the parser could say
   // about them. Nothing here applies a proposal to Scripture.
   import { onDestroy, tick } from "svelte";
+  import ParatextReviewQueue from "./ParatextReviewQueue.svelte";
   import { bridge } from "../api/bridgeClient";
   import { currentChapter, project, selectedVerse, verseKey } from "../stores";
   import {
@@ -25,9 +26,20 @@
     ParatextLinkState, ParatextNoteThread, ParatextNotesIndexState, ParatextOutboxItem, ParatextProposal,
   } from "../types/paratext";
 
+  /** App's navigateToReportRow, for the review queue's "Go to verse" (#432). */
+  export let onNavigate: ((book: string, chapter: string, verse: string) => Promise<void>) | null = null;
+
   const POLL_MS = 1500;
   const PENDING_POLL_MS = 4000;
   const PENDING_POLLS = 15;
+
+  // #432: the review queue over this book's QA proposals, a modal dialog.
+  let queueOpen = false;
+  function closeQueue(): void {
+    queueOpen = false;
+    void load($currentChapter, $selectedVerse);
+    void loadParatextNoteCounts($currentChapter);
+  }
 
   let threads: ParatextNoteThread[] = [];
   let pending: ParatextOutboxItem[] = [];
@@ -244,9 +256,14 @@
   <PanelHeader id="paratext" label="the Paratext notes panel"
     title={$selectedVerse ? `Paratext notes · ${$currentChapter}:${$selectedVerse}` : "Paratext notes"}>
     {#if state && state !== "unavailable"}
+      <button type="button" class="refresh" on:click={() => (queueOpen = true)}
+        title="Review this book's QA proposals from Paratext notes in Scripture order">Review queue…</button>
       <button type="button" class="refresh" on:click={refresh} disabled={refreshing} title="Read the Paratext notes files again">Refresh</button>
     {/if}
   </PanelHeader>
+  {#if queueOpen}
+    <ParatextReviewQueue onClose={closeQueue} {onNavigate} />
+  {/if}
   <div class="pt-scroll">
   {#if error}
     <p class="pt-msg pt-error" role="alert">{error}</p>

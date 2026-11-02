@@ -41,7 +41,7 @@ _GENERATIONS: dict[str, int] = {}
 _GENERATION_LOCK = threading.Lock()
 
 
-WORKBENCH_SCHEMA_VERSION = 11
+WORKBENCH_SCHEMA_VERSION = 12
 WORKBENCH_SCHEMA_ID = "bridge-workbench-v1"
 
 _IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -79,6 +79,8 @@ MUTABLE_TABLES: tuple[str, ...] = (
     "alignment_verdicts",
     "paratext_links",
     "paratext_outbox",
+    "paratext_review_decisions",
+    "paratext_review_state",
 )
 
 
@@ -811,6 +813,49 @@ CREATE INDEX ix_paratext_outbox_status
     ON paratext_outbox(project_id, status);
 """
 
+# v12 (#423 / #432 / #433, Joel 2026-11-02): the Paratext review queue.
+# `paratext_review_decisions` is human-owned and SYNCED: one row per QA
+# proposal (the parser's `proposalId`, tc_ai_bridge/paratext_proposals.py)
+# the reviewer decided on -- `decision` applied / rejected / manual / deferred
+# / reverted, the comment, the replacement, the before/after verse snapshots
+# and whether the saved text was read back and verified. A changed decision is
+# a new revision of the row; every revision is a change_log row, so the
+# history is append-only. `paratext_review_state` is this device's queue
+# position, filter and drafts for one reviewer, NOT_SYNCED. Lifted columns are
+# nullable, as in v11; values are validated in Python. Additive.
+_MIGRATION_V12 = r"""
+CREATE TABLE paratext_review_decisions (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    book_id TEXT,
+    revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1),
+    actor_id TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    proposal_id TEXT,
+    thread_id TEXT,
+    decision TEXT,
+    verified INTEGER
+);
+CREATE INDEX ix_paratext_review_decisions_thread
+    ON paratext_review_decisions(project_id, book_id, thread_id);
+CREATE INDEX ix_paratext_review_decisions_proposal
+    ON paratext_review_decisions(project_id, book_id, proposal_id);
+CREATE TABLE paratext_review_state (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    book_id TEXT,
+    revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1),
+    actor_id TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    payload_json TEXT NOT NULL
+);
+"""
+
 _MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, _MIGRATION_V1),
     (2, _MIGRATION_V2),
@@ -823,6 +868,7 @@ _MIGRATIONS: tuple[tuple[int, str], ...] = (
     (9, _MIGRATION_V9),
     (10, _MIGRATION_V10),
     (11, _MIGRATION_V11),
+    (12, _MIGRATION_V12),
 )
 
 

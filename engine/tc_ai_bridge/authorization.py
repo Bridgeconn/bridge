@@ -180,6 +180,8 @@ _READ = (
     "paratext.notesForChapter", "paratext.notesForVerse", "paratext.noteThread",
     # #358: this device's outbox and the book's thread links, read-only.
     "paratext.outbox", "paratext.threadsFor",
+    # #432: the review queue, a preview of one apply, and the latest report, read-only.
+    "paratextReview.queue", "paratextReview.preview", "paratextReview.latestReport",
     "navigation.status", "navigation.poll", "navigation.bridgeChanged", "navigation.resolve",
     "users.list", "users.setCurrent",
     "assignments.list",
@@ -228,6 +230,10 @@ _WRITE = (
     "paratext.flushOutbox", "paratext.replyThread", "paratext.resolveThread", "paratext.linkThread",
     # #426: a note from the Paratext notes panel with no Bridge record behind it.
     "paratext.createNote",
+    # #432/#433: a decision on a QA proposal (an apply goes through edit_verse),
+    # the reviewer's queue state, the checked revert, and the evidence files.
+    "paratextReview.decide", "paratextReview.saveState", "paratextReview.revertLatest",
+    "paratextReview.exportCsv", "paratextReview.report",
 )
 
 _MANAGE_PROJECTS = (

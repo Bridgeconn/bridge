@@ -192,6 +192,119 @@ export interface ParatextNotesForVerse {
   pending: ParatextOutboxItem[];
 }
 
+// #428/#431/#432/#433/#434: the Paratext QA review queue (engine:
+// tc_ai_bridge/paratext_review.py). An apply goes through verse.edit's writer
+// on Bridge's copy of the verse; nothing here writes into Paratext.
+export type ParatextReviewFilter = "unresolved" | "resolved" | "all";
+export type ParatextReviewDecisionKind = "applied" | "rejected" | "manual" | "deferred" | "reverted";
+
+export interface ParatextReviewSnapshot {
+  raw: string;
+  plain: string;
+}
+
+export interface ParatextReviewDecision {
+  proposalId: string;
+  threadId: string;
+  book: string;
+  chapter: string;
+  verse: string;
+  verseRef: string;
+  pass: string;
+  category: string;
+  route: ParatextProposalRoute;
+  operation: ParatextProposalOperation;
+  decision: ParatextReviewDecisionKind;
+  comment: string;
+  reviewer: string;
+  decidedAt: string;
+  threadResolved: boolean;
+  original: string;
+  replacement: string;
+  verified: boolean;
+  before?: ParatextReviewSnapshot;
+  after?: ParatextReviewSnapshot;
+  observed?: ParatextReviewSnapshot;
+  span?: { plainStart: number; plainEnd: number; rawStart: number; rawEnd: number };
+  journalTransactionId?: string;
+  unverifiedReason?: string;
+  revertedAt?: string;
+  revertVerified?: boolean;
+  revision: number;
+  updatedAt: string;
+}
+
+export interface ParatextReviewDraft {
+  replacement: string;
+  comment: string;
+}
+
+export interface ParatextReviewThreadCompletion {
+  complete: boolean;
+  blocking: string[];
+}
+
+export interface ParatextReviewItem {
+  proposalId: string;
+  threadId: string;
+  book: string;
+  chapter: string;
+  verse: string;
+  verseRef: string;
+  threadResolved: boolean;
+  selectedText: string;
+  contextBefore: string;
+  contextAfter: string;
+  proposal: ParatextProposal;
+  threadOutstanding: number;
+  decision: ParatextReviewDecision | null;
+  draft: ParatextReviewDraft | null;
+  thread: ParatextReviewThreadCompletion;
+}
+
+export interface ParatextReviewState {
+  status: ParatextReviewFilter;
+  position: string;
+  drafts: Record<string, ParatextReviewDraft>;
+  sessionStartedAt: string;
+}
+
+export interface ParatextReviewPreset {
+  id: string;
+  label: string;
+  text: string;
+}
+
+export interface ParatextReviewQueue {
+  indexState: ParatextNotesIndexState;
+  status: ParatextReviewFilter;
+  book: string;
+  items: ParatextReviewItem[];
+  counts: Record<"total" | "undecided" | ParatextReviewDecisionKind, number>;
+  state: ParatextReviewState;
+  presets: ParatextReviewPreset[];
+  reviewer: string;
+}
+
+export interface ParatextReviewPreview {
+  proposalId: string;
+  plain: string;
+  found: number;
+  ok: boolean;
+  reason: string;
+  after: string;
+  span: { plainStart: number; plainEnd: number } | null;
+  matches: { plainStart: number; plainEnd: number; wholeWord: boolean }[];
+}
+
+export interface ParatextReviewReport {
+  written: boolean;
+  path: string;
+  html: string;
+  count: number;
+  reason?: string;
+}
+
 // #358: Paratext write-back (engine: tc_ai_bridge/paratext_outbox.py).
 // "note" (#426): a note from the notes panel with no Bridge record behind it.
 export type ParatextWriteKind = "issue_resolution" | "finding" | "correction_proposal" | "note";

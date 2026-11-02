@@ -344,6 +344,19 @@ class ParatextSession:
         return {"state": state, "book": book.upper(), "chapter": str(chapter), "verse": str(verse),
                 "threads": threads}
 
+    def book_threads(self, book: str) -> tuple[list[NoteThread], str]:
+        """Every thread anchored in `book`, in chapter and verse order, with
+        the index state (#432: the review queue scans the index, never a
+        sibling's files)."""
+        index, state = self._index_for_request()
+        if index is None:
+            return [], state
+        chapters = index.by_ref.get(book.upper(), {})
+        threads: list[NoteThread] = []
+        for chapter in sorted(chapters, key=lambda c: int(c) if str(c).isdigit() else 0):
+            threads.extend(index.threads_for(book, chapter))
+        return threads, state
+
     def note_thread(self, thread_id: str) -> dict[str, Any]:
         index, state = self._index_for_request()
         thread = index.threads.get(thread_id) if index is not None else None
