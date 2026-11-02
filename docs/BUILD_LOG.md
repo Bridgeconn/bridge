@@ -23732,8 +23732,10 @@ command. Rust: `tauri-plugin-window-state` (remembered placement, #435) and
 
 **Verified:** engine `-k paratext` 241 passed (new: regions 6, recovery 6,
 scope 3, closure recovery 4; `tests/support/paratext_review.py` holds the
-shared helpers, no cross-test imports); full engine suite 3697 passed with the
-stage-3 DB test deselected (environmental, as on 2026-11-02); svelte-check 0/0;
-Vitest 1102 + 11 new; `npm run build`; `cargo check` + `cargo test` 18 passed.
-Frozen sidecars: rebuilt and smoked before the release (recorded below when
-done). **Not verified:** anything on a real Paratext (checklist E–G).
+shared helpers, no cross-test imports); full engine suite **5809 passed, 1
+skipped, 3 xfailed** with `test_semantic_mapping_stage3.py` deselected (no
+stage-3 DB on this machine, as on 2026-11-02); svelte-check 0/0; Vitest 1113;
+`npm run build`; `cargo check` + `cargo test` 18 passed; both frozen sidecars
+rebuilt (`build-sidecars.ps1`) and `scripts/smoke_sidecars.py` passed (real
+Wildebeest, hub `--serve`, indic-qa packs). **Not verified:** anything on a real
+Paratext (checklist E–G); connector 0.10.0 never compiled.
