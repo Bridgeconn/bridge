@@ -6,7 +6,7 @@
 | Revision | 1.0 |
 | Status | Baseline draft for maintainer review |
 | Date | 2026-09-21 |
-| Product baseline | Bridge 0.24.1 |
+| Product baseline | Bridge 0.24.2 |
 | Source baseline | `main` at `c8fa74d` |
 | Primary platform | Windows x86-64 |
 | Product owner / maintainer | @RevantCI |
