@@ -1,6 +1,7 @@
 <script lang="ts">
   import UsersPane from "./UsersPane.svelte";
   import TeamPane from "./TeamPane.svelte";
+  import UpdatesPane from "./UpdatesPane.svelte";
   import { onDestroy, onMount } from "svelte";
   import { bridge, type EngineInfo } from "../api/bridgeClient";
   import { nudgeLanguageQa } from "../languageQaInline";
@@ -11,7 +12,7 @@
   import type { CheckerSettings } from "../types/languageQa";
   import CheckerSettingsDialog from "./CheckerSettingsDialog.svelte";
 
-  type Pane = "ai" | "quality" | "connections" | "resources" | "terminology" | "languageQa" | "security" | "users" | "team";
+  type Pane = "ai" | "quality" | "connections" | "resources" | "terminology" | "languageQa" | "security" | "users" | "team" | "updates";
 
   export let onClose: () => void;
   export let initialPane: Pane = "ai";
@@ -33,6 +34,7 @@
   let reviewerNameUpdatedAt = "";
   let localUserRole: UserRole = "project_admin";
   let engineInfo: EngineInfo | null = null;
+  let automaticUpdates = true;
   // Settings > Language QA: which findings are drawn in the text (#250).
   // App-level (a reviewer's tolerance), applied by the engine per request.
   let inlinePrecision = 0;
@@ -121,6 +123,7 @@
     loading = true;
     try {
       const s: SettingsData = await bridge.getSettings();
+      automaticUpdates = s.automaticUpdates ?? true;
       provider = s.provider || "openai";
       apiBaseUrl = s.apiBaseUrl || "";
       model = s.model || "gpt-5.6";
@@ -564,6 +567,7 @@
       <button class="nav-item" class:active={activePane === "security"} on:click={() => (activePane = "security")}>Security</button>
       <button class="nav-item" class:active={activePane === "users"} on:click={() => (activePane = "users")}>Users</button>
       <button class="nav-item" class:active={activePane === "team"} on:click={() => (activePane = "team")}>Team</button>
+      <button class="nav-item" class:active={activePane === "updates"} on:click={() => (activePane = "updates")}>App updates</button>
       {#if engineInfo}
         <div class="about-version" title="What this window is actually running, not what Windows says was installed">
           Bridge {engineInfo.bridgeVersion} · Schema v{engineInfo.companionSchemaVersion}
@@ -574,6 +578,8 @@
     <div class="settings-body">
       {#if loading}
         <p class="muted">Loading…</p>
+      {:else if activePane === "updates"}
+        <UpdatesPane bind:enabled={automaticUpdates} />
       {:else if activePane === "ai"}
         <h3>AI provider</h3>
         <p class="desc">Used only for optional "Explain with AI." Core QA (Greek Room, local checks) never requires this and works fully offline.</p>

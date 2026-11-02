@@ -77,6 +77,7 @@
   import { estimateReportSeconds, recordReportBuild } from "./lib/reportEstimate";
   import { bindCollectionStrip, cancelStripJob } from "./lib/collectionStrip";
   import { prepareDetail, prepareProgress } from "./lib/openProgress";
+  import { startUpdates, stopUpdates, updateStatus } from "./lib/updates";
 
   let opened = false;
   let engineStatus: "checking" | "ready" | "error" = "checking";
@@ -505,6 +506,7 @@
       await refreshNavigationStatus();
       try {
         const settings = await bridge.getSettings();
+        if (!appDisposed) void startUpdates(settings.automaticUpdates ?? true).catch((error) => console.warn("Could not start updater", error));
         reviewerMode.set(settings.reviewerMode);
         needsUserChoice = Boolean(settings.needsUserChoice);
         localUserId.set(settings.localUserId || "");
@@ -580,6 +582,7 @@
     })();
     return () => {
       appDisposed = true;
+      stopUpdates();
       unlistenFileDrop?.();
       unlistenLog?.();
       unlistenRespawn?.();
@@ -1843,6 +1846,7 @@
         </button>
       {/if}
       {#if engineNotice}<span class="engine-notice" title={engineNotice}>{engineNotice}</span>{/if}
+      {#if $updateStatus.phase === "ready"}<span title={$updateStatus.message}>Bridge {$updateStatus.version} will install on close.</span>{/if}
       <span>Engine: {engineStatus}</span>
       <button class="diagnostics-btn" on:click={() => diagnosticsOpen.set(true)}>
         Diagnostics

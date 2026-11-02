@@ -912,3 +912,16 @@ a recorded review outcome, not linguistic certification.
 Final #417 full engine gate: 5,709 passed and 3 xfailed; the final targeted
 32-test gate covers the later import validation cases. Frozen final rebuild
 and smoke pass. Native and installed desktop rows remain pending as above.
+
+## App updater (#321, 2026-11-02)
+
+| Layer | Gate | Evidence |
+|---|---|---|
+| Source | Default-on persisted opt-out; scheduler/manual checks; stale-download rejection; signed Windows release manifest | Final combined checkout: Svelte check 0 errors/warnings, all 1,102 frontend tests, 18 Rust tests, and 5 settings tests passed. Earlier full Python run had 3 failures, all passing serial retry; see BUILD_LOG.md for exact results and build/manifest checks. |
+| Frozen | Rebuilt sidecar settings/protocol smoke | PASS: both sidecars rebuilt; full smoke passed on retry after an initial timeout under concurrent test/build load. |
+| Desktop | Install updater-enabled version, publish a newer signed stable release, verify download and install on normal exit, both sidecars replaced and project/review/settings retained | NOT RUN: requires release signing credentials and two real installed releases. |
+| Failure/opt-out | Offline or invalid signature never installs/blocks work; opt-out cancels staging even mid-download; manual checks remain available | Source policy tests; actual installed/network cases NOT RUN. |
+
+Windows only for in-app installation. macOS/Linux installers remain manual.
+The first updater-enabled installer must be installed manually. Signing setup is
+in DEVELOPER_SETUP.md; a green source suite is not updater release acceptance.

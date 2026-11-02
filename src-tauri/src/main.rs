@@ -3,6 +3,7 @@
 
 mod commands;
 mod sidecar;
+mod updates;
 
 use sidecar::EngineSidecar;
 use tauri::{AppHandle, Manager, WindowEvent};
@@ -35,6 +36,8 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(updates::AppUpdates::default())
         .manage(EngineSidecar::new())
         .setup(|app| {
             let handle = app.handle().clone();
@@ -62,6 +65,9 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            updates::update_status,
+            updates::configure_updates,
+            updates::check_updates,
             commands::engine_call,
             commands::engine_log_recent,
             commands::frontend_log,
@@ -82,6 +88,9 @@ fn main() {
         // inside tauri-build with a bare "Access is denied" as it tried to
         // refresh target/'s copy of that binary.
         .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { ref api, .. } = event {
+                updates::install_on_exit(app, api);
+            }
             if matches!(event, tauri::RunEvent::Exit) {
                 app.state::<EngineSidecar>().shutdown(app);
             }

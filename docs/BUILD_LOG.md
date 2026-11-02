@@ -23503,6 +23503,79 @@ writes/revert/export/Send-Receive, offline application restart and multi-device
 closure remain NOT RUN. Updated the issue/PR discussions with this separation of
 observed results and remaining work for Joel. No application code was changed.
 
+### Default-on signed GitHub updates (#321, 2026-11-02)
+
+Benz approved the previously blocked update network exception and explicitly
+requested automatic updates enabled by default, an opt-out and manual checks.
+This supersedes the earlier click-only proposal in #321. The GitHub integration
+returned 403 for an issue comment and gh's stored authentication is invalid, so
+the approval/implementation record is local rather than posted to the issue.
+
+AppSettings now stores automatic_updates in the existing workspace settings KV
+(default true); settings.get/set expose automaticUpdates. No schema changes.
+The app starts an independent updater listener/six-hour scheduler after reading
+settings, without awaiting network activity during startup. Settings > App updates
+saves its toggle immediately and offers a manual check and explicit download.
+The Rust wrapper uses Tauri's mandatory signature verification and newer-version
+comparison; it stages verified bytes in memory, never installs because a download
+finished, invalidates in-flight results on opt-out, and starts installation only
+on ExitRequested. Its Windows before-exit hook explicitly stops the frozen engine
+and performs Tauri cleanup because plugin installation exits the process directly.
+
+In-app installation is initially Windows-only. Debug builds and builds without a
+public updater key do not contact GitHub. release.yml embeds the public key from
+BRIDGE_UPDATER_PUBLIC_KEY, uses TAURI_SIGNING_PRIVATE_KEY[_PASSWORD] to produce
+updater signatures independently of Authenticode, requires credentials for tagged
+Windows builds, and uploads latest.json last for stable versions only. The feed
+names the exact versioned signed installer; a manifest script rejects absent
+signatures, prereleases and mismatched tag/config versions. Existing installations
+need one manual upgrade to bootstrap the updater. Developer setup and QA matrix
+record the maintainer setup and installed-to-installed acceptance still required.
+
+Verification in progress: svelte-check passed with 0 errors/warnings; both Vite
+production builds passed (existing large-chunk advisory). Both PyInstaller
+sidecars rebuilt. Node manifest test passed. Initial sandbox test/build attempts
+hit process/temp-directory permissions, so executable test gates were rerun with
+appropriate permissions. The first frozen smoke timed out during an import while
+full pytest, Vitest and Rust compilation were running concurrently; no timeout
+threshold or smoke expectation was changed. Final results follow below.
+
+Updater verification results (2026-11-02):
+
+- Frontend full suite: 106 files / 1,087 tests passed. Final review found that the
+  update toggle needed a two-way binding to its Settings parent, otherwise changing
+  panes could visually reset it. Added that regression: final affected suite passed
+  all 46 tests (including the new navigation case); svelte-check again reported
+  0 errors and 0 warnings, and both production Vite builds passed.
+- Manifest generation test passed; release YAML parsed and all 19 PowerShell run
+  steps parsed after substituting GitHub expressions. These are local syntax and
+  fixture checks, not evidence of a GitHub Actions release execution.
+- Settings persistence module: 5 passed. Full Python run: 5,722 passed, 3 xfailed,
+  3 failed in 2,394.81 s. The failures were Logos helper state round-trip/close
+  and continuous foreground polling versus Language QA. All three passed serially
+  in 19.48 s, without code or timeout changes, once the full run ended. Retain the
+  original non-green run as evidence; this was not a clean full-suite pass.
+- Both frozen sidecars rebuilt. The full smoke passed on retry, including real
+  Wildebeest/Uroman, source tokens, versification, names, alignment, connectors,
+  registry/import, export/undo, language packs and hub. The first smoke timeout
+  remains recorded above; no smoke expectation was changed to obtain the pass.
+- cargo check passed. Rust unit-test result follows once linking finishes.
+- Tauri's passive updater install is not NSIS silent mode, so the optional
+  Paratext connector post-install prompt now explicitly skips /UPDATE installs.
+- NOT RUN: actual signed Windows installer upgrade, invalid-signature/offline
+  installed acceptance, and macOS/Linux upgrade acceptance. No release was
+  published and no GitHub signing secret was created or changed. The first
+  updater-enabled version still requires manual installation.
+
+Final Rust result: all 18 tests passed outside the sandbox (including the three
+new updater policy cases and both real Windows process-tree termination tests).
+The first sandboxed Rust run passed 16 but could not terminate the two throwaway
+child process trees; rerunning with process-management permission passed without
+code changes. cargo check had already passed. Final local implementation gates
+are complete, with the original full-Python timing failures and successful retries
+recorded above. Signed installed-upgrade/release acceptance remains NOT RUN.
+
+
 ### Connector 0.9.0 host compatibility and live acceptance (#438, 2026-11-02)
 
 Pulled merged main with autostash, preserved all unrelated local updater work,
@@ -23574,3 +23647,19 @@ completion audit on #423 (issuecomment-6577967177). No additional issue was
 closed on the strength of the merged PR alone. Prepared the previously local
 owner decisions and walkthrough history for publication; updated current-state
 guidance to point to the merged body-write implementation and acceptance limits.
+
+### Final combined checkout validation before push (#321, #423, 2026-11-02)
+
+Committed Paratext decision/audit documentation separately from the updater
+settings persistence. Rechecked the combined merged checkout: svelte-check
+reported 0 errors/warnings, all 1,102 frontend tests in 107 files passed, settings
+persistence passed all 5 tests, cargo check passed and all 18 Rust tests passed.
+Sandbox attempts hit directory/process permissions; frontend/settings gates and
+Rust process-tree tests passed outside the sandbox without changing expectations.
+Release workflow YAML parsed with the existing global Python environment (the
+engine virtual environment has no PyYAML). The earlier full-engine/frozen results
+and pending signed installed-upgrade acceptance remain recorded above; the full
+engine suite and frozen rebuild were not repeated during this commit-only pass.
+
+Both production Vite builds and the signed-feed manifest fixture passed. The
+existing large-chunk advisory remains; no installer or release was published.

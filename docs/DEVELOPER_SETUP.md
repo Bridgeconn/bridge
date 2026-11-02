@@ -263,3 +263,31 @@ re-debugging from scratch.
 - Rust: standard `cargo build`/`cargo test` inside `src-tauri/`.
 - Full release acceptance (frozen sidecars, NSIS installer, exact artifact
   hashes): [`docs/QA_TEST_MATRIX.md`](QA_TEST_MATRIX.md).
+
+## GitHub app updates (#321)
+
+Windows releases support optional automatic update checks and downloads, enabled
+by default. Settings > App updates can disable them or check/download manually.
+Checks run independently at startup and every six hours. A signed download stays
+in memory for the session and installs only on normal application exit; unfinished
+downloads are retried next session. No project data is replaced by the updater.
+Development builds and builds without a public key never contact the update feed.
+macOS/Linux continue to use manual installers pending desktop upgrade validation.
+
+The feed is `https://github.com/Bridgeconn/bridge/releases/latest/download/latest.json`.
+Only stable releases receive a feed. Version tags must match tauri.conf.json.
+The workflow uploads the feed after the checked installer and its signature exist.
+Clients need no GitHub account or token.
+
+One-time maintainer setup (separate from Windows Authenticode signing):
+
+1. Generate a Tauri updater key in a secure location with `npm run tauri signer generate -- -w C:/secure/bridge-updater.key`. Keep a protected backup of this key and its password. Never commit the private key.
+2. In the Bridgeconn/bridge Actions configuration, set repository variable `BRIDGE_UPDATER_PUBLIC_KEY` to the generated `.pub` file contents. Set repository secret `TAURI_SIGNING_PRIVATE_KEY` to the private key contents, and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` to its password, if used.
+3. Build and publish a stable signed release using release.yml. Its Windows build embeds that public key and creates the installer signature; tagged Windows releases fail if the updater credentials are missing. Artifact-only builds may omit the key and have no functioning updater.
+4. Manually install the first updater-enabled release. Existing versions have no updater and cannot receive this bootstrap automatically.
+5. Publish a higher stable version, then verify the actual installed upgrade: automatic check/download, continued editing, installation on close, both sidecars replaced, unchanged project/settings/review data, invalid-signature rejection, offline operation, and opt-out before/during a download. Source tests alone do not establish this acceptance.
+
+Changing or losing the updater private key prevents existing clients from trusting
+new updates; key rotation needs a deliberate transition release. Never silently
+generate a replacement key in CI. Updating the app is independent of project
+schema migrations, which still follow each repository's migration ladder.

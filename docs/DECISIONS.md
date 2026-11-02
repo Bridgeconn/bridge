@@ -1,5 +1,20 @@
 # Decisions
 
+## 2026-11-02 — Automatic app updates, enabled by default (#321)
+
+**Decision:** Benz approved the optional GitHub update network path and asked for
+automatic updates enabled by default, with a Settings opt-out and manual checks.
+This supersedes #321's earlier click-only proposal. Windows checks at startup and
+every six hours, downloads a newer signed stable release, and installs only on
+normal app exit, after explicitly stopping the frozen sidecar. Offline failures
+never gate startup, project open/import or QA. Disabling discards pending downloads.
+**Rules out:** forced restarts during work, unsigned packages, login/token requirements
+on client devices, automatic prerelease adoption, and extending this network exception
+to translation/QA paths. macOS/Linux updates require separate desktop verification.
+**Release prerequisite:** the maintainer holds the private updater key in GitHub
+Actions secrets; public-key configuration, a signed release, and installed-to-installed
+upgrade acceptance remain required before calling this release-ready.
+
 Architectural and product decisions, newest first. Five lines each — this is a log, not
 a design document.
 

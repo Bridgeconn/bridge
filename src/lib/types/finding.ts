@@ -1547,6 +1547,8 @@ export interface SettingsData {
   languageQaInlineConfidence: InlineConfidence;
   /** Learn a word the reviewer replaced and offer the change where it recurs. Default on. */
   languageQaLearnedFixes?: boolean;
+  /** Check/download signed app updates in the background; install on close. Default on. */
+  automaticUpdates?: boolean;
   /** The open project's reference Bible (#289), null with no project open.
    *  origin "project" = chosen for this project on this machine; "bundled" =
    *  the Language QA pack's own text; "none" = neither. */

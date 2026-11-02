@@ -86,6 +86,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "svelte-check failed" }
           npm run test
           if ($LASTEXITCODE -ne 0) { throw "vitest failed" }
+          node --test scripts/tests/update-manifest.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Updater manifest tests failed' }
 
       - name: Draft the release if the tag has none
         if: env.RELEASE_TAG != ''
@@ -253,15 +255,26 @@ jobs:
 
       - name: Build desktop app
         env:
+          BRIDGE_UPDATER_PUBLIC_KEY: ${{ vars.BRIDGE_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # Ad-hoc signature on macOS (see the header). The Windows and Linux
           # bundlers never read this variable.
           APPLE_SIGNING_IDENTITY: "-"
         run: |
-          if ($IsWindows -and $env:WINDOWS_SIGNING_ENABLED -eq 'true') {
-            npm run tauri build -- --config $env:WINDOWS_SIGNING_CONFIG
-          } else {
-            npm run tauri build
+          # Updater signatures are independent of Windows Authenticode signing.
+          # Never publish an updater-enabled installer without a trusted key.
+          $updater = $IsWindows -and -not [string]::IsNullOrWhiteSpace($env:BRIDGE_UPDATER_PUBLIC_KEY) -and -not [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)
+          if ($IsWindows -and $env:RELEASE_TAG -ne '' -and -not $updater) {
+            throw 'Configure BRIDGE_UPDATER_PUBLIC_KEY and TAURI_SIGNING_PRIVATE_KEY before releasing Windows updates.'
           }
+          $overlay = @{ bundle = @{ createUpdaterArtifacts = $updater } }
+          if ($IsWindows -and $env:WINDOWS_SIGNING_ENABLED -eq 'true') {
+            $overlay.bundle.windows = (Get-Content -LiteralPath $env:WINDOWS_SIGNING_CONFIG -Raw | ConvertFrom-Json).bundle.windows
+          }
+          $config = Join-Path $env:RUNNER_TEMP 'bridge-release-config.json'
+          $overlay | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $config -Encoding utf8
+          npm run tauri build -- --config $config
           if ($LASTEXITCODE -ne 0) { throw 'Desktop build failed' }
 
       # The bundler signs the externalBin sidecars along with the app (the
@@ -354,6 +367,20 @@ jobs:
           } | Set-Content -LiteralPath $manifest -Encoding utf8
           "path=$manifest" >> $env:GITHUB_OUTPUT
 
+      - name: Prepare the stable Windows updater feed
+        id: updater
+        if: runner.os == 'Windows' && env.RELEASE_TAG != '' && !contains(env.RELEASE_TAG, '-')
+        env:
+          BUNDLE_PATHS: ${{ steps.bundles.outputs.paths }}
+        run: |
+          $installer = @($env:BUNDLE_PATHS -split "`r?`n" | Where-Object { $_ -like '*-setup.exe' })
+          if ($installer.Count -ne 1) { throw 'Expected exactly one Windows updater installer' }
+          $manifest = Join-Path (Split-Path $installer[0] -Parent) 'latest.json'
+          node scripts/write-update-manifest.mjs '${{ github.repository }}' $env:RELEASE_TAG $installer[0] $manifest
+          if ($LASTEXITCODE -ne 0) { throw 'Updater manifest generation failed' }
+          "manifest=$manifest" >> $env:GITHUB_OUTPUT
+          "signature=$($installer[0]).sig" >> $env:GITHUB_OUTPUT
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -361,6 +388,8 @@ jobs:
           path: |
             ${{ steps.bundles.outputs.paths }}
             ${{ steps.checksums.outputs.path }}
+            ${{ steps.updater.outputs.manifest }}
+            ${{ steps.updater.outputs.signature }}
           if-no-files-found: error
           retention-days: 90
 
@@ -373,6 +402,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           BUNDLE_PATHS: ${{ steps.bundles.outputs.paths }}
           CHECKSUM_PATH: ${{ steps.checksums.outputs.path }}
+          UPDATE_MANIFEST: ${{ steps.updater.outputs.manifest }}
+          UPDATE_SIGNATURE: ${{ steps.updater.outputs.signature }}
         run: |
           # @(...) is load-bearing: with one bundle, Where-Object hands back a
           # bare string, and splatting a string passes every character as its
@@ -384,3 +415,8 @@ jobs:
           }
           gh release upload $env:RELEASE_TAG @paths $env:CHECKSUM_PATH --repo ${{ github.repository }} --clobber
           if ($LASTEXITCODE -ne 0) { throw "Release upload failed" }
+          # Publish the feed last, after its installer is present and checked.
+          if ($env:UPDATE_MANIFEST) {
+            gh release upload $env:RELEASE_TAG $env:UPDATE_SIGNATURE $env:UPDATE_MANIFEST --repo ${{ github.repository }} --clobber
+            if ($LASTEXITCODE -ne 0) { throw 'Updater feed upload failed' }
+          }
