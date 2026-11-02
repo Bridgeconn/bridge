@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 from tc_ai_bridge.paratext_link import LINKED, LinkResolution
+from tc_ai_bridge.paratext_proposals import summarize, thread_proposals
 from tc_ai_bridge.paratext_project import (
     PARATEXT_CANON,
     NoteComment,
@@ -288,7 +289,11 @@ class ParatextSession:
     def _summary(self, thread: NoteThread) -> dict[str, Any]:
         first, last = thread.comments[0], thread.comments[-1]
         excerpt = first.contents.split("\n", 1)[0]
+        # #427: what a QA pass proposed in this thread, counted; the full
+        # proposals ride on the full thread shape.
+        proposals = thread_proposals(thread.id, thread.comments)
         return {
+            "proposals": summarize(proposals),
             "id": thread.id, "kind": thread.kind, "status": thread.status or "todo",
             "resolved": thread.resolved, "verseRef": thread.verse_ref,
             "verse": thread.ref.verse if thread.ref else "",
@@ -302,6 +307,8 @@ class ParatextSession:
         first = thread.comments[0]
         value = self._summary(thread)
         value.update({
+            # #427: every proposal the thread carries, parsed; read-only.
+            "proposalItems": [p.to_json() for p in thread_proposals(thread.id, thread.comments)],
             "contextBefore": first.context_before, "contextAfter": first.context_after,
             "comments": [{
                 "user": c.user, "date": c.date, "contents": c.contents, "status": c.status, "type": c.type,
