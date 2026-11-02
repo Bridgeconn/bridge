@@ -4,6 +4,7 @@ import contextlib
 import copy
 import hashlib
 import json
+import re
 import os
 import shutil
 import tempfile
@@ -565,6 +566,62 @@ class TranslationCoreProject:
             for verse, items in data.items()
             if isinstance(items, list)
         }
+
+    def apply_heading_edit(self, chapter: str | int, verse: str | int, index: int, new_text: str, *,
+                           expected_old_text: str, username: str = 'AI Bridge Reviewer',
+                           new_tag: str | None = None) -> dict[str, Any]:
+        """Change one heading the verse introduces (#429, #430): the text, or
+        with `new_tag` its marker. Headings are not Scripture (#180) and live in
+        `<chapter>.headings.json`; this is that file's one writer, journalled
+        like a Scripture edit (a backup, a transaction record with the before
+        and after, rollback on failure) and refused unless the heading still
+        reads exactly `expected_old_text`. The verse map is never touched."""
+        path = self.book_dir / f'{chapter}.headings.json'
+        headings = self.chapter_headings(chapter)
+        items = list(headings.get(str(verse)) or [])
+        if not 0 <= int(index) < len(items):
+            raise ProjectError(f'Verse {chapter}:{verse} has no heading {index}; nothing was written.')
+        current = dict(items[int(index)])
+        if str(current.get('text') or '') != expected_old_text:
+            raise ProjectError('REVISION_CONFLICT: the heading was changed after this edit was started; nothing was written.')
+        new_text = str(new_text)
+        if not new_text.strip():
+            raise ProjectError('A heading may not be left empty.')
+        if new_tag is not None and not re.fullmatch(r'[a-z]+[0-9]?', str(new_tag)):
+            raise ProjectError(f'"{new_tag}" is not a heading marker.')
+        if new_text == current.get('text') and (new_tag is None or new_tag == current.get('tag')):
+            raise ProjectError('No heading change detected.')
+        updated = {**current, 'text': new_text}
+        if new_tag is not None:
+            updated['tag'] = str(new_tag)
+        items[int(index)] = updated
+        data = _read_json(path) if path.exists() else {}
+        if not isinstance(data, dict):
+            data = {}
+        data[str(verse)] = items
+        tx_paths = [path]
+        existed = {str(path.resolve()): path.exists()}
+        backup = self._backup_paths(tx_paths, 'headingEdit')
+        journal_tx = self.journal.begin('headingEdit', tx_paths)
+        self.journal.mark_writing(journal_tx)
+        try:
+            _write_json_atomic(path, data)
+        except Exception as e:
+            try:
+                self._rollback_paths(backup, tx_paths, existed)
+            finally:
+                try:
+                    self.journal.rollback(journal_tx, str(e))
+                except Exception:
+                    pass
+            self._forget_chapter_files()
+            raise
+        self.journal.commit(journal_tx, {
+            'operation': 'headingEdit', 'chapter': str(chapter), 'verse': str(verse), 'index': int(index),
+            'before': current, 'after': updated, 'username': username,
+        })
+        self._forget_chapter_files()
+        return {'journalTransactionId': journal_tx.transaction_id, 'before': current, 'after': updated}
 
     def usfm_path(self) -> Path | None:
         candidates = list(self.path.glob('*.usfm')) + list(self.path.glob('*.USFM')) + list(self.path.glob('*.sfm')) + list(self.path.glob('*.SFM'))
@@ -4118,6 +4175,34 @@ def peek_learned_fixes(project_root: str | Path) -> list[dict[str, Any]]:
         except (TypeError, ValueError):
             continue
         if isinstance(payload, dict):
+            out.append(payload)
+    return out
+
+
+def peek_review_decisions(project_root: str | Path) -> list[dict[str, Any]]:
+    """A sibling book's Paratext review decisions (#432) straight from its
+    workbench database, read-only (`_peek_workbench`): the project-wide
+    queue shows what was decided in a book without opening it. [] for a book
+    with no workbench or no v12 table."""
+    conn = _peek_workbench(project_root)
+    if conn is None:
+        return []
+    try:
+        rows = conn.execute(
+            'SELECT payload_json, revision, updated_at FROM paratext_review_decisions').fetchall()
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            payload = json.loads(row['payload_json'])
+        except (TypeError, ValueError):
+            continue
+        if isinstance(payload, dict):
+            payload['revision'] = int(row['revision'] or 1)
+            payload['updatedAt'] = row['updated_at'] or ''
             out.append(payload)
     return out
 

@@ -45,6 +45,26 @@ release, book, chapter)`, `GetUSFMTokens`, `PutUSFMTokens`, `SendNotifications`,
 `ChangedTextToken`) are exactly those selvabenz/Paratext-sug-in-context-menu
 compiled and ran against the same 2.0.100.0 interfaces.
 
+Since 0.10.0 (#429, #430, 2026-11-03) `put_verse_text` takes a `region`:
+`body` (as before), `footnote` / `crossReference` (the verse's note tokens, by
+note kind), `heading` (the heading tokens the verse introduces -- Paratext
+anchors them on the verse before, so `firstVerse - 1` is accepted) and
+`introduction` (chapter 0 to the token API, the `\i*` paragraphs). The token
+classification is the reference plugin's `TokenMapping.Parts`, compiled and run
+on the host. A region is never a fallback for another. The second write,
+`rename_marker`, is the reference plugin's `ApplyMarkerRename`: an exact
+heading / chapter-label marker rename (ms, ms1-3, s, s1-4, cl, cd) with the
+label unchanged, unique at the anchor, no attributes, the edited chapter
+rendered to USFM and parsed again by Paratext (`ConvertToUSFMTokens`) before
+`PutUSFMTokens`, read back after. Capabilities `text_regions` and
+`rename_marker` tell Bridge which connector it is talking to; an older one keeps
+a region write queued with the reason. **0.10.0 has not been compiled anywhere
+yet** (no Paratext on the machine it was written on); the members it adds
+(`IUSFMMarkerToken.Marker/Type/Data/EndMarker/Attributes`, `MarkerType.Verse/
+Paragraph`, `ConvertToUSFMTokens(string, int, int, int)`) are exactly those the
+reference plugin's `ChangedMarkerToken` and `ApplyMarkerRename` compiled against
+2.0.100.0.
+
 ## Live verification
 
 The v0.7.4 connector was already installed and working on the development

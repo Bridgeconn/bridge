@@ -11,7 +11,8 @@ import type {
   ParatextNotesForVerse, ParatextNotesIndexState, ParatextOutboxItem, ParatextThreadLink, ParatextThreadsFor,
   ParatextWriteKind,
   ParatextReviewDecision, ParatextReviewDecisionKind, ParatextReviewFilter, ParatextReviewItem, ParatextReviewPreview,
-  ParatextReviewQueue, ParatextReviewReport, ParatextReviewState,
+  ParatextReviewQueue, ParatextReviewReport, ParatextReviewState, ParatextReviewScope, ParatextReconcileOutcome,
+  ParatextReviewReports,
 } from "../types/paratext";
 import type {
   HouseStyleEntry, HouseStyleEntryInput, HouseStyleListResponse,
@@ -406,6 +407,7 @@ export type EngineMethod =
   | "navigation.status"
   | "paratext.connectorStatus"
   | "paratext.getState"
+  | "paratext.setReference"
   | "paratext.installConnector"
   | "paratext.linkStatus"
   | "paratext.relink"
@@ -428,6 +430,9 @@ export type EngineMethod =
   | "paratextReview.exportCsv"
   | "paratextReview.report"
   | "paratextReview.latestReport"
+  | "paratextReview.reconcile"
+  | "paratextReview.uncertain"
+  | "paratextReview.reports"
   | "paratext.outbox"
   | "paratext.flushOutbox"
   | "ping"
@@ -1402,6 +1407,17 @@ export const bridge = {
     return call("paratext.getState");
   },
 
+  /** #432: move Paratext's active window (its scroll group A-E) to a
+   *  reference; the plugin refuses when the window is in no group. */
+  paratextSetReference(reference: string): Promise<unknown> {
+    return call("paratext.setReference", { reference });
+  },
+
+  /** #433: try every queued Paratext write now (a saved resolve retry). */
+  paratextFlushOutbox(): Promise<unknown> {
+    return call("paratext.flushOutbox");
+  },
+
   /** #282: whether Bridge's Paratext connector is installed on this PC. */
   paratextConnectorStatus(): Promise<ParatextConnectorStatus> {
     return call("paratext.connectorStatus");
@@ -1490,11 +1506,12 @@ export const bridge = {
     return call("paratext.queueRecord", { kind, localId, chapter, verse, text, lines, selectedText });
   },
 
-  // #428/#431/#432/#433/#434: the Paratext QA review queue over the open
-  // book's notes. An apply edits Bridge's copy of the verse through the one
-  // Scripture writer and is read back; nothing here writes into Paratext.
-  paratextReviewQueue(status: ParatextReviewFilter | "" = ""): Promise<ParatextReviewQueue> {
-    return call("paratextReview.queue", { status });
+  // #428-#434: the Paratext QA review queue over the books in scope. An apply
+  // edits Bridge's copy through the one Scripture writer (or the heading
+  // writer) and is read back; with writeParatext the same exact replacement
+  // is then queued for the linked Paratext project.
+  paratextReviewQueue(status: ParatextReviewFilter | "" = "", scope: ParatextReviewScope | null = null): Promise<ParatextReviewQueue> {
+    return call("paratextReview.queue", scope ? { status, scope } : { status });
   },
 
   paratextReviewPreview(proposalId: string, replacement: string | null = null): Promise<ParatextReviewPreview> {
@@ -1512,6 +1529,11 @@ export const bridge = {
       writeParatext: options.writeParatext ?? false });
   },
 
+  /** #431: the reviewer's classification of an interrupted apply. */
+  paratextReviewReconcile(proposalId: string, outcome: ParatextReconcileOutcome, note = ""): Promise<{ decision: ParatextReviewDecision; classified: string }> {
+    return call("paratextReview.reconcile", { proposalId, outcome, note });
+  },
+
   paratextReviewSaveState(state: Partial<ParatextReviewState>): Promise<{ state: ParatextReviewState }> {
     return call("paratextReview.saveState", { state });
   },
@@ -1524,12 +1546,26 @@ export const bridge = {
     return call("paratextReview.exportCsv", { outputPath });
   },
 
-  paratextReviewReport(since = ""): Promise<ParatextReviewReport> {
-    return call("paratextReview.report", { since });
+  /** `cumulative` reports every decision of the book; otherwise this session's.
+   *  `outputPath` writes somewhere other than the project's own folder. */
+  paratextReviewReport(options: { since?: string; outputPath?: string; cumulative?: boolean } = {}): Promise<ParatextReviewReport> {
+    return call("paratextReview.report", { since: options.since ?? "", outputPath: options.outputPath ?? "",
+      cumulative: options.cumulative ?? false });
   },
 
-  paratextReviewLatestReport(): Promise<{ path: string; html: string }> {
-    return call("paratextReview.latestReport");
+  /** #434: the book's saved reports (interrupted generations cleared) and
+   *  what the recovery tab shows beside them. */
+  paratextReviewReports(): Promise<ParatextReviewReports> {
+    return call("paratextReview.reports");
+  },
+
+  paratextReviewLatestReport(path = ""): Promise<{ path: string; html: string }> {
+    return call("paratextReview.latestReport", { path });
+  },
+
+  /** #434: open a report Bridge wrote in the default browser (Tauri shell). */
+  openPath(path: string): Promise<void> {
+    return invoke<void>("open_path", { path });
   },
 
   navigationStatus(context?: string): Promise<NavigationSyncState> {

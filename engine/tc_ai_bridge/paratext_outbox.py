@@ -47,8 +47,12 @@ OP_RESOLVE = "resolve"
 # "original not found" refusal, which is final (never retried in the
 # background) so a crash between sent and recorded cannot apply it twice.
 OP_PUT_TEXT = "put_verse_text"
-OPS = (OP_CREATE, OP_COMMENT, OP_RESOLVE, OP_PUT_TEXT)
+# #430 (connector 0.10.0): the one structural write, an allowlisted heading
+# marker rename with the label unchanged. Same finality as put_verse_text.
+OP_RENAME_MARKER = "rename_marker"
+OPS = (OP_CREATE, OP_COMMENT, OP_RESOLVE, OP_PUT_TEXT, OP_RENAME_MARKER)
 NOTE_OPS = (OP_CREATE, OP_COMMENT)
+SCRIPTURE_OPS = (OP_PUT_TEXT, OP_RENAME_MARKER)
 NOT_FOUND = "was not found"
 
 QUEUED = "queued"
@@ -70,7 +74,9 @@ FROM_PARATEXT = "paratext_to_bridge"
 
 # The plugin calls each op needs; 0.7.4 has none of them.
 _NEEDS = {OP_CREATE: "create_note", OP_COMMENT: "add_comment", OP_RESOLVE: "resolve_note",
-          OP_PUT_TEXT: "put_verse_text"}
+          OP_PUT_TEXT: "put_verse_text", OP_RENAME_MARKER: "rename_marker"}
+# A region other than the body needs the region-aware write of 0.10.0.
+_NEEDS_REGIONS = "text_regions"
 
 WAITING_FOR_INDEX = "Waiting for Bridge to read the Paratext notes files before sending (so nothing is sent twice)."
 NOT_LINKED = ("This book is not linked to a Paratext project, so Bridge cannot tell which project "
@@ -197,6 +203,9 @@ class ParatextOutbox:
             raise OutboxError("A reply or resolve names the Paratext thread it goes to.")
         if op == OP_PUT_TEXT and not (scripture and scripture.get("verse") and scripture.get("original")):
             raise OutboxError("A Scripture write names its verse and the exact original text.")
+        if op == OP_RENAME_MARKER and not (scripture and scripture.get("fromMarker") and scripture.get("toMarker")
+                                           and scripture.get("label")):
+            raise OutboxError("A marker rename names the marker it changes, the new marker and the label.")
         existing = self.get(message_id)
         if existing is not None and existing["status"] == SENT:
             return existing
@@ -369,10 +378,16 @@ class ParatextOutbox:
                     raise ParatextConnectorError(state_error)
                 assert state is not None
                 need = _NEEDS[item["op"]]
-                if need not in {c.strip().casefold() for c in state.capabilities}:
+                have = {c.strip().casefold() for c in state.capabilities}
+                if need not in have:
                     raise ParatextConnectorError(
                         f"The Paratext connector {state.plugin_version or 'installed'} cannot {item['op'].replace('_', ' ')}; "
-                        "update it to 0.8.0 in Settings › Connections (Paratext closed).")
+                        "update it to 0.8.0 or newer in Settings › Connections (Paratext closed).")
+                region = str((item.get("scripture") or {}).get("region") or "body")
+                if item["op"] == OP_PUT_TEXT and region != "body" and _NEEDS_REGIONS not in have:
+                    raise ParatextConnectorError(
+                        f"The Paratext connector {state.plugin_version or 'installed'} writes only verse body text; "
+                        f"a {region} correction needs connector 0.10.0. Update it in Settings › Connections.")
                 project = state.project_named(expected_id)
                 if project is None:
                     name = str(expected.get("name") or expected_id[:8])
@@ -385,8 +400,8 @@ class ParatextOutbox:
                     # A Scripture write Paratext could not place is final: the
                     # text moved on, or it is already there. Retrying blind
                     # could apply it twice; the reviewer looks first.
-                    item["op"] == OP_PUT_TEXT and (NOT_FOUND in str(exc) or AMBIGUOUS_SELECTION in str(exc)
-                                                   or "occurs" in str(exc)))
+                    item["op"] in SCRIPTURE_OPS and (NOT_FOUND in str(exc) or AMBIGUOUS_SELECTION in str(exc)
+                                                     or "occurs" in str(exc) or "missing or ambiguous" in str(exc)))
                 changed(self._mark(item, attempts=attempts, lastError=str(exc),
                                    status=REFUSED if refused else QUEUED))
         return touched
@@ -405,18 +420,26 @@ class ParatextOutbox:
             return result
         key = dict(item.get("key") or {})
         book, chapter = item.get("book", ""), item.get("chapter", "")
-        if item["op"] == OP_PUT_TEXT:
+        if item["op"] in SCRIPTURE_OPS:
             scripture = dict(item.get("scripture") or {})
             user = dict(item.get("bridgeUser") or {})
             who = str(user.get("displayName") or "")
             if user.get("userId"):
                 who = f"{who} ({user['userId']})" if who else str(user["userId"])
-            answer = client.put_verse_text(
-                project_id, book, chapter, str(scripture.get("verse") or ""),
-                str(scripture.get("original") or ""), str(scripture.get("replacement") or ""),
-                before_context=item.get("beforeContext", ""), after_context=item.get("afterContext", ""),
-                bridge_user=who, allow_delete=bool(scripture.get("allowDelete")),
-            )
+            if item["op"] == OP_RENAME_MARKER:
+                answer = client.rename_marker(
+                    project_id, book, chapter, str(scripture.get("verse") or ""),
+                    str(scripture.get("fromMarker") or ""), str(scripture.get("toMarker") or ""),
+                    str(scripture.get("label") or ""), bridge_user=who,
+                )
+            else:
+                answer = client.put_verse_text(
+                    project_id, book, chapter, str(scripture.get("verse") or ""),
+                    str(scripture.get("original") or ""), str(scripture.get("replacement") or ""),
+                    before_context=item.get("beforeContext", ""), after_context=item.get("afterContext", ""),
+                    bridge_user=who, allow_delete=bool(scripture.get("allowDelete")),
+                    region=str(scripture.get("region") or "body"),
+                )
             return self._mark(item, attempts=attempts, status=SENT, lastError="", sentAt=_now(),
                               resultKey=f"{answer.get('author', '')}|{answer.get('created', '')}",
                               author=answer.get("author", ""), created=answer.get("created", ""),

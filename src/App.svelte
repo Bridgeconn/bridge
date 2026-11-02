@@ -23,6 +23,8 @@
   import ReferencePanel from "./lib/components/ReferencePanel.svelte";
   import SourceTextPanel from "./lib/components/SourceTextPanel.svelte";
   import ParatextNotesPanel from "./lib/components/ParatextNotesPanel.svelte";
+  import ParatextReviewQueue from "./lib/components/ParatextReviewQueue.svelte";
+  import { paratextReviewQueueOpen } from "./lib/paratextNotes";
   import FindingContextMenu from "./lib/components/FindingContextMenu.svelte";
   import { TEXT_SCALES, bumpTextScale, rawView, sidePanelOrder, sidePanels, textScale, toggleSidePanel } from "./lib/editorPrefs";
   import { verseMin } from "./lib/panelFit";
@@ -1810,7 +1812,7 @@
                 </SidePanel>
               {:else if panelId === "paratext"}
                 <SidePanel id="paratext" label="Paratext notes">
-                  {#key $project.path}<ParatextNotesPanel onNavigate={navigateToReportRow} />{/key}
+                  {#key $project.path}<ParatextNotesPanel />{/key}
                 </SidePanel>
               {/if}
             {/if}
@@ -1893,6 +1895,10 @@
        Outside the project block: Settings can ask with no project open. -->
   {#if workspaceRecovery}<WorkspaceRecoveryDialog summary={workspaceRecovery} onClose={() => (workspaceRecovery = null)} />{/if}
   {#if $confirmRequest}<ConfirmDialog />{/if}
+  <!-- #432: one review queue for the project; it stays open across a book switch. -->
+  {#if $paratextReviewQueueOpen && $project}
+    <ParatextReviewQueue onClose={() => paratextReviewQueueOpen.set(false)} onNavigate={navigateToReportRow} />
+  {/if}
 
   {#if $diagnosticsOpen}
     <DiagnosticsPanel onClose={() => diagnosticsOpen.set(false)} />

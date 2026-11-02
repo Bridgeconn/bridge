@@ -69,11 +69,11 @@ def test_thread_calls_name_the_project_the_chapter_and_the_key():
     assert resolved == {"project_id": "c2d042a9-linked", "book": "TIT", "chapter": "1", "key": key}
 
 
-def test_the_bundled_plugin_is_0_9_0_and_serves_the_seven_actions_with_exactly_one_scripture_write():
-    assert paratext_install.bundled_version() == "0.9.0"
+def test_the_bundled_plugin_is_0_10_0_and_serves_the_eight_actions_with_two_scripture_writes():
+    assert paratext_install.bundled_version() == "0.10.0"
     source = PLUGIN.read_text(encoding="utf-8")
     for action in ("get_state", "set_reference", "create_note", "list_notes", "add_comment", "resolve_note",
-                   "put_verse_text"):
+                   "put_verse_text", "rename_marker"):
         assert f'action == "{action}"' in source, action
     # The write boundary: Project Notes through the notes lock; one Scripture write
     # (put_verse_text, #429, DECISIONS 2026-11-02) through the chapter lock, read
@@ -82,13 +82,15 @@ def test_the_bundled_plugin_is_0_9_0_and_serves_the_seven_actions_with_exactly_o
     # #438: the installed 9.5.110.1 interfaces expose PutUSFM(lock, usfm, bookNum) -- a
     # whole-book write -- so the verse write goes through the token API the
     # reference plugin ran on that host: CanEdit, a chapter-scoped lock,
-    # GetUSFMTokens, exactly one PutUSFMTokens, SendNotifications, GetUSFMTokens again.
-    assert len(re.findall(r"\.PutUSFMTokens\(", source)) == 1
+    # GetUSFMTokens, one PutUSFMTokens per write (the text write and, 0.10.0 #430, the
+    # marker rename), SendNotifications, GetUSFMTokens again.
+    assert len(re.findall(r"\.PutUSFMTokens\(", source)) == 2
     assert not re.search(r"\.(PutUSFM|PutUSX|DeleteNote|Delete|Reopen)\(", source)
     assert "project.CanEdit(this, bookNum, chapterNum)" in source
     assert "RequestWriteLock(this, delegate(IWriteLock requested) { revoked = true; }, bookNum, chapterNum)" in source
     assert source.index(".PutUSFMTokens(") < source.index("writeLock.SendNotifications()") < source.index("reread = project.GetUSFMTokens(")
-    assert "put_verse_text" in source.split("r.capabilities = new string[]")[1].split("};")[0]
+    capabilities = source.split("r.capabilities = new string[]")[1].split("};")[0]
+    assert "put_verse_text" in capabilities and "text_regions" in capabilities and "rename_marker" in capabilities
     # A note is addressed by project id; the active window never decides the destination.
     assert "GetAllProjects()" in source
     assert 'project_id is required' in source

@@ -24,7 +24,7 @@ vi.mock("../../api/bridgeClient", () => ({
 import { get } from "svelte/store";
 import ParatextNotesPanel from "../ParatextNotesPanel.svelte";
 import { currentChapter, project, selectedVerse } from "../../stores";
-import { paratextNoteRequest, requestParatextNote } from "../../paratextNotes";
+import { paratextNoteRequest, requestParatextNote, dropDraft, draftKey } from "../../paratextNotes";
 import { sidePanels } from "../../editorPrefs";
 import type { ParatextNoteThread, ParatextOutboxItem, ParatextProposal } from "../../types/paratext";
 
@@ -259,6 +259,28 @@ describe("ParatextNotesPanel writes (#426) and QA proposals (#427)", () => {
     const back = await screen.findByPlaceholderText("Your note, as the Paratext user on this PC") as HTMLTextAreaElement;
     expect(back.value).toBe("draft words");
     expect(paratextCreateNote).not.toHaveBeenCalled();
+  });
+
+  it("keeps a composer draft across closing and reopening Bridge (localStorage), and drops it once sent (#426)", async () => {
+    dropDraft(draftKey("C:/p/jos", "3", "4"));     // the earlier test's draft, now persisted too
+    paratextNotesForVerse.mockResolvedValue(verseAnswer("ready"));
+    paratextCreateNote.mockResolvedValue({ item: { messageId: "m1", status: "sent", lastError: "" } });
+    const first = render(ParatextNotesPanel);
+    await screen.findByText("No Paratext notes on this verse.");
+    await fireEvent.click(await screen.findByRole("button", { name: "New note…" }));
+    await fireEvent.input(screen.getByPlaceholderText("Your note, as the Paratext user on this PC"), { target: { value: "kept words" } });
+    selectedVerse.set("5");
+    await waitFor(() => expect(screen.queryByPlaceholderText("Your note, as the Paratext user on this PC")).toBeNull());
+    first.unmount();
+    expect(JSON.parse(localStorage.getItem("bridge.paratextNoteDrafts.v1") ?? "{}")["C:/p/jos|3:4"]).toEqual({ text: "kept words", selectedText: "" });
+
+    selectedVerse.set("4");
+    render(ParatextNotesPanel);
+    const back = await screen.findByPlaceholderText("Your note, as the Paratext user on this PC") as HTMLTextAreaElement;
+    expect(back.value).toBe("kept words");
+    await fireEvent.click(screen.getByRole("button", { name: "Send to Paratext" }));
+    await waitFor(() => expect(paratextCreateNote).toHaveBeenCalledWith("3", "4", "kept words", ""));
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("bridge.paratextNoteDrafts.v1") ?? "{}")["C:/p/jos|3:4"]).toBeUndefined());
   });
 
   it("sends a note for a finding through queueRecord with the card's lines, and shows a linked thread's closure (#433)", async () => {

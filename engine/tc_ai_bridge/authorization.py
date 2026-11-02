@@ -183,6 +183,7 @@ _READ = (
     "paratext.outbox", "paratext.threadsFor",
     # #432: the review queue, a preview of one apply, and the latest report, read-only.
     "paratextReview.queue", "paratextReview.preview", "paratextReview.latestReport",
+    "paratextReview.uncertain", "paratextReview.reports",
     "navigation.status", "navigation.poll", "navigation.bridgeChanged", "navigation.resolve",
     "users.list", "users.setCurrent",
     "assignments.list",
@@ -237,6 +238,8 @@ _WRITE = (
     # the reviewer's queue state, the checked revert, and the evidence files.
     "paratextReview.decide", "paratextReview.saveState", "paratextReview.revertLatest",
     "paratextReview.exportCsv", "paratextReview.report",
+    # #431: the reviewer's reconciliation of an interrupted apply.
+    "paratextReview.reconcile",
 )
 
 _MANAGE_PROJECTS = (

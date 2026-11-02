@@ -16,6 +16,7 @@ use crate::sidecar::EngineSidecar;
 use serde_json::Value;
 use tauri::State;
 use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_shell::ShellExt;
 
 /// Forward one protocol request to bridge-engine. `method` is the engine's
 /// method string (e.g. "project.open"); `params` is passed through verbatim,
@@ -150,4 +151,31 @@ pub async fn pick_save_path(
         });
     rx.await
         .map_err(|e| format!("save dialog cancelled unexpectedly: {e}"))
+}
+
+/// #434: open a file Bridge wrote -- a saved Paratext review report -- in
+/// whatever the OS opens it with (the default browser for .html). Only a
+/// regular file that exists is handed over, so the command cannot be used to
+/// launch an arbitrary program or URL from the page.
+// tauri-plugin-shell's `open` is deprecated in favour of tauri-plugin-opener;
+// it still works, and adding a plugin for one call is not worth a second
+// permission surface. Revisit when the shell plugin drops it.
+#[allow(deprecated)]
+#[tauri::command]
+pub async fn open_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let target = std::path::PathBuf::from(&path);
+    if !target.is_file() {
+        return Err(format!("{path} is not a file"));
+    }
+    let extension = target
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    if !matches!(extension.as_str(), "html" | "htm" | "csv" | "txt") {
+        return Err(format!("{path} is not a report or export file"));
+    }
+    app.shell()
+        .open(target.to_string_lossy().to_string(), None)
+        .map_err(|e| format!("could not open {path}: {e}"))
 }
