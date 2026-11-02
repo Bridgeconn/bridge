@@ -138,20 +138,23 @@ namespace TranslationCoreAiBridge.ParatextConnector
             return new BridgeResponse { ok = false, error = "Unsupported connector action: " + action, plugin_version = PluginVersion };
         }
 
-        // ---- put_verse_text (0.9.0, #429) ------------------------------------------------
+        // ---- put_verse_text (0.9.0, #429, #438) ----------------------------------------
         //
         // The one Scripture write. Bridge sends it only after a reviewer confirmed the
         // correction and it was applied and verified on Bridge's own copy of the verse
-        // (DECISIONS 2026-11-02, Benz). Under Paratext's chapter write lock the chapter's
-        // USFM is read, the verse's span found, the exact `original` located once inside
-        // that span (outside any \f ... \f* or \x ... \x* note; repeats told apart by
-        // the note's own before/after context, whitespace-collapsed), replaced, written
-        // back with PutUSFM, and read again: `verified` is true only when the chapter
-        // reads exactly as written. Anything else -- no lock, no verse, not found, found
-        // twice, text inside a note, a replacement carrying a marker or a line break --
-        // is refused with nothing changed. Paratext records its own logged-in user as the
-        // editor; the Bridge user who confirmed it is `bridge_user`, echoed in the answer
-        // for Bridge's evidence, never impersonated.
+        // (DECISIONS 2026-11-02, Benz). It uses the token API the installed 9.5.110.1
+        // interfaces (2.0.100.0) actually expose and that selvabenz/Paratext-sug-in-context-menu
+        // exercised on this host (#438: `PutUSFM` takes (lock, usfm, bookNum), not a chapter):
+        // `CanEdit`, a chapter-scoped `RequestWriteLock`, `GetUSFMTokens(book, chapter)`, one
+        // Scripture text token of the verse replaced, `PutUSFMTokens(lock, tokens, book)`,
+        // `SendNotifications`, then `GetUSFMTokens` again: `verified` is true only when the
+        // chapter's USFM reads exactly as expected. The exact `original` must occur once in the
+        // verse's Scripture text tokens (never in a footnote or cross-reference token, never
+        // across two tokens, on text-element boundaries), repeats told apart by the note's own
+        // before/after context (whitespace-collapsed). Anything else is refused with nothing
+        // changed. Paratext records its own logged-in user as the editor; the Bridge user who
+        // confirmed it is `bridge_user`, echoed in the answer for Bridge's evidence, never
+        // impersonated. A history point is taken before and after, as the reference plugin does.
 
         private BridgeResponse PutVerseText(IDictionary<string, object> payload)
         {
@@ -170,7 +173,8 @@ namespace TranslationCoreAiBridge.ParatextConnector
             string afterContext = BridgeJson.GetString(payload, "after_context");
             string bridgeUser = BridgeJson.GetString(payload, "bridge_user").Trim();
             bool allowDelete = BridgeJson.GetBool(payload, "allow_delete");
-            if (String.IsNullOrEmpty(verse)) return Fail("verse is required.");
+            int firstVerse, lastVerse;
+            if (!ParseVerseRange(verse, out firstVerse, out lastVerse)) return Fail("verse is required (a number, or a bridge like 3-4).");
             if (String.IsNullOrEmpty(original)) return Fail("original is required: the exact text to replace.");
             if (replacement == null) replacement = String.Empty;
             if (replacement.Length == 0 && !allowDelete) return Fail("An empty replacement deletes text; Bridge did not confirm a deletion.");
@@ -178,17 +182,26 @@ namespace TranslationCoreAiBridge.ParatextConnector
                 return Fail("The replacement carries a USFM marker or a line break; that is a structural change the connector does not make.");
             if (String.Equals(original, replacement, StringComparison.Ordinal)) return Fail("The original and the replacement are identical; nothing to change.");
             if (project.IsResource) return Fail("Paratext project " + (project.ShortName ?? String.Empty) + " is a resource and cannot be edited.");
+            bool canEdit;
+            try { canEdit = project.CanEdit(this, bookNum, chapterNum); }
+            catch (Exception ex)
+            {
+                return Fail("Paratext could not say whether this chapter may be edited: " + ex.Message);
+            }
+            if (!canEdit)
+                return Fail("You do not have editing permission for " + BridgeJson.GetString(payload, "book") + " " +
+                            chapterNum.ToString(CultureInfo.InvariantCulture) + " in " + (project.ShortName ?? String.Empty) + "; nothing was changed.");
 
+            try { project.MakeHistoryPoint("Before Bridge correction at " + BridgeJson.GetString(payload, "book") + " " + chapterNum.ToString(CultureInfo.InvariantCulture) + ":" + verse, true); }
+            catch { /* a history point that cannot be taken does not block the edit; Paratext still records it */ }
+
+            bool revoked = false;
             IWriteLock writeLock = null;
             try
             {
                 try
                 {
-                    writeLock = project.RequestWriteLock(this, delegate(IWriteLock requested)
-                    {
-                        try { if (requested != null) requested.Dispose(); }
-                        catch { }
-                    }, bookNum, chapterNum);
+                    writeLock = project.RequestWriteLock(this, delegate(IWriteLock requested) { revoked = true; }, bookNum, chapterNum);
                 }
                 catch (Exception ex)
                 {
@@ -197,27 +210,58 @@ namespace TranslationCoreAiBridge.ParatextConnector
                 if (writeLock == null)
                     return Fail("Scripture WRITE_LOCK failed: Paratext could not grant a write lock on " +
                                 (project.ShortName ?? String.Empty) + " " + BridgeJson.GetString(payload, "book") + " " +
-                                chapterNum.ToString(CultureInfo.InvariantCulture) + ". Check that you may edit this book and that nothing else holds it.");
+                                chapterNum.ToString(CultureInfo.InvariantCulture) + ". Check that nothing else holds it and try again.");
 
-                string usfm;
-                try { usfm = project.GetUSFM(bookNum, chapterNum) ?? String.Empty; }
+                List<IUSFMToken> tokens = new List<IUSFMToken>();
+                try
+                {
+                    IReadOnlyList<IUSFMToken> read = project.GetUSFMTokens(bookNum, chapterNum);
+                    if (read != null) for (int i = 0; i < read.Count; i++) tokens.Add(read[i]);
+                }
                 catch (Exception ex)
                 {
-                    return Fail("Paratext could not read the chapter's USFM: " + ex.Message);
+                    return Fail("Paratext could not read the chapter's USFM tokens: " + ex.Message);
                 }
-                int spanStart, spanEnd;
-                if (!FindVerseSpan(usfm, verse, out spanStart, out spanEnd))
-                    return Fail("Verse " + verse + " was not found in the chapter's USFM; nothing was changed.");
-                string span = usfm.Substring(spanStart, spanEnd - spanStart);
+                if (tokens.Count == 0) return Fail("The chapter has no USFM tokens; nothing was changed.");
+
+                // The verse's Scripture text, token by token, with a map back to each token.
+                List<int> candidateIndexes = new List<int>();
+                StringBuilder plainBuilder = new StringBuilder();
+                List<int> tokenOfChar = new List<int>();     // plain index -> candidate index
+                List<int> offsetOfChar = new List<int>();    // plain index -> offset in that token
+                for (int i = 0; i < tokens.Count; i++)
+                {
+                    IUSFMTextToken text = tokens[i] as IUSFMTextToken;
+                    if (text == null || text.VerseRef == null) continue;
+                    if (text.IsMetadata || text.IsFigure || text.IsSpecial || text.IsFootnoteOrCrossReference || !text.IsScripture) continue;
+                    if (text.VerseRef.ChapterNum != chapterNum) continue;
+                    if (text.VerseRef.VerseNum < firstVerse || text.VerseRef.VerseNum > lastVerse) continue;
+                    string t = text.Text ?? String.Empty;
+                    int candidate = candidateIndexes.Count;
+                    candidateIndexes.Add(i);
+                    for (int k = 0; k < t.Length; k++)
+                    {
+                        plainBuilder.Append(t[k]);
+                        tokenOfChar.Add(candidate);
+                        offsetOfChar.Add(k);
+                    }
+                }
+                string plain = plainBuilder.ToString();
+                if (candidateIndexes.Count == 0)
+                    return Fail("Verse " + verse + " has no Scripture text in the chapter's tokens; nothing was changed.");
 
                 List<int> found = new List<int>();
+                int[] elements = StringInfo.ParseCombiningCharacters(plain);
                 int from = 0;
-                while (from <= span.Length - original.Length)
+                while (from <= plain.Length - original.Length)
                 {
-                    int at = span.IndexOf(original, from, StringComparison.Ordinal);
+                    int at = plain.IndexOf(original, from, StringComparison.Ordinal);
                     if (at < 0) break;
-                    if (!InsideNote(span, at)) found.Add(at);
                     from = at + 1;
+                    int end = at + original.Length;
+                    if (Array.BinarySearch(elements, at) < 0 || (end < plain.Length && Array.BinarySearch(elements, end) < 0)) continue;
+                    if (tokenOfChar[at] != tokenOfChar[end - 1]) continue;       // runs across two tokens (markup between)
+                    found.Add(at);
                 }
                 int chosen = -1;
                 if (found.Count == 1) chosen = found[0];
@@ -227,8 +271,8 @@ namespace TranslationCoreAiBridge.ParatextConnector
                     List<int> anchored = new List<int>();
                     for (int i = 0; i < found.Count; i++)
                     {
-                        string left = Collapse(StripMarkup(span.Substring(0, found[i])));
-                        string right = Collapse(StripMarkup(span.Substring(found[i] + original.Length)));
+                        string left = Collapse(plain.Substring(0, found[i]));
+                        string right = Collapse(plain.Substring(found[i] + original.Length));
                         bool okBefore = before.Length == 0 || left.EndsWith(before, StringComparison.Ordinal);
                         bool okAfter = after.Length == 0 || right.StartsWith(after, StringComparison.Ordinal);
                         if ((before.Length > 0 || after.Length > 0) && okBefore && okAfter) anchored.Add(found[i]);
@@ -241,28 +285,54 @@ namespace TranslationCoreAiBridge.ParatextConnector
                     return Fail("The original text occurs " + found.Count.ToString(CultureInfo.InvariantCulture) +
                                 " times in verse " + verse + " and the context does not identify one; nothing was changed.");
 
-                string newSpan = span.Substring(0, chosen) + replacement + span.Substring(chosen + original.Length);
-                string newUsfm = usfm.Substring(0, spanStart) + newSpan + usfm.Substring(spanEnd);
-                try { project.PutUSFM(writeLock, bookNum, newUsfm, chapterNum); }
+                int tokenIndex = candidateIndexes[tokenOfChar[chosen]];
+                int offset = offsetOfChar[chosen];
+                IUSFMTextToken old = tokens[tokenIndex] as IUSFMTextToken;
+                if (old == null) return Fail("The selected target is not a Scripture text token; nothing was changed.");
+                string oldText = old.Text ?? String.Empty;
+                if (offset + original.Length > oldText.Length || String.CompareOrdinal(oldText, offset, original, 0, original.Length) != 0)
+                    return Fail("The matched text changed before replacement; nothing was changed.");
+                string newText = oldText.Substring(0, offset) + replacement + oldText.Substring(offset + original.Length);
+                tokens[tokenIndex] = new ChangedTextToken(old, newText);
+
+                string expected;
+                try { expected = project.ConvertToUSFMString(tokens); }
                 catch (Exception ex)
                 {
-                    return Fail("Scripture PUT_USFM failed for verse " + verse + ": " + ex.Message);
+                    return Fail("Paratext could not render the edited chapter as USFM: " + ex.Message);
                 }
-                string readBack;
-                try { readBack = project.GetUSFM(bookNum, chapterNum) ?? String.Empty; }
+                if (revoked) return Fail("The Scripture write lock was withdrawn before the write; nothing was changed.");
+                try
+                {
+                    project.PutUSFMTokens(writeLock, tokens, bookNum);
+                    writeLock.SendNotifications();
+                }
                 catch (Exception ex)
                 {
-                    readBack = null;
-                    BridgeResponse partial = BuildScriptureResponse(project, span, newSpan, false, bridgeUser);
+                    return Fail("Scripture PUT_USFM_TOKENS failed for verse " + verse + ": " + ex.Message);
+                }
+                string saved;
+                try
+                {
+                    List<IUSFMToken> again = new List<IUSFMToken>();
+                    IReadOnlyList<IUSFMToken> reread = project.GetUSFMTokens(bookNum, chapterNum);
+                    if (reread != null) for (int i = 0; i < reread.Count; i++) again.Add(reread[i]);
+                    saved = project.ConvertToUSFMString(again);
+                }
+                catch (Exception ex)
+                {
+                    BridgeResponse partial = BuildScriptureResponse(project, oldText, newText, false, bridgeUser);
                     partial.message = "The verse was written but could not be read back: " + ex.Message + ". Treat the edit as unverified.";
                     return partial;
                 }
-                bool verified = String.Equals(readBack, newUsfm, StringComparison.Ordinal);
+                bool verified = String.Equals(saved, expected, StringComparison.Ordinal);
                 TouchState("scripture_verse_written", String.Empty);
-                BridgeResponse r = BuildScriptureResponse(project, span, newSpan, verified, bridgeUser);
+                try { project.MakeHistoryPoint("Bridge correction at " + BridgeJson.GetString(payload, "book") + " " + chapterNum.ToString(CultureInfo.InvariantCulture) + ":" + verse, true); }
+                catch { }
+                BridgeResponse r = BuildScriptureResponse(project, oldText, newText, verified, bridgeUser);
                 r.message = verified
                     ? "Verse " + verse + " written in " + (project.ShortName ?? String.Empty) + " and read back."
-                    : "Verse " + verse + " was written but the chapter does not read back as written; treat the edit as unverified.";
+                    : "Verse " + verse + " was written but the chapter does not read back as expected; treat the edit as unverified.";
                 return r;
             }
             finally
@@ -289,75 +359,25 @@ namespace TranslationCoreAiBridge.ParatextConnector
             return r;
         }
 
-        /// <summary>The span of `\v N` in chapter USFM: from the verse marker to the next
-        /// `\v` or `\c` marker (or the end). A bridge "3-4" is matched as written.</summary>
-        private static bool FindVerseSpan(string usfm, string verse, out int start, out int end)
+        /// <summary>"3" -> (3, 3); a bridge "3-4" -> (3, 4); "4a" -> (4, 4).</summary>
+        private static bool ParseVerseRange(string verse, out int first, out int last)
         {
-            start = -1;
-            end = -1;
-            int from = 0;
-            while (true)
-            {
-                int at = usfm.IndexOf("\\v ", from, StringComparison.Ordinal);
-                if (at < 0) return false;
-                int numberStart = at + 3;
-                int numberEnd = numberStart;
-                while (numberEnd < usfm.Length && !Char.IsWhiteSpace(usfm[numberEnd])) numberEnd++;
-                string number = usfm.Substring(numberStart, numberEnd - numberStart);
-                if (String.Equals(number, verse, StringComparison.Ordinal))
-                {
-                    start = at;
-                    int nextV = usfm.IndexOf("\\v ", numberEnd, StringComparison.Ordinal);
-                    int nextC = usfm.IndexOf("\\c ", numberEnd, StringComparison.Ordinal);
-                    end = usfm.Length;
-                    if (nextV >= 0 && nextV < end) end = nextV;
-                    if (nextC >= 0 && nextC < end) end = nextC;
-                    return true;
-                }
-                from = numberEnd;
-            }
+            first = 0;
+            last = 0;
+            if (String.IsNullOrEmpty(verse)) return false;
+            string[] parts = verse.Split('-');
+            if (!TryLeadingNumber(parts[0], out first)) return false;
+            last = first;
+            if (parts.Length > 1 && TryLeadingNumber(parts[1], out last) && last < first) last = first;
+            return true;
         }
 
-        /// <summary>True when `index` falls inside an open `\f ... \f*` or `\x ... \x*`
-        /// (or `\fe ... \fe*`) note of `span`.</summary>
-        private static bool InsideNote(string span, int index)
+        private static bool TryLeadingNumber(string text, out int value)
         {
-            string[] opens = { "\\f ", "\\x ", "\\fe " };
-            string[] closes = { "\\f*", "\\x*", "\\fe*" };
-            for (int n = 0; n < opens.Length; n++)
-            {
-                int open = span.LastIndexOf(opens[n], index, StringComparison.Ordinal);
-                if (open < 0) continue;
-                int close = span.IndexOf(closes[n], open, StringComparison.Ordinal);
-                if (close < 0 || close > index) return true;
-            }
-            return false;
-        }
-
-        private static string StripMarkup(string text)
-        {
-            StringBuilder sb = new StringBuilder(text.Length);
-            int i = 0;
-            while (i < text.Length)
-            {
-                if (text[i] == '\\')
-                {
-                    int j = i + 1;
-                    while (j < text.Length && !Char.IsWhiteSpace(text[j]) && text[j] != '*' && text[j] != '\\') j++;
-                    if (j < text.Length && text[j] == '*') j++;
-                    i = j;
-                    continue;
-                }
-                if (text[i] == '|')
-                {
-                    int close = text.IndexOf("\\", i, StringComparison.Ordinal);
-                    i = close < 0 ? text.Length : close;
-                    continue;
-                }
-                sb.Append(text[i]);
-                i++;
-            }
-            return sb.ToString();
+            value = 0;
+            int end = 0;
+            while (end < text.Length && Char.IsDigit(text[end])) end++;
+            return end > 0 && Int32.TryParse(text.Substring(0, end), NumberStyles.None, CultureInfo.InvariantCulture, out value);
         }
 
         private static string Collapse(string text)
@@ -373,6 +393,24 @@ namespace TranslationCoreAiBridge.ParatextConnector
                 sb.Append(text[i]);
             }
             return sb.ToString();
+        }
+
+        /// <summary>A text token with its text replaced and everything else as the host gave it
+        /// (the shape selvabenz/Paratext-sug-in-context-menu compiled and ran against 2.0.100.0).</summary>
+        private sealed class ChangedTextToken : IUSFMTextToken
+        {
+            private readonly IUSFMTextToken _source;
+            private readonly string _text;
+            public ChangedTextToken(IUSFMTextToken original, string value) { _source = original; _text = value; }
+            public string Text { get { return _text; } }
+            public IVerseRef VerseRef { get { return _source.VerseRef; } }
+            public int VerseOffset { get { return _source.VerseOffset; } }
+            public bool IsSpecial { get { return _source.IsSpecial; } }
+            public bool IsFigure { get { return _source.IsFigure; } }
+            public bool IsFootnoteOrCrossReference { get { return _source.IsFootnoteOrCrossReference; } }
+            public bool IsScripture { get { return _source.IsScripture; } }
+            public bool IsMetadata { get { return _source.IsMetadata; } }
+            public bool IsPublishableVernacular { get { return _source.IsPublishableVernacular; } }
         }
 
         // ---- state -------------------------------------------------------------------------

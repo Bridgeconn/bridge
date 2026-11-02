@@ -23357,3 +23357,32 @@ layout and #436's host validation are Benz's walk (`docs/PARATEXT_HOST_ACCEPTANC
 - Frozen pair rebuilt (`scripts/build-sidecars.ps1`) and `scripts/smoke_sidecars.py` passed
   (real Wildebeest/Uroman, both indic-qa layers, desktop connectors, alignment/export/undo, hub `/health`).
 - NOT RUN: connector 0.9.0 compile and every real-Paratext step (the checklist); the desktop at 1366×768.
+
+## 2026-11-02 — #438: connector 0.9.0 did not compile on the real host; verse write moved to the token API (Joel)
+
+Benz's live walk (comment on #423, 10:34 UTC) passed the notes round trip on Paratext 9.5.110.1
+with connector 0.8.1 against PR commit `d5da598`: create / reply / resolve with read-back, the
+attribution line, "resolved in Bridge" on the link, idempotent re-resolve, wrong project and
+stale key refused. Scripture SHA-256 unchanged. But `build.ps1` on 0.9.0 failed:
+`CS1501: No overload for method 'PutUSFM' takes 4 arguments` -- the installed interfaces
+(2.0.100.0) expose `PutUSFM(IWriteLock, String, Int32)` (lock, usfm, bookNum: a whole-book
+write) and `PutUSFMTokens(IWriteLock, IReadOnlyList<IUSFMToken>, Int32)`. CLAUDE.md's rule
+("never trust a doc's description of what it does -- run it") applied to me: I wrote the call
+from memory of the API and nothing here could compile it.
+
+**Fix.** `PutVerseText` now takes the route selvabenz/Paratext-sug-in-context-menu compiled
+and ran on that host: `CanEdit(plugin, book, chapter)`; history point; chapter-scoped
+`RequestWriteLock(plugin, release, book, chapter)`; `GetUSFMTokens(book, chapter)`; the verse's
+Scripture text tokens (not metadata/figure/special/footnote tokens, `IsScripture`, the verse
+number or bridge range) concatenated into a plain string with a map back to each token; the
+original located once on text-element boundaries (`StringInfo.ParseCombiningCharacters`),
+never across two tokens, repeats narrowed by the note's context; that one token replaced by a
+`ChangedTextToken`; `ConvertToUSFMString` for the expected chapter; `PutUSFMTokens(lock,
+tokens, book)`; `SendNotifications`; `GetUSFMTokens` again and `verified` only on an exact
+match; history point after. `FindVerseSpan` / `InsideNote` / `StripMarkup` are gone. The
+protocol shape to Bridge is unchanged (`usfm_before`/`usfm_after` are now the edited token's
+text). The source test pins exactly one `PutUSFMTokens`, no `PutUSFM`/`PutUSX`/delete/reopen,
+and the write-then-notify-then-reread order.
+
+**Still not compiled here.** Benz's next `build.ps1` is the check; #438's acceptance (one
+correction persists, other verses/chapters/notes/markers preserved, refusals) is his walk.

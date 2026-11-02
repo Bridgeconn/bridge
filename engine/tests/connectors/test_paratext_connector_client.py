@@ -79,9 +79,15 @@ def test_the_bundled_plugin_is_0_9_0_and_serves_the_seven_actions_with_exactly_o
     # (put_verse_text, #429, DECISIONS 2026-11-02) through the chapter lock, read
     # back after writing; no delete, no reopen, no token-level or USX write.
     assert "WriteLockScope.ProjectNotes" in source
-    assert len(re.findall(r"\.PutUSFM\(", source)) == 1
-    assert not re.search(r"\.(PutUSX|PutUSFMTokens|DeleteNote|Delete|Reopen)\(", source)
-    assert source.index(".PutUSFM(") < source.index("readBack = project.GetUSFM(")
+    # #438: the installed 9.5.110.1 interfaces expose PutUSFM(lock, usfm, bookNum) -- a
+    # whole-book write -- so the verse write goes through the token API the
+    # reference plugin ran on that host: CanEdit, a chapter-scoped lock,
+    # GetUSFMTokens, exactly one PutUSFMTokens, SendNotifications, GetUSFMTokens again.
+    assert len(re.findall(r"\.PutUSFMTokens\(", source)) == 1
+    assert not re.search(r"\.(PutUSFM|PutUSX|DeleteNote|Delete|Reopen)\(", source)
+    assert "project.CanEdit(this, bookNum, chapterNum)" in source
+    assert "RequestWriteLock(this, delegate(IWriteLock requested) { revoked = true; }, bookNum, chapterNum)" in source
+    assert source.index(".PutUSFMTokens(") < source.index("writeLock.SendNotifications()") < source.index("reread = project.GetUSFMTokens(")
     assert "put_verse_text" in source.split("r.capabilities = new string[]")[1].split("};")[0]
     # A note is addressed by project id; the active window never decides the destination.
     assert "GetAllProjects()" in source
