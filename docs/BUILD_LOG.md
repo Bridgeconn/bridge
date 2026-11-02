@@ -23439,3 +23439,34 @@ PARATEXT_HOST_ACCEPTANCE_CHECKLIST.md. UI/layout, multi-chapter preservation,
 live lock revocation, Send/Receive and two-device acceptance remain separate
 checks; non-body/marker operations remain review-only. An isolated acceptance
 app build excludes the unrelated unfinished updater changes.
+
+
+### Completed native and build verification after #438 (2026-11-02)
+
+Published the focused connector fix and first host record as 23497c0; GitHub CI
+run 41445384036 passed. The isolated merged source then passed Svelte check
+(0 errors/warnings), all 1,095 frontend tests, both production frontend builds,
+the rebuilt frozen-pair smoke, cargo check and all 15 Rust tests. The isolated
+build used the existing engine/.venv release environment; global Python lacked
+spylls metadata and was not used for the successful frozen build.
+
+Initialized a new synthetic BQAT090 project while Paratext was closed, without
+overwriting an existing project. Live chapter-1 correction left chapter 2,
+the other verse and footnote intact. Paratext normalized the initial fixture's
+line endings; repeating against its persisted native-format baseline preserved
+chapter 2 byte-for-byte and restored the full file byte-for-byte. All original
+fixture text was preserved.
+
+Built an internal debug/no-bundle Bridge executable in the isolated checkout
+and launched it with separate settings/WebView data. Observed startup and the
+one-project NSTest list. Native folder-picker/input automation was unreliable;
+registered the disposable project through the supported project.open API and
+reopened the task-owned app. Concurrent desktop input was detected, so the
+full notes/queue UI walk is not claimed. The normal installed Bridge was not
+replaced and no public release/installer was produced. The test app remains
+available for manual screen acceptance.
+
+Issue results distinguish real native writes/record closure, synthetic
+finding/proposal link closure, and the unverified screens/lock-revocation/
+Send-Receive/multi-device checks. Bridge-only revert and the outstanding
+non-body/marker/multi-book queue requirements remain open follow-ups.
