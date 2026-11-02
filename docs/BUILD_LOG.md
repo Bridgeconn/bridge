@@ -23407,3 +23407,35 @@ in the engine, but only issue-resolution cards could create a thread. Now:
 - Ran: `tests/service/test_paratext_record_threads_protocol.py` 3 passed; notes-panel, roles
   suites; svelte-check 0/0; ParatextNotesPanel 12, VerseList 115 (menu label list updated),
   CorrectionReviewPanel 66, ThreadPanel 7. Full gates below.
+
+
+### Connector 0.9.0 host compatibility and live acceptance (#438, 2026-11-02)
+
+Pulled merged main with autostash, preserved all unrelated local updater work,
+and resolved the two documentation conflicts by retaining both histories. The
+revised connector still failed CS0266 at its two GetUSFMTokens assignments:
+the installed public API returns IEnumerable, not IReadOnlyList. Accept the
+enumerables and materialize them into the existing lists; matching, locking,
+write scope and readback verification are unchanged.
+
+The connector compiled against Paratext 9.5.110.1 / interfaces 2.0.100.0.
+Backed up 0.8.1, installed 0.9.0 through the existing elevated installer with
+Paratext closed, and verified its live put_verse_text capability. On NSTest,
+native exact write/readback and refusal checks passed; Bridge's isolated
+review queue applied to both copies, verified the native result and generated
+CSV/HTML evidence. Restored native Scripture byte-for-byte, including after
+host restart. Checked Bridge revert is confirmed Bridge-only: native restore
+was a separate supported operation, not an automatic round-trip revert.
+
+External native resolution closed an actual isolated issue-resolution record
+once; finding/proposal link closures passed with synthetic record references
+and actual native threads. Repeated refresh was idempotent. An offline note
+survived host and Bridge-process restart and delivered exactly once. A
+post-check cleanup comment hit a busy-pipe timeout before send; retried only
+native resolution. Focused tests: 87 passed. No working translation was edited.
+
+Detailed observations and limits are appended to
+PARATEXT_HOST_ACCEPTANCE_CHECKLIST.md. UI/layout, multi-chapter preservation,
+live lock revocation, Send/Receive and two-device acceptance remain separate
+checks; non-body/marker operations remain review-only. An isolated acceptance
+app build excludes the unrelated unfinished updater changes.

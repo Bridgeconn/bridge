@@ -215,8 +215,8 @@ namespace TranslationCoreAiBridge.ParatextConnector
                 List<IUSFMToken> tokens = new List<IUSFMToken>();
                 try
                 {
-                    IReadOnlyList<IUSFMToken> read = project.GetUSFMTokens(bookNum, chapterNum);
-                    if (read != null) for (int i = 0; i < read.Count; i++) tokens.Add(read[i]);
+                    IEnumerable<IUSFMToken> read = project.GetUSFMTokens(bookNum, chapterNum);
+                    if (read != null) tokens.AddRange(read);
                 }
                 catch (Exception ex)
                 {
@@ -315,8 +315,8 @@ namespace TranslationCoreAiBridge.ParatextConnector
                 try
                 {
                     List<IUSFMToken> again = new List<IUSFMToken>();
-                    IReadOnlyList<IUSFMToken> reread = project.GetUSFMTokens(bookNum, chapterNum);
-                    if (reread != null) for (int i = 0; i < reread.Count; i++) again.Add(reread[i]);
+                    IEnumerable<IUSFMToken> reread = project.GetUSFMTokens(bookNum, chapterNum);
+                    if (reread != null) again.AddRange(reread);
                     saved = project.ConvertToUSFMString(again);
                 }
                 catch (Exception ex)
