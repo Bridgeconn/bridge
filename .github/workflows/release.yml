@@ -145,8 +145,15 @@ jobs:
         run: |
           Import-Module ./scripts/WindowsRelease.psm1
           $enabled = -not [string]::IsNullOrWhiteSpace($env:BRIDGE_WINDOWS_SIGN_COMMAND)
-          if ($enabled -or $env:RELEASE_TAG -ne '') {
+          # 2026-11-03 (Benz, DECISIONS.md): until a trusted signing identity
+          # exists, a tagged release builds and attaches an unsigned Windows
+          # installer, flagged in the run summary. The Defender scan and the
+          # hash checks still gate it; only the signature requirement is lifted.
+          if ($enabled) {
             $null = Get-BridgeSigningConfiguration
+          } elseif ($env:RELEASE_TAG -ne '') {
+            '::warning::Windows release is UNSIGNED: BRIDGE_WINDOWS_SIGN_COMMAND is not set (gate relaxed 2026-11-03, #413).'
+            '**Windows installer is unsigned** (no signing identity configured; gate relaxed 2026-11-03, #413).' >> $env:GITHUB_STEP_SUMMARY
           }
           "WINDOWS_SIGNING_ENABLED=$($enabled.ToString().ToLowerInvariant())" >> $env:GITHUB_ENV
           if ($enabled) {
@@ -325,7 +332,7 @@ jobs:
         run: |
           $files = @('src-tauri/target/release/translationcore-ai-bridge.exe', 'src-tauri/target/release/bridge-engine.exe', 'src-tauri/target/release/bridge-usfm-checker.exe')
           $files += @($env:BUNDLE_PATHS -split "`r?`n" | Where-Object { $_.Trim() -ne '' })
-          $signed = $env:RELEASE_TAG -ne '' -or $env:WINDOWS_SIGNING_ENABLED -eq 'true'
+          $signed = $env:WINDOWS_SIGNING_ENABLED -eq 'true'
           ./scripts/check-windows-release.ps1 -Path $files -ReportPath "$env:RUNNER_TEMP/windows-security-report.json" -RequireSignature:$signed
 
       - name: Smoke-test the final Windows sidecars
@@ -341,7 +348,7 @@ jobs:
         run: |
           $files = @('src-tauri/target/release/translationcore-ai-bridge.exe', 'src-tauri/target/release/bridge-engine.exe', 'src-tauri/target/release/bridge-usfm-checker.exe')
           $files += @($env:BUNDLE_PATHS -split "`r?`n" | Where-Object { $_.Trim() -ne '' })
-          $signed = $env:RELEASE_TAG -ne '' -or $env:WINDOWS_SIGNING_ENABLED -eq 'true'
+          $signed = $env:WINDOWS_SIGNING_ENABLED -eq 'true'
           ./scripts/check-windows-release.ps1 -VerifyOnly -Path $files -ReportPath "$env:RUNNER_TEMP/windows-security-report.json" -RequireSignature:$signed
 
       - name: Preserve Windows security report
@@ -411,7 +418,7 @@ jobs:
           $paths = @($env:BUNDLE_PATHS -split "`r?`n" | Where-Object { $_.Trim() -ne "" })
           if ($IsWindows) {
             $files = @('src-tauri/target/release/translationcore-ai-bridge.exe', 'src-tauri/target/release/bridge-engine.exe', 'src-tauri/target/release/bridge-usfm-checker.exe') + $paths
-            ./scripts/check-windows-release.ps1 -VerifyOnly -Path $files -ReportPath "$env:RUNNER_TEMP/windows-security-report.json" -RequireSignature
+            ./scripts/check-windows-release.ps1 -VerifyOnly -Path $files -ReportPath "$env:RUNNER_TEMP/windows-security-report.json" -RequireSignature:($env:WINDOWS_SIGNING_ENABLED -eq 'true')
           }
           gh release upload $env:RELEASE_TAG @paths $env:CHECKSUM_PATH --repo ${{ github.repository }} --clobber
           if ($LASTEXITCODE -ne 0) { throw "Release upload failed" }

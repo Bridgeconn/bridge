@@ -1533,3 +1533,15 @@ remain tasks. No runtime code or Scripture was changed in recording this answer.
 (`PARATEXT_HOST_ACCEPTANCE_CHECKLIST.md`, sections E–G) is the acceptance for
 every region but the verse body, for the rename, the reverse write, lock
 revocation, Send/Receive and two devices.
+
+## 2026-11-03 — Windows signing gate relaxed until a signing identity exists (Benz, #413)
+
+**Decision:** The v0.24.0/v0.24.1 release runs failed the Windows leg because
+`BRIDGE_WINDOWS_SIGN_COMMAND` is not set: no certificate has been provisioned
+(Microsoft's Artifact Signing does not accept the Indian publisher; another CA
+must be chosen). Benz decided, relayed by Joel, that a release must not wait on
+that: a tagged release now builds and attaches an **unsigned** Windows
+installer, flagged in the run summary, while the Defender scan and hash checks
+stay as gates. The unsigned-release prohibition of #413 is suspended, not
+withdrawn: revert the three `release.yml` lines when the identity exists.
+

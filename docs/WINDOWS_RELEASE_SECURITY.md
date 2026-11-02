@@ -11,10 +11,13 @@ Microsoft has not yet confirmed whether this detection is a false positive.
 
 ## Release gates
 
-`release.yml` requires signing configuration for a Windows job that attaches to
-a GitHub release. Missing configuration fails before the expensive build. A
-manually dispatched run with `upload_to_release` blank may produce unsigned
-internal artifacts; those are not eligible for public release.
+`release.yml` signs when `BRIDGE_WINDOWS_SIGN_COMMAND` is set and requires the
+signatures to verify. **Relaxed on 2026-11-03 (Benz, DECISIONS.md):** until a
+trusted signing identity exists, a tagged release without that variable builds
+and attaches an *unsigned* Windows installer, with a warning in the run summary;
+the Defender scan, the 24-hour definition check and the hash rechecks still
+gate it. The original rule -- no unsigned public Windows release -- is restored
+by reverting that change once signing is provisioned.
 
 The workflow signs both Python sidecars before packaging. Tauri invokes the
 same signing wrapper for the application and installer via a temporary config
