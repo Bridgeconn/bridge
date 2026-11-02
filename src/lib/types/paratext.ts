@@ -165,6 +165,8 @@ export interface ParatextNoteThread extends ParatextNoteSummary {
   comments: ParatextNoteComment[];
   /** #427: every proposal in the thread, in comment order. */
   proposalItems: ParatextProposal[];
+  /** #433: the Bridge records this thread is linked to, with their closure. */
+  links?: { kind: ParatextWriteKind; localId: string; closure: ParatextThreadLink["closure"] }[];
 }
 
 export interface ParatextNoteCount {

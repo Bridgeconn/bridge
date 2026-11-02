@@ -531,7 +531,7 @@ describe("VerseList footnote handling", () => {
     expect(screen.getByRole("menu", { name: /Actions for Possible spelling issue/i }))
       .toBeInTheDocument();
     expect(screen.getAllByRole("menuitem").map((item) => item.textContent))
-      .toEqual(["Accept finding", "Ignore", "Flag for review…", "Copy word", "Search in this book", "Edit…"]);
+      .toEqual(["Accept finding", "Ignore", "Flag for review…", "Copy word", "Search in this book", "Edit…", "Send to Paratext…"]);
     // Both stay usable whether or not the check proposed a correction — the
     // menu never changes height between findings.
     for (const name of ["Accept finding", "Ignore"]) expect(screen.getByRole("menuitem", { name })).toBeEnabled();

@@ -419,6 +419,7 @@ export type EngineMethod =
   | "paratext.resolveThread"
   | "paratext.linkThread"
   | "paratext.createNote"
+  | "paratext.queueRecord"
   | "paratextReview.queue"
   | "paratextReview.preview"
   | "paratextReview.decide"
@@ -1475,6 +1476,18 @@ export const bridge = {
   paratextCreateNote(chapter: string, verse: string, text: string, selectedText = ""):
     Promise<{ item: ParatextOutboxItem | null }> {
     return call("paratext.createNote", { chapter, verse, text, selectedText });
+  },
+
+  /** #426/#433: a Paratext thread for a finding or a correction proposal.
+   *  `lines` is what the card says about the record; `text` the reviewer's
+   *  own note. Same outbox, footer and linked-project rules as a note; the
+   *  link is made once Bridge reads the thread back, and a verified Paratext
+   *  resolve then closes the record. Same record + same note sends nothing twice. */
+  paratextQueueRecord(
+    kind: "finding" | "correction_proposal", localId: string, chapter: string, verse: string,
+    text: string, lines: string[] = [], selectedText = "",
+  ): Promise<{ item: ParatextOutboxItem | null } & ParatextThreadsFor> {
+    return call("paratext.queueRecord", { kind, localId, chapter, verse, text, lines, selectedText });
   },
 
   // #428/#431/#432/#433/#434: the Paratext QA review queue over the open

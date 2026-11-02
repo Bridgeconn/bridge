@@ -21,6 +21,7 @@
   import { currentChapter, project, selectedVerse, verseKey } from "../stores";
   import {
     draftKey, dropDraft, loadParatextNoteCounts, paratextNoteRequest, readDraft, saveDraft,
+    type ParatextNoteRecord,
   } from "../paratextNotes";
   import type {
     ParatextLinkState, ParatextNoteThread, ParatextNotesIndexState, ParatextOutboxItem, ParatextProposal,
@@ -158,8 +159,13 @@
     replyText = "";
   }
 
-  async function openComposer(selectedText = ""): Promise<void> {
+  // #433: when the composer was opened for a finding or a correction
+  // proposal, the note is sent for that record and linked to it.
+  let noteRecord: ParatextNoteRecord | null = null;
+
+  async function openComposer(selectedText = "", record: ParatextNoteRecord | null = null): Promise<void> {
     composing = true;
+    noteRecord = record;
     if (selectedText) noteSelection = selectedText;
     notice = "";
     await tick();
@@ -170,8 +176,13 @@
     composing = false;
     noteText = "";
     noteSelection = "";
+    noteRecord = null;
     if (draftFor) dropDraft(draftFor);
   }
+
+  const RECORD_LABEL: Record<string, string> = {
+    finding: "finding", correction_proposal: "correction proposal", issue_resolution: "issue", note: "note",
+  };
 
   function outcome(item: ParatextOutboxItem | null, sent: string): string {
     if (!item) return "";
@@ -181,11 +192,15 @@
   }
 
   async function sendNote(): Promise<void> {
-    if (sending || !noteText.trim() || !$selectedVerse) return;
+    if (sending || !$selectedVerse) return;
+    if (!noteText.trim() && !noteRecord) return;
     sending = "note";
     notice = "";
     try {
-      const result = await bridge.paratextCreateNote($currentChapter, $selectedVerse, noteText.trim(), noteSelection.trim());
+      const result = noteRecord
+        ? await bridge.paratextQueueRecord(noteRecord.kind, noteRecord.localId, $currentChapter, $selectedVerse,
+            noteText.trim(), noteRecord.lines, noteSelection.trim())
+        : await bridge.paratextCreateNote($currentChapter, $selectedVerse, noteText.trim(), noteSelection.trim());
       notice = outcome(result.item, "Note sent to Paratext. It shows here once Bridge has read Paratext's notes file again.");
       closeComposer();
       await load($currentChapter, $selectedVerse);
@@ -244,7 +259,7 @@
          && $paratextNoteRequest.verse === $selectedVerse) {
     const asked = $paratextNoteRequest;
     paratextNoteRequest.set(null);
-    void openComposer(asked.selectedText);
+    void openComposer(asked.selectedText, asked.record ?? null);
   }
 
   const canWrite = (s: ParatextNotesIndexState | ""): boolean => s === "ready" || s === "stale" || s === "building";
@@ -286,8 +301,17 @@
     {#if canWrite(state)}
       {#if composing}
         <form class="pt-compose" on:submit|preventDefault={sendNote} aria-label="New Paratext note">
+          {#if noteRecord}
+            <p class="pt-msg pt-record" data-testid="note-record">
+              <strong>Linked to {RECORD_LABEL[noteRecord.kind]}:</strong> {noteRecord.title}.
+              A resolve in Paratext will close it in Bridge.
+            </p>
+            <ul class="pt-record-lines" aria-label="What the note says about the record">
+              {#each noteRecord.lines as line, i (i)}<li class="target">{line}</li>{/each}
+            </ul>
+          {/if}
           <label class="pt-field">
-            <span>Note for Paratext · {$currentChapter}:{$selectedVerse}</span>
+            <span>{noteRecord ? "Your note (optional)" : "Note for Paratext"} · {$currentChapter}:{$selectedVerse}</span>
             <textarea bind:this={composerBox} bind:value={noteText} rows="3"
               placeholder="Your note, as the Paratext user on this PC" disabled={Boolean(sending)} />
           </label>
@@ -296,7 +320,7 @@
             <input type="text" bind:value={noteSelection} disabled={Boolean(sending)} class="target" />
           </label>
           <div class="pt-actions">
-            <button type="submit" class="small-btn primary" disabled={Boolean(sending) || !noteText.trim()}>
+            <button type="submit" class="small-btn primary" disabled={Boolean(sending) || (!noteText.trim() && !noteRecord)}>
               {sending === "note" ? "Sending…" : "Send to Paratext"}</button>
             <button type="button" class="small-btn" on:click={closeComposer} disabled={Boolean(sending)}>Discard</button>
           </div>
@@ -327,6 +351,11 @@
           {#if thread.assignedUser}<span class="pt-assigned">Assigned to {thread.assignedUser}</span>{/if}
           {#each thread.tags as tag (tag.id)}<span class="pt-tag">{tag.name || `tag ${tag.id}`}</span>{/each}
           {#if thread.proposals?.outstanding}<span class="pt-tag pt-qa">{thread.proposals.outstanding} QA proposal{thread.proposals.outstanding === 1 ? "" : "s"}</span>{/if}
+          {#each thread.links ?? [] as link, i (i)}
+            <!-- #433: a thread linked to a Bridge record, and the closure that record got. -->
+            <span class="pt-tag pt-link" title={link.closure ? `${link.closure.status} · ${link.closure.actor}` : "Linked to a Bridge record"}>
+              {RECORD_LABEL[link.kind] ?? link.kind}{link.closure ? ` · ${link.closure.status}` : ""}</span>
+          {/each}
         </header>
         {#if thread.selectedText}<blockquote class="pt-quote">{thread.selectedText}</blockquote>{/if}
         {#each thread.proposalItems ?? [] as proposal (proposal.proposalId)}
@@ -417,6 +446,9 @@
   .pt-status { font-weight: 700; }
   .pt-tag { border-radius: 999px; padding: 0 6px; background: var(--accent-bg); color: var(--accent); }
   .pt-tag.pt-qa { font-weight: 700; }
+  .pt-tag.pt-link { background: transparent; border: 1px solid var(--accent); }
+  .pt-record { margin: 0; }
+  .pt-record-lines { margin: 0; padding-left: 16px; font-size: var(--fs-2xs); color: var(--text-2); display: grid; gap: 2px; }
   .pt-quote { margin: 6px 0; padding: 2px 8px; border-left: 3px solid var(--border-strong); color: var(--text-2); }
   .pt-comments { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
   .pt-meta { font-size: var(--fs-2xs); color: var(--text-2); }

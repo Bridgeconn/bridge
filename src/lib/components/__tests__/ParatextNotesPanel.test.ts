@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/sve
 
 const {
   paratextNotesForVerse, paratextLinkStatus, paratextRefresh, paratextNotesForChapter,
-  paratextCreateNote, paratextReplyThread, paratextResolveThread,
+  paratextCreateNote, paratextReplyThread, paratextResolveThread, paratextQueueRecord,
 } = vi.hoisted(() => ({
   paratextNotesForVerse: vi.fn(),
   paratextLinkStatus: vi.fn(),
@@ -12,11 +12,12 @@ const {
   paratextCreateNote: vi.fn(),
   paratextReplyThread: vi.fn(),
   paratextResolveThread: vi.fn(),
+  paratextQueueRecord: vi.fn(),
 }));
 vi.mock("../../api/bridgeClient", () => ({
   bridge: {
     paratextNotesForVerse, paratextLinkStatus, paratextRefresh, paratextNotesForChapter,
-    paratextCreateNote, paratextReplyThread, paratextResolveThread,
+    paratextCreateNote, paratextReplyThread, paratextResolveThread, paratextQueueRecord,
   },
 }));
 
@@ -258,6 +259,33 @@ describe("ParatextNotesPanel writes (#426) and QA proposals (#427)", () => {
     const back = await screen.findByPlaceholderText("Your note, as the Paratext user on this PC") as HTMLTextAreaElement;
     expect(back.value).toBe("draft words");
     expect(paratextCreateNote).not.toHaveBeenCalled();
+  });
+
+  it("sends a note for a finding through queueRecord with the card's lines, and shows a linked thread's closure (#433)", async () => {
+    paratextNotesForVerse.mockResolvedValue(verseAnswer("ready", [thread({
+      links: [{ kind: "finding", localId: "f1", closure: { status: "resolved in Paratext", origin: "paratext",
+        actor: "Reviewer Uma", resolvedAt: "2026-10-27T09:00:00+05:30", seenAt: "2026-10-27T09:05:00+05:30" } }],
+    })]));
+    paratextQueueRecord.mockResolvedValue({ item: outboxItem({ status: "sent", lastError: "" }), state: "ready", links: [], pending: [] });
+    render(ParatextNotesPanel);
+    expect(await screen.findByText("finding · resolved in Paratext")).toBeTruthy();
+
+    requestParatextNote("3", "4", "3,000 அடிகள்", {
+      kind: "finding", localId: "f1", title: "names.spelling_similarity · greekroom",
+      lines: ["Bridge finding · names.spelling_similarity (greekroom)", "Text: 3,000 அடிகள்"],
+    });
+    const record = await screen.findByTestId("note-record");
+    expect(record).toHaveTextContent("Linked to finding: names.spelling_similarity · greekroom");
+    expect(screen.getByText("Text: 3,000 அடிகள்")).toBeTruthy();
+    // The reviewer's own words are optional for a record: Send is enabled with an empty box.
+    const send = screen.getByRole("button", { name: "Send to Paratext" }) as HTMLButtonElement;
+    expect(send.disabled).toBe(false);
+    await fireEvent.input(screen.getByPlaceholderText("Your note, as the Paratext user on this PC"), { target: { value: "Please look." } });
+    await fireEvent.click(send);
+    await waitFor(() => expect(paratextQueueRecord).toHaveBeenCalledWith("finding", "f1", "3", "4", "Please look.",
+      ["Bridge finding · names.spelling_similarity (greekroom)", "Text: 3,000 அடிகள்"], "3,000 அடிகள்"));
+    expect(paratextCreateNote).not.toHaveBeenCalled();
+    expect(await screen.findByText(/Note sent to Paratext/)).toBeTruthy();
   });
 
   it("shows a thread's QA proposals read-only, with what the parser could say about each", async () => {
