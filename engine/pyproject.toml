@@ -26,6 +26,9 @@ dependencies = [
     # positions -- a release that shifts how it reports line/column would move
     # stored verse boundaries, and the parser refuses rather than guesses.
     "usfmtc==0.4.8",
+    # Pure-Python offline Hunspell lookup for the seven additional spelling
+    # packs (#414). Existing indic-qa and Tamil paths remain independent.
+    "spylls==0.1.7",
     # "greekroom" left commented — OWL/UAlign not wired up yet (see
     # docs/BUILD_LOG.md's Phase 4-6 status). USFM, versification,
     # and Smart Edit Distance are all vendored separately instead — none

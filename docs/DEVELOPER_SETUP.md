@@ -254,6 +254,8 @@ re-debugging from scratch.
 
 ## Running the QA gate
 
+- Windows release signing, Defender scans, checksum manifests, and Microsoft
+  detection review: [Windows release security](WINDOWS_RELEASE_SECURITY.md).
 - Python: `pytest -n auto` from `engine/` (both test roots are `testpaths`) —
   expect the counts recorded in `docs/BUILD_LOG.md`'s #74 section; `-m "not slow"`
   is the inner loop, `pytest tests/<area>` runs one package.

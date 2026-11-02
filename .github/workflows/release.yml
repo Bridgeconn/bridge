@@ -112,6 +112,10 @@ jobs:
     needs: prepare
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
+    env:
+      # A structured command, not a shell expression. Provider credentials belong
+      # in secrets/the provider's runner authentication, never in this variable.
+      BRIDGE_WINDOWS_SIGN_COMMAND: ${{ vars.BRIDGE_WINDOWS_SIGN_COMMAND }}
     strategy:
       # One OS failing must not cancel the others: the Windows installer is
       # still wanted when the Linux leg breaks on a new webkit package name.
@@ -133,6 +137,27 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Configure Windows signing
+        if: runner.os == 'Windows'
+        run: |
+          Import-Module ./scripts/WindowsRelease.psm1
+          $enabled = -not [string]::IsNullOrWhiteSpace($env:BRIDGE_WINDOWS_SIGN_COMMAND)
+          if ($enabled -or $env:RELEASE_TAG -ne '') {
+            $null = Get-BridgeSigningConfiguration
+          }
+          "WINDOWS_SIGNING_ENABLED=$($enabled.ToString().ToLowerInvariant())" >> $env:GITHUB_ENV
+          if ($enabled) {
+            $overlay = @{ bundle = @{ windows = @{ signCommand = @{
+              cmd = 'pwsh'
+              args = @('-NoProfile', '-File', (Join-Path $env:GITHUB_WORKSPACE 'scripts/sign-windows.ps1'), '-Path', '%1')
+            } } } }
+            $configPath = Join-Path $env:RUNNER_TEMP 'bridge-windows-signing.json'
+            $overlay | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $configPath -Encoding utf8
+            "WINDOWS_SIGNING_CONFIG=$configPath" >> $env:GITHUB_ENV
+          } else {
+            'Internal artifact-only build: unsigned, not eligible for public release.' >> $env:GITHUB_STEP_SUMMARY
+          }
 
       - uses: actions/setup-node@v4
         with:
@@ -193,6 +218,17 @@ jobs:
       - name: Build sidecars
         run: ./scripts/build-sidecars.ps1
 
+      - name: Sign Windows sidecars before packaging
+        if: runner.os == 'Windows' && env.WINDOWS_SIGNING_ENABLED == 'true'
+        run: |
+          ./scripts/sign-windows.ps1 -Path @('engine/dist/bridge-engine.exe', 'engine/dist/bridge-usfm-checker.exe')
+          if (-not $?) { throw 'Sidecar signing failed' }
+          $triple = ((rustc -vV | Select-String '^host:').Line -replace '^host:\s*', '').Trim()
+          if (-not $triple) { throw 'Could not determine the sidecar target triple' }
+          foreach ($name in @('bridge-engine', 'bridge-usfm-checker')) {
+            Copy-Item -LiteralPath "engine/dist/$name.exe" -Destination "src-tauri/binaries/$name-$triple.exe" -Force
+          }
+
       # Verifies the frozen pair, not the source tree — the two have diverged
       # before (PyInstaller missing a dynamically-imported vendor tree).
       #
@@ -220,7 +256,13 @@ jobs:
           # Ad-hoc signature on macOS (see the header). The Windows and Linux
           # bundlers never read this variable.
           APPLE_SIGNING_IDENTITY: "-"
-        run: npm run tauri build
+        run: |
+          if ($IsWindows -and $env:WINDOWS_SIGNING_ENABLED -eq 'true') {
+            npm run tauri build -- --config $env:WINDOWS_SIGNING_CONFIG
+          } else {
+            npm run tauri build
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop build failed' }
 
       # The bundler signs the externalBin sidecars along with the app (the
       # build log shows "Signing .../Contents/MacOS/bridge-engine"). An
@@ -263,11 +305,62 @@ jobs:
           $lines += "BUNDLE_PATHS"
           $lines | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
+      - name: Scan final Windows executables and installer
+        if: runner.os == 'Windows'
+        env:
+          BUNDLE_PATHS: ${{ steps.bundles.outputs.paths }}
+        run: |
+          $files = @('src-tauri/target/release/translationcore-ai-bridge.exe', 'src-tauri/target/release/bridge-engine.exe', 'src-tauri/target/release/bridge-usfm-checker.exe')
+          $files += @($env:BUNDLE_PATHS -split "`r?`n" | Where-Object { $_.Trim() -ne '' })
+          $signed = $env:RELEASE_TAG -ne '' -or $env:WINDOWS_SIGNING_ENABLED -eq 'true'
+          ./scripts/check-windows-release.ps1 -Path $files -ReportPath "$env:RUNNER_TEMP/windows-security-report.json" -RequireSignature:$signed
+
+      - name: Smoke-test the final Windows sidecars
+        if: runner.os == 'Windows'
+        run: |
+          python scripts/smoke_sidecars.py src-tauri/target/release/bridge-engine.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Final Windows sidecar smoke failed' }
+
+      - name: Recheck Windows files after smoke testing
+        if: runner.os == 'Windows'
+        env:
+          BUNDLE_PATHS: ${{ steps.bundles.outputs.paths }}
+        run: |
+          $files = @('src-tauri/target/release/translationcore-ai-bridge.exe', 'src-tauri/target/release/bridge-engine.exe', 'src-tauri/target/release/bridge-usfm-checker.exe')
+          $files += @($env:BUNDLE_PATHS -split "`r?`n" | Where-Object { $_.Trim() -ne '' })
+          $signed = $env:RELEASE_TAG -ne '' -or $env:WINDOWS_SIGNING_ENABLED -eq 'true'
+          ./scripts/check-windows-release.ps1 -VerifyOnly -Path $files -ReportPath "$env:RUNNER_TEMP/windows-security-report.json" -RequireSignature:$signed
+
+      - name: Preserve Windows security report
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-security-report
+          path: ${{ runner.temp }}/windows-security-report.json
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Write checksums for the final bundles
+        id: checksums
+        env:
+          BUNDLE_PATHS: ${{ steps.bundles.outputs.paths }}
+          ARTIFACT_NAME: ${{ matrix.artifact }}
+        run: |
+          $paths = @($env:BUNDLE_PATHS -split "`r?`n" | Where-Object { $_.Trim() -ne '' })
+          $manifest = Join-Path (Split-Path $paths[0] -Parent) "$env:ARTIFACT_NAME-SHA256SUMS.txt"
+          $paths | ForEach-Object {
+            $hash = (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $([IO.Path]::GetFileName($_))"
+          } | Set-Content -LiteralPath $manifest -Encoding utf8
+          "path=$manifest" >> $env:GITHUB_OUTPUT
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ steps.bundles.outputs.paths }}
+          path: |
+            ${{ steps.bundles.outputs.paths }}
+            ${{ steps.checksums.outputs.path }}
           if-no-files-found: error
           retention-days: 90
 
@@ -279,10 +372,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           BUNDLE_PATHS: ${{ steps.bundles.outputs.paths }}
+          CHECKSUM_PATH: ${{ steps.checksums.outputs.path }}
         run: |
           # @(...) is load-bearing: with one bundle, Where-Object hands back a
           # bare string, and splatting a string passes every character as its
           # own argument ("no matches found for `U`", tag run 38235008945).
           $paths = @($env:BUNDLE_PATHS -split "`r?`n" | Where-Object { $_.Trim() -ne "" })
-          gh release upload $env:RELEASE_TAG @paths --repo ${{ github.repository }} --clobber
+          if ($IsWindows) {
+            $files = @('src-tauri/target/release/translationcore-ai-bridge.exe', 'src-tauri/target/release/bridge-engine.exe', 'src-tauri/target/release/bridge-usfm-checker.exe') + $paths
+            ./scripts/check-windows-release.ps1 -VerifyOnly -Path $files -ReportPath "$env:RUNNER_TEMP/windows-security-report.json" -RequireSignature
+          }
+          gh release upload $env:RELEASE_TAG @paths $env:CHECKSUM_PATH --repo ${{ github.repository }} --clobber
           if ($LASTEXITCODE -ne 0) { throw "Release upload failed" }

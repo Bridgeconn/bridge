@@ -1,0 +1,14 @@
+{
+ "pack": "ne-irv",
+ "version": "1.0.0",
+ "language": "ne",
+ "script": "Deva",
+ "description": "Nepali offline dictionary spelling candidates from LibreOffice/Hunspell. An absent word is not proof of an error. No clause grammar or meaning assessment.",
+ "spellingDictionary": {
+  "path": "dictionary/ne_NP",
+  "manifest": "dictionary/MANIFEST.json"
+ },
+ "rules": [
+  "rules/spelling.dictionary-miss.json"
+ ]
+}

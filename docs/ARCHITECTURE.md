@@ -345,6 +345,7 @@ This is the repository's one doc map; `CLAUDE.md`, `DEVELOPER_GUIDE.md` and
 | `SOFTWARE_REQUIREMENTS_SPECIFICATION.md` | Normative current-product requirements: scope, functional behavior, data and safety rules, quality attributes, interfaces, acceptance, and traceability. |
 | `DEVELOPER_GUIDE.md` | Roadmap: what was planned per phase and what actually shipped, plus dependencies, AI triage and the finding context menu. |
 | `DEVELOPER_SETUP.md` | How to get engine, frontend and desktop app running on Windows, and how to build the installer. |
+| `WINDOWS_RELEASE_SECURITY.md` | Windows signing prerequisites, Defender release gates, exact-artifact checksums, Microsoft detection review, and clean-Windows installed acceptance. |
 | `BUILD_LOG.md` | The session record: the investigation behind every decision and gotcha, appended as work lands. |
 | `DECISIONS.md` | Five lines per decision, newest first, with what each one rules out. |
 | `INVARIANTS.md` | The rules the pipeline may not break: token identity (§20), the Unicode span contract (§21) and comparison invariant (§21a), embeddings policy (§31), the hard constraints (§39) and continuity rules (§44.8). Cited by section number from engine code. |

@@ -858,3 +858,56 @@ passed the full Windows Python suite (5,655 passed, 2 skipped, 3 xfailed), front
 foreground latency and both human-label accuracy gates. #132, #358 and #353 are
 closed; the #358 and #353 board items are Done. This does not change the NOT RUN
 status of M20's separate automatic-recheck recovery scenario.
+
+
+### 2026-10-30 — #414 spelling packs for the seven additional languages
+
+Source: 43 focused tests passed; the final Book words/review flow gate passed
+8 tests after the missing-corpus-count UI integration. All twelve packs load
+through the real scanner. Frontend: check 0 errors/warnings, 1,046 tests passed,
+production build passed.
+Full engine run: 5,696 passed, 3 xfailed, 2 failures from pre-registration
+assertions (Marathi canonical code and Bengali pack availability). Both
+expectations are updated; the complete Language QA service module rerun passed
+298 tests. The full suite was not repeated after these test-only updates.
+Genesis 1 was scanned read-only in Assamese, Bengali, Gujarati, Kannada,
+Marathi, Nepali and Telugu. The measured dictionary-miss counts and substantial
+coverage gaps are in LANGUAGE_QA_PACKS.md; these are not native-labelled errors.
+
+Frozen: isolated PyInstaller pair built; expanded smoke passed, including the
+new Marathi dictionary plus existing Hindi/Tamil checks. Desktop **NOT RUN**:
+open each new-language project,
+confirm the selected pack/coverage, inspect marks and raw Unicode spans, add an
+accepted word to Dictionary, Ignore a candidate and reopen, and confirm that
+existing Hindi/Tamil checks still appear. No new linguistic accuracy sign-off:
+each language still needs native-labelled correct and incorrect examples.
+
+
+### 2026-10-30 — #417 provisional AI review during normal work
+
+Source: 32 importer/flags/authorization tests passed on the final importer;
+true code-point spans, verse bridges/segments, unsafe chapter keys,
+source/project changes, untrusted provenance and repeat imports covered.
+The actual review packet has 111 matching source questions; real dispatcher
+Ruth replays across 12 languages imported 21 matching cases, reimported
+none, and wrote no Scripture or learned fixes. Full engine result is recorded
+in BUILD_LOG. Frontend: check 0 errors/warnings, 1,048 tests passed,
+production build passed.
+
+Frozen: isolated final engine built and expanded smoke passed, including
+preview/import and no learned fix/Scripture write/recreated resolved case.
+Desktop NOT RUN: open a matching book, go to Language QA > Flags, preview
+the D-drive AI review JSON, check scope/staleness counts, import, inspect
+inline flags, record a conclusion, keep an uncertain question open, resolve
+and reopen another, and repeat import without resurrecting deleted cases.
+The installed app was not replaced.
+
+Native accuracy remains PENDING. R1 was confirmed AI-assisted; neither the
+44 reported errors nor the other AI verdicts are native ground truth. No new
+grammar rule, precision promotion, approved dictionary word, ignored finding
+or automatic Scripture correction was introduced. A resolved flag is only
+a recorded review outcome, not linguistic certification.
+
+Final #417 full engine gate: 5,709 passed and 3 xfailed; the final targeted
+32-test gate covers the later import validation cases. Frozen final rebuild
+and smoke pass. Native and installed desktop rows remain pending as above.

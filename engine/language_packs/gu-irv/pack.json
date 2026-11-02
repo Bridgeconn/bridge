@@ -1,0 +1,14 @@
+{
+ "pack": "gu-irv",
+ "version": "1.0.0",
+ "language": "gu",
+ "script": "Gujr",
+ "description": "Gujarati offline dictionary spelling candidates from LibreOffice/Hunspell. An absent word is not proof of an error. No clause grammar or meaning assessment.",
+ "spellingDictionary": {
+  "path": "dictionary/gu_IN",
+  "manifest": "dictionary/MANIFEST.json"
+ },
+ "rules": [
+  "rules/spelling.dictionary-miss.json"
+ ]
+}

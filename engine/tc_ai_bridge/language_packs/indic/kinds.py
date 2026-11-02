@@ -26,9 +26,9 @@ from ..tokens import GRAPHEME, WORD
 
 LEXICON_CHECKS = ("known-split", "known-misspelling", "rare-near-common")
 KINDS = ("token-context", "regex", "sign-sequence", "mixed-script", "reduplication-allowlist",
-         "lexicon-lookup", "wordlist-variant")
+         "lexicon-lookup", "wordlist-variant", "dictionary-lookup")
 PAIR_KINDS = frozenset({"reduplication-allowlist"})
-VERSE_KINDS = frozenset({"regex", "sign-sequence", "mixed-script"})
+VERSE_KINDS = frozenset({"regex", "sign-sequence", "mixed-script", "dictionary-lookup"})
 BOOK_KINDS = frozenset({"wordlist-variant"})
 
 # lexicon-lookup rare-near-common and wordlist-variant thresholds: what a rule
@@ -80,7 +80,14 @@ def compile_match(kind: str, match: dict[str, Any], where: str) -> dict[str, Any
     refused, as everywhere in a pack."""
     allowed = {"type"}
     params: dict[str, Any] = {}
-    if kind == "sign-sequence":
+    if kind == "dictionary-lookup":
+        allowed |= {"script"}
+        script = _text(match, "script", where)
+        try:
+            params = {"script": regex.compile(rf"[\p{{Script={script}}}\p{{M}}\u200c\u200d]+")}
+        except regex.error as exc:
+            raise KindError(f"{where}: match.script: {exc}") from exc
+    elif kind == "sign-sequence":
         # A dependent sign (vowel sign, virama, ...) must follow a base letter.
         allowed |= {"bases", "signs"}
         params = {"bases": frozenset(nfc(_text(match, "bases", where))),

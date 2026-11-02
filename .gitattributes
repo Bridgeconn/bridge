@@ -9,3 +9,5 @@ engine/resources/el-x-koine/lexicons/strongs/v1.0.2_openscriptures/** -text -dif
 # The code keeps its diffs for review; the dictionaries are data.
 engine/vendor/indic-qa/** -text
 engine/language_packs/*-irv/dictionary/** -text -diff
+# #414: shared full licence texts have SHA-256 manifests too.
+engine/language_packs/LICENSES/** -text

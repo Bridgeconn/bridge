@@ -1,0 +1,12 @@
+{
+ "source": "https://github.com/LibreOffice/dictionaries",
+ "commit": "4f1df64b2e8e14751aa7c2205d170ca016071315",
+ "directory": "mr_IN",
+ "license": "GPL-2.0-only",
+ "files": {
+  "mr_IN.aff": "f870dde7dc0e50b15467b159c3c4c893c339936f1aa3642a4ab3303a13510ed9",
+  "mr_IN.dic": "fe1112d88208b928dc2cca76f18bc3161b99c67b483778ed67fe5877461eb25a",
+  "COPYING": "204d8eff92f95aac4df6c8122bc1505f468f3a901e5a4cc08940e0ede1938994"
+ },
+ "normalizations": []
+}

@@ -57,7 +57,11 @@
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   <div class="actions">
     {#if flag.status === "open"}
-      <button type="button" on:click={() => status("resolved")}>Resolve</button>
+      {#if flag.aiReview}
+        <span class="meta">Record your check under Language QA → Flags.</span>
+      {:else}
+        <button type="button" on:click={() => status("resolved")}>Resolve</button>
+      {/if}
     {:else}
       <button type="button" on:click={() => status("open")}>Reopen</button>
     {/if}

@@ -1,0 +1,33 @@
+name: Windows release checks
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/release.yml'
+      - '.github/workflows/windows-release-checks.yml'
+      - 'scripts/WindowsRelease.psm1'
+      - 'scripts/*windows*.ps1'
+      - 'scripts/tests/windows-release.Tests.ps1'
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - '.github/workflows/windows-release-checks.yml'
+      - 'scripts/WindowsRelease.psm1'
+      - 'scripts/*windows*.ps1'
+      - 'scripts/tests/windows-release.Tests.ps1'
+
+permissions:
+  contents: read
+
+jobs:
+  security-gate-tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test Windows release failure handling
+        shell: powershell
+        run: |
+          Import-Module Pester -RequiredVersion 3.4.0 -ErrorAction Stop
+          $result = Invoke-Pester -Script scripts/tests/windows-release.Tests.ps1 -PassThru
+          if ($result.FailedCount -ne 0 -or $result.TotalCount -eq 0) { throw 'Windows release checks failed' }

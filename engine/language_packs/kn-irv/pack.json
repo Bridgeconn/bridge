@@ -1,0 +1,14 @@
+{
+ "pack": "kn-irv",
+ "version": "1.0.0",
+ "language": "kn",
+ "script": "Knda",
+ "description": "Kannada offline dictionary spelling candidates from LibreOffice/Hunspell. An absent word is not proof of an error. No clause grammar or meaning assessment.",
+ "spellingDictionary": {
+  "path": "dictionary/kn_IN",
+  "manifest": "dictionary/MANIFEST.json"
+ },
+ "rules": [
+  "rules/spelling.dictionary-miss.json"
+ ]
+}

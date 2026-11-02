@@ -991,7 +991,8 @@ def test_detection_metadata_conflicts_shared_scripts_and_mixed_input():
     assert detect_language(tamil, "hin")["basis"] == "metadata-conflict"
     assert detect_language(tamil, "hin")["pack"] == "common"
     assert detect_language("देवनागरी " * 20)["language"] == "und"
-    assert detect_language("देवनागरी " * 20, "mar")["language"] == "mar"
+    marathi = detect_language("देवनागरी " * 20, "mar")
+    assert marathi["language"] == "mr" and marathi["pack"] == "mr-irv"
     assert detect_language("hello world " * 20, "ta-Latn")["pack"] == "common"
     assert detect_language("தமிழ் abcde " * 20)["basis"] == "mixed-script"
     assert detect_language("123")["language"] == "und"
@@ -1031,9 +1032,12 @@ def test_a_conflict_runs_common_checks_and_names_both_languages():
 def test_a_shared_script_never_suggests_a_pack_without_metadata():
     # Devanagari is written by Hindi, Marathi, Nepali and Sanskrit: never guessed.
     assert detect_language("देवनागरी लिपि में लिखा पाठ " * 10)["pack"] == "common"
-    # A language with no registered pack gets the common checks, however clear its script.
-    # (Malayalam got the ml-irv pack on 2026-10-07; Bengali has none.)
-    assert detect_language("বাংলা লিপিতে লেখা পাঠ্য " * 10, "bn")["pack"] == "common"
+    # Bengali/Assamese share a script too. Bengali now has a pack (#414),
+    # but script alone still must not choose it.
+    assert detect_language("বাংলা লিপিতে লেখা পাঠ্য " * 10)["pack"] == "common"
+    assert detect_language("বাংলা লিপিতে লেখা পাঠ্য " * 10, "bn")["pack"] == "bn-irv"
+    # An unregistered language still gets common checks with clear metadata.
+    assert detect_language("देवनागरी लिपि में लिखा पाठ " * 10, "sa")["pack"] == "common"
 
 
 def test_wordlist_findings_flags_a_rare_pulli_variant_of_a_common_word():

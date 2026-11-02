@@ -55,6 +55,25 @@ function replace(flag: LanguageQaFlag, next: LanguageQaFlag | null): void {
   });
 }
 
+/** Refresh the current book after importing questions; preserve no stale markers. */
+export function publishBookFlags(flags: LanguageQaFlag[]): void {
+  const grouped: Record<string, LanguageQaFlag[]> = {};
+  for (const flag of flags) (grouped[keyOf(flag)] ??= []).push(flag);
+  flagsByVerse.set(grouped);
+}
+
+export async function recordFlagCheck(projectPath: string, flag: LanguageQaFlag, conclusion: string, resolve = true): Promise<string> {
+  if (!conclusion.trim()) return "Record what you checked before resolving this question.";
+  const note = `${flag.note}\nHuman check (${new Date().toISOString()}): ${conclusion.trim()}`;
+  try {
+    const { flag: saved } = await bridge.languageQaFlagUpdate(projectPath, flag.flagId, { note, status: resolve ? "resolved" : "open" });
+    replace(flag, saved);
+    return "";
+  } catch (cause) {
+    return message(cause);
+  }
+}
+
 /** Resolve or reopen. Shows at once; restored if the engine refuses. */
 export async function setFlagStatus(projectPath: string, flag: LanguageQaFlag, status: Exclude<FlagStatus, "deleted">): Promise<string> {
   replace(flag, { ...flag, status });

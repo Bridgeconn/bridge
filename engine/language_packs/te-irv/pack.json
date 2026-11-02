@@ -1,0 +1,14 @@
+{
+ "pack": "te-irv",
+ "version": "1.0.0",
+ "language": "te",
+ "script": "Telu",
+ "description": "Telugu offline dictionary spelling candidates from LibreOffice/Hunspell. An absent word is not proof of an error. No clause grammar or meaning assessment.",
+ "spellingDictionary": {
+  "path": "dictionary/te_IN",
+  "manifest": "dictionary/MANIFEST.json"
+ },
+ "rules": [
+  "rules/spelling.dictionary-miss.json"
+ ]
+}

@@ -210,6 +210,8 @@ export type FlagStatus = "open" | "resolved" | "deleted";
 
 /** A reviewer's question on a passage (workbench v6). Never a Scripture write. */
 export interface LanguageQaFlag {
+  /** Imported proposal provenance; resolving it never creates benchmark labels. */
+  aiReview?: { packetId: string; caseId: string; sourceArchiveSha256: string; provenance: "ai-assisted-native-pending" };
   flagId: string;
   chapter: string;
   verse: string;
@@ -228,6 +230,20 @@ export interface LanguageQaFlag {
   status: FlagStatus;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AiReviewImportPreview {
+  packetId: string;
+  provenance: "ai-assisted-native-pending";
+  sha256: string;
+  book: string;
+  language: string;
+  ready: number;
+  existing: number;
+  stale: number;
+  otherScope: number;
+  imported?: number;
+  examples: { id: string; chapter: string; verse: string; text: string; note: string }[];
 }
 
 export interface FlagInput {
@@ -249,8 +265,9 @@ export interface BookWordRow {
   /** The checker's view (irv_ok: the IRV uses it; unknown: neither), or "added" to the project word list. */
   status: "unknown" | "irv_ok" | "inflected_ok" | "compound" | "rare_near_common" | "added";
   countBook: number;
-  countIrv: number;
-  countOv: number;
+  /** Null when the spelling pack has no corresponding corpus snapshot. */
+  countIrv: number | null;
+  countOv: number | null;
   firstRef: { chapter: string; verse: string };
 }
 

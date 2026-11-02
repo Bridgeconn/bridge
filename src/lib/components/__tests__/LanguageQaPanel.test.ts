@@ -19,6 +19,9 @@ const learnedForgetCall = vi.fn();
 const learnedRestoreCall = vi.fn();
 const flagsListCall = vi.fn();
 const flagUpdateCall = vi.fn();
+const pickReviewCall = vi.fn();
+const reviewPreviewCall = vi.fn();
+const reviewImportCall = vi.fn();
 const bookWordsCall = vi.fn();
 const wordsAddCall = vi.fn();
 const verseHistoryCall = vi.fn();
@@ -32,6 +35,9 @@ vi.mock("../../api/bridgeClient", () => ({ bridge: {
   languageQaLearnedRestore: (...args: unknown[]) => learnedRestoreCall(...args),
   languageQaFlagsList: (...args: unknown[]) => flagsListCall(...args),
   languageQaFlagUpdate: (...args: unknown[]) => flagUpdateCall(...args),
+  pickJsonFile: (...args: unknown[]) => pickReviewCall(...args),
+  languageQaReviewPreview: (...args: unknown[]) => reviewPreviewCall(...args),
+  languageQaReviewImport: (...args: unknown[]) => reviewImportCall(...args),
   languageQaBookWords: (...args: unknown[]) => bookWordsCall(...args),
   languageQaWordsAdd: (...args: unknown[]) => wordsAddCall(...args),
   verseHistory: (...args: unknown[]) => verseHistoryCall(...args),
@@ -469,6 +475,51 @@ describe("Language QA", () => {
     await waitFor(() => expect(screen.queryByText("Is this the sense?")).toBeNull());
   });
 
+  it("previews an AI review file and imports matching questions only after confirmation", async () => {
+    flagsListCall.mockReset().mockResolvedValue({ flags: [] });
+    pickReviewCall.mockReset().mockResolvedValue("D:/review.json");
+    const preview = { packetId: "pilot-1", provenance: "ai-assisted-native-pending", sha256: "filehash",
+      book: "php", language: "ta", ready: 2, existing: 1, stale: 3, otherScope: 9,
+      examples: [{ id: "c1", chapter: "1", verse: "2", text: "தேவன்", note: "AI proposal" }] };
+    reviewPreviewCall.mockReset().mockResolvedValue(preview);
+    reviewImportCall.mockReset().mockResolvedValue({ ...preview, imported: 2 });
+    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
+    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
+    await fireEvent.click(screen.getByRole("tab", { name: "Flags" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Import AI review…" }));
+    expect(await screen.findByText("AI-assisted review — native confirmation pending.")).toBeTruthy();
+    expect(reviewPreviewCall).toHaveBeenCalledWith("C:/project", "D:/review.json");
+    expect(reviewImportCall).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole("button", { name: "Import 2 questions" }));
+    await waitFor(() => expect(reviewImportCall).toHaveBeenCalledWith("C:/project", "D:/review.json", "filehash"));
+    expect(await screen.findByText(/Imported 2 open questions/)).toBeTruthy();
+  });
+
+  it("records a human conclusion on an AI question and can keep uncertainty open", async () => {
+    const flag = { flagId: "ai-1", chapter: "1", verse: "2", verseEnd: null, start: 0, end: 5,
+      text: "தேவன்", textHash: "h", type: "spelling" as const,
+      note: "AI-assisted review — native confirmation pending.", suggested: null, findingId: null,
+      reviewer: "AI-assisted review", status: "open" as const, createdAt: "2026-10-30", updatedAt: "2026-10-30",
+      aiReview: { packetId: "p1", caseId: "c1", sourceArchiveSha256: "a".repeat(64), provenance: "ai-assisted-native-pending" as const } };
+    flagsListCall.mockReset().mockResolvedValue({ flags: [flag] });
+    flagUpdateCall.mockReset().mockImplementation(async (_path, _id, patch) => {
+      const saved = { ...flag, ...patch };
+      flagsListCall.mockResolvedValue({ flags: [saved] });
+      return { flag: saved };
+    });
+    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
+    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
+    await fireEvent.click(screen.getByRole("tab", { name: "Flags" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Record check…" }));
+    expect((screen.getByRole("button", { name: "Save and resolve" }) as HTMLButtonElement).disabled).toBe(true);
+    await fireEvent.input(screen.getByRole("textbox", { name: "Human check" }), { target: { value: "Still uncertain; ask the native reviewer." } });
+    await fireEvent.click(screen.getByRole("button", { name: "Save and keep open" }));
+    await waitFor(() => expect(flagUpdateCall).toHaveBeenCalledWith("C:/project", "ai-1", {
+      status: "open", note: expect.stringContaining("Still uncertain; ask the native reviewer.") }));
+    expect(flagUpdateCall.mock.calls[0][2].note).toContain(flag.note);
+    expect(flagUpdateCall.mock.calls[0][2].note).toContain("Human check (");
+  });
+
   it("lists the book's edits by day in the Edits tab, with what changed, and navigates to one", async () => {
     const edit = (verse: string, timestamp: string, batchId: string | null = null) => ({
       chapter: "2", verse, timestamp, username: "Benz", verseBefore: "a", verseAfter: "b",
@@ -504,6 +555,20 @@ describe("Language QA", () => {
     await waitFor(() => expect(wordsAddCall).toHaveBeenCalledWith("C:/project", ["राज्यपाल"], "book"));
     expect(await screen.findByText(/1 word added to the dictionary\./)).toBeTruthy();
     expect(screen.getByText("in dictionary")).toBeTruthy();
+  });
+
+  it("a dictionary without corpus counts shows unavailable counts and keeps manual word selection", async () => {
+    bookWordsCall.mockReset().mockResolvedValue({ ready: true, total: 1, words: [{ word: "माणूसमाणूस",
+      status: "unknown", countBook: 2, countIrv: null, countOv: null, firstRef: { chapter: "1", verse: "1" } }] });
+    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
+    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
+    await fireEvent.click(screen.getByRole("tab", { name: /^Words in / }));
+    expect(await screen.findByText("माणूसमाणूस")).toBeTruthy();
+    expect(screen.getAllByRole("cell", { name: "—" })).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "Tick" })).toBeNull();
+    const checkbox = screen.getByRole("checkbox", { name: "Tick माणूसमाणूस" });
+    await fireEvent.click(checkbox);
+    expect((checkbox as HTMLInputElement).checked).toBe(true);
   });
 });
 

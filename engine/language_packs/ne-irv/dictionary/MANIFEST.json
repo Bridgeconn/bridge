@@ -1,0 +1,12 @@
+{
+ "source": "https://github.com/LibreOffice/dictionaries",
+ "commit": "4f1df64b2e8e14751aa7c2205d170ca016071315",
+ "directory": "ne_NP",
+ "license": "LGPL-2.1-only",
+ "files": {
+  "ne_NP.aff": "ab53d76a82da5229d484ce0d4c892f6c1ffba5fddeb7bac73685cbf590ae130d",
+  "ne_NP.dic": "f3e8877d0f7f12c3ab7ef812388a77c20a9fcd3f8cc24d973709ec517150598d",
+  "README_ne_NP.txt": "3d4a5a1f21be6c552e11bee42b149ac7b2c93879c50206a54f09f6b27c4a7e7f"
+ },
+ "normalizations": []
+}

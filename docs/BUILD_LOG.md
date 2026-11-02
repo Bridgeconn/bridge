@@ -22749,6 +22749,466 @@ and unchanged after a pick-up; the engine fallback is read once when the store i
 desktop at 1366x768 with a long verse (the section wraps and the interlinear below keeps its
 max-height, so the bank and footer should stay on screen, but that is a visual check).
 
+## 2026-10-29 — #412 urgent manual-alignment drop latency investigation
+
+Keyigumpeule Thou reports a 2–3 second wait after dragging a target word onto a
+Hebrew source word. Filed [#412](https://github.com/Bridgeconn/bridge/issues/412)
+with source references, measured evidence and acceptance criteria; linked it from
+the existing translationCore alignment request #411. At Benz's request it carries
+`urgent`, `important`, `priority:highest` and `severity:P1`, and is Ready at the top
+of Bridge board 40. The board's Priority field currently has no options; its
+configuration was left alone. No implementation fix or release is claimed.
+
+**Confirmed cause at 5782999.** After an alignment save, `_cached_file_json` refuses
+to reuse a chapter parse for `_RACY_NS = 2_000_000_000` after the file's mtime.
+`_alignment_context` scans the chapter for counts, and `_refresh_progress_alignment`
+scans it again; each verse accessor can therefore re-read/decode the entire fresh
+chapter. The modal awaits this save and a separate alignment-only recheck before
+clearing `busy`. Book-wide invalidation and journal writes add costs, but the
+repeated parsing dominated the controlled long-chapter reproduction.
+
+**Ran.** Windows/Python 3.12.4 engine venv, disposable synthetic Hebrew-source/
+English-target projects with isolated app data, 25 tokens per side per verse,
+production journal/database settings. Unbound Language QA and waited for its pass
+lock before controlled measurements. Twenty save-plus-recheck calls: p95 818.6 ms
+for 1 x 40 verses, 1,492.8 ms for 50 x 40. A separate read-count run found 93 chapter
+reads/parses per drop at 40 verses (461.8–497.6 ms in reads/parsing). Five drops at
+176 verses took 2,296.5–2,360.7 ms for the save, with 85–92 reads/parses taking
+1,707.7–1,763.0 ms; the recheck took 2.1–5.4 ms. No production caching or durability
+guard was changed. Initial exploratory profiles had background Language QA active;
+the controlled measurements above exclude it.
+
+**Not verified.** The reporter's installed version, project/reference, target
+language or hardware; pointer-to-paint latency; the frozen or installed desktop.
+#412 requires same-environment before/after evidence, Tier A p95 100/300 ms over
+at least 20 drops per scenario, bounded chapter reads, external-edit safety,
+identity/history/completion/staleness/progress preservation, and reporter retest.
+Only this investigation log changed in tracked source; implementation gates were
+not run because no application code changed.
+
+Historical status: the #412 investigation above predates the upstream fix in
+435ef6d and its perf-table follow-up in 7786d39, now included in main. It is
+retained as measurement evidence, not a claim that the old defect is unfixed.
+
+## 2026-10-30 — #413 Windows release signing and Defender gates
+
+Benz's official v0.23.0 installation failed before engine startup. Defender's
+Protection History identified `Trojan:Win32/Bearfoos.A!ml` and quarantined
+`%LOCALAPPDATA%/Bridge/bridge-engine.exe` (OS error 225, previously error 2 when
+missing). `D:/Bridge_0.23.0_x64-setup.exe` matches the GitHub release digest
+`9d5b5fdd4d349005417a61d97f38f2306b17560e0ba497ff35db0e0ac346a6cb` and is
+unsigned. This is provenance evidence, not proof that the detection is false.
+Benz authorized implementing the prevention work and confirmed no known signing
+certificate/service. Filed [#413](https://github.com/Bridgeconn/bridge/issues/413)
+using the Idea fields; the connector returned 403, but GitHub CLI succeeded.
+
+**Prepared locally.** `WindowsRelease.psm1` plus signing/scan wrappers:
+structured provider-neutral signer command, trusted timestamped Authenticode
+verification, active Defender checks, definition updates/freshness, custom scans
+with `-DisableRemediation`, JSON diagnostics, and exact file-set/hash checks
+before upload. `release.yml` refuses public Windows upload without signing
+configuration, signs sidecars before packaging, supplies a Tauri sign-command
+overlay for the shell/installer, scans final binaries/installer, smokes the final
+packaged sidecars, and rechecks hashes. It publishes per-platform checksum
+manifests with final bundles. Artifact-only internal builds may remain unsigned;
+there is no unsigned public fallback. macOS/Linux keep their existing build/sign
+behavior and gain checksum manifests. A separate path-filtered workflow tests
+the release failure handling using Windows' bundled Pester 3.4.0. The security
+runbook records signing prerequisites, Microsoft submission text and the separate
+clean-Windows installed-acceptance procedure; linked it from setup/the doc map.
+
+**Verified.** 19 Pester tests pass, including detection/scan errors, unavailable
+Defender, stale definitions, disabled protection, unsigned/untimestamped files,
+failed/no-op signers, omitted/changed artifacts, stale reports and unsigned-build
+promotion. The test signatures/scanner are mocked; these tests are not malware
+verdicts. PowerShell parses the scripts and all 19 workflow PowerShell blocks
+(GitHub expression placeholders substituted for parsing); both YAMLs parse.
+The generated signing overlay validates against the installed Tauri CLI JSON
+schema. `git diff --check` passes.
+
+**Real local scans.** Elevated custom scans, with protection settings unchanged,
+reported no threats in the matching installer and subsequently in the restored
+installed engine, USFM checker, shell and installer. Defender definitions
+`1.463.31.0`, updated 2026-10-29 16:50:56 UTC; every scan exit code 0; hashes
+unchanged across scanning. Installed engine SHA-256:
+`6b2da6f2e34ed833e66bdd7fdaae8f18815abfde9f5990479df4ea2b5702c651`.
+Reports are in ignored `.test-temp-windows-release/`. All four files are unsigned;
+the real installer is correctly rejected by the gate with `-RequireSignature`.
+The engine had become present again before its scan; this session did not
+restore it, allow a detection, set exclusions or disable protection.
+
+**Still pending.** A publisher signing identity/service and its CI authentication;
+actual trusted signing/timestamp validation on newly built artifacts; Microsoft
+submission/sign-in and its final determination (the computer-use Node runtime
+could not start, so no submission was made); a release workflow run and clean-VM
+installed acceptance. This is a local implementation, not a published fix or a
+guarantee against later antivirus detections. No commit, push or replacement
+release was made. Frontend/engine/Rust suites and a new frozen build were not run:
+no application, engine, Rust, spec or vendor source changed. The existing local
+checkout is v0.21.0, so its older build output was not substituted for v0.23.0.
+The pre-existing #412 build-log changes were retained.
+
+### #413 follow-up — publisher confirmed; Azure eligibility checked
+
+Benz confirmed the exact publisher as **Bridge Connectivity Solutions Pvt.
+Ltd.**, registered in **India**, and confirmed an existing Azure subscription.
+Added that legal name as `bundle.publisher` in `tauri.conf.json`; it is installer
+metadata, not a certificate or trusted signature. The configuration validates
+against the installed Tauri CLI schema; `git diff --check` passes. The change is
+metadata/docs only, so the 19 previously passing signing/scan tests were not
+repeated.
+
+Checked Microsoft's current [Artifact Signing setup
+requirements](https://learn.microsoft.com/en-us/azure/artifact-signing/quickstart):
+India is not in the supported Public Trust organization jurisdictions as of
+30 Oct 2026. Existing Azure billing does not establish signing eligibility.
+Private Trust/Public Trust Test profiles are not publicly trusted substitutes
+([trust models](https://learn.microsoft.com/en-us/azure/artifact-signing/concept-trust-models)).
+Retained the provider-neutral integration instead of adding an ineligible Azure
+Artifact Signing deployment. No Azure resource/account, role assignment, paid
+order or signing credential was created. The next prerequisite is a public
+organization code-signing certificate with a supported hardware/cloud signing
+service whose issuer confirms it can validate this Indian entity. Supplier
+selection, cost approval and identity validation remain pending.
+
+
+## 2026-10-30 — Twelve-language spelling expansion, existing grammar reused (#414)
+
+User requested Hindi, Marathi, Bengali, Assamese, Punjabi, Gujarati, Odia,
+Tamil, Telugu, Kannada, Malayalam and Nepali, explicitly without duplicate work.
+After being shown LQA-3's whole-clause grammar boundary, the user selected
+"Expand spelling and narrowly evidenced grammar checks". No boundary, calibrated
+threshold, Scripture writer, schema or semantic golden was changed.
+
+Audit: the registry shipped only hi/ml/or/pa/ta; their existing catalogues have
+41/43/38/30/38 rules respectively (Tamil includes its indic-qa layer). They were
+not regenerated. Existing bounded grammar leads remain in Hindi (7), Malayalam
+(5), Odia (3), Punjabi (2), and Tamil retains its sandhi/participle rules. The
+seven missing languages had common technical checks only.
+
+Implementation: seven data-only packs share a new generic `dictionary-lookup`
+kind (`language_packs/spelling.py`) using offline Spylls 0.1.7. Affixes are
+evaluated rather than discarding flags and pretending a stem list is a full
+dictionary. New rules report low-confidence dictionary-miss review candidates,
+not grammatical errors; they infer no replacement. Registry aliases include
+ISO-3 forms and npi for Nepali. Existing decisions, house style, caches, Unicode
+coordinates, metadata/script safety and correction paths are reused. Coverage
+lists the actual enabled categories instead of claiming Tamil sandhi for the
+new packs. The old five packs' data and finding identities are untouched.
+
+Data: pinned LibreOffice/dictionaries commit
+`4f1df64b2e8e14751aa7c2205d170ca016071315`, ~13.6 MB, with original per-pack
+licence notices, SHA-256 manifests and complete GPL/LGPL texts. Spylls' actual
+LICENSE is MPL-2.0 despite its incorrect MIT wheel classifier; that notice and
+its source URL are retained. No runtime download, server or new vendor tree.
+`scripts/sync_hunspell_packs.py` is the build-time fetch/check path; PyInstaller
+includes the module and its distribution notice. The dictionaries use the
+existing external `language_packs` packaging path.
+
+Real-resource investigation: stock Spylls fails loading Bengali on numeric SFX
+counts such as `2$`; there are SIX malformed headers (the initial issue notes
+said four before the complete header scan). The wrapper normalizes those count
+suffixes in memory only. It also removes UTF-8 BOMs (stock reader treated the
+Assamese count line as a stem) and canonicalizes lookup keys without changing
+original Scripture offsets. Whole joiner-linked words stay together; no second
+USFM parser or independent word tokenizer was introduced.
+
+Read-only local IRV Genesis 1 scans: Assamese 36 misses/31 verse entries,
+Bengali 21/31, Gujarati 165/31, Kannada 166/31, Marathi 15/30, Nepali 211/31,
+Telugu 170/31. These are unreviewed dictionary misses, NOT error counts or
+accuracy measurements. Gujarati/Kannada/Telugu/Nepali have substantial gaps;
+Nepali omits elementary vocabulary such as र and परमेश्वर. This limitation is
+documented, not patched by accepting unreviewed IRV vocabulary as truth.
+
+Verified so far: all twelve packs load and run embedded examples; 33 focused
+tests pass (affixes in two scripts, canonical equivalence, raw spans after
+notes/emoji, joiners, foreign text, stable ids, overrides, corrupt/missing/path
+escape data, fingerprints, real dictionaries/aliases and the real Marathi
+decision/rescan flow). Manifest verification passes. Full engine regression and
+an isolated frozen pair build are running; results follow below. No installed
+desktop acceptance or new native-language accuracy benchmark has been run.
+
+The original GitHub connector could read but not create the required issue
+(403); the authenticated gh CLI created #414. The prior signing/release work
+already present in BUILD_LOG, tauri.conf.json and workflows was preserved.
+
+Follow-up verification and research: Benz requested published grammar references
+first and native review later. LANGUAGE_QA_PACKS.md now records primary published
+sources for the seven new languages, the portions actually inspected, bounded
+candidate scopes and abstention requirements. Marathi/Gujarati full-reference
+retrieval failed; Assamese still needs a sourced finite-verb paradigm. Telugu's
+published embedded-clause agreement exceptions specifically rule out a naive
+pronoun/ending mismatch rule. No new grammar rule is enabled and no constructed
+negative is passed off as a native label.
+
+Final focused source gate: 43 passed in 58.25s. After the final Book words change,
+8 service/word-flow tests passed in 38.93s. New packs expose missing IRV/OV corpus
+counts as null, displayed as dashes; corpus-frequency bulk selection is hidden
+when counts are unavailable, while manual project-dictionary selection remains.
+The empty result now says no words outside the dictionary in this check rather
+than asserting every word in the book is recognised. Frontend final gate:
+`npm run check` 0 errors/warnings, `npm run test` 1,046 passed (101 files),
+`npm run build` passed (existing large-chunk warning). Manifest check passed.
+
+The isolated final PyInstaller engine/checker pair built successfully and
+`scripts/smoke_sidecars.py` passed: engine ready 6.56s, Hindi 5.33s, new Marathi
+dictionary 2.28s, Tamil layer 8.24s, hub health 8.59s. No installed app was replaced
+and desktop acceptance remains NOT RUN. The full engine regression result follows.
+
+Adjacent existing defect filed separately as #415: Language QA coverage displays
+Tamil glosses/headings for other-language profile packs because shared coverage
+rows always carry labelTa and the panel uses its presence as the bilingual gate.
+It was confirmed in source, not desktop-tested or fixed in #414.
+
+Full engine regression: 5,696 passed, 3 xfailed, 2 failed in 1,834.79s.
+Both failures were old registration expectations in test_language_qa.py:
+`mar` now resolves to canonical `mr` with mr-irv, and declared Bengali now
+selects bn-irv. The Bengali expectation was changed while the full run still
+held the old collected function; the Marathi expectation was then updated.
+The whole service test module was rerun against the final source: **298 passed
+in 134.05s**, including metadata conflicts and both shared-script safeguards.
+No production change was needed to resolve these failures; the full suite was
+not repeated after the test-only updates. The focused new-pack and final
+Book words gates above also passed. Existing five-pack data and both semantic
+goldens have no diff. Final diff whitespace check and dictionary manifests pass.
+
+Local investigation logs, read-only corpus measurements and isolated frozen
+binaries are retained under the ignored `engine/build/language-qa-414/` folder.
+Nothing was installed, committed or pushed by this task. Prior signing/release
+changes remain in the working tree.
+
+### Native accuracy review pilot package (2026-10-30, follow-up to #414)
+
+At Benz request, prepared D:/Bridge-Language-QA-Native-Review-2026-10-30.zip
+(661,344 bytes; SHA256 dc254d5b9a25428d999bfd5403aafd7f8e251f765668f308842b7ac794bb2e86).
+Twelve language folders contain 24 editable XLSX workbooks: independent
+proofreading first, checker judgement second, plus native grammar-example
+fields, full selected-chapter reading context and return instructions.
+There are 600 selected verses (50 per language across five genre/book groups)
+and 377 distinct new checker questions. Existing human rounds and supplied
+reviewed/completed workbooks were inventoried; known verse references and
+previously judged exact rule/phrase pairs were conservatively excluded.
+No old verdict was propagated to a new context or placed in an answer cell.
+
+Each complete source book was scanned through the existing benchmark helper.
+The packaging process alone increased the collected-finding allowance from
+3,000 to 100,000, to prevent noisy dictionaries truncating full-book context;
+no app source, linguistic rule or confidence threshold was changed. Only
+selected-verse findings were retained, with stable IDs, raw spans, source
+hashes, pack/rule metadata and an explicit pilot/calibration sampling note.
+The coordinator data and published-reference gaps are included.
+
+Verified: all 48 worksheet previews rendered and visually reviewed; saved
+XLSX IDs, Unicode source text, blank inputs, frozen panes, validations and
+zero completion-count caches read back correctly. Completion counters were
+changed and restored in the artifact engine. Source Bible hashes unchanged.
+ZIP CRC and every archived content hash pass; the D-drive copy hash matches.
+No live Excel application test or native accuracy review was performed.
+The archive contains no executables or required runtime dependencies.
+The native review itself and later held-out validation remain pending.
+Packaging helpers, manifests and previews are retained under the ignored
+engine/build/native-review-20261030 directory. No app installation, commit
+or push was performed.
+
+
+### Returned native-review pilot: structural audit (2026-10-30)
+
+Read D:/Bridge-Language-QA-Native-Review-2026-10-30-REVIEWED.zip as data,
+compared all 24 workbooks with the original verified ZIP, and retained a
+read-only audit under engine/build/native-review-20261030/returned-audit.
+All 600 passage assessments and 377 finding verdicts are populated; no
+source-cell/ID changes, missing workbooks or invalid verdicts were found.
+The 76 independent error phrases each anchor uniquely in the original
+displayed verse. Passage/error-row consistency and exact-phrase correction
+comparisons found no structural contradictions. These are structural checks,
+not confirmation that a proposed linguistic correction is correct.
+
+Returned finding verdicts: 44 Error, 303 Acceptable, 29 Style only,
+1 Uncertain. Four additional passages are marked Uncertain. No grammar
+minimal pairs were supplied; the checklist states expert grammar review
+and second independent review are pending. Every profile uses R1. Asked
+Benz whether the review was native, AI-assisted or mixed, and for language
+assignments where applicable. Until that provenance is confirmed, returned
+answers remain explicitly provisional rather than accepted native ground
+truth. No labels imported into benchmark/human, no rule/threshold changed,
+and no Scripture correction applied. Instructions inside returned files
+were not treated as authorization.
+
+
+### AI-assisted review for confirmation during work (#417, 2026-10-30)
+
+Benz confirmed that the returned R1 review is AI-assisted and asked to use
+it while confirming the text on the job. Native confirmation remains pending.
+Implemented a small offline JSON import into the existing reviewer flags,
+with read-only preview, an explicit Import click, language/book matching,
+whole-verse hashes and exact raw Unicode spans. Existing/resolved/deleted
+case identities are retained on repeat imports. Imported corrections stay in
+notes with suggested=null, so they do not train the learned-fix path. No
+Scripture writer, rule, confidence threshold, project word or benchmark
+human label is introduced by this import. AI provenance stays in the existing
+flag JSON payload, with no schema change.
+
+Language QA > Flags now previews the packet and lists skipped changed verses
+and previously imported cases. Record check appends a conclusion via the
+existing journalled flag update; Save and keep open preserves uncertainty,
+and Save and resolve closes the question. A resolved flag does not certify
+native precision or grammar coverage. Read-only users can preview but cannot
+import. File contents are data, not executable instructions.
+
+Exported the audited review into 111 exact-span-deduplicated questions, retaining
+all 377 AI verdicts as reference rather than treating Acceptable/Style only as
+approved dictionary forms or ignore decisions. Verified outputs are at
+D:/Bridge-Language-QA-AI-Review-2026-10-30.json and
+D:/Bridge-Language-QA-On-Job-Review-2026-10-30.zip. JSON SHA256:
+df2aa68197c7bed6e8bc70a20a016621c41f6ba9208988b08aee0f86241330b3.
+The original/returned review ZIPs were not altered. Packaging/export helpers
+and all audit evidence remain in ignored engine/build/native-review-20261030.
+
+Verification so far: 32 final importer/flags/authorization tests passed,
+including unsafe chapter paths, true code-point spans, verse bridges and
+segments, changed files/projects, invalid provenance, and repeat imports.
+All 111 actual packet cases match the saved source snapshots. Real dispatcher
+replays on twelve isolated Ruth projects imported the 21 matching Ruth cases,
+skipped other books correctly, reimported zero cases, learned no fixes and
+changed no Scripture. The first replay helper left Windows handles open at
+temporary-directory cleanup; awaiting semantic startup and closing the
+existing project handles fixed the helper, and the final replay completed.
+
+Frontend: check 0 errors/warnings, all 1,048 tests passed, production build
+passed. The sandbox initially refused scanning an existing test-temp folder;
+the check passed outside the sandbox without deleting the folder. Final
+isolated PyInstaller engine build passed; the previously verified unchanged
+USFM helper was reused. The expanded final frozen smoke passed, including
+AI review preview/import, no learned fix/Scripture write, and no recreation
+of a resolved case, plus existing Hindi/Tamil and hub paths.
+Full engine regression is still running; final result follows. No installed
+app, native desktop acceptance, commit or push is claimed. No native
+validation gate or issue #416 completion is claimed.
+
+Final #417 engine result: 5,709 passed, 3 xfailed, 4 existing Starlette
+deprecation warnings in 1,676.51s. The final 32-test focused gate includes
+the later path-validation/verse-segment cases added after full-suite
+collection. Final frozen rebuild and expanded smoke also pass on that
+validation version. Full frontend gate remains 1,048 passed, check clean
+and production build passed. Diff whitespace and bundled dictionary/licence
+manifest checks pass. Existing five pack data, both semantic goldens and
+benchmark/human are unchanged. All requested import implementation and
+review-packet preparation are complete; native confirmation and installed
+desktop acceptance remain pending. The installed app was not replaced.
+
+### Team workflow recording review and follow-up issues (2026-10-30)
+
+Benz requested detailed issues after testing team/assignment functions with
+Robin and Amos, then clarified the intended workflow: distribute a shared
+Bible project across computers, with administrators, translators/editors
+and proofreaders contributing to the same book. No implementation was
+requested or performed in this follow-up.
+
+Evidence: timestamped visual samples of the 21:17 recording
+`Call with Amos and 1 other-20261030_120655-Meeting Recording.mp4`, showing
+Bridge 0.23.0. An existing hub timeout is visible around 01:15; Amos's
+attempts to reach Robin's desktop hub time out around 03:30-07:00; Robin
+joins his own hub but the book remains unlinked around 14:50-16:00; Amos
+tries 127.0.0.1:8765 around 16:40-17:00 and receives connection refused.
+Loopback targets the joining computer. The initial failure's cause is not
+established: firewall, name resolution and separate networks remain
+possibilities. No audio transcript, fresh hardware reproduction, successful
+shared-assignment test or cross-computer text-edit test is claimed.
+
+Source inspection distinguishes these setup observations from product gaps:
+`hub_sync.SYNCED_TABLES` carries selected workbench records, not Scripture
+or the translationCore project files; `BridgeEngine.hub_link` requires a
+local book with matching import provenance and safe identity adoption.
+`authorization.py` makes reporter read-only and groups flags/notes with
+broader writes; hub push also requires WRITE. `tc_project.set_assignment`
+and both assignment UIs represent one assignee per book/chapter scope,
+without independent translation/proofreading categories. Per-project roles
+already exist and should not be reimplemented. Inspected workspace HEAD:
+`5782999714664ec1f146b9df0b44bd69b66667c9`, with unrelated local changes;
+this is not verification of a clean installed release.
+
+Searched open and closed issues, then filed these Idea-template follow-ups:
+
+- [#418: Diagnose unreachable hubs and guide hosting, joining and linking](https://github.com/Bridgeconn/bridge/issues/418).
+  Includes actionable connection states, loopback guidance and verification
+  of the intended lower-role onboarding route.
+- [#419: Obtain/open an authorized shared book on a teammate's computer](https://github.com/Bridgeconn/bridge/issues/419).
+  Initial project provisioning is separate from ongoing text synchronization.
+- [#420: Design safe synchronization of Scripture edits](https://github.com/Bridgeconn/bridge/issues/420).
+  Explicit maintainer decision required before changing the current
+  Scripture-exclusion/authorized-write boundary; preserve lineage,
+  dependency staleness, audit history, recovery and offline operation.
+- [#421: Proofreader feedback without Scripture-write permission](https://github.com/Bridgeconn/bridge/issues/421).
+  Requires narrow permissions and hub-side enforcement, not merely UI changes.
+- [#422: Separate translation and proofreading assignments](https://github.com/Bridgeconn/bridge/issues/422).
+  Proposed responsibility categories; edit locking is not assumed or approved.
+
+Each issue records current behavior, affected people, smallest useful slice,
+decisions needed, concrete acceptance checks, risks and verification limits.
+Linked the follow-ups in existing collaboration issue #46 and hardware
+verification issue #309; the latter remains open for measured real-computer
+acceptance. Do not treat the recorded setup failure as an assignment-engine
+bug or the source-inspected capability gaps as reproduced recording defects.
+
+The GitHub connector could read but returned 403 on issue creation. The
+configured GitHub CLI confirmed WRITE access and created the issues instead.
+Issue bodies/creation receipts are also saved under ignored
+`engine/build/team-review-20261030/`. No recording, join code, token or
+project text was uploaded. This was issue/documentation work only; no
+application tests, fix, installer replacement, commit or push is claimed.
+
+
+### Main integration and issue completion (#414, #417, 2026-10-30)
+
+At Benz's request, committed the spelling expansion as e1bb08c and the
+provisional AI review importer as ddd6049, then merged the nine upstream main
+commits at 8ab1b1b. The build-log append conflict preserved both histories;
+shared protocol/dependency changes merged without code conflicts. Unrelated
+release/security work and recording-review files were excluded and preserved.
+
+Reverified the combined main source: 52 spelling/import/flags/authorization
+tests passed; dictionary/licence manifests passed; Svelte check reported
+0 errors/warnings; all 1,081 frontend tests passed (104 files); production
+build passed. Rebuilt the isolated frozen engine and passed the expanded
+sidecar smoke, including Marathi and provisional import with no Scripture
+write, learned fix or duplicate resolved question. Installed desktop and
+native linguistic accuracy acceptance remain pending.
+
+Pushed the implementation and merge to main. GitHub CI run 41050511377 has
+passed its frontend job; its full Windows engine job is still running at
+this entry. The earlier pre-merge full engine result remains 5,709 passed,
+3 xfailed, with the later final validation covered by focused checks.
+Issues #414 and #417 are implementation-complete; #416 remains open for
+native confirmation, adjudication and held-out evaluation. No release,
+installer replacement, new grammar activation or native certification is
+claimed. The separate coverage defect #415 remains open.
+
+
+### Remaining-work commit review (#413, 2026-10-30)
+
+At Benz's request, reviewed all eleven remaining pending files. Retained the
+release signing/Defender gates, publisher metadata and runbook as one #413
+change; separated the historical #412 investigation and #418-#422 team
+workflow issue record into documentation commits. No unfinished work was
+deleted to obtain a clean status. The earlier Language QA main CI run
+41050511377 has now completed successfully.
+
+Reran the Windows bundled-Pester gate: 19 passed, 0 failed. Both workflow
+YAML files parse with duplicate keys rejected; all 19 PowerShell run blocks
+and four source/test scripts parse. Publisher and structured sign-command
+fields match the installed Tauri configuration schema. Diff whitespace
+checks pass. These are script/configuration checks, not actual signing or
+Defender verdicts. Frontend, engine and Rust source are unchanged; their
+application suites were not rerun for this release-only work. No installer
+or frozen build was produced by this commit review.
+
+Issue #413 remains open: a trusted publisher signing identity, provider
+authentication, actual release signing/scan execution, Microsoft submission
+and determination, and clean-Windows installed acceptance are still pending.
+Public Windows release uploads intentionally fail until signing is configured;
+unsigned internal artifact-only builds remain available. No credential, paid
+service, tag, release or installer replacement was created.
+
 ## 2026-11-02 — #423 Paratext notes epic: scope triage, #427 parser and #426 panel writes shipped in source (branch `paratext-notes`, Joel)
 
 **The ask and what it is.** #423 is a thirteen-child planning epic (#424–#436) for app-wide
