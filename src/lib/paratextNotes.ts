@@ -12,17 +12,31 @@ import type { ParatextNoteCount } from "./types/paratext";
 // #426: a request from elsewhere in the editor (the verse context menu) to
 // write a Paratext note on a verse, optionally on its selected text. The
 // notes panel opens its composer with these and clears the request.
+export interface ParatextNoteRecord {
+  /** The Bridge record the thread will be linked to (#433): a finding or a
+   *  correction proposal. A verified Paratext resolve then closes it. */
+  kind: "finding" | "correction_proposal";
+  localId: string;
+  /** Shown above the composer: "Finding · names.spelling_similarity". */
+  title: string;
+  /** What the note says about the record before the reviewer's own words. */
+  lines: string[];
+}
+
 export interface ParatextNoteRequest {
   chapter: string;
   verse: string;
   selectedText: string;
+  record?: ParatextNoteRecord;
 }
 export const paratextNoteRequest = writable<ParatextNoteRequest | null>(null);
 
 /** Open the Paratext notes panel on `verse` with its composer ready. The
- *  verse is already the selected one when the menu was opened on it. */
-export function requestParatextNote(chapter: string, verse: string, selectedText = ""): void {
-  paratextNoteRequest.set({ chapter, verse, selectedText });
+ *  verse is already the selected one when the menu was opened on it. With
+ *  `record`, the note is sent for that record and linked to it. */
+export function requestParatextNote(chapter: string, verse: string, selectedText = "",
+                                    record?: ParatextNoteRecord): void {
+  paratextNoteRequest.set({ chapter, verse, selectedText, record });
   revealSidePanel("paratext");
 }
 

@@ -23386,3 +23386,24 @@ and the write-then-notify-then-reread order.
 
 **Still not compiled here.** Benz's next `build.ps1` is the check; #438's acceptance (one
 correction persists, other verses/chapters/notes/markers preserved, refusals) is his walk.
+
+## 2026-11-02 — #433: findings and correction proposals get their Paratext thread (branch `paratext-cards`, Joel)
+
+The gap left after #437: closure on a verified Paratext resolve covered all three record kinds
+in the engine, but only issue-resolution cards could create a thread. Now:
+- `paratext.queueRecord` {kind: finding | correction_proposal, localId, chapter, verse, lines,
+  text, selectedText?}: the card's `lines` (check and text for a finding; current / proposed /
+  why for a proposal) and the reviewer's own note, attributed, footered, through the outbox
+  with the record's kind and id as the link key. Message id from kind + id + body, so the same
+  record with the same note sends nothing twice and a new note is a new thread. The link is
+  made when the index shows the thread; a verified resolve closes it (link only, no finding
+  status invented -- the protocol test checks no qa decision row appears).
+- `paratext.notesForVerse` threads carry `links` (kind, localId, closure), so the notes panel
+  badges "finding · resolved in Paratext" wherever the thread shows.
+- Greek Room finding menu: "Send to Paratext…" opens the notes panel's composer for the
+  finding (`requestParatextNote` with a `record`); the composer shows what the note will say
+  about the record and allows an empty reviewer note. Correction review panel: "Send to
+  Paratext…" and the thread panel mounted on the proposal (`kind="correction_proposal"`).
+- Ran: `tests/service/test_paratext_record_threads_protocol.py` 3 passed; notes-panel, roles
+  suites; svelte-check 0/0; ParatextNotesPanel 12, VerseList 115 (menu label list updated),
+  CorrectionReviewPanel 66, ThreadPanel 7. Full gates below.

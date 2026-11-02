@@ -16,6 +16,10 @@
     CorrectionVerificationState,
   } from "../types/correctionReview";
   import { actorLabel, providerLabel, verificationLabel } from "../utils/reviewLabels";
+  // #433: a Paratext thread for the proposal, and what Paratext says on it.
+  import ParatextThreadPanel from "./ParatextThreadPanel.svelte";
+  import { requestParatextNote } from "../paratextNotes";
+  import { currentChapter, selectedVerse } from "../stores";
   import type { AnalysisJobSnapshot } from "../types/analysisJob";
   import type { SettingsData } from "../types/finding";
   import type { CoverageDimension } from "../types/passageSemanticV1";
@@ -880,7 +884,26 @@
             {#if mayApply}
               <button type="button" class="apply" disabled={busy} on:click={openApplicationReview}>Review application</button>
             {/if}
+            {#if $selectedVerse}
+              <button type="button" class="secondary" disabled={busy}
+                title="Write a Paratext Project Note about this proposal on the verse, linked to it; a resolve in Paratext closes the link"
+                on:click={() => requestParatextNote($currentChapter, $selectedVerse ?? "", "", {
+                  kind: "correction_proposal", localId: selectedProposal.id,
+                  title: `correction proposal ${selectedProposal.id.slice(0, 8)}`,
+                  lines: [
+                    "Bridge correction proposal",
+                    `Current: ${selectedProposal.currentText}`,
+                    `Proposed: ${selectedProposal.proposedText}`,
+                    ...(selectedProposal.explanation ? [`Why: ${selectedProposal.explanation}`] : []),
+                  ],
+                })}>Send to Paratext…</button>
+            {/if}
           </div>
+          {#if $selectedVerse}
+            <!-- #433: the proposal's Paratext thread(s); a resolve there closes the link. -->
+            <ParatextThreadPanel kind="correction_proposal" localId={selectedProposal.id}
+              chapter={$currentChapter} verse={$selectedVerse} />
+          {/if}
         {/if}
         {#if selectedProposal && !proposalReviewed && proposalCurrent}
           <p class="boundary">Edit or choose this wording to record human review before application.</p>

@@ -1296,7 +1296,7 @@ the notes index shows it resolved. Nothing is sent to Paratext, and no new statu
 **Because:** the six answers said "offered as one click" without saying what the click does; the
 existing `resolved` status is what the reviewer means, and the event keeps the reason auditable.
 **Rules out:** ~~applying it without a click~~; offering it on a thread that is still open in Paratext.
-**Revisit when:** findings (not only issue resolutions) carry Paratext links.
+**Revisit when:** ~~findings (not only issue resolutions) carry Paratext links~~ (they do since 2026-11-02, `paratext.queueRecord`, #433).
 **Amended 2026-11-02 (Benz, #423):** the click is gone. A verified Paratext resolve closes the
 linked record as Bridge reads it (`_reconcile_paratext_closures`), for issue resolutions,
 findings and correction proposals alike, recording "resolved in Paratext", the external actor and

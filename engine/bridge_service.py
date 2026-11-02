@@ -731,6 +731,8 @@ class Methods:
     # #426: a note written from the Paratext notes panel, with no Bridge
     # record behind it, through the same outbox.
     PARATEXT_CREATE_NOTE = "paratext.createNote"
+    # #426/#433: a Paratext thread for a finding or a correction proposal.
+    PARATEXT_QUEUE_RECORD = "paratext.queueRecord"
     # #428/#431/#432/#433/#434: the Paratext QA review queue (paratext_review.py).
     PARATEXT_REVIEW_QUEUE = "paratextReview.queue"
     PARATEXT_REVIEW_PREVIEW = "paratextReview.preview"
@@ -5554,8 +5556,20 @@ class BridgeEngine:
         # shows a note as made before Paratext's file holds it: a create on
         # this verse that is queued, refused, or sent but not yet read back;
         # a reply or resolve on one of this verse's threads that is not sent.
-        result["pending"] = self._pending_for_verse(str(chapter), str(verse),
-                                                    {t["id"] for t in result.get("threads") or []})
+        threads = result.get("threads") or []
+        result["pending"] = self._pending_for_verse(str(chapter), str(verse), {t["id"] for t in threads})
+        # #433: which Bridge records each thread is linked to, with their
+        # closure, so the panel can say "linked to a finding · resolved in
+        # Paratext" wherever the thread is shown.
+        try:
+            by_thread: dict[str, list[dict[str, Any]]] = {}
+            for link in self._outbox().links():
+                by_thread.setdefault(str(link.get("threadId") or ""), []).append(
+                    {"kind": link.get("kind"), "localId": link.get("localId"), "closure": link.get("closure")})
+            for thread in threads:
+                thread["links"] = by_thread.get(thread["id"], [])
+        except ProjectError:
+            pass
         return result
 
     def _pending_for_verse(self, chapter: str, verse: str, thread_ids: set[str]) -> list[dict[str, Any]]:
@@ -5603,6 +5617,50 @@ class BridgeEngine:
             raise ProjectError(str(exc)) from exc
         self._flush_outbox(only=[message_id])
         return {"item": self._outbox().get(message_id)}
+
+    def paratext_queue_record(self, kind: str, local_id: str, chapter: str, verse: str, text: str,
+                              lines: list[str] | None = None, selected_text: str = "") -> dict[str, Any]:
+        """#426/#433: a Paratext thread for a finding or a correction proposal
+        (the two record kinds that had no card action), through the same
+        outbox as an issue resolution's note (#358). `lines` is what the card
+        says about the record (check, text, proposal); `text` is the reviewer's
+        own note. The link to the thread is made once the notes index shows it,
+        and a verified Paratext resolve then closes the record (DECISIONS
+        2026-11-02). Queuing the same record with the same note again sends
+        nothing: the message id is derived from both."""
+        self._require_project()
+        if kind not in ("finding", "correction_proposal"):
+            raise ProjectError("kind must be finding or correction_proposal.")
+        local_id = str(local_id or "").strip()
+        if not local_id:
+            raise ProjectError("The record id is required.")
+        chapter, verse = str(chapter), str(verse)
+        body_lines = [str(line) for line in (lines or []) if str(line).strip()]
+        note = str(text or "").strip()
+        if not body_lines and not note:
+            raise ProjectError("The note text is empty.")
+        body = "\n\n".join(body_lines + ([f"Reviewer note: {note}"] if note else []))
+        selected = str(selected_text or "").strip()
+        if selected:
+            self.project.require_unique_selection(chapter, verse, selected)
+        before, after = outbox_module.selection_context(self.project.target_verse_text(chapter, verse), selected)
+        digest = hashlib.sha1(f"{kind}|{local_id}|{body}".encode("utf-8")).hexdigest()[:16]
+        message_id = f"bridge-{kind.split('_')[0]}-{digest}"
+        outbox = self._outbox()
+        existing = outbox.get(message_id)
+        if existing is None or existing["status"] != outbox_module.SENT:
+            try:
+                outbox.enqueue(
+                    outbox_module.OP_CREATE, message_id=message_id, kind=kind, local_id=local_id,
+                    text=self._attributed(body), reference=f"{self._paratext_book()} {chapter}:{verse}",
+                    selected_text=selected, before_context=before, after_context=after,
+                    book=str(self.project.book_id or ""), chapter=chapter, bridge_user=self._bridge_user(),
+                    record={"chapter": chapter, "verse": verse},
+                )
+            except OutboxError as exc:
+                raise ProjectError(str(exc)) from exc
+            self._flush_outbox(only=[message_id])
+        return {"item": outbox.get(message_id), **self.paratext_threads_for(kind, local_id)}
 
     # -- #428/#431/#432/#433/#434: the Paratext QA review queue -----------------
     # The logic is in tc_ai_bridge/paratext_review.py; these pick the book, the
@@ -9843,6 +9901,12 @@ class BridgeEngine:
                 return EngineResponse.ok(request.id, result=self.paratext_create_note(
                     str(p.get("chapter") or ""), str(p.get("verse") or ""), str(p.get("text") or ""),
                     str(p.get("selectedText") or ""),
+                ))
+            if m == Methods.PARATEXT_QUEUE_RECORD:
+                return EngineResponse.ok(request.id, result=self.paratext_queue_record(
+                    str(p.get("kind") or ""), str(p.get("localId") or ""), str(p.get("chapter") or ""),
+                    str(p.get("verse") or ""), str(p.get("text") or ""),
+                    [str(x) for x in (p.get("lines") or [])], str(p.get("selectedText") or ""),
                 ))
             if m == Methods.PARATEXT_REVIEW_QUEUE:
                 return EngineResponse.ok(request.id, result=self.paratext_review_queue(str(p.get("status") or "")))

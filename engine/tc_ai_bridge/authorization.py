@@ -230,8 +230,9 @@ _WRITE = (
     # #358: Paratext write-back. Any Bridge write role may post (decision 4):
     # a note, a reply, a resolve, a link to an existing thread, a send now.
     "paratext.flushOutbox", "paratext.replyThread", "paratext.resolveThread", "paratext.linkThread",
-    # #426: a note from the Paratext notes panel with no Bridge record behind it.
-    "paratext.createNote",
+    # #426: a note from the Paratext notes panel with no Bridge record behind it,
+    # and a thread for a finding or a correction proposal (#433).
+    "paratext.createNote", "paratext.queueRecord",
     # #432/#433: a decision on a QA proposal (an apply goes through edit_verse),
     # the reviewer's queue state, the checked revert, and the evidence files.
     "paratextReview.decide", "paratextReview.saveState", "paratextReview.revertLatest",

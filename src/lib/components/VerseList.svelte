@@ -157,7 +157,20 @@
       // finding's words are selected when the verse opens.
       { id: "edit", label: "Edit…", separatorBefore: true, disabled: busy,
         title: "Open this verse for editing, with the flagged text selected." },
+      // #433: a Paratext thread for this finding, through the notes panel's
+      // composer; a resolve in Paratext then closes the finding's link.
+      { id: "paratext", label: "Send to Paratext…", disabled: busy || !$project,
+        title: "Write a Paratext Project Note about this finding on this verse, linked to it" },
     ];
+  }
+
+  /** What the Paratext note says about a finding (#433), before the reviewer's own words. */
+  function findingNoteLines(finding: QaFinding): string[] {
+    const lines = [`Bridge finding · ${finding.check_type} (${finding.engine})`];
+    if (finding.original_text?.trim()) lines.push(`Text: ${finding.original_text.trim()}`);
+    if (finding.explanation?.trim()) lines.push(`Finding: ${finding.explanation.trim()}`);
+    if (finding.suggested_replacement) lines.push(`Proposed: ${finding.suggested_replacement}`);
+    return lines;
   }
 
   /**
@@ -877,6 +890,14 @@
     if (event.detail.id === "edit") {
       contextMenu = null;
       editWithSelection(finding, $currentChapter, verse);
+      return;
+    }
+    if (event.detail.id === "paratext") {
+      contextMenu = null;
+      requestParatextNote($currentChapter, verse, word, {
+        kind: "finding", localId: finding.id, title: `${finding.check_type} · ${finding.engine}`,
+        lines: findingNoteLines(finding),
+      });
       return;
     }
     if (event.detail.id === "flag") {
