@@ -725,6 +725,9 @@ class Methods:
     PARATEXT_REPLY_THREAD = "paratext.replyThread"
     PARATEXT_RESOLVE_THREAD = "paratext.resolveThread"
     PARATEXT_LINK_THREAD = "paratext.linkThread"
+    # #426: a note written from the Paratext notes panel, with no Bridge
+    # record behind it, through the same outbox.
+    PARATEXT_CREATE_NOTE = "paratext.createNote"
 
     LOGOS_GET_STATE = "logos.getState"
     LOGOS_SET_REFERENCE = "logos.setReference"
@@ -5531,7 +5534,60 @@ class BridgeEngine:
             self._paratext_book(), str(chapter), include_resolved=include_resolved, kinds=kinds)
 
     def paratext_notes_for_verse(self, chapter: str, verse: str) -> dict[str, Any]:
-        return self._paratext_session().notes_for_verse(self._paratext_book(), str(chapter), str(verse))
+        result = self._paratext_session().notes_for_verse(self._paratext_book(), str(chapter), str(verse))
+        # #426: this verse's writes still in the outbox, so the panel never
+        # shows a note as made before Paratext's file holds it: a create on
+        # this verse that is queued, refused, or sent but not yet read back;
+        # a reply or resolve on one of this verse's threads that is not sent.
+        result["pending"] = self._pending_for_verse(str(chapter), str(verse),
+                                                    {t["id"] for t in result.get("threads") or []})
+        return result
+
+    def _pending_for_verse(self, chapter: str, verse: str, thread_ids: set[str]) -> list[dict[str, Any]]:
+        try:
+            outbox = self._outbox()
+        except ProjectError:
+            return []
+        pending: list[dict[str, Any]] = []
+        for item in outbox.items():
+            if item["op"] == outbox_module.OP_CREATE:
+                if item["status"] == outbox_module.SENT and item["threadId"]:
+                    continue
+                reference = str(item.get("reference") or "")
+                on_verse = str(item.get("chapter") or "") == chapter and reference.rsplit(":", 1)[-1].strip() == verse
+            else:
+                on_verse = item["status"] != outbox_module.SENT and item["threadId"] in thread_ids
+            if on_verse:
+                pending.append({k: item.get(k) for k in (
+                    "messageId", "op", "threadId", "status", "attempts", "lastError", "sentAt", "createdAt",
+                    "kind", "localId", "reference", "selectedText", "text")})
+        return pending
+
+    def paratext_create_note(self, chapter: str, verse: str, text: str, selected_text: str = "") -> dict[str, Any]:
+        """#426: a Project Note on this verse from the notes panel, with no
+        Bridge record behind it. Same outbox, same footer, same linked-project
+        destination and author rules as a resolution's note (#358); the
+        selection, when given, must occur once in the verse."""
+        self._require_project()
+        if not str(text or "").strip():
+            raise ProjectError("The note text is empty.")
+        chapter, verse = str(chapter), str(verse)
+        selected = str(selected_text or "").strip()
+        if selected:
+            self.project.require_unique_selection(chapter, verse, selected)
+        before, after = outbox_module.selection_context(self.project.target_verse_text(chapter, verse), selected)
+        message_id = outbox_module.new_message_id()
+        try:
+            self._outbox().enqueue(
+                outbox_module.OP_CREATE, message_id=message_id, kind=outbox_module.KIND_NOTE, local_id=message_id,
+                text=text, reference=f"{self._paratext_book()} {chapter}:{verse}",
+                selected_text=selected, before_context=before, after_context=after,
+                book=str(self.project.book_id or ""), chapter=chapter,
+            )
+        except OutboxError as exc:
+            raise ProjectError(str(exc)) from exc
+        self._flush_outbox(only=[message_id])
+        return {"item": self._outbox().get(message_id)}
 
     def paratext_note_thread(self, thread_id: str) -> dict[str, Any]:
         return self._paratext_session().note_thread(str(thread_id))
@@ -9399,6 +9455,11 @@ class BridgeEngine:
             if m == Methods.PARATEXT_LINK_THREAD:
                 return EngineResponse.ok(request.id, result=self.paratext_link_thread(
                     str(p.get("threadId") or ""), str(p.get("kind") or ""), str(p.get("localId") or ""),
+                ))
+            if m == Methods.PARATEXT_CREATE_NOTE:
+                return EngineResponse.ok(request.id, result=self.paratext_create_note(
+                    str(p.get("chapter") or ""), str(p.get("verse") or ""), str(p.get("text") or ""),
+                    str(p.get("selectedText") or ""),
                 ))
             if m == Methods.PARATEXT_GET_STATE:
                 return EngineResponse.ok(request.id, result=self.paratext_get_state())

@@ -1292,3 +1292,35 @@ the notes index shows it resolved. Nothing is sent to Paratext, and no new statu
 existing `resolved` status is what the reviewer means, and the event keeps the reason auditable.
 **Rules out:** applying it without a click; offering it on a thread that is still open in Paratext.
 **Revisit when:** findings (not only issue resolutions) carry Paratext links.
+
+## 2026-11-02 — PROPOSED, awaiting maintainer sign-off: two Paratext policy reversals asked for in #423 (Joel, #423 / #424 / #425 / #429 / #433)
+**Status:** not decided and not implemented. Recorded here because #423 and four of its children
+carry an "Approved policy update — 2026-11-02" paragraph that reverses two rules in the
+2026-10-26 entries above, and `CLAUDE.md` says a request that conflicts with a recorded decision
+is a question for the maintainer, not a commit. Runtime behaviour is unchanged.
+**What #423 asks for:**
+1. Bridge writing human-confirmed Scripture corrections through Paratext's supported editing
+   APIs (`PutUSFM`/`PutUSX`, #429, #430, #431). The 2026-10-26 decision *rules out* "Scripture
+   writes from any Paratext path", and `CLAUDE.md` lists "a second Scripture writer, or an
+   alternative path for applying corrections to the text" under stop-and-ask: Stage 9B.3b's
+   authorized write is deliberately the only one.
+2. A verified Paratext thread resolution automatically closing its linked Bridge QA record with
+   no second click (#425, #433). The 2026-10-26 "decision 3" entry *rules out* "applying it
+   without a click"; today the card offers "Mark resolved in Bridge".
+**What was done instead (same day):** the two children that need neither reversal nor a real
+Paratext host were implemented and verified in source: #427 (the QA proposal parser, read-only)
+and the core of #426 (notes created, replied to and resolved from the Paratext notes panel,
+pending state shown, drafts kept). See BUILD_LOG 2026-11-02.
+**Questions the maintainer has to answer before either reversal lands:**
+- Does the Paratext-API Scripture write replace Stage 9B.3b as the writer for Paratext-linked
+  books, or sit beside it? Two writers over one verse need one ownership rule (#424's
+  "stale-baseline detection, two-sided refresh, recovery when only one save succeeds").
+- Is automatic closure a status change (`resolved`) with an `external` actor in the append-only
+  history, as #425 describes, and does it apply to findings and correction proposals as well as
+  issue resolutions? Today only issue resolutions carry Paratext links.
+- The reference plugin (selvabenz/Paratext-sug-in-context-menu) has no licence file (checked
+  2026-11-02 through the GitHub API: `license: null`). Its parser shape was used as a format
+  reference only; no code was copied. Reusing more than that is a licensing question (#424).
+**If approved:** amend the two 2026-10-26 entries (do not delete them), then the "Rules out"
+lines there, then this entry's status. The implementation order in #423 (#424 spike first, on a
+real Paratext 9.5 host) still holds; this machine has no Paratext installation.

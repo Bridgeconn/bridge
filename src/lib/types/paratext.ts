@@ -81,6 +81,50 @@ export interface ParatextNoteTag {
   name: string;
 }
 
+// #427: what a QA pass proposed in a note, parsed by the engine
+// (tc_ai_bridge/paratext_proposals.py). Read-only: a route is the strongest
+// claim the parser makes about the Suggested field, never a decision.
+export type ParatextProposalRoute = "literal" | "review" | "structure" | "noChange" | "legacy" | "unreadable";
+export type ParatextProposalOperation =
+  "replace" | "insert" | "delete" | "alternatives" | "noChange" | "structural" | "markerRename" | "instruction" | "none";
+export type ParatextProposalRegion = "body" | "introduction" | "heading" | "footnote" | "crossReference" | "structure";
+
+export interface ParatextProposalSummary {
+  total: number;
+  outstanding: number;
+  unreadable: number;
+  byRoute: Record<ParatextProposalRoute, number>;
+}
+
+export interface ParatextProposal {
+  proposalId: string;
+  commentIndex: number;
+  block: number;
+  route: ParatextProposalRoute;
+  operation: ParatextProposalOperation;
+  region: ParatextProposalRegion;
+  pass: string;
+  topic: string;
+  category: string;
+  categoryKnown: boolean;
+  original: string;
+  suggested: string;
+  reason: string;
+  location: string;
+  reference: string;
+  severity: string;
+  confidence: string;
+  reviewerDecision: boolean;
+  anchorWarning: boolean;
+  historical: boolean;
+  outstanding: boolean;
+  alternatives: string[];
+  structural: { fromMarker: string; toMarker: string; label: string } | null;
+  diagnostics: string[];
+  author: string;
+  date: string;
+}
+
 export interface ParatextNoteSummary {
   id: string;
   kind: ParatextNoteKind;
@@ -98,6 +142,8 @@ export interface ParatextNoteSummary {
   tags: ParatextNoteTag[];
   hidden: boolean;
   commentCount: number;
+  /** #427: the QA proposals in the thread, counted. */
+  proposals: ParatextProposalSummary;
 }
 
 export interface ParatextNoteComment {
@@ -117,6 +163,8 @@ export interface ParatextNoteThread extends ParatextNoteSummary {
   contextBefore: string;
   contextAfter: string;
   comments: ParatextNoteComment[];
+  /** #427: every proposal in the thread, in comment order. */
+  proposalItems: ParatextProposal[];
 }
 
 export interface ParatextNoteCount {
@@ -138,10 +186,15 @@ export interface ParatextNotesForVerse {
   chapter: string;
   verse: string;
   threads: ParatextNoteThread[];
+  /** #426: this verse's writes still in the outbox: a note queued, refused
+   *  or sent but not yet read back from Paratext's file; a reply or resolve
+   *  on one of its threads not yet sent. Never shown as made. */
+  pending: ParatextOutboxItem[];
 }
 
 // #358: Paratext write-back (engine: tc_ai_bridge/paratext_outbox.py).
-export type ParatextWriteKind = "issue_resolution" | "finding" | "correction_proposal";
+// "note" (#426): a note from the notes panel with no Bridge record behind it.
+export type ParatextWriteKind = "issue_resolution" | "finding" | "correction_proposal" | "note";
 export type ParatextOutboxOp = "create_thread" | "add_comment" | "resolve";
 
 export interface ParatextOutboxItem {
@@ -156,6 +209,10 @@ export interface ParatextOutboxItem {
   createdAt: string;
   kind?: ParatextWriteKind;
   localId?: string;
+  /** On a create: where it goes and what it says (with the Bridge footer). */
+  reference?: string;
+  selectedText?: string;
+  text?: string;
 }
 
 export interface ParatextThreadLink {

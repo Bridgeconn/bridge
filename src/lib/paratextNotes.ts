@@ -3,10 +3,50 @@
 // paratextNoteCountsByVerse (verseKey()-keyed, cleared by resetBookState()).
 // While the engine's index is still building, the chapter is asked again a
 // few times; a late answer for a chapter the reviewer has left is dropped.
-import { get } from "svelte/store";
+import { get, writable } from "svelte/store";
 import { bridge } from "./api/bridgeClient";
+import { revealSidePanel } from "./editorPrefs";
 import { currentChapter, paratextNoteCountsByVerse, project, verseKey } from "./stores";
 import type { ParatextNoteCount } from "./types/paratext";
+
+// #426: a request from elsewhere in the editor (the verse context menu) to
+// write a Paratext note on a verse, optionally on its selected text. The
+// notes panel opens its composer with these and clears the request.
+export interface ParatextNoteRequest {
+  chapter: string;
+  verse: string;
+  selectedText: string;
+}
+export const paratextNoteRequest = writable<ParatextNoteRequest | null>(null);
+
+/** Open the Paratext notes panel on `verse` with its composer ready. The
+ *  verse is already the selected one when the menu was opened on it. */
+export function requestParatextNote(chapter: string, verse: string, selectedText = ""): void {
+  paratextNoteRequest.set({ chapter, verse, selectedText });
+  revealSidePanel("paratext");
+}
+
+/** #426: composer drafts, kept while the reviewer moves between verses and
+ *  books in this session (keyed by project path and verse). A draft is
+ *  dropped once its note is queued. */
+const drafts = new Map<string, { text: string; selectedText: string }>();
+
+export function draftKey(projectPath: string, chapter: string, verse: string): string {
+  return `${projectPath}|${verseKey(chapter, verse)}`;
+}
+
+export function readDraft(key: string): { text: string; selectedText: string } | null {
+  return drafts.get(key) ?? null;
+}
+
+export function saveDraft(key: string, draft: { text: string; selectedText: string }): void {
+  if (draft.text.trim() || draft.selectedText.trim()) drafts.set(key, draft);
+  else drafts.delete(key);
+}
+
+export function dropDraft(key: string): void {
+  drafts.delete(key);
+}
 
 const RETRY_MS = 2000;
 const MAX_TRIES = 30;

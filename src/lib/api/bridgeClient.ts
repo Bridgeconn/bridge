@@ -414,6 +414,7 @@ export type EngineMethod =
   | "paratext.replyThread"
   | "paratext.resolveThread"
   | "paratext.linkThread"
+  | "paratext.createNote"
   | "paratext.outbox"
   | "paratext.flushOutbox"
   | "ping"
@@ -1447,6 +1448,14 @@ export const bridge = {
   paratextLinkThread(threadId: string, kind: ParatextWriteKind, localId: string):
     Promise<{ link: Omit<ParatextThreadLink, "thread"> }> {
     return call("paratext.linkThread", { threadId, kind, localId });
+  },
+
+  /** #426: a Project Note on this verse from the notes panel, with no Bridge
+   *  record behind it. Queued in the outbox and sent now when Paratext is
+   *  available; `selectedText`, when given, must occur once in the verse. */
+  paratextCreateNote(chapter: string, verse: string, text: string, selectedText = ""):
+    Promise<{ item: ParatextOutboxItem | null }> {
+    return call("paratext.createNote", { chapter, verse, text, selectedText });
   },
 
   navigationStatus(context?: string): Promise<NavigationSyncState> {

@@ -22748,3 +22748,79 @@ and unchanged after a pick-up; the engine fallback is read once when the store i
 `npm run check` 0/0, `npm run test` 104 files 1078 passed, `npm run build` ok. **Not verified:** the
 desktop at 1366x768 with a long verse (the section wraps and the interlinear below keeps its
 max-height, so the bank and footer should stay on screen, but that is a visual check).
+
+## 2026-11-02 — #423 Paratext notes epic: scope triage, #427 parser and #426 panel writes shipped in source (branch `paratext-notes`, Joel)
+
+**The ask and what it is.** #423 is a thirteen-child planning epic (#424–#436) for app-wide
+Paratext notes with a QA-correction round trip; every child says "Planning only; implementation
+is not authorized in this task", and four carry an "Approved policy update — 2026-11-02" that
+reverses two recorded decisions (Scripture writes through Paratext's API; automatic closure of a
+Bridge record on a Paratext resolve). The session was asked to implement the lot. Triage, from
+the code and this machine, before any code was written:
+
+| Child | Can it be built and verified here? | Why |
+| --- | --- | --- |
+| #424 spike, #436 validation | No | They need a real Paratext 9.5 host. This PC has no Paratext (registry empty, no projects folder, no connector pipe). |
+| #429, #430, #431 | Not without a decision | A Scripture writer through `PutUSFM`/`PutUSX`; `CLAUDE.md` stop-and-ask and DECISIONS 2026-10-26 "rules out". Recorded as PROPOSED in DECISIONS, not implemented. |
+| #425 automatic closure, #433 | Not without a decision | Reverses decision 3 ("never applied without a click"). Same PROPOSED entry. The rest of #425 (identity, footer idempotency, refused/queued states, independent retry) already exists from #358. |
+| #428, #432, #434, #435 | Later | A review window with Apply, a project-wide queue, reports and layout all sit on top of #429/#433 or need the real desktop at 1366x768. |
+| **#427** | **Yes, done** | Pure parser, synthetic fixtures, no host, no policy. |
+| **#426 core** | **Yes, done** | Notes created / replied / resolved from the panel ride the existing outbox and connector 0.8.0 calls; the stand-in exercises them. The real round trip is NOT RUN. |
+
+**#427 — `engine/tc_ai_bridge/paratext_proposals.py`.** Reads the `[AI-QA <pass>] <topic> — <category>`
+header, the `Original` / `Suggested` / `Reason` / `Reference` / `Location` / `Severity` fields and the
+`Confidence · Reviewer decision needed · Severity` metadata line, for every block in a comment.
+The format came from the reference plugin's `Domain.cs` and `CATEGORY_HANDLING.md` (format only;
+no code copied, and that repository has no licence file — DECISIONS). Each proposal carries a
+`route` (`literal`, `review`, `structure`, `noChange`, `legacy`, `unreadable`), an `operation`
+(`replace`, `insert`, `delete`, `alternatives`, `instruction`, `structural`, `markerRename`,
+`noChange`, `none`), a `region`, the sixteen canonical categories (seven of them "literal"
+categories; the rest route to review whatever the Suggested field holds), `reviewerDecision`
+(missing metadata = Yes), `anchorWarning`, `historical` (a `Changed to:` is not outstanding), and
+a `proposalId` hashed from thread, author, date, block and NFC/whitespace-normalized content.
+Prose detection generalizes the reference's Tamil-only rule: parentheses, ellipsis, line breaks,
+an instruction verb at the start, or Latin letters against a non-Latin Original. A parser that
+cannot read a structured-looking comment answers `unreadable` with diagnostics and never raises,
+so one bad note never stops the thread or the verse. Nothing here applies anything: `literal` is
+the strongest claim the parser makes, not a permission. Wire: `proposals` (counts) on every
+thread summary, `proposalItems` on the full thread (`notesForVerse`, `noteThread`, `threadsFor`).
+
+**#426 core.** `paratext_outbox.KINDS` gains `note` (local id = own message id for a create, the
+thread id for a reply or resolve). `paratext.createNote` {chapter, verse, text, selectedText?}
+validates a selection with `require_unique_selection`, adds the neighbouring-word context (#358 h),
+enqueues `create_thread` with the `[Bridge ref …]` footer and flushes only that id; the
+destination and author rules are #358's. `paratext.notesForVerse` now returns `pending`: this
+verse's creates that are queued, refused, or sent but not yet read back from Paratext's file, and
+replies/resolves on its threads not yet sent — so the panel never shows a note as made before the
+file holds it. Classified as a write-role method in `authorization.py` (decision 4 on #358).
+Frontend: the Paratext notes panel has "New note…" (composer with optional "Attach to text"),
+Reply and "Resolve in Paratext" on every thread (kind `note`), a pending list, read-only proposal
+blocks with the parser's route label, and drafts kept per project+verse for the session
+(`paratextNotes.ts`). The verse context menu gains "Paratext notes…" / "Paratext note on
+selection…" (`requestParatextNote` reveals the panel and seeds the composer): the visible,
+keyboard-reachable command #426 asks for beside the panel itself. One Svelte gotcha hit and
+fixed: `$: switchDraft(currentDraftKey())` never re-ran because the stores were read inside the
+function, not in the statement; the statement now names them.
+
+**Not done, deliberately.** No Apply control anywhere (#428/#429). No automatic closure
+(#425/#433). The notes panel is still the editor layout's side panel; alignment review and
+Project Home do not host it (#426's "every work area"). `pending` polls the engine for a bounded
+while after a write; the background outbox flush on the navigation probe is unchanged.
+
+**Ran and watched (source, this branch at `7786d39` + these changes).**
+- `tests/project_io/test_paratext_proposals.py`: 57 passed. `tests/service/test_paratext_notes_panel_protocol.py`:
+  6 passed. The Paratext suites plus `test_authorize_roles.py` together: 171 passed.
+- Full engine `pytest -n auto`: 5,716 passed, 29 failed, 1 skipped, 3 xfailed in 12m05s. All 29 are
+  environmental and none touches Paratext: 17 pass when rerun with `--basetemp C:\t\pt` (they
+  failed on `WinError 206`, the OneDrive path plus pytest's temp nesting exceeding MAX_PATH), and
+  the 12 `test_semantic_mapping_stage3.py` failures are `Semantic source database not found:
+  resources/semantic_mapping/bridge_semantic_source_v0.3.sqlite` (the `stage3db` resource is not
+  on this machine). Not fixed here; neither is a code failure.
+- Frontend: `npm run check` 0 errors / 0 warnings; `npm run test` 104 files, 1,083 passed;
+  `npm run build` passed (existing chunk-size warning).
+- Frozen pair: see the line below this entry.
+- NOT RUN: any real Paratext (create here → see there → reply there → refresh here), the
+  installed desktop at 1366x768, Rust (`src-tauri` untouched).
+- Frozen pair: `scripts/build-sidecars.ps1` built both executables and
+  `scripts/smoke_sidecars.py engine/dist/bridge-engine.exe` passed (real Wildebeest/Uroman, both
+  indic-qa layers, desktop connectors, alignment/export/undo, hub `/health`).

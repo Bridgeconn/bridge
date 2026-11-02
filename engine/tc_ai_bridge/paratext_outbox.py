@@ -52,7 +52,11 @@ SENT = "sent"
 REFUSED = "refused"
 AMBIGUOUS_SELECTION = "occurs more than once"
 
-KINDS = ("issue_resolution", "finding", "correction_proposal")
+# "note" (#426): a note the reviewer writes from the Paratext notes panel with
+# no Bridge record behind it. Its local id is its own message id for a
+# create, and the Paratext thread id for a reply or a resolve.
+KIND_NOTE = "note"
+KINDS = ("issue_resolution", "finding", "correction_proposal", KIND_NOTE)
 TO_PARATEXT = "bridge_to_paratext"
 FROM_PARATEXT = "paratext_to_bridge"
 
