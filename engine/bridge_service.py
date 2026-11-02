@@ -128,6 +128,7 @@ from paratext_session import ParatextSession
 from tc_ai_bridge.navigation import NavigationSyncCoordinator
 from tc_ai_bridge import paratext_outbox as outbox_module
 from tc_ai_bridge.paratext_outbox import OutboxError, ParatextOutbox
+from tc_ai_bridge import paratext_review
 from tc_ai_bridge.models import QAIssue, TokenRef, VerseAlignment
 from tc_ai_bridge.secret_store import AppSettings
 from tc_ai_bridge.workspace_repository import WorkspaceRepository, project_path_key, WorkspaceError
@@ -727,6 +728,18 @@ class Methods:
     PARATEXT_REPLY_THREAD = "paratext.replyThread"
     PARATEXT_RESOLVE_THREAD = "paratext.resolveThread"
     PARATEXT_LINK_THREAD = "paratext.linkThread"
+    # #426: a note written from the Paratext notes panel, with no Bridge
+    # record behind it, through the same outbox.
+    PARATEXT_CREATE_NOTE = "paratext.createNote"
+    # #428/#431/#432/#433/#434: the Paratext QA review queue (paratext_review.py).
+    PARATEXT_REVIEW_QUEUE = "paratextReview.queue"
+    PARATEXT_REVIEW_PREVIEW = "paratextReview.preview"
+    PARATEXT_REVIEW_DECIDE = "paratextReview.decide"
+    PARATEXT_REVIEW_SAVE_STATE = "paratextReview.saveState"
+    PARATEXT_REVIEW_REVERT_LATEST = "paratextReview.revertLatest"
+    PARATEXT_REVIEW_EXPORT_CSV = "paratextReview.exportCsv"
+    PARATEXT_REVIEW_REPORT = "paratextReview.report"
+    PARATEXT_REVIEW_LATEST_REPORT = "paratextReview.latestReport"
 
     LOGOS_GET_STATE = "logos.getState"
     LOGOS_SET_REFERENCE = "logos.setReference"
@@ -5517,7 +5530,10 @@ class BridgeEngine:
         session = self._paratext_session()
         if self.project is not None:
             session.refresh(paratext_link.resolve(self.project.path))
-        return session.link_status()
+        status = session.link_status()
+        if self.project is not None and session.index_ready():
+            status["closed"] = self._reconcile_paratext_closures()
+        return status
 
     def paratext_book_names(self) -> dict[str, Any]:
         session = self._paratext_session()
@@ -5533,7 +5549,303 @@ class BridgeEngine:
             self._paratext_book(), str(chapter), include_resolved=include_resolved, kinds=kinds)
 
     def paratext_notes_for_verse(self, chapter: str, verse: str) -> dict[str, Any]:
-        return self._paratext_session().notes_for_verse(self._paratext_book(), str(chapter), str(verse))
+        result = self._paratext_session().notes_for_verse(self._paratext_book(), str(chapter), str(verse))
+        # #426: this verse's writes still in the outbox, so the panel never
+        # shows a note as made before Paratext's file holds it: a create on
+        # this verse that is queued, refused, or sent but not yet read back;
+        # a reply or resolve on one of this verse's threads that is not sent.
+        result["pending"] = self._pending_for_verse(str(chapter), str(verse),
+                                                    {t["id"] for t in result.get("threads") or []})
+        return result
+
+    def _pending_for_verse(self, chapter: str, verse: str, thread_ids: set[str]) -> list[dict[str, Any]]:
+        try:
+            outbox = self._outbox()
+        except ProjectError:
+            return []
+        pending: list[dict[str, Any]] = []
+        for item in outbox.items():
+            if item["op"] == outbox_module.OP_CREATE:
+                if item["status"] == outbox_module.SENT and item["threadId"]:
+                    continue
+                reference = str(item.get("reference") or "")
+                on_verse = str(item.get("chapter") or "") == chapter and reference.rsplit(":", 1)[-1].strip() == verse
+            else:
+                on_verse = item["status"] != outbox_module.SENT and item["threadId"] in thread_ids
+            if on_verse:
+                pending.append({k: item.get(k) for k in (
+                    "messageId", "op", "threadId", "status", "attempts", "lastError", "sentAt", "createdAt",
+                    "kind", "localId", "reference", "selectedText", "text")})
+        return pending
+
+    def paratext_create_note(self, chapter: str, verse: str, text: str, selected_text: str = "") -> dict[str, Any]:
+        """#426: a Project Note on this verse from the notes panel, with no
+        Bridge record behind it. Same outbox, same footer, same linked-project
+        destination and author rules as a resolution's note (#358); the
+        selection, when given, must occur once in the verse."""
+        self._require_project()
+        if not str(text or "").strip():
+            raise ProjectError("The note text is empty.")
+        chapter, verse = str(chapter), str(verse)
+        selected = str(selected_text or "").strip()
+        if selected:
+            self.project.require_unique_selection(chapter, verse, selected)
+        before, after = outbox_module.selection_context(self.project.target_verse_text(chapter, verse), selected)
+        message_id = outbox_module.new_message_id()
+        try:
+            self._outbox().enqueue(
+                outbox_module.OP_CREATE, message_id=message_id, kind=outbox_module.KIND_NOTE, local_id=message_id,
+                text=self._attributed(text), reference=f"{self._paratext_book()} {chapter}:{verse}",
+                selected_text=selected, before_context=before, after_context=after,
+                book=str(self.project.book_id or ""), chapter=chapter, bridge_user=self._bridge_user(),
+            )
+        except OutboxError as exc:
+            raise ProjectError(str(exc)) from exc
+        self._flush_outbox(only=[message_id])
+        return {"item": self._outbox().get(message_id)}
+
+    # -- #428/#431/#432/#433/#434: the Paratext QA review queue -----------------
+    # The logic is in tc_ai_bridge/paratext_review.py; these pick the book, the
+    # store and the one Scripture writer (edit_verse) and stay thin.
+
+    def _review_store(self) -> paratext_review.ReviewStore:
+        self._require_project()
+        return paratext_review.ReviewStore(self.project.workbench, self.project.workbench_identity, self.project.book_id)
+
+    def _review_reviewer(self) -> str:
+        return self.settings.reviewer_name or "Bridge Reviewer"
+
+    def _review_items(self, status: str) -> tuple[list[dict[str, Any]], str]:
+        threads, state = self._paratext_session().book_threads(self._paratext_book())
+        try:
+            return paratext_review.queue_items(threads, status=status), state
+        except paratext_review.ReviewError as exc:
+            raise ProjectError(str(exc)) from exc
+
+    def _scripture_status(self, message_id: str) -> dict[str, Any]:
+        """What the outbox says about a queued Paratext Scripture write."""
+        item = self._outbox().get(message_id) if message_id else None
+        if item is None:
+            return {"status": "unknown", "messageId": message_id, "lastError": ""}
+        result = dict(item.get("result") or {})
+        return {"status": item["status"], "messageId": message_id, "lastError": item.get("lastError", ""),
+                "attempts": item.get("attempts", 0), "sentAt": item.get("sentAt", ""),
+                "verified": bool(result.get("verified")), "author": item.get("author", ""),
+                "usfmBefore": result.get("usfmBefore", ""), "usfmAfter": result.get("usfmAfter", "")}
+
+    def _review_merge(self, items: list[dict[str, Any]], store: paratext_review.ReviewStore) -> list[dict[str, Any]]:
+        decisions = {d["proposalId"]: d for d in store.decisions()}
+        for decision in decisions.values():
+            message_id = str((decision.get("paratext") or {}).get("messageId") or "")
+            if message_id:
+                decision["paratext"] = self._scripture_status(message_id)
+        drafts = dict(store.state().get("drafts") or {})
+        by_thread: dict[str, list[dict[str, Any]]] = {}
+        for item in items:
+            by_thread.setdefault(item["threadId"], []).append(item)
+        completion = {tid: paratext_review.thread_completion(group, decisions) for tid, group in by_thread.items()}
+        merged = []
+        for item in items:
+            merged.append({**item, "decision": decisions.get(item["proposalId"]),
+                           "draft": drafts.get(item["proposalId"]), "thread": completion[item["threadId"]]})
+        return merged
+
+    def paratext_review_queue(self, status: str = "") -> dict[str, Any]:
+        store = self._review_store()
+        state = store.state()
+        status = status or str(state.get("status") or paratext_review.FILTER_UNRESOLVED)
+        items, index_state = self._review_items(status)
+        merged = self._review_merge(items, store)
+        counts = {"total": len(merged), "undecided": 0}
+        for name in paratext_review.DECISIONS_ALL:
+            counts[name] = 0
+        for item in merged:
+            decision = item["decision"]
+            if decision is None:
+                counts["undecided"] += 1
+            else:
+                counts[str(decision.get("decision"))] = counts.get(str(decision.get("decision")), 0) + 1
+        return {"indexState": index_state, "status": status, "book": self._paratext_book(), "items": merged,
+                "counts": counts, "state": state, "presets": list(paratext_review.COMMENT_PRESETS),
+                "reviewer": self._review_reviewer()}
+
+    def _review_item(self, proposal_id: str) -> dict[str, Any]:
+        items, _ = self._review_items(paratext_review.FILTER_ALL)
+        for item in items:
+            if item["proposalId"] == proposal_id:
+                return item
+        raise ProjectError("That proposal is not in the Paratext notes Bridge has read; refresh the notes and try again.")
+
+    def paratext_review_preview(self, proposal_id: str, replacement: str | None = None) -> dict[str, Any]:
+        """Where the Original is in the current verse and what the verse would
+        read after the replacement. Reads only."""
+        item = self._review_item(proposal_id)
+        raw = self.project.target_verse_text(item["chapter"], item["verse"])
+        proposal = item["proposal"]
+        location = paratext_review.locate(raw, str(proposal.get("original") or ""),
+                                          context_before=item.get("contextBefore", ""),
+                                          context_after=item.get("contextAfter", ""))
+        plain = lift_verse(raw).plain
+        text = str(proposal.get("suggested") or "") if replacement is None else str(replacement)
+        after = ""
+        if location.ok and location.chosen is not None:
+            m = location.chosen
+            after = plain[:m.start] + text + plain[m.end:]
+        return {
+            "proposalId": proposal_id, "plain": plain, "found": len(location.found), "ok": location.ok,
+            "reason": location.reason, "after": after,
+            "span": ({"plainStart": location.chosen.start, "plainEnd": location.chosen.end} if location.chosen else None),
+            "matches": [{"plainStart": m.start, "plainEnd": m.end, "wholeWord": m.whole_word} for m in location.found],
+        }
+
+    def paratext_review_decide(self, proposal_id: str, decision: str, comment: str = "",
+                               replacement: str | None = None, confirm_delete: bool = False,
+                               write_paratext: bool = False) -> dict[str, Any]:
+        """One decision on one proposal. An `applied` decision edits Bridge's
+        copy through edit_verse and is verified by read-back; with
+        `write_paratext` (DECISIONS 2026-11-02, Benz) the same exact
+        replacement is then queued for the linked Paratext project through the
+        outbox (connector 0.9.0's put_verse_text) -- after, never instead of,
+        the verified Bridge apply -- and its status rides on the decision."""
+        if decision not in (paratext_review.APPLIED, paratext_review.REJECTED, paratext_review.MANUAL,
+                            paratext_review.DEFERRED):
+            raise ProjectError("decision must be applied, rejected, manual or deferred.")
+        store = self._review_store()
+        item = self._review_item(proposal_id)
+        proposal = item["proposal"]
+        comment = str(comment or "").strip()
+        if decision in (paratext_review.REJECTED, paratext_review.MANUAL) and not comment:
+            raise ProjectError("A rejection or a manual completion needs a comment saying why.")
+        existing = store.decision(proposal_id)
+        if existing and existing.get("decision") == paratext_review.APPLIED and existing.get("verified") \
+                and decision == paratext_review.APPLIED:
+            raise ProjectError("This proposal was already applied and verified; revert it first to apply again.")
+        now = paratext_review._now()
+        payload: dict[str, Any] = {
+            "proposalId": proposal_id, "threadId": item["threadId"], "book": item["book"],
+            "chapter": item["chapter"], "verse": item["verse"], "verseRef": item["verseRef"],
+            "pass": proposal.get("pass", ""), "category": proposal.get("category", ""),
+            "route": proposal.get("route", ""), "operation": proposal.get("operation", ""),
+            "decision": decision, "comment": comment, "reviewer": self._review_reviewer(), "decidedAt": now,
+            "threadResolved": bool(item.get("threadResolved")),
+            "original": str(proposal.get("original") or ""),
+            "replacement": str(proposal.get("suggested") or "") if replacement is None else str(replacement),
+        }
+        with self._checker_lock:
+            raw = self.project.target_verse_text(item["chapter"], item["verse"])
+            if decision == paratext_review.APPLIED:
+                try:
+                    applied = paratext_review.apply_proposal(
+                        item=item, replacement=payload["replacement"], raw_verse=raw,
+                        edit=lambda ch, v, new, old: self.edit_verse(ch, v, new, expected_old_text=old),
+                        read_back=lambda ch, v: self.project.target_verse_text(ch, v),
+                        confirm_delete=bool(confirm_delete),
+                    )
+                except paratext_review.ReviewError as exc:
+                    raise ProjectError(str(exc)) from exc
+                payload.update(applied)
+                payload["bridgeUser"] = self._bridge_user()
+                if write_paratext:
+                    if not applied.get("verified"):
+                        payload["paratext"] = {"status": "not_sent", "messageId": "",
+                                               "lastError": "Not sent to Paratext: the Bridge apply did not verify."}
+                    else:
+                        message_id = f"bridge-pt-{proposal_id}-{applied['journalTransactionId'][:12]}"
+                        before_ctx, after_ctx = outbox_module.selection_context(raw, payload["original"])
+                        try:
+                            self._outbox().enqueue(
+                                outbox_module.OP_PUT_TEXT, message_id=message_id, kind=outbox_module.KIND_NOTE,
+                                local_id=proposal_id, reference=item["verseRef"],
+                                before_context=before_ctx, after_context=after_ctx,
+                                book=str(self.project.book_id or ""), chapter=item["chapter"],
+                                scripture={"verse": item["verse"], "original": payload["original"],
+                                           "replacement": payload["replacement"],
+                                           "allowDelete": payload["replacement"] == "",
+                                           "expectedAfter": applied["after"]["plain"]},
+                                bridge_user=self._bridge_user(),
+                                record={"proposalId": proposal_id, "threadId": item["threadId"]},
+                            )
+                        except OutboxError as exc:
+                            raise ProjectError(str(exc)) from exc
+                        self._flush_outbox(only=[message_id])
+                        payload["paratext"] = self._scripture_status(message_id)
+            else:
+                payload["observed"] = {"raw": raw, "plain": lift_verse(raw).plain}
+                payload["verified"] = False
+            saved = store.write_decision(payload)
+            # The draft is spent.
+            state = store.state()
+            drafts = dict(state.get("drafts") or {})
+            if proposal_id in drafts:
+                drafts.pop(proposal_id)
+                store.save_state({"drafts": drafts})
+        # Completion is a property of the whole thread, so merge its siblings too.
+        all_items, _ = self._review_items(paratext_review.FILTER_ALL)
+        group = self._review_merge([i for i in all_items if i["threadId"] == item["threadId"]], store)
+        merged = next(i for i in group if i["proposalId"] == proposal_id)
+        return {"decision": saved, "item": merged}
+
+    def paratext_review_save_state(self, patch: dict[str, Any]) -> dict[str, Any]:
+        store = self._review_store()
+        clean = {k: v for k, v in dict(patch or {}).items() if k in ("status", "position", "drafts", "sessionStartedAt")}
+        if "status" in clean and clean["status"] not in paratext_review.FILTERS:
+            raise ProjectError(f"status must be one of {list(paratext_review.FILTERS)}")
+        return {"state": store.save_state(clean)}
+
+    def paratext_review_revert_latest(self) -> dict[str, Any]:
+        store = self._review_store()
+        with self._checker_lock:
+            try:
+                reverted = paratext_review.revert_latest(
+                    store, read_back=lambda ch, v: self.project.target_verse_text(ch, v),
+                    edit=lambda ch, v, new, old: self.edit_verse(ch, v, new, expected_old_text=old),
+                    username=self._review_reviewer())
+            except paratext_review.ReviewError as exc:
+                raise ProjectError(str(exc)) from exc
+        return {"decision": reverted}
+
+    def paratext_review_export_csv(self, output_path: str) -> dict[str, Any]:
+        if not str(output_path or "").strip():
+            raise ProjectError("Choose where to save the CSV.")
+        store = self._review_store()
+        try:
+            return paratext_review.write_csv(output_path, store.decisions())
+        except OSError as exc:
+            raise ProjectError(f"The CSV could not be written: {exc}") from exc
+
+    def _review_report_folder(self) -> Path:
+        return Path(self.project.path) / ".apps" / "translationCoreAI" / "paratext-review"
+
+    def paratext_review_report(self, since: str = "") -> dict[str, Any]:
+        """Write this session's HTML report into the project's own folder
+        (identity-checked by being the open project) and return it."""
+        store = self._review_store()
+        state = store.state()
+        since = since or str(state.get("sessionStartedAt") or "")
+        decisions = [d for d in store.decisions() if not since or str(d.get("decidedAt") or "") >= since]
+        if not decisions:
+            return {"written": False, "path": "", "html": "", "count": 0,
+                    "reason": "No decisions in this session; no report was written."}
+        generated = paratext_review._now()
+        text = paratext_review.session_report_html(
+            project_name=str(getattr(self.project.summary, "name", "") or self.project.book_id or ""),
+            book=self._paratext_book(), reviewer=self._review_reviewer(), decisions=decisions,
+            since=since, generated_at=generated)
+        try:
+            path = paratext_review.write_session_report(self._review_report_folder(), text)
+        except OSError as exc:
+            raise ProjectError(f"The report could not be written: {exc}") from exc
+        return {"written": True, "path": str(path), "html": text, "count": len(decisions)}
+
+    def paratext_review_latest_report(self) -> dict[str, Any]:
+        self._require_project()
+        path = paratext_review.latest_report(self._review_report_folder())
+        if path is None:
+            return {"path": "", "html": ""}
+        try:
+            return {"path": str(path), "html": path.read_text(encoding="utf-8")}
+        except OSError as exc:
+            raise ProjectError(f"The report could not be read: {exc}") from exc
 
     def paratext_note_thread(self, thread_id: str) -> dict[str, Any]:
         return self._paratext_session().note_thread(str(thread_id))
@@ -5608,6 +5920,86 @@ class BridgeEngine:
     def _outbox(self) -> ParatextOutbox:
         self._require_project()
         return ParatextOutbox(self.project.workbench, self.project.workbench_identity, self.project.book_id)
+
+    def _bridge_user(self) -> dict[str, str]:
+        """The authenticated Bridge user behind a write (DECISIONS 2026-11-02,
+        Benz): id and display name, recorded on the outbox item and named on
+        the note's first line. Never Paratext's author."""
+        try:
+            user = self.local_user()
+        except Exception:  # noqa: BLE001 -- no workspace yet: attribute by the chosen name only
+            user = {}
+        return {"userId": str(user.get("userId") or self.settings.current_user_id or ""),
+                "displayName": str(user.get("displayName") or self.settings.reviewer_name or "Bridge Reviewer")}
+
+    def _attributed(self, text: str) -> str:
+        user = self._bridge_user()
+        return outbox_module.attributed(text, user["displayName"], user["userId"])
+
+    # -- #425 / #433 (DECISIONS 2026-11-02): closure on a verified Paratext resolve ----
+
+    def _reconcile_paratext_closures(self) -> list[dict[str, Any]]:
+        """Every linked thread the notes index now shows resolved in Paratext
+        closes its Bridge record: an issue resolution becomes `resolved` with a
+        `resolved_from_paratext` event naming the external actor; a finding or
+        correction proposal gets the closure on its link ("resolved in
+        Paratext") and nothing else -- no Apply/Reject decision is invented and
+        CORRECTED is never set. One closure per link, idempotent; a thread
+        Bridge has not read is left alone; a resolve Bridge itself sent is
+        recorded as Bridge-origin. Never raises: a record that cannot be
+        closed is skipped and reported."""
+        if self.project is None:
+            return []
+        try:
+            outbox = self._outbox()
+        except ProjectError:
+            return []
+        session = self._paratext_session()
+        if not session.linked:
+            return []
+        closed: list[dict[str, Any]] = []
+        sent_resolves = {i["threadId"] for i in outbox.items(outbox_module.SENT) if i["op"] == outbox_module.OP_RESOLVE}
+        for link in outbox.links():
+            if link.get("closure") or not link.get("threadId"):
+                continue
+            thread = session.note_thread(link["threadId"]).get("thread")
+            if not thread or not thread.get("resolved"):
+                continue
+            done = next((c for c in reversed(thread.get("comments") or []) if c.get("status") in ("done", "deleted")), {})
+            origin = "bridge" if link["threadId"] in sent_resolves else "paratext"
+            closure = {
+                "origin": origin, "actor": str(done.get("user") or ""), "resolvedAt": str(done.get("date") or ""),
+                "seenAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "evidence": {"threadId": link["threadId"], "verseRef": thread.get("verseRef", ""),
+                             "commentCount": len(thread.get("comments") or [])},
+            }
+            if origin == "bridge":
+                closure["status"] = "resolved in Bridge"
+            try:
+                if link["kind"] == "issue_resolution":
+                    record = self._issue_resolution_by_id(link["localId"])
+                    if record is not None and str(record.get("status") or "") != "resolved":
+                        with self._checker_lock:
+                            self.project.resolve_issue_resolution_from_paratext(
+                                record["chapter"], record["verse"], link["localId"], thread_id=link["threadId"],
+                                done_by=str(done.get("user") or ""), done_at=str(done.get("date") or ""),
+                                username=f"{done.get('user') or 'Paratext'} (resolved in Paratext)"
+                                if origin == "paratext" else self._review_reviewer(),
+                            )
+                updated = outbox.close_link(link["kind"], link["localId"], link["threadId"], closure)
+                if updated is not None:
+                    closed.append(updated)
+            except Exception as exc:  # noqa: BLE001 -- one record's failure never stops the others
+                _trace(f"paratext closure: {link['kind']} {link['localId']} not closed: {exc}")
+        return closed
+
+    def _issue_resolution_by_id(self, resolution_id: str) -> dict[str, Any] | None:
+        for row in self.project.workbench.rows("issue_resolutions", project_id=self.project.workbench_identity.project_id,
+                                               book_id=self.project.book_id):
+            payload = json.loads(row.get("payload_json") or "{}")
+            if str(payload.get("resolutionId") or "") == resolution_id:
+                return payload
+        return None
 
     @staticmethod
     def _handoff_from(item: dict[str, Any], record: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -5699,7 +6091,7 @@ class BridgeEngine:
         "[Bridge ref ...]" footer (decisions 1 and 2 on #358)."""
         self._require_project()
         record = self.project.load_issue_resolution(chapter, verse, resolution_id)
-        comment = self._issue_handoff_comment(record, include_proposal)
+        comment = self._attributed(self._issue_handoff_comment(record, include_proposal))
         signature = str((record.get("paratext") or {}).get("contentSignature") or "")
         message_id = f"bridge-{resolution_id}-{signature[:12]}"
         outbox = self._outbox()
@@ -5717,6 +6109,7 @@ class BridgeEngine:
             book=str(self.project.book_id or ""), chapter=str(chapter),
             record={"chapter": str(chapter), "verse": str(verse), "resolutionId": resolution_id,
                     "contentSignature": signature},
+            bridge_user=self._bridge_user(),
         )
         self._outbox_changed(item)
         self._flush_outbox(only=[message_id])
@@ -5780,6 +6173,9 @@ class BridgeEngine:
         outbox = self._outbox()
         session = self._paratext_session()
         status = session.notes_index_status()
+        # DECISIONS 2026-11-02: a thread resolved in Paratext closes its record
+        # here, as it is read, with no second click.
+        self._reconcile_paratext_closures()
         links = []
         for link in outbox.links_for(kind, local_id):
             found = session.note_thread(link["threadId"]).get("thread")
@@ -5798,7 +6194,8 @@ class BridgeEngine:
 
     def paratext_flush_outbox(self) -> dict[str, Any]:
         touched = self._flush_outbox()
-        return {"touched": touched, **self.paratext_outbox()}
+        closed = self._reconcile_paratext_closures()
+        return {"touched": touched, "closed": closed, **self.paratext_outbox()}
 
     def _thread_key(self, thread_id: str) -> dict[str, Any]:
         found = self._paratext_session().thread_key(str(thread_id or ""))
@@ -5811,8 +6208,9 @@ class BridgeEngine:
         message_id = outbox_module.new_message_id()
         try:
             self._outbox().enqueue(
-                outbox_module.OP_COMMENT, message_id=message_id, kind=kind, local_id=local_id, text=text,
-                thread_id=thread_id, key=where["key"], book=where["book"], chapter=where["chapter"],
+                outbox_module.OP_COMMENT, message_id=message_id, kind=kind, local_id=local_id,
+                text=self._attributed(text), thread_id=thread_id, key=where["key"], book=where["book"],
+                chapter=where["chapter"], bridge_user=self._bridge_user(),
             )
         except OutboxError as exc:
             raise ProjectError(str(exc)) from exc
@@ -5820,17 +6218,31 @@ class BridgeEngine:
         return {"item": self._outbox().get(message_id)}
 
     def paratext_resolve_thread(self, thread_id: str, kind: str, local_id: str) -> dict[str, Any]:
+        """Resolve the thread in Paratext. A Bridge-origin completion is
+        recorded as "resolved in Bridge" (DECISIONS 2026-11-02): a comment
+        naming the Bridge user goes first, then the resolve."""
         where = self._thread_key(thread_id)
+        note_id = outbox_module.new_message_id()
         message_id = outbox_module.new_message_id()
         try:
-            self._outbox().enqueue(
+            outbox = self._outbox()
+            outbox.enqueue(
+                outbox_module.OP_COMMENT, message_id=note_id, kind=kind, local_id=local_id,
+                text=self._attributed("Resolved in Bridge."), thread_id=thread_id, key=where["key"],
+                book=where["book"], chapter=where["chapter"], bridge_user=self._bridge_user(),
+            )
+            outbox.enqueue(
                 outbox_module.OP_RESOLVE, message_id=message_id, kind=kind, local_id=local_id,
                 thread_id=thread_id, key=where["key"], book=where["book"], chapter=where["chapter"],
+                bridge_user=self._bridge_user(),
             )
         except OutboxError as exc:
             raise ProjectError(str(exc)) from exc
+        # The comment goes first, then the resolve: two flushes, so the order
+        # never depends on two rows created in the same second.
+        self._flush_outbox(only=[note_id])
         self._flush_outbox(only=[message_id])
-        return {"item": self._outbox().get(message_id)}
+        return {"item": self._outbox().get(message_id), "comment": self._outbox().get(note_id)}
 
     def paratext_link_thread(self, thread_id: str, kind: str, local_id: str) -> dict[str, Any]:
         """Link an existing Paratext thread to a Bridge record ("Link existing
@@ -9427,6 +9839,32 @@ class BridgeEngine:
                 return EngineResponse.ok(request.id, result=self.paratext_link_thread(
                     str(p.get("threadId") or ""), str(p.get("kind") or ""), str(p.get("localId") or ""),
                 ))
+            if m == Methods.PARATEXT_CREATE_NOTE:
+                return EngineResponse.ok(request.id, result=self.paratext_create_note(
+                    str(p.get("chapter") or ""), str(p.get("verse") or ""), str(p.get("text") or ""),
+                    str(p.get("selectedText") or ""),
+                ))
+            if m == Methods.PARATEXT_REVIEW_QUEUE:
+                return EngineResponse.ok(request.id, result=self.paratext_review_queue(str(p.get("status") or "")))
+            if m == Methods.PARATEXT_REVIEW_PREVIEW:
+                return EngineResponse.ok(request.id, result=self.paratext_review_preview(
+                    str(p.get("proposalId") or ""), p.get("replacement"),
+                ))
+            if m == Methods.PARATEXT_REVIEW_DECIDE:
+                return EngineResponse.ok(request.id, result=self.paratext_review_decide(
+                    str(p.get("proposalId") or ""), str(p.get("decision") or ""), str(p.get("comment") or ""),
+                    p.get("replacement"), bool(p.get("confirmDelete", False)), bool(p.get("writeParatext", False)),
+                ))
+            if m == Methods.PARATEXT_REVIEW_SAVE_STATE:
+                return EngineResponse.ok(request.id, result=self.paratext_review_save_state(dict(p.get("state") or {})))
+            if m == Methods.PARATEXT_REVIEW_REVERT_LATEST:
+                return EngineResponse.ok(request.id, result=self.paratext_review_revert_latest())
+            if m == Methods.PARATEXT_REVIEW_EXPORT_CSV:
+                return EngineResponse.ok(request.id, result=self.paratext_review_export_csv(str(p.get("outputPath") or "")))
+            if m == Methods.PARATEXT_REVIEW_REPORT:
+                return EngineResponse.ok(request.id, result=self.paratext_review_report(str(p.get("since") or "")))
+            if m == Methods.PARATEXT_REVIEW_LATEST_REPORT:
+                return EngineResponse.ok(request.id, result=self.paratext_review_latest_report())
             if m == Methods.PARATEXT_GET_STATE:
                 return EngineResponse.ok(request.id, result=self.paratext_get_state())
             if m == Methods.PARATEXT_SET_REFERENCE:

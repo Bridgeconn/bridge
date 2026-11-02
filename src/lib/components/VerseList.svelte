@@ -16,7 +16,7 @@
   import VerseHistoryPopover from "./VerseHistoryPopover.svelte";
   import { rawView, revealSidePanel } from "../editorPrefs";
   import { openIssueSummary } from "../verseIssues";
-  import { loadParatextNoteCounts, noteCountFor } from "../paratextNotes";
+  import { loadParatextNoteCounts, noteCountFor, requestParatextNote } from "../paratextNotes";
   import type { FlagInput, LanguageQaFlag } from "../types/languageQa";
   import type { VerseDisplay } from "../types/finding";
   import VerseNotesPopup from "./VerseNotesPopup.svelte";
@@ -373,6 +373,18 @@
         ],
       },
       {
+        // #426: the visible command for Paratext notes on this verse: opens
+        // the notes panel (existing QA suggestions and threads) with a
+        // composer for a new note, on the selection when there is one.
+        id: "paratext-note",
+        label: hasSelection ? "Paratext note on selection…" : "Paratext notes…",
+        separatorBefore: true,
+        title: hasSelection
+          ? "Open the Paratext notes on this verse and write a note attached to the selected text"
+          : "Open the Paratext notes on this verse (QA suggestions, threads) and write a note",
+        tag: (() => { const n = noteCountFor($paratextNoteCountsByVerse, $currentChapter, verse).open; return n ? `${n} open` : ""; })(),
+      },
+      {
         id: "edit-verse",
         label: "Edit verse",
         separatorBefore: true,
@@ -514,6 +526,10 @@
     }
     if (id === "edit-verse") {
       startVerseEdit($currentChapter, verse);
+      return;
+    }
+    if (id === "paratext-note") {
+      requestParatextNote($currentChapter, verse, selection && word ? word.word : "");
       return;
     }
     if (id === "change-history") {

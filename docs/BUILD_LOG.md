@@ -23208,3 +23208,181 @@ and determination, and clean-Windows installed acceptance are still pending.
 Public Windows release uploads intentionally fail until signing is configured;
 unsigned internal artifact-only builds remain available. No credential, paid
 service, tag, release or installer replacement was created.
+
+## 2026-11-02 — #423 Paratext notes epic: scope triage, #427 parser and #426 panel writes shipped in source (branch `paratext-notes`, Joel)
+
+**The ask and what it is.** #423 is a thirteen-child planning epic (#424–#436) for app-wide
+Paratext notes with a QA-correction round trip; every child says "Planning only; implementation
+is not authorized in this task", and four carry an "Approved policy update — 2026-11-02" that
+reverses two recorded decisions (Scripture writes through Paratext's API; automatic closure of a
+Bridge record on a Paratext resolve). The session was asked to implement the lot. Triage, from
+the code and this machine, before any code was written:
+
+| Child | Can it be built and verified here? | Why |
+| --- | --- | --- |
+| #424 spike, #436 validation | No | They need a real Paratext 9.5 host. This PC has no Paratext (registry empty, no projects folder, no connector pipe). |
+| #429, #430, #431 | Not without a decision | A Scripture writer through `PutUSFM`/`PutUSX`; `CLAUDE.md` stop-and-ask and DECISIONS 2026-10-26 "rules out". Recorded as PROPOSED in DECISIONS, not implemented. |
+| #425 automatic closure, #433 | Not without a decision | Reverses decision 3 ("never applied without a click"). Same PROPOSED entry. The rest of #425 (identity, footer idempotency, refused/queued states, independent retry) already exists from #358. |
+| #428, #432, #434, #435 | Later | A review window with Apply, a project-wide queue, reports and layout all sit on top of #429/#433 or need the real desktop at 1366x768. |
+| **#427** | **Yes, done** | Pure parser, synthetic fixtures, no host, no policy. |
+| **#426 core** | **Yes, done** | Notes created / replied / resolved from the panel ride the existing outbox and connector 0.8.0 calls; the stand-in exercises them. The real round trip is NOT RUN. |
+
+**#427 — `engine/tc_ai_bridge/paratext_proposals.py`.** Reads the `[AI-QA <pass>] <topic> — <category>`
+header, the `Original` / `Suggested` / `Reason` / `Reference` / `Location` / `Severity` fields and the
+`Confidence · Reviewer decision needed · Severity` metadata line, for every block in a comment.
+The format came from the reference plugin's `Domain.cs` and `CATEGORY_HANDLING.md` (format only;
+no code copied, and that repository has no licence file — DECISIONS). Each proposal carries a
+`route` (`literal`, `review`, `structure`, `noChange`, `legacy`, `unreadable`), an `operation`
+(`replace`, `insert`, `delete`, `alternatives`, `instruction`, `structural`, `markerRename`,
+`noChange`, `none`), a `region`, the sixteen canonical categories (seven of them "literal"
+categories; the rest route to review whatever the Suggested field holds), `reviewerDecision`
+(missing metadata = Yes), `anchorWarning`, `historical` (a `Changed to:` is not outstanding), and
+a `proposalId` hashed from thread, author, date, block and NFC/whitespace-normalized content.
+Prose detection generalizes the reference's Tamil-only rule: parentheses, ellipsis, line breaks,
+an instruction verb at the start, or Latin letters against a non-Latin Original. A parser that
+cannot read a structured-looking comment answers `unreadable` with diagnostics and never raises,
+so one bad note never stops the thread or the verse. Nothing here applies anything: `literal` is
+the strongest claim the parser makes, not a permission. Wire: `proposals` (counts) on every
+thread summary, `proposalItems` on the full thread (`notesForVerse`, `noteThread`, `threadsFor`).
+
+**#426 core.** `paratext_outbox.KINDS` gains `note` (local id = own message id for a create, the
+thread id for a reply or resolve). `paratext.createNote` {chapter, verse, text, selectedText?}
+validates a selection with `require_unique_selection`, adds the neighbouring-word context (#358 h),
+enqueues `create_thread` with the `[Bridge ref …]` footer and flushes only that id; the
+destination and author rules are #358's. `paratext.notesForVerse` now returns `pending`: this
+verse's creates that are queued, refused, or sent but not yet read back from Paratext's file, and
+replies/resolves on its threads not yet sent — so the panel never shows a note as made before the
+file holds it. Classified as a write-role method in `authorization.py` (decision 4 on #358).
+Frontend: the Paratext notes panel has "New note…" (composer with optional "Attach to text"),
+Reply and "Resolve in Paratext" on every thread (kind `note`), a pending list, read-only proposal
+blocks with the parser's route label, and drafts kept per project+verse for the session
+(`paratextNotes.ts`). The verse context menu gains "Paratext notes…" / "Paratext note on
+selection…" (`requestParatextNote` reveals the panel and seeds the composer): the visible,
+keyboard-reachable command #426 asks for beside the panel itself. One Svelte gotcha hit and
+fixed: `$: switchDraft(currentDraftKey())` never re-ran because the stores were read inside the
+function, not in the statement; the statement now names them.
+
+**Not done, deliberately.** No Apply control anywhere (#428/#429). No automatic closure
+(#425/#433). The notes panel is still the editor layout's side panel; alignment review and
+Project Home do not host it (#426's "every work area"). `pending` polls the engine for a bounded
+while after a write; the background outbox flush on the navigation probe is unchanged.
+
+**Ran and watched (source, this branch at `7786d39` + these changes).**
+- `tests/project_io/test_paratext_proposals.py`: 57 passed. `tests/service/test_paratext_notes_panel_protocol.py`:
+  6 passed. The Paratext suites plus `test_authorize_roles.py` together: 171 passed.
+- Full engine `pytest -n auto`: 5,716 passed, 29 failed, 1 skipped, 3 xfailed in 12m05s. All 29 are
+  environmental and none touches Paratext: 17 pass when rerun with `--basetemp C:\t\pt` (they
+  failed on `WinError 206`, the OneDrive path plus pytest's temp nesting exceeding MAX_PATH), and
+  the 12 `test_semantic_mapping_stage3.py` failures are `Semantic source database not found:
+  resources/semantic_mapping/bridge_semantic_source_v0.3.sqlite` (the `stage3db` resource is not
+  on this machine). Not fixed here; neither is a code failure.
+- Frontend: `npm run check` 0 errors / 0 warnings; `npm run test` 104 files, 1,083 passed;
+  `npm run build` passed (existing chunk-size warning).
+- Frozen pair: see the line below this entry.
+- NOT RUN: any real Paratext (create here → see there → reply there → refresh here), the
+  installed desktop at 1366x768, Rust (`src-tauri` untouched).
+- Frozen pair: `scripts/build-sidecars.ps1` built both executables and
+  `scripts/smoke_sidecars.py engine/dist/bridge-engine.exe` passed (real Wildebeest/Uroman, both
+  indic-qa layers, desktop connectors, alignment/export/undo, hub `/health`).
+
+## 2026-11-02 — #423 batch 2: review queue, Benz's decided policy (Paratext Scripture write, automatic closure, attribution), host checklist (branch `paratext-notes`, Joel)
+
+**What changed between batch 1 and this.** Joel asked for the rest of #423 to be built, and
+Benz answered the policy questions on the issue (comment 6573021022, 2026-11-02): the two
+reversals are approved, attribution is named, closure covers all three record types, the
+reference repo is his and may be reused, and he will run the host test. DECISIONS.md carries
+the decided entry (the PROPOSED text kept below it for the record) and the two 2026-10-26
+entries are amended in place, not deleted. CLAUDE.md's automatic-path paragraph and stop-and-ask
+bullet record the new boundary.
+
+**Review queue (#428, #431, #432, #433, #434) -- `tc_ai_bridge/paratext_review.py`, workbench v12.**
+Two tables: `paratext_review_decisions` (synced; one row per proposal decision, every revision a
+change_log row) and `paratext_review_state` (device-local position, filter, drafts).
+`queue_items` lists the open book's outstanding proposals in Scripture order from the notes
+index (never a sibling's files); `locate` finds the Original once in the verse body on
+text-element boundaries (a span that would end before a vowel sign or virama is skipped),
+narrowed by the note's own before/after context then by whole-word matches, never across markup
+or into a footnote; `apply_proposal` goes through `edit_verse` with `expected_old_text` -- the one
+Scripture writer -- and marks `verified` only when the read-back equals what was written at the
+span; rejected / manual need a comment and record the observed text; deferred is non-terminal;
+`thread_completion` is what lets "Resolve thread in Paratext" be offered as a click;
+`revert_latest` restores the latest verified apply only while the verse still equals its
+post-image; `decisions_csv` is UTF-8 BOM, formula-safe (`'` before `= + - @`); the HTML session
+report is fully escaped, written atomically, recoverable as "latest report". The dialog
+(`ParatextReviewQueue.svelte`, from the notes panel's "Review queue…") has the list, filters,
+the source proposal, the located span and After preview, alternatives, editable replacement,
+five presets that only fill the comment, the four decisions, Previous / Next / Go to verse, and
+a Reports / recovery tab. Browsing never changes a stored target: the engine locates at apply time.
+
+**Decided policy.**
+- *Scripture write into Paratext* (#429): connector **0.9.0** adds `put_verse_text` (C#:
+  chapter write lock via `RequestWriteLock(plugin, release, bookNum, chapterNum)`, `GetUSFM`,
+  verse span by `\v N`, the original located once outside `\f`/`\x`/`\fe` notes with
+  whitespace-collapsed context, `PutUSFM`, `GetUSFM` again, `verified` only on an exact match;
+  refuses markers/line breaks in the replacement, empty replacement without `allow_delete`,
+  resources). Python: `ParatextConnectorClient.put_verse_text`, outbox op `put_verse_text`
+  (no footer; a "not found"/"occurs N times" refusal is final and never retried in the
+  background), `paratextReview.decide` with `writeParatext` queues it **after** the verified
+  Bridge apply and records the outbox status on the decision; the queue shows it; an older
+  connector keeps it queued with the update hint. **The C# has not been compiled**: no Paratext
+  (and so no `PluginInterfaces.dll`) on this machine. The API shapes are as the Paratext 9.5
+  plugin interfaces document them; Benz's `build.ps1` is the first compile.
+- *Automatic closure* (#425, #433): `_reconcile_paratext_closures` runs on `paratext.threadsFor`,
+  `paratext.refresh` and `paratext.flushOutbox`: a linked thread the index shows resolved closes
+  its record once -- `closure` on the `paratext_links` row ("resolved in Paratext", actor, resolve
+  date, seen-at; "resolved in Bridge" when the resolve was Bridge's own), plus `resolved` with the
+  `resolved_from_paratext` event for an issue resolution. Findings and proposals get the closure
+  only: no Apply/Reject invented, CORRECTED never set. The one-click RPC stays and is refused as
+  already resolved. The thread panel shows the closure and offers no click.
+- *Attribution*: `outbox.attributed()` puts `[<display name> (<user id>) via Bridge]` on the first
+  line of every note, reply and the "Resolved in Bridge." comment that now precedes a Bridge
+  resolve; the outbox row carries `bridgeUser`; Paratext's author stays the PC's user.
+
+**Not done.** Findings and correction proposals still have no UI that creates a Paratext link
+(the thread panel is mounted on issue-resolution cards only), so their closure path is engine-only
+until a card offers "Send to Paratext" for them; #430 heading markers stay review-only; the
+revert is Bridge-side only (Paratext is not reverted; the checklist says so); #435's desktop
+layout and #436's host validation are Benz's walk (`docs/PARATEXT_HOST_ACCEPTANCE_CHECKLIST.md`).
+
+**Ran and watched (source).**
+- New: `tests/service/test_paratext_review_queue_protocol.py` 11, `test_paratext_decided_policy_protocol.py` 6;
+  updated: outbox, notes-panel, connector-client, v7-upgrade, hub-sync and workbench suites for the
+  changed expectations (closure on links, the "Resolved in Bridge." comment, the attribution line,
+  v12, 14 synced tables, exactly one `PutUSFM` followed by a read-back).
+- Full engine `pytest -n auto --basetemp C:\t\pt2`: 5,752 passed, 14 failed, 1 skipped, 3 xfailed
+  in 7m00s. Twelve are `test_semantic_mapping_stage3.py` (missing `bridge_semantic_source_v0.3.sqlite`
+  on this PC, as in batch 1); two were `test_workbench_v7_upgrade.py` pinning v11, fixed to v12 and
+  rerun (6 passed). The short temp path removed batch 1's MAX_PATH failures.
+- Frontend: `npm run check` 0/0; `npm run test` 105 files, 1,091 passed; `npm run build` ok.
+- Frozen pair rebuilt (`scripts/build-sidecars.ps1`) and `scripts/smoke_sidecars.py` passed
+  (real Wildebeest/Uroman, both indic-qa layers, desktop connectors, alignment/export/undo, hub `/health`).
+- NOT RUN: connector 0.9.0 compile and every real-Paratext step (the checklist); the desktop at 1366×768.
+
+## 2026-11-02 — #438: connector 0.9.0 did not compile on the real host; verse write moved to the token API (Joel)
+
+Benz's live walk (comment on #423, 10:34 UTC) passed the notes round trip on Paratext 9.5.110.1
+with connector 0.8.1 against PR commit `d5da598`: create / reply / resolve with read-back, the
+attribution line, "resolved in Bridge" on the link, idempotent re-resolve, wrong project and
+stale key refused. Scripture SHA-256 unchanged. But `build.ps1` on 0.9.0 failed:
+`CS1501: No overload for method 'PutUSFM' takes 4 arguments` -- the installed interfaces
+(2.0.100.0) expose `PutUSFM(IWriteLock, String, Int32)` (lock, usfm, bookNum: a whole-book
+write) and `PutUSFMTokens(IWriteLock, IReadOnlyList<IUSFMToken>, Int32)`. CLAUDE.md's rule
+("never trust a doc's description of what it does -- run it") applied to me: I wrote the call
+from memory of the API and nothing here could compile it.
+
+**Fix.** `PutVerseText` now takes the route selvabenz/Paratext-sug-in-context-menu compiled
+and ran on that host: `CanEdit(plugin, book, chapter)`; history point; chapter-scoped
+`RequestWriteLock(plugin, release, book, chapter)`; `GetUSFMTokens(book, chapter)`; the verse's
+Scripture text tokens (not metadata/figure/special/footnote tokens, `IsScripture`, the verse
+number or bridge range) concatenated into a plain string with a map back to each token; the
+original located once on text-element boundaries (`StringInfo.ParseCombiningCharacters`),
+never across two tokens, repeats narrowed by the note's context; that one token replaced by a
+`ChangedTextToken`; `ConvertToUSFMString` for the expected chapter; `PutUSFMTokens(lock,
+tokens, book)`; `SendNotifications`; `GetUSFMTokens` again and `verified` only on an exact
+match; history point after. `FindVerseSpan` / `InsideNote` / `StripMarkup` are gone. The
+protocol shape to Bridge is unchanged (`usfm_before`/`usfm_after` are now the edited token's
+text). The source test pins exactly one `PutUSFMTokens`, no `PutUSFM`/`PutUSX`/delete/reopen,
+and the write-then-notify-then-reread order.
+
+**Still not compiled here.** Benz's next `build.ps1` is the check; #438's acceptance (one
+correction persists, other verses/chapters/notes/markers preserved, refusals) is his walk.

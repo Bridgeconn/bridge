@@ -1807,7 +1807,7 @@
                 </SidePanel>
               {:else if panelId === "paratext"}
                 <SidePanel id="paratext" label="Paratext notes">
-                  {#key $project.path}<ParatextNotesPanel />{/key}
+                  {#key $project.path}<ParatextNotesPanel onNavigate={navigateToReportRow} />{/key}
                 </SidePanel>
               {/if}
             {/if}

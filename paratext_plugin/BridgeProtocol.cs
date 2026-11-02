@@ -58,6 +58,15 @@ namespace TranslationCoreAiBridge.ParatextConnector
         public bool resolved { get; set; }
         // 0.8.0: list_notes.
         public List<Dictionary<string, object>> notes { get; set; }
+        // 0.9.0 (#429): put_verse_text. `verified` is true only when the chapter
+        // read back exactly as written; the before/after are the verse's USFM span.
+        // `bridge_user` echoes who confirmed it in Bridge; `author` is Paratext's own
+        // logged-in user, the editor of record.
+        public bool scripture_written { get; set; }
+        public bool verified { get; set; }
+        public string usfm_before { get; set; }
+        public string usfm_after { get; set; }
+        public string bridge_user { get; set; }
     }
 
     internal static class BridgeJson

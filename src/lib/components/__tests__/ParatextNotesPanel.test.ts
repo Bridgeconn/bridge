@@ -1,19 +1,31 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 
-const { paratextNotesForVerse, paratextLinkStatus, paratextRefresh, paratextNotesForChapter } = vi.hoisted(() => ({
+const {
+  paratextNotesForVerse, paratextLinkStatus, paratextRefresh, paratextNotesForChapter,
+  paratextCreateNote, paratextReplyThread, paratextResolveThread,
+} = vi.hoisted(() => ({
   paratextNotesForVerse: vi.fn(),
   paratextLinkStatus: vi.fn(),
   paratextRefresh: vi.fn(),
   paratextNotesForChapter: vi.fn(),
+  paratextCreateNote: vi.fn(),
+  paratextReplyThread: vi.fn(),
+  paratextResolveThread: vi.fn(),
 }));
 vi.mock("../../api/bridgeClient", () => ({
-  bridge: { paratextNotesForVerse, paratextLinkStatus, paratextRefresh, paratextNotesForChapter },
+  bridge: {
+    paratextNotesForVerse, paratextLinkStatus, paratextRefresh, paratextNotesForChapter,
+    paratextCreateNote, paratextReplyThread, paratextResolveThread,
+  },
 }));
 
+import { get } from "svelte/store";
 import ParatextNotesPanel from "../ParatextNotesPanel.svelte";
 import { currentChapter, project, selectedVerse } from "../../stores";
-import type { ParatextNoteThread } from "../../types/paratext";
+import { paratextNoteRequest, requestParatextNote } from "../../paratextNotes";
+import { sidePanels } from "../../editorPrefs";
+import type { ParatextNoteThread, ParatextOutboxItem, ParatextProposal } from "../../types/paratext";
 
 const PROJECT = { path: "C:/p/jos", bookId: "jos", bookName: "Joshua", targetLanguage: "Tamil", tcVersion: "",
                   chapters: ["3"], checkTypes: {} };
@@ -24,14 +36,37 @@ function thread(overrides: Partial<ParatextNoteThread> = {}): ParatextNoteThread
     users: ["Yesu Selva Benz"], firstDate: "2025-10-21T14:40:12+05:30", lastDate: "2025-10-21T14:40:12+05:30",
     lastUser: "Yesu Selva Benz", excerpt: "ஒரு கிலோமீட்டர்", selectedText: "3,000 அடிகள்", assignedUser: "",
     tags: [], hidden: false, commentCount: 1, contextBefore: "", contextAfter: "",
+    proposals: { total: 0, outstanding: 0, unreadable: 0,
+                 byRoute: { literal: 0, review: 0, structure: 0, noChange: 0, legacy: 0, unreadable: 0 } },
+    proposalItems: [],
     comments: [{ user: "Yesu Selva Benz", date: "2025-10-21T14:40:12+05:30", contents: "ஒரு கிலோமீட்டர்",
                  status: "", type: "", assignedUser: null, replyToUser: "", language: "ta", tagsAdded: [], tagsRemoved: [] }],
     ...overrides,
   };
 }
 
-function verseAnswer(state: string, threads: ParatextNoteThread[] = []) {
-  return { state, book: "JOS", chapter: "3", verse: "4", threads };
+function verseAnswer(state: string, threads: ParatextNoteThread[] = [], pending: ParatextOutboxItem[] = []) {
+  return { state, book: "JOS", chapter: "3", verse: "4", threads, pending };
+}
+
+function outboxItem(overrides: Partial<ParatextOutboxItem> = {}): ParatextOutboxItem {
+  return {
+    messageId: "bridge-abc", op: "create_thread", threadId: "", status: "queued", attempts: 1,
+    lastError: "Paratext is offline", sentAt: "", resultKey: "", createdAt: "2026-11-02T08:00:00Z",
+    kind: "note", localId: "bridge-abc", reference: "JOS 3:4", selectedText: "",
+    text: "Please look at the measure.\n\n[Bridge ref bridge-abc]", ...overrides,
+  };
+}
+
+function proposal(overrides: Partial<ParatextProposal> = {}): ParatextProposal {
+  return {
+    proposalId: "p1", commentIndex: 0, block: 0, route: "literal", operation: "replace", region: "body",
+    pass: "R2", topic: "Sandhi", category: "Sandhi / word-joining", categoryKnown: true,
+    original: "ஒரு கிலோ", suggested: "ஒருகிலோ", reason: "The words join.", location: "", reference: "",
+    severity: "low", confidence: "0.93", reviewerDecision: false, anchorWarning: false, historical: false,
+    outstanding: true, alternatives: [], structural: null, diagnostics: [], author: "QA", date: "2026-10-20",
+    ...overrides,
+  };
 }
 
 describe("ParatextNotesPanel (#357)", () => {
@@ -128,5 +163,138 @@ describe("ParatextNotesPanel (#357)", () => {
     await waitFor(() => expect(screen.getByText("edited in Paratext")).toBeTruthy());
     expect(paratextRefresh).toHaveBeenCalledTimes(1);
     expect(paratextNotesForChapter).toHaveBeenCalledWith("3");
+  });
+});
+
+describe("ParatextNotesPanel writes (#426) and QA proposals (#427)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    project.set(PROJECT);
+    currentChapter.set("3");
+    selectedVerse.set("4");
+    paratextNoteRequest.set(null);
+    paratextNotesForChapter.mockResolvedValue({ state: "ready", book: "JOS", chapter: "3", verses: {}, counts: {} });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    project.set(null);
+    selectedVerse.set(null);
+  });
+
+  it("writes a new note on the verse through the engine and reports a sent note as pending, not as a thread", async () => {
+    paratextNotesForVerse
+      .mockResolvedValueOnce(verseAnswer("ready"))
+      .mockResolvedValueOnce(verseAnswer("ready", [], [outboxItem({ status: "sent", lastError: "" })]));
+    paratextCreateNote.mockResolvedValue({ item: outboxItem({ status: "sent", lastError: "" }) });
+    render(ParatextNotesPanel);
+    await screen.findByText("No Paratext notes on this verse.");
+
+    await fireEvent.click(await screen.findByRole("button", { name: "New note…" }));
+    const box = screen.getByPlaceholderText("Your note, as the Paratext user on this PC") as HTMLTextAreaElement;
+    await fireEvent.input(box, { target: { value: "Please look at the measure." } });
+    await fireEvent.input(screen.getByLabelText(/Attach to text/), { target: { value: "3,000 அடிகள்" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Send to Paratext" }));
+
+    await waitFor(() => expect(paratextCreateNote).toHaveBeenCalledWith("3", "4", "Please look at the measure.", "3,000 அடிகள்"));
+    expect(await screen.findByText(/Note sent to Paratext/)).toBeTruthy();
+    const pending = document.querySelector('[data-message-id="bridge-abc"]') as HTMLElement;
+    expect(pending).toHaveTextContent("Note sent. It shows here once Bridge has read Paratext's notes file again.");
+    expect(pending).toHaveTextContent("Please look at the measure.");
+    expect(pending).not.toHaveTextContent("[Bridge ref");
+    expect(document.querySelector("article.pt-thread")).toBeNull();
+    expect(screen.queryByText("No Paratext notes on this verse.")).toBeNull();
+  });
+
+  it("keeps a queued note visible with its reason and an engine refusal as the notice", async () => {
+    paratextNotesForVerse.mockResolvedValue(verseAnswer("ready", [], [outboxItem()]));
+    render(ParatextNotesPanel);
+    expect(await screen.findByText(/Note queued for Paratext\. Paratext is offline/)).toBeTruthy();
+
+    paratextCreateNote.mockRejectedValue(new Error("The selected target text is not present in the current verse."));
+    await fireEvent.click(screen.getByRole("button", { name: "New note…" }));
+    await fireEvent.input(screen.getByPlaceholderText("Your note, as the Paratext user on this PC"), { target: { value: "x" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Send to Paratext" }));
+    expect(await screen.findByText("The selected target text is not present in the current verse.")).toBeTruthy();
+    // The draft is still there to fix.
+    expect((screen.getByPlaceholderText("Your note, as the Paratext user on this PC") as HTMLTextAreaElement).value).toBe("x");
+  });
+
+  it("replies to and resolves any thread on the verse, with no Bridge record behind it", async () => {
+    paratextNotesForVerse.mockResolvedValue(verseAnswer("ready", [thread()]));
+    paratextReplyThread.mockResolvedValue({ item: outboxItem({ op: "add_comment", status: "sent", lastError: "" }) });
+    paratextResolveThread.mockResolvedValue({ item: outboxItem({ op: "resolve", status: "queued" }) });
+    render(ParatextNotesPanel);
+    await screen.findByText("ஒரு கிலோமீட்டர்", { selector: ".pt-body" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    await fireEvent.input(screen.getByPlaceholderText("Your reply, as the Paratext user on this PC"), { target: { value: "Agreed." } });
+    await fireEvent.click(screen.getByRole("button", { name: "Send reply" }));
+    await waitFor(() => expect(paratextReplyThread).toHaveBeenCalledWith("8a14411f", "Agreed.", "note", "8a14411f"));
+    expect(await screen.findByText("Reply sent to Paratext.")).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Resolve in Paratext" }));
+    await waitFor(() => expect(paratextResolveThread).toHaveBeenCalledWith("8a14411f", "note", "8a14411f"));
+    expect(await screen.findByText(/Queued for Paratext\. Paratext is offline/)).toBeTruthy();
+  });
+
+  it("opens the composer on the selection when the verse menu asks for a note, and keeps the draft across verses", async () => {
+    paratextNotesForVerse.mockResolvedValue(verseAnswer("ready"));
+    sidePanels.update((all) => ({ ...all, paratext: { ...all.paratext, open: false } }));
+    render(ParatextNotesPanel);
+    await screen.findByText("No Paratext notes on this verse.");
+
+    requestParatextNote("3", "4", "3,000 அடிகள்");
+    const target = await screen.findByLabelText(/Attach to text/) as HTMLInputElement;
+    expect(target.value).toBe("3,000 அடிகள்");
+    expect(get(paratextNoteRequest)).toBeNull();
+    let opened = false;
+    sidePanels.subscribe((all) => { opened = all.paratext.open; })();
+    expect(opened).toBe(true);
+    await fireEvent.input(screen.getByPlaceholderText("Your note, as the Paratext user on this PC"), { target: { value: "draft words" } });
+
+    selectedVerse.set("5");
+    await waitFor(() => expect(screen.queryByPlaceholderText("Your note, as the Paratext user on this PC")).toBeNull());
+    selectedVerse.set("4");
+    const back = await screen.findByPlaceholderText("Your note, as the Paratext user on this PC") as HTMLTextAreaElement;
+    expect(back.value).toBe("draft words");
+    expect(paratextCreateNote).not.toHaveBeenCalled();
+  });
+
+  it("shows a thread's QA proposals read-only, with what the parser could say about each", async () => {
+    paratextNotesForVerse.mockResolvedValue(verseAnswer("ready", [thread({
+      proposals: { total: 3, outstanding: 2, unreadable: 0,
+                   byRoute: { literal: 1, review: 1, structure: 0, noChange: 0, legacy: 1, unreadable: 0 } },
+      proposalItems: [
+        proposal(),
+        proposal({ proposalId: "p2", route: "review", operation: "alternatives", alternatives: ["அ", "ஆ"],
+                   suggested: "அ / ஆ", reviewerDecision: true, category: "Reviewer decision",
+                   region: "footnote", diagnostics: [] }),
+        proposal({ proposalId: "p3", route: "legacy", operation: "none", historical: true, category: "Unstructured / discussion",
+                   original: "", suggested: "ஒருகிலோ", reason: "", outstanding: false,
+                   diagnostics: ["Older note label \"Changed to\"; read the discussion before acting. A \"Changed to\" reports an edit already made."] }),
+      ],
+    })]));
+    render(ParatextNotesPanel);
+    await screen.findByText("ஒரு கிலோமீட்டர்", { selector: ".pt-body" });
+
+    expect(screen.getByText("2 QA proposals")).toBeTruthy();
+    const literal = document.querySelector('[data-proposal-id="p1"]') as HTMLElement;
+    expect(literal).toHaveTextContent("Literal correction · review before use");
+    expect(literal).toHaveTextContent("Sandhi / word-joining");
+    expect(within(literal).getByText("ஒரு கிலோ")).toBeTruthy();
+    expect(within(literal).getByText("ஒருகிலோ")).toBeTruthy();
+    expect(literal).toHaveTextContent("The words join.");
+    expect(literal).toHaveTextContent("Confidence 0.93");
+    const alternatives = document.querySelector('[data-proposal-id="p2"]') as HTMLElement;
+    expect(alternatives).toHaveTextContent("Needs a reviewer's decision");
+    expect(alternatives).toHaveTextContent("alternatives");
+    expect(alternatives).toHaveTextContent("in the footnote");
+    expect([...alternatives.querySelectorAll(".pt-alts li")].map((li) => li.textContent)).toEqual(["அ", "ஆ"]);
+    expect(alternatives).toHaveTextContent("Reviewer decision needed");
+    const legacy = document.querySelector('[data-proposal-id="p3"]') as HTMLElement;
+    expect(legacy).toHaveTextContent("Older note label");
+    expect(legacy).toHaveTextContent("already made");
+    // Nothing applies: no Apply control anywhere.
+    expect(screen.queryByRole("button", { name: /apply/i })).toBeNull();
   });
 });

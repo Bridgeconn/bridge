@@ -186,3 +186,19 @@ class ParatextConnectorClient:
         return self._exchange('resolve_note', {
             'project_id': project_id, 'book': book, 'chapter': str(chapter), 'key': dict(key),
         })
+
+    # -- 0.9.0 (#429): the one Scripture write, a reviewer-confirmed exact
+    # replacement in one verse, under Paratext's chapter write lock. Answers
+    # with `verified` (the chapter read back exactly as written), `usfm_before`
+    # / `usfm_after` (the verse's span), `author` (Paratext's logged-in user,
+    # the editor of record) and `bridge_user` echoed back.
+
+    def put_verse_text(self, project_id: str, book: str, chapter: str, verse: str, original: str, replacement: str,
+                       *, before_context: str = '', after_context: str = '', bridge_user: str = '',
+                       allow_delete: bool = False) -> dict[str, Any]:
+        return self._exchange('put_verse_text', {
+            'project_id': project_id, 'book': book, 'chapter': str(chapter), 'verse': str(verse),
+            'original': original, 'replacement': replacement,
+            'before_context': before_context, 'after_context': after_context,
+            'bridge_user': bridge_user, 'allow_delete': bool(allow_delete),
+        })

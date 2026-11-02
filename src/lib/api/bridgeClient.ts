@@ -10,6 +10,8 @@ import type {
   ParatextBookNames, ParatextLinkStatus, ParatextNoteKind, ParatextNoteThread, ParatextNotesForChapter,
   ParatextNotesForVerse, ParatextNotesIndexState, ParatextOutboxItem, ParatextThreadLink, ParatextThreadsFor,
   ParatextWriteKind,
+  ParatextReviewDecision, ParatextReviewDecisionKind, ParatextReviewFilter, ParatextReviewItem, ParatextReviewPreview,
+  ParatextReviewQueue, ParatextReviewReport, ParatextReviewState,
 } from "../types/paratext";
 import type {
   HouseStyleEntry, HouseStyleEntryInput, HouseStyleListResponse,
@@ -416,6 +418,15 @@ export type EngineMethod =
   | "paratext.replyThread"
   | "paratext.resolveThread"
   | "paratext.linkThread"
+  | "paratext.createNote"
+  | "paratextReview.queue"
+  | "paratextReview.preview"
+  | "paratextReview.decide"
+  | "paratextReview.saveState"
+  | "paratextReview.revertLatest"
+  | "paratextReview.exportCsv"
+  | "paratextReview.report"
+  | "paratextReview.latestReport"
   | "paratext.outbox"
   | "paratext.flushOutbox"
   | "ping"
@@ -1456,6 +1467,56 @@ export const bridge = {
   paratextLinkThread(threadId: string, kind: ParatextWriteKind, localId: string):
     Promise<{ link: Omit<ParatextThreadLink, "thread"> }> {
     return call("paratext.linkThread", { threadId, kind, localId });
+  },
+
+  /** #426: a Project Note on this verse from the notes panel, with no Bridge
+   *  record behind it. Queued in the outbox and sent now when Paratext is
+   *  available; `selectedText`, when given, must occur once in the verse. */
+  paratextCreateNote(chapter: string, verse: string, text: string, selectedText = ""):
+    Promise<{ item: ParatextOutboxItem | null }> {
+    return call("paratext.createNote", { chapter, verse, text, selectedText });
+  },
+
+  // #428/#431/#432/#433/#434: the Paratext QA review queue over the open
+  // book's notes. An apply edits Bridge's copy of the verse through the one
+  // Scripture writer and is read back; nothing here writes into Paratext.
+  paratextReviewQueue(status: ParatextReviewFilter | "" = ""): Promise<ParatextReviewQueue> {
+    return call("paratextReview.queue", { status });
+  },
+
+  paratextReviewPreview(proposalId: string, replacement: string | null = null): Promise<ParatextReviewPreview> {
+    return call("paratextReview.preview", { proposalId, replacement });
+  },
+
+  paratextReviewDecide(
+    proposalId: string, decision: Exclude<ParatextReviewDecisionKind, "reverted">,
+    options: { comment?: string; replacement?: string | null; confirmDelete?: boolean; writeParatext?: boolean } = {},
+  ): Promise<{ decision: ParatextReviewDecision; item: ParatextReviewItem }> {
+    return call("paratextReview.decide", { proposalId, decision, comment: options.comment ?? "",
+      replacement: options.replacement ?? null, confirmDelete: options.confirmDelete ?? false,
+      // DECISIONS 2026-11-02: after a verified Bridge apply, the same exact
+      // replacement may also be written into the linked Paratext project.
+      writeParatext: options.writeParatext ?? false });
+  },
+
+  paratextReviewSaveState(state: Partial<ParatextReviewState>): Promise<{ state: ParatextReviewState }> {
+    return call("paratextReview.saveState", { state });
+  },
+
+  paratextReviewRevertLatest(): Promise<{ decision: ParatextReviewDecision }> {
+    return call("paratextReview.revertLatest");
+  },
+
+  paratextReviewExportCsv(outputPath: string): Promise<{ written: boolean; path: string; count: number }> {
+    return call("paratextReview.exportCsv", { outputPath });
+  },
+
+  paratextReviewReport(since = ""): Promise<ParatextReviewReport> {
+    return call("paratextReview.report", { since });
+  },
+
+  paratextReviewLatestReport(): Promise<{ path: string; html: string }> {
+    return call("paratextReview.latestReport");
   },
 
   navigationStatus(context?: string): Promise<NavigationSyncState> {

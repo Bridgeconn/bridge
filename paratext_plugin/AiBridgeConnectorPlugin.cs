@@ -10,9 +10,11 @@ namespace TranslationCoreAiBridge.ParatextConnector
 {
     /// <summary>
     /// Paratext 9.5 companion for translationCore AI Bridge.
-    /// Deliberate write boundary: this plugin writes Project Notes only (create a thread, add a
-    /// comment, resolve), through Paratext's own write lock. It contains no PutUSFM/PutUSX/
-    /// Scripture-write operation and never deletes a note.
+    /// Write boundary: this plugin writes Project Notes (create a thread, add a comment,
+    /// resolve) and, since 0.9.0 (#429, DECISIONS 2026-11-02), one exact verse-text replacement
+    /// (`put_verse_text`) that Bridge sends only after a reviewer confirmed it and it was
+    /// applied and verified on Bridge's own copy. Both go through Paratext's own write locks.
+    /// It never deletes a note, never reopens one, and never restructures USFM.
     ///
     /// 0.8.0 (#358): a note is addressed by project id (`get_state` lists every project on this
     /// PC), never by whatever window happens to be active; `create_note` answers with the author
@@ -25,7 +27,7 @@ namespace TranslationCoreAiBridge.ParatextConnector
     /// </summary>
     public sealed class AiBridgeConnectorPlugin : IParatextStartupAutomaticPlugin, IPluginObject
     {
-        private const string PluginVersion = "0.8.1";
+        private const string PluginVersion = "0.9.0";
         private IPluginHost _host;
         private NamedPipeBridgeServer _server;
         private SynchronizationContext _uiContext;
@@ -36,14 +38,14 @@ namespace TranslationCoreAiBridge.ParatextConnector
 
         public string Name { get { return "translationCore AI Bridge Connector"; } }
         public string Publisher { get { return "translationCore AI Bridge"; } }
-        public Version Version { get { return new Version(0, 8, 0, 0); } }
+        public Version Version { get { return new Version(0, 9, 0, 0); } }
         public string VersionString { get { return PluginVersion; } }
 
         public string GetDescription(string locale)
         {
             return "Local connector for translationCore AI Bridge: Paratext user/project state, " +
-                   "two-way Scripture navigation, selected text, and Project Notes (create, reply, resolve). " +
-                   "Scripture writing is disabled.";
+                   "two-way Scripture navigation, selected text, Project Notes (create, reply, resolve) and " +
+                   "one reviewer-confirmed exact verse-text replacement under Paratext's write lock.";
         }
 
         public IDataFileMerger GetMerger(IPluginHost host, string dataIdentifier)
@@ -132,7 +134,283 @@ namespace TranslationCoreAiBridge.ParatextConnector
             if (action == "list_notes") return ListNotes(request.payload);
             if (action == "add_comment") return AddComment(request.payload);
             if (action == "resolve_note") return ResolveNote(request.payload);
+            if (action == "put_verse_text") return PutVerseText(request.payload);
             return new BridgeResponse { ok = false, error = "Unsupported connector action: " + action, plugin_version = PluginVersion };
+        }
+
+        // ---- put_verse_text (0.9.0, #429, #438) ----------------------------------------
+        //
+        // The one Scripture write. Bridge sends it only after a reviewer confirmed the
+        // correction and it was applied and verified on Bridge's own copy of the verse
+        // (DECISIONS 2026-11-02, Benz). It uses the token API the installed 9.5.110.1
+        // interfaces (2.0.100.0) actually expose and that selvabenz/Paratext-sug-in-context-menu
+        // exercised on this host (#438: `PutUSFM` takes (lock, usfm, bookNum), not a chapter):
+        // `CanEdit`, a chapter-scoped `RequestWriteLock`, `GetUSFMTokens(book, chapter)`, one
+        // Scripture text token of the verse replaced, `PutUSFMTokens(lock, tokens, book)`,
+        // `SendNotifications`, then `GetUSFMTokens` again: `verified` is true only when the
+        // chapter's USFM reads exactly as expected. The exact `original` must occur once in the
+        // verse's Scripture text tokens (never in a footnote or cross-reference token, never
+        // across two tokens, on text-element boundaries), repeats told apart by the note's own
+        // before/after context (whitespace-collapsed). Anything else is refused with nothing
+        // changed. Paratext records its own logged-in user as the editor; the Bridge user who
+        // confirmed it is `bridge_user`, echoed in the answer for Bridge's evidence, never
+        // impersonated. A history point is taken before and after, as the reference plugin does.
+
+        private BridgeResponse PutVerseText(IDictionary<string, object> payload)
+        {
+            IProject project;
+            string projectError;
+            if (!TryResolveProject(payload, out project, out projectError))
+                return Fail(projectError);
+            int bookNum, chapterNum;
+            string whereError;
+            if (!TryResolveChapter(project, payload, out bookNum, out chapterNum, out whereError))
+                return Fail(whereError);
+            string verse = BridgeJson.GetString(payload, "verse").Trim();
+            string original = BridgeJson.GetString(payload, "original");
+            string replacement = BridgeJson.GetString(payload, "replacement");
+            string beforeContext = BridgeJson.GetString(payload, "before_context");
+            string afterContext = BridgeJson.GetString(payload, "after_context");
+            string bridgeUser = BridgeJson.GetString(payload, "bridge_user").Trim();
+            bool allowDelete = BridgeJson.GetBool(payload, "allow_delete");
+            int firstVerse, lastVerse;
+            if (!ParseVerseRange(verse, out firstVerse, out lastVerse)) return Fail("verse is required (a number, or a bridge like 3-4).");
+            if (String.IsNullOrEmpty(original)) return Fail("original is required: the exact text to replace.");
+            if (replacement == null) replacement = String.Empty;
+            if (replacement.Length == 0 && !allowDelete) return Fail("An empty replacement deletes text; Bridge did not confirm a deletion.");
+            if (replacement.IndexOf('\\') >= 0 || replacement.IndexOf('\n') >= 0 || replacement.IndexOf('\r') >= 0)
+                return Fail("The replacement carries a USFM marker or a line break; that is a structural change the connector does not make.");
+            if (String.Equals(original, replacement, StringComparison.Ordinal)) return Fail("The original and the replacement are identical; nothing to change.");
+            if (project.IsResource) return Fail("Paratext project " + (project.ShortName ?? String.Empty) + " is a resource and cannot be edited.");
+            bool canEdit;
+            try { canEdit = project.CanEdit(this, bookNum, chapterNum); }
+            catch (Exception ex)
+            {
+                return Fail("Paratext could not say whether this chapter may be edited: " + ex.Message);
+            }
+            if (!canEdit)
+                return Fail("You do not have editing permission for " + BridgeJson.GetString(payload, "book") + " " +
+                            chapterNum.ToString(CultureInfo.InvariantCulture) + " in " + (project.ShortName ?? String.Empty) + "; nothing was changed.");
+
+            try { project.MakeHistoryPoint("Before Bridge correction at " + BridgeJson.GetString(payload, "book") + " " + chapterNum.ToString(CultureInfo.InvariantCulture) + ":" + verse, true); }
+            catch { /* a history point that cannot be taken does not block the edit; Paratext still records it */ }
+
+            bool revoked = false;
+            IWriteLock writeLock = null;
+            try
+            {
+                try
+                {
+                    writeLock = project.RequestWriteLock(this, delegate(IWriteLock requested) { revoked = true; }, bookNum, chapterNum);
+                }
+                catch (Exception ex)
+                {
+                    return Fail("Scripture WRITE_LOCK failed: " + ex.Message);
+                }
+                if (writeLock == null)
+                    return Fail("Scripture WRITE_LOCK failed: Paratext could not grant a write lock on " +
+                                (project.ShortName ?? String.Empty) + " " + BridgeJson.GetString(payload, "book") + " " +
+                                chapterNum.ToString(CultureInfo.InvariantCulture) + ". Check that nothing else holds it and try again.");
+
+                List<IUSFMToken> tokens = new List<IUSFMToken>();
+                try
+                {
+                    IReadOnlyList<IUSFMToken> read = project.GetUSFMTokens(bookNum, chapterNum);
+                    if (read != null) for (int i = 0; i < read.Count; i++) tokens.Add(read[i]);
+                }
+                catch (Exception ex)
+                {
+                    return Fail("Paratext could not read the chapter's USFM tokens: " + ex.Message);
+                }
+                if (tokens.Count == 0) return Fail("The chapter has no USFM tokens; nothing was changed.");
+
+                // The verse's Scripture text, token by token, with a map back to each token.
+                List<int> candidateIndexes = new List<int>();
+                StringBuilder plainBuilder = new StringBuilder();
+                List<int> tokenOfChar = new List<int>();     // plain index -> candidate index
+                List<int> offsetOfChar = new List<int>();    // plain index -> offset in that token
+                for (int i = 0; i < tokens.Count; i++)
+                {
+                    IUSFMTextToken text = tokens[i] as IUSFMTextToken;
+                    if (text == null || text.VerseRef == null) continue;
+                    if (text.IsMetadata || text.IsFigure || text.IsSpecial || text.IsFootnoteOrCrossReference || !text.IsScripture) continue;
+                    if (text.VerseRef.ChapterNum != chapterNum) continue;
+                    if (text.VerseRef.VerseNum < firstVerse || text.VerseRef.VerseNum > lastVerse) continue;
+                    string t = text.Text ?? String.Empty;
+                    int candidate = candidateIndexes.Count;
+                    candidateIndexes.Add(i);
+                    for (int k = 0; k < t.Length; k++)
+                    {
+                        plainBuilder.Append(t[k]);
+                        tokenOfChar.Add(candidate);
+                        offsetOfChar.Add(k);
+                    }
+                }
+                string plain = plainBuilder.ToString();
+                if (candidateIndexes.Count == 0)
+                    return Fail("Verse " + verse + " has no Scripture text in the chapter's tokens; nothing was changed.");
+
+                List<int> found = new List<int>();
+                int[] elements = StringInfo.ParseCombiningCharacters(plain);
+                int from = 0;
+                while (from <= plain.Length - original.Length)
+                {
+                    int at = plain.IndexOf(original, from, StringComparison.Ordinal);
+                    if (at < 0) break;
+                    from = at + 1;
+                    int end = at + original.Length;
+                    if (Array.BinarySearch(elements, at) < 0 || (end < plain.Length && Array.BinarySearch(elements, end) < 0)) continue;
+                    if (tokenOfChar[at] != tokenOfChar[end - 1]) continue;       // runs across two tokens (markup between)
+                    found.Add(at);
+                }
+                int chosen = -1;
+                if (found.Count == 1) chosen = found[0];
+                else if (found.Count > 1)
+                {
+                    string before = Collapse(beforeContext), after = Collapse(afterContext);
+                    List<int> anchored = new List<int>();
+                    for (int i = 0; i < found.Count; i++)
+                    {
+                        string left = Collapse(plain.Substring(0, found[i]));
+                        string right = Collapse(plain.Substring(found[i] + original.Length));
+                        bool okBefore = before.Length == 0 || left.EndsWith(before, StringComparison.Ordinal);
+                        bool okAfter = after.Length == 0 || right.StartsWith(after, StringComparison.Ordinal);
+                        if ((before.Length > 0 || after.Length > 0) && okBefore && okAfter) anchored.Add(found[i]);
+                    }
+                    if (anchored.Count == 1) chosen = anchored[0];
+                }
+                if (found.Count == 0)
+                    return Fail("The original text was not found in verse " + verse + " (outside its notes). It may already be corrected or changed since review; nothing was changed.");
+                if (chosen < 0)
+                    return Fail("The original text occurs " + found.Count.ToString(CultureInfo.InvariantCulture) +
+                                " times in verse " + verse + " and the context does not identify one; nothing was changed.");
+
+                int tokenIndex = candidateIndexes[tokenOfChar[chosen]];
+                int offset = offsetOfChar[chosen];
+                IUSFMTextToken old = tokens[tokenIndex] as IUSFMTextToken;
+                if (old == null) return Fail("The selected target is not a Scripture text token; nothing was changed.");
+                string oldText = old.Text ?? String.Empty;
+                if (offset + original.Length > oldText.Length || String.CompareOrdinal(oldText, offset, original, 0, original.Length) != 0)
+                    return Fail("The matched text changed before replacement; nothing was changed.");
+                string newText = oldText.Substring(0, offset) + replacement + oldText.Substring(offset + original.Length);
+                tokens[tokenIndex] = new ChangedTextToken(old, newText);
+
+                string expected;
+                try { expected = project.ConvertToUSFMString(tokens); }
+                catch (Exception ex)
+                {
+                    return Fail("Paratext could not render the edited chapter as USFM: " + ex.Message);
+                }
+                if (revoked) return Fail("The Scripture write lock was withdrawn before the write; nothing was changed.");
+                try
+                {
+                    project.PutUSFMTokens(writeLock, tokens, bookNum);
+                    writeLock.SendNotifications();
+                }
+                catch (Exception ex)
+                {
+                    return Fail("Scripture PUT_USFM_TOKENS failed for verse " + verse + ": " + ex.Message);
+                }
+                string saved;
+                try
+                {
+                    List<IUSFMToken> again = new List<IUSFMToken>();
+                    IReadOnlyList<IUSFMToken> reread = project.GetUSFMTokens(bookNum, chapterNum);
+                    if (reread != null) for (int i = 0; i < reread.Count; i++) again.Add(reread[i]);
+                    saved = project.ConvertToUSFMString(again);
+                }
+                catch (Exception ex)
+                {
+                    BridgeResponse partial = BuildScriptureResponse(project, oldText, newText, false, bridgeUser);
+                    partial.message = "The verse was written but could not be read back: " + ex.Message + ". Treat the edit as unverified.";
+                    return partial;
+                }
+                bool verified = String.Equals(saved, expected, StringComparison.Ordinal);
+                TouchState("scripture_verse_written", String.Empty);
+                try { project.MakeHistoryPoint("Bridge correction at " + BridgeJson.GetString(payload, "book") + " " + chapterNum.ToString(CultureInfo.InvariantCulture) + ":" + verse, true); }
+                catch { }
+                BridgeResponse r = BuildScriptureResponse(project, oldText, newText, verified, bridgeUser);
+                r.message = verified
+                    ? "Verse " + verse + " written in " + (project.ShortName ?? String.Empty) + " and read back."
+                    : "Verse " + verse + " was written but the chapter does not read back as expected; treat the edit as unverified.";
+                return r;
+            }
+            finally
+            {
+                try { if (writeLock != null) writeLock.Dispose(); }
+                catch { }
+            }
+        }
+
+        private BridgeResponse BuildScriptureResponse(IProject project, string before, string after, bool verified, string bridgeUser)
+        {
+            BridgeResponse r = new BridgeResponse();
+            r.ok = true;
+            r.plugin_version = PluginVersion;
+            r.project_id = project.ID ?? String.Empty;
+            r.project_name = project.ShortName ?? String.Empty;
+            r.scripture_written = true;
+            r.verified = verified;
+            r.usfm_before = before;
+            r.usfm_after = after;
+            r.author = _host.UserInfo == null ? String.Empty : (_host.UserInfo.Name ?? String.Empty);
+            r.bridge_user = bridgeUser;
+            r.created = FormatCreated(DateTime.Now);
+            return r;
+        }
+
+        /// <summary>"3" -> (3, 3); a bridge "3-4" -> (3, 4); "4a" -> (4, 4).</summary>
+        private static bool ParseVerseRange(string verse, out int first, out int last)
+        {
+            first = 0;
+            last = 0;
+            if (String.IsNullOrEmpty(verse)) return false;
+            string[] parts = verse.Split('-');
+            if (!TryLeadingNumber(parts[0], out first)) return false;
+            last = first;
+            if (parts.Length > 1 && TryLeadingNumber(parts[1], out last) && last < first) last = first;
+            return true;
+        }
+
+        private static bool TryLeadingNumber(string text, out int value)
+        {
+            value = 0;
+            int end = 0;
+            while (end < text.Length && Char.IsDigit(text[end])) end++;
+            return end > 0 && Int32.TryParse(text.Substring(0, end), NumberStyles.None, CultureInfo.InvariantCulture, out value);
+        }
+
+        private static string Collapse(string text)
+        {
+            if (String.IsNullOrEmpty(text)) return String.Empty;
+            StringBuilder sb = new StringBuilder(text.Length);
+            bool space = false;
+            for (int i = 0; i < text.Length; i++)
+            {
+                if (Char.IsWhiteSpace(text[i])) { space = true; continue; }
+                if (space && sb.Length > 0) sb.Append(' ');
+                space = false;
+                sb.Append(text[i]);
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>A text token with its text replaced and everything else as the host gave it
+        /// (the shape selvabenz/Paratext-sug-in-context-menu compiled and ran against 2.0.100.0).</summary>
+        private sealed class ChangedTextToken : IUSFMTextToken
+        {
+            private readonly IUSFMTextToken _source;
+            private readonly string _text;
+            public ChangedTextToken(IUSFMTextToken original, string value) { _source = original; _text = value; }
+            public string Text { get { return _text; } }
+            public IVerseRef VerseRef { get { return _source.VerseRef; } }
+            public int VerseOffset { get { return _source.VerseOffset; } }
+            public bool IsSpecial { get { return _source.IsSpecial; } }
+            public bool IsFigure { get { return _source.IsFigure; } }
+            public bool IsFootnoteOrCrossReference { get { return _source.IsFootnoteOrCrossReference; } }
+            public bool IsScripture { get { return _source.IsScripture; } }
+            public bool IsMetadata { get { return _source.IsMetadata; } }
+            public bool IsPublishableVernacular { get { return _source.IsPublishableVernacular; } }
         }
 
         // ---- state -------------------------------------------------------------------------
@@ -175,6 +453,7 @@ namespace TranslationCoreAiBridge.ParatextConnector
             r.capabilities = new string[] {
                 "state", "navigation", "selection", "project_notes",
                 "project_list", "create_note", "list_notes", "add_comment", "resolve_note",
+                "put_verse_text",
             };
             return r;
         }
