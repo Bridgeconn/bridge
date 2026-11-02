@@ -22824,3 +22824,76 @@ while after a write; the background outbox flush on the navigation probe is unch
 - Frozen pair: `scripts/build-sidecars.ps1` built both executables and
   `scripts/smoke_sidecars.py engine/dist/bridge-engine.exe` passed (real Wildebeest/Uroman, both
   indic-qa layers, desktop connectors, alignment/export/undo, hub `/health`).
+
+## 2026-11-02 — #423 batch 2: review queue, Benz's decided policy (Paratext Scripture write, automatic closure, attribution), host checklist (branch `paratext-notes`, Joel)
+
+**What changed between batch 1 and this.** Joel asked for the rest of #423 to be built, and
+Benz answered the policy questions on the issue (comment 6573021022, 2026-11-02): the two
+reversals are approved, attribution is named, closure covers all three record types, the
+reference repo is his and may be reused, and he will run the host test. DECISIONS.md carries
+the decided entry (the PROPOSED text kept below it for the record) and the two 2026-10-26
+entries are amended in place, not deleted. CLAUDE.md's automatic-path paragraph and stop-and-ask
+bullet record the new boundary.
+
+**Review queue (#428, #431, #432, #433, #434) -- `tc_ai_bridge/paratext_review.py`, workbench v12.**
+Two tables: `paratext_review_decisions` (synced; one row per proposal decision, every revision a
+change_log row) and `paratext_review_state` (device-local position, filter, drafts).
+`queue_items` lists the open book's outstanding proposals in Scripture order from the notes
+index (never a sibling's files); `locate` finds the Original once in the verse body on
+text-element boundaries (a span that would end before a vowel sign or virama is skipped),
+narrowed by the note's own before/after context then by whole-word matches, never across markup
+or into a footnote; `apply_proposal` goes through `edit_verse` with `expected_old_text` -- the one
+Scripture writer -- and marks `verified` only when the read-back equals what was written at the
+span; rejected / manual need a comment and record the observed text; deferred is non-terminal;
+`thread_completion` is what lets "Resolve thread in Paratext" be offered as a click;
+`revert_latest` restores the latest verified apply only while the verse still equals its
+post-image; `decisions_csv` is UTF-8 BOM, formula-safe (`'` before `= + - @`); the HTML session
+report is fully escaped, written atomically, recoverable as "latest report". The dialog
+(`ParatextReviewQueue.svelte`, from the notes panel's "Review queue…") has the list, filters,
+the source proposal, the located span and After preview, alternatives, editable replacement,
+five presets that only fill the comment, the four decisions, Previous / Next / Go to verse, and
+a Reports / recovery tab. Browsing never changes a stored target: the engine locates at apply time.
+
+**Decided policy.**
+- *Scripture write into Paratext* (#429): connector **0.9.0** adds `put_verse_text` (C#:
+  chapter write lock via `RequestWriteLock(plugin, release, bookNum, chapterNum)`, `GetUSFM`,
+  verse span by `\v N`, the original located once outside `\f`/`\x`/`\fe` notes with
+  whitespace-collapsed context, `PutUSFM`, `GetUSFM` again, `verified` only on an exact match;
+  refuses markers/line breaks in the replacement, empty replacement without `allow_delete`,
+  resources). Python: `ParatextConnectorClient.put_verse_text`, outbox op `put_verse_text`
+  (no footer; a "not found"/"occurs N times" refusal is final and never retried in the
+  background), `paratextReview.decide` with `writeParatext` queues it **after** the verified
+  Bridge apply and records the outbox status on the decision; the queue shows it; an older
+  connector keeps it queued with the update hint. **The C# has not been compiled**: no Paratext
+  (and so no `PluginInterfaces.dll`) on this machine. The API shapes are as the Paratext 9.5
+  plugin interfaces document them; Benz's `build.ps1` is the first compile.
+- *Automatic closure* (#425, #433): `_reconcile_paratext_closures` runs on `paratext.threadsFor`,
+  `paratext.refresh` and `paratext.flushOutbox`: a linked thread the index shows resolved closes
+  its record once -- `closure` on the `paratext_links` row ("resolved in Paratext", actor, resolve
+  date, seen-at; "resolved in Bridge" when the resolve was Bridge's own), plus `resolved` with the
+  `resolved_from_paratext` event for an issue resolution. Findings and proposals get the closure
+  only: no Apply/Reject invented, CORRECTED never set. The one-click RPC stays and is refused as
+  already resolved. The thread panel shows the closure and offers no click.
+- *Attribution*: `outbox.attributed()` puts `[<display name> (<user id>) via Bridge]` on the first
+  line of every note, reply and the "Resolved in Bridge." comment that now precedes a Bridge
+  resolve; the outbox row carries `bridgeUser`; Paratext's author stays the PC's user.
+
+**Not done.** Findings and correction proposals still have no UI that creates a Paratext link
+(the thread panel is mounted on issue-resolution cards only), so their closure path is engine-only
+until a card offers "Send to Paratext" for them; #430 heading markers stay review-only; the
+revert is Bridge-side only (Paratext is not reverted; the checklist says so); #435's desktop
+layout and #436's host validation are Benz's walk (`docs/PARATEXT_HOST_ACCEPTANCE_CHECKLIST.md`).
+
+**Ran and watched (source).**
+- New: `tests/service/test_paratext_review_queue_protocol.py` 11, `test_paratext_decided_policy_protocol.py` 6;
+  updated: outbox, notes-panel, connector-client, v7-upgrade, hub-sync and workbench suites for the
+  changed expectations (closure on links, the "Resolved in Bridge." comment, the attribution line,
+  v12, 14 synced tables, exactly one `PutUSFM` followed by a read-back).
+- Full engine `pytest -n auto --basetemp C:\t\pt2`: 5,752 passed, 14 failed, 1 skipped, 3 xfailed
+  in 7m00s. Twelve are `test_semantic_mapping_stage3.py` (missing `bridge_semantic_source_v0.3.sqlite`
+  on this PC, as in batch 1); two were `test_workbench_v7_upgrade.py` pinning v11, fixed to v12 and
+  rerun (6 passed). The short temp path removed batch 1's MAX_PATH failures.
+- Frontend: `npm run check` 0/0; `npm run test` 105 files, 1,091 passed; `npm run build` ok.
+- Frozen pair rebuilt (`scripts/build-sidecars.ps1`) and `scripts/smoke_sidecars.py` passed
+  (real Wildebeest/Uroman, both indic-qa layers, desktop connectors, alignment/export/undo, hub `/health`).
+- NOT RUN: connector 0.9.0 compile and every real-Paratext step (the checklist); the desktop at 1366×768.

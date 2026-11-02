@@ -143,8 +143,12 @@
       <article class="pt-thread" class:resolved={thread?.resolved} data-thread-id={link.threadId}>
         <header>
           <span class="pt-title">Paratext thread{thread?.verseRef ? ` · ${thread.verseRef}` : ""}</span>
-          {#if thread?.resolved}
-            <span class="pt-state done" title={bridgeResolved ? "" : "Shown only: Bridge's status changes only if you mark it resolved."}>Resolved in Paratext</span>
+          {#if link.closure}
+            <!-- DECISIONS 2026-11-02: the record was closed with this, no click. -->
+            <span class="pt-state done" title={`Seen by Bridge ${when(link.closure.seenAt)}`}>
+              {link.closure.status}{link.closure.actor ? ` · ${link.closure.actor}` : ""}{link.closure.resolvedAt ? ` · ${when(link.closure.resolvedAt)}` : ""}</span>
+          {:else if thread?.resolved}
+            <span class="pt-state done">Resolved in Paratext</span>
           {:else if thread}
             <span class="pt-state">Open in Paratext</span>
           {/if}
@@ -176,7 +180,7 @@
               {#if !thread.resolved}
                 <button class="small-btn" on:click={() => resolveThread(link.threadId)} disabled={Boolean(busy)}>
                   {busy === `resolve:${link.threadId}` ? "Resolving…" : "Resolve in Paratext"}</button>
-              {:else if onResolveHere && !bridgeResolved}
+              {:else if onResolveHere && !bridgeResolved && !link.closure}
                 <button class="small-btn" on:click={() => resolveHere(link.threadId)} disabled={Boolean(busy)}>
                   {busy === `here:${link.threadId}` ? "Marking…" : "Mark resolved in Bridge"}</button>
               {/if}

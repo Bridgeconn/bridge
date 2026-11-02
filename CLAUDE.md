@@ -179,8 +179,25 @@ passes agree on is written. That covers tC same-verse groups, cross-verse link
 groups and reasoned null decisions, each with `origin: "ai-auto"`. A
 single-pass claim is a suggestion. A word neither pass placed is a *possible*
 omission or addition and is never forced. A reviewer's existing alignment is
-never written over. Scripture text and findings are still untouched by any
-automatic path, and widening to them is still a fresh question.
+never written over.
+
+The third (#423, Benz's decision 2026-11-02, DECISIONS.md) is **closure on a
+Paratext resolve**: when the notes index shows a linked Paratext thread resolved,
+the linked Bridge record -- an issue resolution, a finding or a correction
+proposal -- is closed as it is read, with no click (`_reconcile_paratext_closures`
+in `bridge_service.py`). What it writes is a `closure` on the `paratext_links`
+row ("resolved in Paratext", the external actor, the resolve comment's date) and,
+for an issue resolution, the existing `resolved` status with its
+`resolved_from_paratext` event. It invents no Apply/Reject decision, never sets
+`CORRECTED`, and closes each link once. The same decision admits **one Scripture
+write into Paratext** (`put_verse_text`, connector 0.9.0, #429): a reviewer's
+"Apply and next" in the Paratext review queue, with "Also write to Paratext"
+ticked, applies the exact replacement on Bridge's copy through the one writer
+first, verifies it by read-back, and only then queues the same replacement for
+the linked Paratext project, where the plugin places the original once in the
+verse under the chapter write lock, writes, reads back, or refuses. That is still
+not an automatic path: it is the reviewer's click, on text the reviewer saw.
+Findings are untouched by any automatic path.
 
 ### Two different vendoring shapes for the same upstream repo
 
@@ -266,7 +283,7 @@ A raw Scripture import becomes a translationCore-compatible book project:
                                                 dialog (2026-10-08). An indic-qa rule may be switched back
                                                 on there; inline never.
 <project>/.apps/translationCoreAI/bridge-workbench.sqlite3
-                                                schema v11. Every Bridge-private store lives here:
+                                                schema v12. Every Bridge-private store lives here:
                                                 the human-owned ones (#76), the derived ones
                                                 (#77) -- progress rollup, check-finding snapshots,
                                                 check cache, triage verdicts, metrics, backups index --
@@ -291,7 +308,15 @@ A raw Scripture import becomes a translationCore-compatible book project:
                                                 (synced), and `paratext_outbox`, this device's
                                                 queue of plugin calls keyed by the message id in
                                                 the note's "[Bridge ref ...]" footer (never synced:
-                                                another device must not send the note again).
+                                                another device must not send the note again), and
+                                                the Paratext QA review queue's two (v12, #432/#433,
+                                                2026-11-02): `paratext_review_decisions` (synced; one
+                                                row per QA-proposal decision -- applied / rejected /
+                                                manual / deferred / reverted -- with before/after
+                                                snapshots and whether the saved verse was read back;
+                                                every revision is a change_log row) and
+                                                `paratext_review_state` (device-local: the reviewer's
+                                                queue position, filter and drafts).
 <project>/.apps/translationCoreAI/backups/      the backup files themselves, indexed by the DB
 %LOCALAPPDATA%\Bridge\data\workspace.sqlite3    app-level, schema v5 (#77, #236, #238, #240): users
                                                 with their role and the chosen one, devices, the
@@ -450,7 +475,7 @@ translation team that database *is* months of work, and no reset is available.
 
 This same discipline now has two more, independent ladders. `bridge-workbench.sqlite3`
 (`WorkbenchRepository`, `engine/tc_ai_bridge/workbench_repository.py`,
-`WORKBENCH_SCHEMA_VERSION`, currently v11 — v2 added `change_log.columns_json` for
+`WORKBENCH_SCHEMA_VERSION`, currently v12 — v2 added `change_log.columns_json` for
 sync and rebuilt the immutability trigger; v3 added `alignment_cross_verse_links`,
 #117; v4 added `language_qa_cache`, #169; v5 rebuilt `human_decisions` to admit the `housestyle` kind, #169;
 v6 added `language_qa_batches`, `language_qa_learned_fixes` and `language_qa_flags`, indic-qa editor
@@ -459,7 +484,9 @@ v7 added `alignment_null_decisions` and `alignment_verdicts`, #216; v8 lifted
 `team_assignments` into real columns, #240; v9 added the hub's device-local
 `sync_state` and `sync_conflicts`, #80; v10 lifted `team_members.user_id` and `role` for
 per-project roles, #279; v11 added `paratext_links` (synced) and `paratext_outbox`
-(device-local, never synced) for Paratext write-back, #358) and `workspace.sqlite3`
+(device-local, never synced) for Paratext write-back, #358; v12 added
+`paratext_review_decisions` (synced) and `paratext_review_state` (device-local)
+for the Paratext QA review queue, #432/#433, 2026-11-02) and `workspace.sqlite3`
 (`WorkspaceRepository`, `engine/tc_ai_bridge/workspace_repository.py`,
 `WORKSPACE_SCHEMA_VERSION`, currently v5 — v1 is exactly the unversioned
 devices/users the first cut created, kept as `IF NOT EXISTS` so an existing
@@ -752,7 +779,13 @@ raise it as a question in the issue rather than deciding it in a commit:
   adds no writer: it calls the same `apply_scripture_edit` as `verse.edit` and the
   single-verse Use, once per verse, within one book, after the reviewer confirms
   the listed verses. Whether a bulk Use is an "alternative path" in this sense is
-  raised for the maintainer in BUILD_LOG's handoff; do not widen it further.)
+  raised for the maintainer in BUILD_LOG's handoff; do not widen it further.
+  The Paratext review queue's apply, 2026-11-02, is the same writer again --
+  `edit_verse` with `expected_old_text` -- and the write *into Paratext* that may
+  follow it is decided (Benz, DECISIONS 2026-11-02), scoped to one exact verse
+  replacement through the plugin after a verified Bridge apply. Widening that --
+  to headings, footnotes, markers, or any write Paratext makes first -- is a
+  fresh question.)
 - Bundling or switching the multilingual embedding model
   (`SemanticEmbeddingProvider.available` is `False` in the shipped app today, so
   production location runs use lexical/structural evidence only — that is a known

@@ -41,7 +41,15 @@ LINKS = "paratext_links"
 OP_CREATE = "create_thread"
 OP_COMMENT = "add_comment"
 OP_RESOLVE = "resolve"
-OPS = (OP_CREATE, OP_COMMENT, OP_RESOLVE)
+# #429 (DECISIONS 2026-11-02): the one Scripture write, connector 0.9.0's
+# put_verse_text -- a reviewer-confirmed exact replacement already applied and
+# verified on Bridge's copy. No footer: its idempotency is the plugin's own
+# "original not found" refusal, which is final (never retried in the
+# background) so a crash between sent and recorded cannot apply it twice.
+OP_PUT_TEXT = "put_verse_text"
+OPS = (OP_CREATE, OP_COMMENT, OP_RESOLVE, OP_PUT_TEXT)
+NOTE_OPS = (OP_CREATE, OP_COMMENT)
+NOT_FOUND = "was not found"
 
 QUEUED = "queued"
 SENT = "sent"
@@ -61,7 +69,8 @@ TO_PARATEXT = "bridge_to_paratext"
 FROM_PARATEXT = "paratext_to_bridge"
 
 # The plugin calls each op needs; 0.7.4 has none of them.
-_NEEDS = {OP_CREATE: "create_note", OP_COMMENT: "add_comment", OP_RESOLVE: "resolve_note"}
+_NEEDS = {OP_CREATE: "create_note", OP_COMMENT: "add_comment", OP_RESOLVE: "resolve_note",
+          OP_PUT_TEXT: "put_verse_text"}
 
 WAITING_FOR_INDEX = "Waiting for Bridge to read the Paratext notes files before sending (so nothing is sent twice)."
 NOT_LINKED = ("This book is not linked to a Paratext project, so Bridge cannot tell which project "
@@ -74,6 +83,19 @@ def footer(message_id: str) -> str:
 
 def with_footer(text: str, message_id: str) -> str:
     return f"{str(text or '').rstrip()}\n\n{footer(message_id)}"
+
+
+def attributed(text: str, display_name: str, user_id: str = "") -> str:
+    """The note body with the Bridge user who wrote it named on its first
+    line (DECISIONS 2026-11-02, Benz: the authenticated Bridge user's id and
+    display name are recorded as the person initiating the change). Paratext's
+    own author stays the PC's logged-in user; this line is attribution, never
+    impersonation."""
+    name = str(display_name or "").strip()
+    if not name:
+        return str(text or "")
+    who = f"{name} ({user_id})" if user_id else name
+    return f"[{who} via Bridge]\n{str(text or '').lstrip()}"
 
 
 def selection_context(raw_verse: str, selected_text: str) -> tuple[str, str]:
@@ -158,18 +180,23 @@ class ParatextOutbox:
                 reference: str = "", selected_text: str = "", before_context: str = "",
                 after_context: str = "", thread_id: str = "",
                 key: dict[str, Any] | None = None, book: str = "", chapter: str = "",
-                record: dict[str, Any] | None = None) -> dict[str, Any]:
+                record: dict[str, Any] | None = None, scripture: dict[str, Any] | None = None,
+                bridge_user: dict[str, Any] | None = None) -> dict[str, Any]:
         """Put one write in the queue. A message id already sent is returned as
         it is (the same message is never queued twice); one still queued has
-        its content refreshed, keeping its attempts."""
+        its content refreshed, keeping its attempts. `scripture` is the
+        put_verse_text request (verse, original, replacement, allowDelete,
+        expectedAfter); `bridge_user` the Bridge user behind the write."""
         if op not in OPS:
             raise OutboxError(f"op must be one of {list(OPS)}")
         if kind not in KINDS:
             raise OutboxError(f"kind must be one of {list(KINDS)}")
-        if op != OP_RESOLVE and not str(text or "").strip():
+        if op in NOTE_OPS and not str(text or "").strip():
             raise OutboxError("The note text is empty.")
-        if op != OP_CREATE and not thread_id:
+        if op in (OP_COMMENT, OP_RESOLVE) and not thread_id:
             raise OutboxError("A reply or resolve names the Paratext thread it goes to.")
+        if op == OP_PUT_TEXT and not (scripture and scripture.get("verse") and scripture.get("original")):
+            raise OutboxError("A Scripture write names its verse and the exact original text.")
         existing = self.get(message_id)
         if existing is not None and existing["status"] == SENT:
             return existing
@@ -177,8 +204,9 @@ class ParatextOutbox:
             "kind": kind, "localId": local_id, "book": book.upper(), "chapter": str(chapter),
             "reference": reference, "selectedText": selected_text,
             "beforeContext": before_context, "afterContext": after_context,
-            "text": with_footer(text, message_id) if op != OP_RESOLVE else "",
+            "text": with_footer(text, message_id) if op in NOTE_OPS else "",
             "key": dict(key or {}), "record": dict(record or {}),
+            "scripture": dict(scripture or {}), "bridgeUser": dict(bridge_user or {}),
         }
         self._write(OUTBOX, message_id, payload, {
             "op": op, "thread_id": thread_id or None, "status": QUEUED,
@@ -190,7 +218,8 @@ class ParatextOutbox:
     def _mark(self, item: dict[str, Any], **changes: Any) -> dict[str, Any]:
         merged = {**item, **changes}
         payload = {k: merged.get(k) for k in ("kind", "localId", "book", "chapter", "reference", "selectedText",
-                                              "beforeContext", "afterContext", "text", "key", "record", "anchor", "author", "created")
+                                              "beforeContext", "afterContext", "text", "key", "record", "anchor", "author", "created",
+                                              "scripture", "bridgeUser", "result")
                    if merged.get(k) not in (None, "")}
         self._write(OUTBOX, item["messageId"], payload, {
             "op": merged["op"], "thread_id": merged.get("threadId") or None, "status": merged["status"],
@@ -221,12 +250,50 @@ class ParatextOutbox:
                                    equals={"kind": kind, "local_id": local_id})
         return [{"kind": r.get("kind"), "localId": r.get("local_id"), "threadId": r.get("thread_id"),
                  "messageId": r.get("message_id") or "", "direction": r.get("direction") or "",
-                 "createdAt": r.get("created_at") or ""} for r in rows]
+                 "createdAt": r.get("created_at") or "",
+                 "closure": (json.loads(r.get("payload_json") or "{}").get("closure") or None)} for r in rows]
 
     def links(self) -> list[dict[str, Any]]:
         rows = self.workbench.rows(LINKS, project_id=self.identity.project_id, book_id=self.book_id)
         return [{"kind": r.get("kind"), "localId": r.get("local_id"), "threadId": r.get("thread_id"),
-                 "messageId": r.get("message_id") or "", "direction": r.get("direction") or ""} for r in rows]
+                 "messageId": r.get("message_id") or "", "direction": r.get("direction") or "",
+                 "closure": (json.loads(r.get("payload_json") or "{}").get("closure") or None)} for r in rows]
+
+    # -- closure (#425 / #433, DECISIONS 2026-11-02) ------------------------------
+
+    def close_link(self, kind: str, local_id: str, thread_id: str, closure: dict[str, Any]) -> dict[str, Any] | None:
+        """Record on the link that its Paratext thread was resolved there --
+        "resolved in Paratext", with the external actor, the resolve comment
+        (user and date) and when Bridge saw it. Idempotent: a link already
+        closed is returned as it is, so one external resolution is one
+        closure. The row's revision moves and the change_log keeps every
+        revision; the link itself is never removed."""
+        row_id = natural_row_id(self.identity.project_id, self.book_id, kind, local_id, thread_id)
+        existing = self.workbench.get(LINKS, row_id)
+        if existing is None:
+            return None
+        payload = json.loads(existing.get("payload_json") or "{}")
+        if payload.get("closure"):
+            return self._link_json(existing)
+        payload["closure"] = {"status": "resolved in Paratext", **dict(closure)}
+        self.workbench._write(
+            LINKS, row_id, project_id=self.identity.project_id, book_id=self.book_id, payload=payload,
+            actor_id=self.identity.actor_id, device_id=self.identity.device_id, expected_revision=None,
+            op="closure:resolved_in_paratext",
+            extra_columns={"kind": existing.get("kind"), "local_id": existing.get("local_id"),
+                           "thread_id": existing.get("thread_id"), "message_id": existing.get("message_id"),
+                           "direction": existing.get("direction")},
+        )
+        return self._link_json(self.workbench.get(LINKS, row_id))
+
+    @staticmethod
+    def _link_json(row: dict[str, Any] | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        payload = json.loads(row.get("payload_json") or "{}")
+        return {"kind": row.get("kind"), "localId": row.get("local_id"), "threadId": row.get("thread_id"),
+                "messageId": row.get("message_id") or "", "direction": row.get("direction") or "",
+                "closure": payload.get("closure") or None}
 
     # -- flush ------------------------------------------------------------------
 
@@ -280,7 +347,7 @@ class ParatextOutbox:
                 changed(self._mark(item, attempts=attempts,
                                    lastError=(waiting_reason() if waiting_reason else "") or WAITING_FOR_INDEX))
                 continue
-            if item["op"] != OP_RESOLVE:
+            if item["op"] in NOTE_OPS:
                 found = find_ref(item["messageId"])
                 if found:
                     # Already in Paratext: sent earlier (a crash before the
@@ -314,7 +381,12 @@ class ParatextOutbox:
                 item = self._send(client_factory(), item, expected_id, attempts)
                 changed(item)
             except ParatextConnectorError as exc:
-                refused = item["op"] == OP_CREATE and AMBIGUOUS_SELECTION in str(exc)
+                refused = (item["op"] == OP_CREATE and AMBIGUOUS_SELECTION in str(exc)) or (
+                    # A Scripture write Paratext could not place is final: the
+                    # text moved on, or it is already there. Retrying blind
+                    # could apply it twice; the reviewer looks first.
+                    item["op"] == OP_PUT_TEXT and (NOT_FOUND in str(exc) or AMBIGUOUS_SELECTION in str(exc)
+                                                   or "occurs" in str(exc)))
                 changed(self._mark(item, attempts=attempts, lastError=str(exc),
                                    status=REFUSED if refused else QUEUED))
         return touched
@@ -333,6 +405,25 @@ class ParatextOutbox:
             return result
         key = dict(item.get("key") or {})
         book, chapter = item.get("book", ""), item.get("chapter", "")
+        if item["op"] == OP_PUT_TEXT:
+            scripture = dict(item.get("scripture") or {})
+            user = dict(item.get("bridgeUser") or {})
+            who = str(user.get("displayName") or "")
+            if user.get("userId"):
+                who = f"{who} ({user['userId']})" if who else str(user["userId"])
+            answer = client.put_verse_text(
+                project_id, book, chapter, str(scripture.get("verse") or ""),
+                str(scripture.get("original") or ""), str(scripture.get("replacement") or ""),
+                before_context=item.get("beforeContext", ""), after_context=item.get("afterContext", ""),
+                bridge_user=who, allow_delete=bool(scripture.get("allowDelete")),
+            )
+            return self._mark(item, attempts=attempts, status=SENT, lastError="", sentAt=_now(),
+                              resultKey=f"{answer.get('author', '')}|{answer.get('created', '')}",
+                              author=answer.get("author", ""), created=answer.get("created", ""),
+                              result={"verified": bool(answer.get("verified")),
+                                      "usfmBefore": str(answer.get("usfm_before") or ""),
+                                      "usfmAfter": str(answer.get("usfm_after") or ""),
+                                      "message": str(answer.get("message") or "")})
         if item["op"] == OP_COMMENT:
             answer = client.add_comment(project_id, book, chapter, key, item.get("text", ""))
         else:

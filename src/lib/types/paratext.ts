@@ -230,6 +230,19 @@ export interface ParatextReviewDecision {
   unverifiedReason?: string;
   revertedAt?: string;
   revertVerified?: boolean;
+  /** DECISIONS 2026-11-02: the same replacement written into the linked
+   *  Paratext project through the outbox (connector 0.9.0 put_verse_text),
+   *  after the verified Bridge apply. `verified` is Paratext's read-back. */
+  paratext?: {
+    status: "queued" | "refused" | "sent" | "not_sent" | "unknown";
+    messageId: string;
+    lastError: string;
+    attempts?: number;
+    sentAt?: string;
+    verified?: boolean;
+    author?: string;
+  };
+  bridgeUser?: { userId: string; displayName: string };
   revision: number;
   updatedAt: string;
 }
@@ -336,6 +349,17 @@ export interface ParatextThreadLink {
   direction: "bridge_to_paratext" | "paratext_to_bridge";
   /** The thread as the notes index has it; null until Bridge has read it. */
   thread: ParatextNoteThread | null;
+  /** DECISIONS 2026-11-02: set once the thread was seen resolved. "resolved in
+   *  Paratext" with the external actor, or "resolved in Bridge" when Bridge
+   *  sent the resolve. The linked Bridge record was closed with it. */
+  closure?: {
+    status: "resolved in Paratext" | "resolved in Bridge";
+    origin: "paratext" | "bridge";
+    actor: string;
+    resolvedAt: string;
+    seenAt: string;
+    evidence?: { threadId: string; verseRef: string; commentCount: number };
+  } | null;
 }
 
 export interface ParatextThreadsFor {

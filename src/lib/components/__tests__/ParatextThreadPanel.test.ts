@@ -80,12 +80,25 @@ describe("ParatextThreadPanel (#358)", () => {
         thread: thread({ resolved: true, status: "deleted" }) }],
     }));
     render(ParatextThreadPanel, props);
-    const badge = await screen.findByText("Resolved in Paratext");
-    expect(badge.getAttribute("title")).toMatch(/status changes only if you mark it resolved/);
+    expect(await screen.findByText("Resolved in Paratext")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Resolve in Paratext" })).toBeNull();
     // No owner callback: no one-click offer either.
     expect(screen.queryByRole("button", { name: "Mark resolved in Bridge" })).toBeNull();
     expect(paratextResolveThread).not.toHaveBeenCalled();
+  });
+
+  it("shows the closure the engine recorded on a resolved link and offers no click (DECISIONS 2026-11-02)", async () => {
+    paratextThreadsFor.mockResolvedValue(data({
+      links: [{ kind: "issue_resolution", localId: "r1", threadId: "T1", messageId: "", direction: "bridge_to_paratext",
+        thread: thread({ resolved: true, status: "deleted" }),
+        closure: { status: "resolved in Paratext", origin: "paratext", actor: "Reviewer Uma",
+          resolvedAt: "2026-10-27T09:00:00+05:30", seenAt: "2026-10-27T09:05:00+05:30" } }],
+    }));
+    render(ParatextThreadPanel, { ...props, onResolveHere: vi.fn() });
+    const badge = await screen.findByText(/resolved in Paratext · Reviewer Uma/);
+    expect(badge.getAttribute("title")).toMatch(/Seen by Bridge/);
+    expect(screen.queryByRole("button", { name: "Mark resolved in Bridge" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Resolve in Paratext" })).toBeNull();
   });
 
   it("offers decision 3's one click on a Paratext done, and not once Bridge is resolved", async () => {

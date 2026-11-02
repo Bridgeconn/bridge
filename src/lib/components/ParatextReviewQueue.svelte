@@ -37,6 +37,19 @@
   let latestHtml = "";
   let latestPath = "";
   let replacementBox: HTMLInputElement | null = null;
+  // DECISIONS 2026-11-02 (Benz): after a verified Bridge apply the same exact
+  // replacement may also be written into the linked Paratext project. Off by
+  // default; the engine queues it and reports what Paratext did.
+  let writeParatext = false;
+
+  function paratextOutcome(decision: { paratext?: { status: string; lastError: string; verified?: boolean } }): string {
+    const pt = decision.paratext;
+    if (!pt) return "";
+    if (pt.status === "sent") return pt.verified ? " Written to Paratext and read back." : " Written to Paratext but NOT verified there.";
+    if (pt.status === "refused") return ` Paratext refused the write: ${pt.lastError}`;
+    if (pt.status === "not_sent") return ` ${pt.lastError}`;
+    return ` Queued for Paratext. ${pt.lastError || "It goes when Paratext is available."}`;
+  }
 
   const ROUTE_LABEL: Record<string, string> = {
     literal: "Literal correction", review: "Needs a reviewer's decision", structure: "USFM structure · review only",
@@ -151,12 +164,13 @@
     try {
       const result = await bridge.paratextReviewDecide(current.proposalId, kind, {
         comment: comment.trim(), replacement: kind === "applied" ? replacement : null, confirmDelete: isDeletion,
+        writeParatext: kind === "applied" && writeParatext,
       });
       replaceItem(result.item);
       await load(data?.status ?? "");
       const verified = result.decision.decision === "applied" ? (result.decision.verified ? " and verified" : ", NOT verified") : "";
       await next(false);
-      notice = `${DECISION_LABEL[result.decision.decision]}${verified}.`;
+      notice = `${DECISION_LABEL[result.decision.decision]}${verified}.${paratextOutcome(result.decision)}`;
     } catch (cause) {
       fail(cause);
     } finally {
@@ -337,6 +351,8 @@
                 <span class="rq-ref">{item.verseRef}</span>
                 <span class="rq-cat">{item.proposal.category}</span>
                 {#if item.decision}<span class="rq-badge {item.decision.decision}">{DECISION_LABEL[item.decision.decision]}</span>{/if}
+                {#if item.decision?.paratext}<span class="rq-badge pt {item.decision.paratext.status}" title={item.decision.paratext.lastError}>
+                  Paratext: {item.decision.paratext.status === "sent" ? (item.decision.paratext.verified ? "written" : "written, unverified") : item.decision.paratext.status}</span>{/if}
                 {#if item.proposal.route === "unreadable"}<span class="rq-badge unreadable">unreadable</span>{/if}
               </button>
             </li>
@@ -414,6 +430,9 @@
               </div>
             </section>
 
+            <label class="rq-check" title="After the correction is applied and verified in Bridge, write the same exact replacement into the linked Paratext project (connector 0.9.0). Paratext's logged-in user is the editor of record; you are named in the evidence.">
+              <input type="checkbox" bind:checked={writeParatext} /> Also write to Paratext
+            </label>
             <div class="rq-actions">
               <button type="button" class="small-btn primary" disabled={!canApply || Boolean(busy)} on:click={() => decide("applied")}
                 title={canApply ? "Apply this correction to the verse and go to the next proposal" : preview?.reason || "This proposal cannot be applied as it is"}>
@@ -535,6 +554,9 @@
     font: inherit; font-weight: 400; color: var(--text); background: var(--surface); resize: vertical; }
   .rq-presets { display: flex; flex-wrap: wrap; gap: 4px; }
   .rq-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .rq-check { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-2xs); color: var(--text-2); }
+  .rq-badge.pt { background: transparent; border: 1px solid var(--accent); }
+  .rq-badge.pt.refused, .rq-badge.pt.not_sent { border-color: var(--danger); color: var(--danger); }
   .rq-spacer { flex: 1; }
   .small-btn { border-radius: 5px; cursor: pointer; font-size: var(--fs-2xs); padding: 5px 8px; color: var(--text-2);
     background: var(--surface); border: 1px solid var(--border-strong); }

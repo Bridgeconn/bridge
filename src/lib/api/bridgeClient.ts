@@ -1481,10 +1481,13 @@ export const bridge = {
 
   paratextReviewDecide(
     proposalId: string, decision: Exclude<ParatextReviewDecisionKind, "reverted">,
-    options: { comment?: string; replacement?: string | null; confirmDelete?: boolean } = {},
+    options: { comment?: string; replacement?: string | null; confirmDelete?: boolean; writeParatext?: boolean } = {},
   ): Promise<{ decision: ParatextReviewDecision; item: ParatextReviewItem }> {
     return call("paratextReview.decide", { proposalId, decision, comment: options.comment ?? "",
-      replacement: options.replacement ?? null, confirmDelete: options.confirmDelete ?? false });
+      replacement: options.replacement ?? null, confirmDelete: options.confirmDelete ?? false,
+      // DECISIONS 2026-11-02: after a verified Bridge apply, the same exact
+      // replacement may also be written into the linked Paratext project.
+      writeParatext: options.writeParatext ?? false });
   },
 
   paratextReviewSaveState(state: Partial<ParatextReviewState>): Promise<{ state: ParatextReviewState }> {

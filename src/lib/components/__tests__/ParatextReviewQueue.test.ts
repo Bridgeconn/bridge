@@ -106,7 +106,7 @@ describe("ParatextReviewQueue (#428, #432, #433, #434)", () => {
 
     await fireEvent.click(within(dialog).getByRole("button", { name: "Apply and next" }));
     await waitFor(() => expect(paratextReviewDecide).toHaveBeenCalledWith("p1", "applied",
-      { comment: "Accepted as suggested.", replacement: "BETA", confirmDelete: false }));
+      { comment: "Accepted as suggested.", replacement: "BETA", confirmDelete: false, writeParatext: false }));
     await waitFor(() => expect(within(dialog).getByText("Applied and verified.")).toBeTruthy());
     await waitFor(() => expect(within(dialog).getByText("TIT 1:2", { selector: "strong" })).toBeTruthy());
     expect(askConfirmation).not.toHaveBeenCalled();

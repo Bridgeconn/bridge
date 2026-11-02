@@ -69,14 +69,20 @@ def test_thread_calls_name_the_project_the_chapter_and_the_key():
     assert resolved == {"project_id": "c2d042a9-linked", "book": "TIT", "chapter": "1", "key": key}
 
 
-def test_the_bundled_plugin_is_0_8_1_and_serves_the_six_actions_without_any_scripture_write():
-    assert paratext_install.bundled_version() == "0.8.1"
+def test_the_bundled_plugin_is_0_9_0_and_serves_the_seven_actions_with_exactly_one_scripture_write():
+    assert paratext_install.bundled_version() == "0.9.0"
     source = PLUGIN.read_text(encoding="utf-8")
-    for action in ("get_state", "set_reference", "create_note", "list_notes", "add_comment", "resolve_note"):
+    for action in ("get_state", "set_reference", "create_note", "list_notes", "add_comment", "resolve_note",
+                   "put_verse_text"):
         assert f'action == "{action}"' in source, action
-    # The write boundary: Project Notes only, through the write lock; no Scripture write, no delete.
+    # The write boundary: Project Notes through the notes lock; one Scripture write
+    # (put_verse_text, #429, DECISIONS 2026-11-02) through the chapter lock, read
+    # back after writing; no delete, no reopen, no token-level or USX write.
     assert "WriteLockScope.ProjectNotes" in source
-    assert not re.search(r"\.(PutUSFM|PutUSX|PutUSFMTokens|DeleteNote|Delete)\(", source)
+    assert len(re.findall(r"\.PutUSFM\(", source)) == 1
+    assert not re.search(r"\.(PutUSX|PutUSFMTokens|DeleteNote|Delete|Reopen)\(", source)
+    assert source.index(".PutUSFM(") < source.index("readBack = project.GetUSFM(")
+    assert "put_verse_text" in source.split("r.capabilities = new string[]")[1].split("};")[0]
     # A note is addressed by project id; the active window never decides the destination.
     assert "GetAllProjects()" in source
     assert 'project_id is required' in source

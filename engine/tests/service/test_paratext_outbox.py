@@ -105,7 +105,7 @@ def test_a_note_already_in_paratext_is_recorded_from_the_file_and_never_sent_aga
     assert online.calls == []
     links = call(engine, "paratext.outbox")["result"]["links"]
     assert links == [{"kind": "issue_resolution", "localId": resolution_id, "threadId": "T1",
-                      "messageId": queued["messageId"], "direction": "bridge_to_paratext"}]
+                      "messageId": queued["messageId"], "direction": "bridge_to_paratext", "closure": None}]
 
 
 def test_nothing_is_sent_while_the_notes_index_is_behind_the_files(tmp_path, monkeypatch):
@@ -155,12 +155,18 @@ def test_reply_resolve_and_link_name_the_thread_by_its_first_comment(tmp_path, m
     missing = call(engine, "paratext.replyThread", {**common, "threadId": "nope", "text": "x"})
 
     assert reply["result"]["item"]["status"] == "sent" and resolve["result"]["item"]["status"] == "sent"
-    (a1, comment), (a2, resolved) = connector.calls
-    assert (a1, a2) == ("add_comment", "resolve_note")
+    # DECISIONS 2026-11-02: a Bridge-origin resolve says so in a comment first,
+    # and every note names the Bridge user on its first line.
+    (a1, comment), (a2, said), (a3, resolved) = connector.calls
+    assert (a1, a2, a3) == ("add_comment", "add_comment", "resolve_note")
     key = {"verse_ref": "TIT 1:1", "offset": -1, "selected_text": "", "first_author": "Translator",
            "first_created": "2026-10-20T08:00:00.0000000+05:30"}
-    assert comment == {"project_id": DEFAULT_GUID, "book": "TIT", "chapter": "1", "key": key,
-                       "text": f"Changed in Bridge.\n\n[Bridge ref {reply['result']['item']['messageId']}]"}
+    me = engine.local_user()
+    assert {k: v for k, v in comment.items() if k != "text"} == {"project_id": DEFAULT_GUID, "book": "TIT",
+                                                                "chapter": "1", "key": key}
+    assert comment["text"] == (f"[{me['displayName']} ({me['userId']}) via Bridge]\nChanged in Bridge."
+                               f"\n\n[Bridge ref {reply['result']['item']['messageId']}]")
+    assert said["text"].startswith(f"[{me['displayName']} ({me['userId']}) via Bridge]\nResolved in Bridge.")
     assert resolved["key"] == key
     assert link["result"]["link"]["direction"] == "paratext_to_bridge"
     assert missing["success"] is False and "has not read that Paratext thread" in str(missing)
@@ -250,27 +256,29 @@ def _linked_thread(engine, folder, resolution_id, *, done: bool):
     call(engine, "paratext.flushOutbox")
 
 
-def test_one_click_after_a_paratext_done_resolves_the_issue_and_records_who_and_which_done(tmp_path, monkeypatch):
-    """Decision 3: the `done` is only shown until the reviewer clicks; the click
-    sets the resolution to resolved and names the Paratext comment it followed."""
+def test_a_paratext_done_resolves_the_issue_by_itself_and_records_who_and_which_done(tmp_path, monkeypatch):
+    """Decision 3 as amended on 2026-11-02 (Benz): a verified Paratext resolve
+    closes the linked resolution as Bridge reads it, with no click; the event
+    names the Paratext comment it followed and the external actor. The old
+    click is then refused as already resolved, so nothing happens twice."""
     connector = stand_in()
     monkeypatch.setattr(bridge_service_module, "ParatextConnectorClient", connector)
     engine, folder = open_linked_review_project(tmp_path, monkeypatch)
     resolution_id = saved_resolution(engine)
-    _linked_thread(engine, folder, resolution_id, done=True)
+    _linked_thread(engine, folder, resolution_id, done=True)   # the flush inside reads the done and closes
     params = {"chapter": "1", "verse": "1", "resolutionId": resolution_id, "threadId": "T5"}
 
-    result = call(engine, "issueResolution.resolveFromParatext", params)
-
-    assert result["success"] is True, result
-    record = result["result"]["record"]
-    assert record["status"] == "resolved"
-    event = record["history"][-1]
-    assert event["event"] == "resolved_from_paratext" and event["previousStatus"] == "open"
-    assert (event["threadId"], event["paratextDoneBy"]) == ("T5", "Translator")
-    assert event["paratextDoneAt"] == "2026-10-27T09:00:00.0000000+05:30"
     listed = call(engine, "issueResolution.list", {"chapter": "1", "verse": "1"})["result"]
     assert listed["resolved"] == 1
+    record = listed["items"][0]
+    assert record["status"] == "resolved"
+    event = next(h for h in record["history"] if h["event"] == "resolved_from_paratext")
+    assert event["previousStatus"] == "open" and "resolved in Paratext" in event["by"]
+    assert (event["threadId"], event["paratextDoneBy"]) == ("T5", "Translator")
+    assert event["paratextDoneAt"] == "2026-10-27T09:00:00.0000000+05:30"
+    threads = call(engine, "paratext.threadsFor", {"kind": "issue_resolution", "localId": resolution_id})["result"]
+    assert threads["links"][0]["closure"]["status"] == "resolved in Paratext"
+    assert threads["links"][0]["closure"]["actor"] == "Translator"
     # Bridge-side only: nothing more went to Paratext.
     assert len(connector.calls) == 1
     again = call(engine, "issueResolution.resolveFromParatext", params)

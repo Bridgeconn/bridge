@@ -36,7 +36,8 @@ def test_a_note_from_the_panel_goes_through_the_outbox_with_its_footer_and_shows
     assert item["status"] == "sent" and item["kind"] == "note" and item["localId"] == item["messageId"]
     [(action, sent)] = connector.calls
     assert action == "create_note" and sent["reference"] == "TIT 1:1"
-    assert sent["comment"].startswith("Please check the metaphor here.")
+    me = engine.local_user()
+    assert sent["comment"].startswith(f"[{me['displayName']} ({me['userId']}) via Bridge]\nPlease check the metaphor here.")
     assert sent["comment"].endswith(f"[Bridge ref {item['messageId']}]")
     assert sent["before_context"] == "alpha" and sent["after_context"] == "gamma"
     # Sent, but Paratext's file does not hold it yet: the verse shows it pending, not as a thread.
@@ -53,7 +54,7 @@ def test_a_note_from_the_panel_goes_through_the_outbox_with_its_footer_and_shows
     assert [t["id"] for t in after["threads"]] == ["N1"] and after["pending"] == []
     links = call(engine, "paratext.outbox")["result"]["links"]
     assert links == [{"kind": "note", "localId": item["messageId"], "threadId": "N1",
-                      "messageId": item["messageId"], "direction": "bridge_to_paratext"}]
+                      "messageId": item["messageId"], "direction": "bridge_to_paratext", "closure": None}]
 
 
 def test_a_note_written_while_paratext_is_closed_stays_queued_on_the_verse_and_goes_later_once(
@@ -65,7 +66,7 @@ def test_a_note_written_while_paratext_is_closed_stays_queued_on_the_verse_and_g
     item = _create(engine)
     assert item["status"] == "queued" and "offline" in item["lastError"]
     pending = _verse(engine)["pending"]
-    assert [p["status"] for p in pending] == ["queued"] and pending[0]["text"].startswith("Please check")
+    assert [p["status"] for p in pending] == ["queued"] and "Please check the metaphor here." in pending[0]["text"]
 
     online = stand_in()
     monkeypatch.setattr(bridge_service_module, "ParatextConnectorClient", online)
@@ -100,9 +101,11 @@ def test_reply_and_resolve_on_a_paratext_thread_with_no_bridge_record_behind_it(
     resolve = call(engine, "paratext.resolveThread", {"threadId": "P1", "kind": "note", "localId": "P1"})
     assert resolve["success"] is True and resolve["result"]["item"]["status"] == "sent"
     actions = [a for a, _ in connector.calls]
-    assert actions == ["add_comment", "resolve_note"]
+    # The resolve is preceded by its "Resolved in Bridge." comment (DECISIONS 2026-11-02).
+    assert actions == ["add_comment", "add_comment", "resolve_note"]
     assert connector.calls[0][1]["key"]["verse_ref"] == "TIT 1:1"
-    assert connector.calls[0][1]["text"].startswith("Yes, keep it.")
+    assert "Yes, keep it." in connector.calls[0][1]["text"]
+    assert "Resolved in Bridge." in connector.calls[1][1]["text"]
     # Sent writes are not pending on the verse.
     assert _verse(engine)["pending"] == []
 

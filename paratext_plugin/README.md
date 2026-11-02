@@ -16,9 +16,24 @@ The connector (0.8.0, #358) supports:
   a thread found by its anchor and first comment (`key`). A Paratext note has no
   id, so author + created is its identity.
 
-It deliberately contains no Scripture-writing (`PutUSFM`/`PutUSX`) operation and
-never deletes a note. The logged-in Paratext user is the author of every note
-and comment; ambiguous repeated-text anchors are refused.
+Since 0.9.0 (#429, DECISIONS 2026-11-02, decided by Benz) it also has **one**
+Scripture write, `put_verse_text`: under Paratext's chapter write lock, the
+chapter's USFM is read, the verse's span found, the exact `original` located
+once inside it (outside any `\f`/`\x` note; repeats told apart by the note's
+before/after context), replaced by `replacement`, written with `PutUSFM`, and
+read back; `verified` is true only when the chapter reads exactly as written.
+Bridge sends it only after a reviewer confirmed the correction in the review
+queue and it was applied and verified on Bridge's own copy. The plugin never
+deletes or reopens a note and never restructures USFM. The logged-in Paratext
+user is the author of every note, comment and edit; the Bridge user who
+confirmed it travels as `bridge_user` for the evidence, never as the author.
+
+**0.9.0 has not been compiled or run against a real Paratext** on the machine
+it was written on (no Paratext there). `RequestWriteLock(plugin, release,
+bookNum, chapterNum)`, `GetUSFM(bookNum, chapterNum)` and `PutUSFM(lock,
+bookNum, usfm, chapterNum)` are used as the Paratext 9.5 plugin interfaces
+document them; the first `build.ps1` on a Paratext PC is the compile check,
+and `docs/PARATEXT_HOST_ACCEPTANCE_CHECKLIST.md` is the live one.
 
 ## Live verification
 
