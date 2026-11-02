@@ -12,6 +12,7 @@
   // nothing here waits on an animation, and `prefers-reduced-motion`
   // switches it all off.
   import { onDestroy, onMount } from "svelte";
+  import BridgeMark from "./BridgeMark.svelte";
   import { bridge, type EngineStartupStage } from "../api/bridgeClient";
   import { currentStageLabel, mergeStage, startupProgress } from "../startup";
 
@@ -56,17 +57,7 @@
   <div class="brand" data-tauri-drag-region>
     <div class="mark-wrap" data-tauri-drag-region>
       <div class="halo" aria-hidden="true"></div>
-      <svg class="mark" viewBox="0 0 64 64" aria-hidden="true">
-        <defs>
-          <linearGradient id="bridge-splash-gradient" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stop-color="#2F6FED" />
-            <stop offset="1" stop-color="#15A34A" />
-          </linearGradient>
-        </defs>
-        <rect width="64" height="64" rx="14" fill="url(#bridge-splash-gradient)" />
-        <path class="arc" d="M13 41 C 24 20, 40 20, 51 41" stroke="#fff" stroke-width="5" fill="none" stroke-linecap="round" />
-        <path class="deck" d="M13 46 H51" stroke="#fff" stroke-width="4" stroke-linecap="round" />
-      </svg>
+      <div class="mark"><BridgeMark animate size={60} /></div>
     </div>
     <div class="words" data-tauri-drag-region>
       <div class="name" data-tauri-drag-region>Bridge</div>
@@ -114,11 +105,7 @@
   @keyframes halo { 0%, 100% { opacity: 0.35; transform: scale(0.92); } 50% { opacity: 0.8; transform: scale(1.06); } }
   .mark { position: relative; width: 60px; height: 60px; display: block; filter: drop-shadow(0 6px 14px rgba(47, 111, 237, 0.28)); animation: mark-in 0.55s cubic-bezier(0.2, 0.9, 0.3, 1.2) both; }
   @keyframes mark-in { from { opacity: 0; transform: scale(0.7) rotate(-6deg); } to { opacity: 1; transform: none; } }
-  /* The arc draws itself left to right, then the deck underneath it. Dash
-     lengths are a little over each path's true length so the ends never clip. */
-  .arc { stroke-dasharray: 52; stroke-dashoffset: 52; animation: draw 0.7s ease-out 0.35s forwards; }
-  .deck { stroke-dasharray: 40; stroke-dashoffset: 40; animation: draw 0.4s ease-out 0.85s forwards; }
-  @keyframes draw { to { stroke-dashoffset: 0; } }
+  /* The arc and deck draw themselves inside BridgeMark (`animate`). */
 
   .words { animation: rise 0.6s ease-out 0.25s both; }
   @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
@@ -147,8 +134,7 @@
   @keyframes sheen { from { transform: translateX(-120%); } to { transform: translateX(420%); } }
 
   @media (prefers-reduced-motion: reduce) {
-    .wash, .halo, .mark, .arc, .deck, .words, .dots i, .label, .sheen { animation: none; }
-    .arc, .deck { stroke-dashoffset: 0; }
+    .wash, .halo, .mark, .words, .dots i, .label, .sheen { animation: none; }
     .fill { transition: none; }
     .halo { opacity: 0.5; }
   }
