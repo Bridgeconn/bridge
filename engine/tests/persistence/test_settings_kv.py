@@ -7,6 +7,20 @@ from tc_ai_bridge.secret_store import AppSettings
 from tc_ai_bridge.workspace_repository import WorkspaceRepository
 
 
+def test_automatic_updates_default_on_and_opt_out_survives_restart(tmp_path):
+    from bridge_service import BridgeEngine
+    settings = AppSettings(path=tmp_path / "settings.json")
+    engine = BridgeEngine(settings=settings)
+    assert engine.get_settings()["automaticUpdates"] is True
+    engine.set_settings(automaticUpdates=False)
+    reloaded = AppSettings(path=tmp_path / "settings.json")
+    assert reloaded.automatic_updates is False
+    assert reloaded.workspace.load_settings()["automatic_updates"] is False
+    assert "automatic_updates" not in json.loads(settings.path.read_text(encoding="utf-8"))
+    engine.set_settings(automaticUpdates=True)
+    assert AppSettings(path=tmp_path / "settings.json").automatic_updates is True
+
+
 def test_settings_round_trip_through_the_workspace_database(tmp_path):
     settings = AppSettings(path=tmp_path / "settings.json")
     settings.model = "gpt-5.6-mini"

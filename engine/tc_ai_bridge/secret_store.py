@@ -361,6 +361,18 @@ class AppSettings:
         self.save_sanitized()
 
     @property
+    def automatic_updates(self) -> bool:
+        """Optional GitHub app updates, enabled unless explicitly disabled (#321)."""
+        return self.data.get('automatic_updates', True) is not False
+
+    @automatic_updates.setter
+    def automatic_updates(self, value: bool) -> None:
+        if not isinstance(value, bool):
+            raise ValueError('automaticUpdates must be a boolean')
+        self.data['automatic_updates'] = value
+        self.save_sanitized()
+
+    @property
     def language_qa_learned_fixes(self) -> bool:
         """Settings > Language QA: learn a word the reviewer replaced and offer
         the same change where it recurs. On by default."""

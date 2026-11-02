@@ -8739,6 +8739,7 @@ class BridgeEngine:
 
     def get_settings(self) -> dict[str, Any]:
         return {
+            "automaticUpdates": self.settings.automatic_updates,
             "provider": self.settings.provider,
             "apiBaseUrl": self.settings.api_base_url,
             "model": self.settings.model,
@@ -8768,6 +8769,8 @@ class BridgeEngine:
         }
 
     def set_settings(self, **kwargs) -> dict[str, Any]:
+        if "automaticUpdates" in kwargs:
+            self.settings.automatic_updates = kwargs["automaticUpdates"]
         if "apiKey" in kwargs:
             self.settings.set_api_key(kwargs["apiKey"])
         if "provider" in kwargs:
