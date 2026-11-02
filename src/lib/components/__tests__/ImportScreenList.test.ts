@@ -177,8 +177,14 @@ describe("ImportScreen projects list (#238)", () => {
       path: "C:/projects/tam_bible_rut", projectName: "IRV Tamil", bookId: "rut", bookName: "Ruth", managed: false })] });
     render(ImportScreen, { props: { onOpened: vi.fn() } });
     await screen.findByText("IRV Tamil");
+    // The card itself opens the project (2026-11-02): one invisible Open
+    // button covers the row, with no glyph and no tooltip of its own.
     const open = screen.getByRole("button", { name: "Open IRV Tamil" });
-    for (const name of ["Open IRV Tamil", "Rename IRV Tamil", "Archive IRV Tamil", "Rename NT review", "Delete NT review"]) {
+    expect(open.classList.contains("open-project")).toBe(true);
+    expect(open.querySelector("svg")).toBeNull();
+    await fireEvent.mouseEnter(open);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    for (const name of ["Rename IRV Tamil", "Archive IRV Tamil", "Rename NT review", "Delete NT review"]) {
       const button = screen.getByRole("button", { name });
       expect(button.tagName).toBe("BUTTON");
       expect(button.querySelector("svg")).not.toBeNull();
@@ -187,7 +193,7 @@ describe("ImportScreen projects list (#238)", () => {
       await fireEvent.mouseLeave(button);
       expect(screen.queryByRole("tooltip")).toBeNull();
     }
-    // Delete is offered only for a managed project; the order is Open, Add books, Rename, Archive, Delete.
+    // Delete is offered only for a managed project; the order is the card-wide Open, then Add books, Rename, Archive, Delete.
     expect(screen.queryByRole("button", { name: "Delete IRV Tamil" })).toBeNull();
     const row = screen.getByText("NT review").closest(".project-row") as HTMLElement;
     expect([...row.querySelectorAll("button")].map((b) => b.getAttribute("aria-label")))

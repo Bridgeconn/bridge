@@ -615,6 +615,9 @@
               </article>
             {:else}
             <article class:missing={item.missing} class:archived={Boolean(item.archivedAt)} class="project-row">
+              {#if !item.missing && confirmingId !== item.projectId}
+                <button class="open-project" aria-label={`Open ${displayName(item)}`} on:click={() => openPath(item.path, item.projectId)} disabled={loading}></button>
+              {/if}
               <div class="book-badge">{item.bookId?.toUpperCase() || "?"}</div>
               <div class="project-copy">
                 {#if renamingId === item.projectId}
@@ -638,7 +641,6 @@
                 <button class="small-button danger" on:click={() => deleteProject(item)} disabled={loading}>Confirm</button>
                 <button class="small-button" on:click={() => (confirmingId = "")} disabled={loading}>Cancel</button>
               {:else}
-                <button class="small-button action-icon primary" aria-label={`Open ${displayName(item)}`} use:tooltip={`Open ${displayName(item)}`} on:click={() => openPath(item.path, item.projectId)} disabled={loading}><UiIcon name="open" /></button>
                 <button class="small-button action-icon" aria-label={`Add books to ${displayName(item)}`} use:tooltip={`Add books to ${displayName(item)}`} on:click={() => (addBooksTarget = item)} disabled={loading}><UiIcon name="addBooks" /></button>
                 <button class="small-button action-icon" aria-label={`Rename ${displayName(item)}`} use:tooltip={`Rename ${displayName(item)}`} on:click={() => startRename(item)} disabled={loading}><UiIcon name="rename" /></button>
                 {#if item.archivedAt}
@@ -810,7 +812,6 @@
   .progress-line { font-size: var(--fs-2xs); color: var(--text-2); }
   .rename-input { font: inherit; font-weight: 700; padding: 2px 6px; border: 1px solid var(--accent); border-radius: 4px; background: var(--surface); color: var(--text); width: 100%; box-sizing: border-box; }
   .small-button { height: var(--control-h); box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); color: var(--text); padding: 0 10px; cursor: pointer; font-size: var(--fs-2xs); flex-shrink: 0; }
-  .small-button.primary { border-color: var(--accent); color: var(--accent); }
   .small-button.danger { color: var(--danger); }
   /* #375: a 28x28 glyph button; the glyph is drawn upright and monochrome
      from the UI font, never from an icon font (CLAUDE.md gotcha 9). */
@@ -916,9 +917,20 @@
   .project-home .project-copy span { white-space: normal; overflow-wrap: anywhere; line-height: 1.6; }
   .project-home .project-copy small { white-space: normal; overflow-wrap: anywhere; line-height: 1.5; }
   .project-home .project-actions { max-width: 300px; }
+  /* The whole card opens the project (team request, 2026-11-02): an invisible
+     Open button covers the card, so there is still one real control for the
+     keyboard, screen readers and tests, with no click handler on the card
+     itself. The badge and copy are inert and let clicks through to it; the
+     actions group, the Project details toggle and the rename input sit above
+     it, so their clicks never reach it. */
+  .project-home .project-row { position: relative; transition: border-color .15s, box-shadow .15s, transform .15s; }
+  .project-home .open-project { position: absolute; inset: 0; z-index: 0; margin: 0; padding: 0; border: 0; border-radius: 14px; background: transparent; cursor: pointer; }
+  .project-home .open-project:focus-visible { outline: none; }
+  .project-home .project-actions, .project-home .project-details, .project-home .rename-input { position: relative; z-index: 1; }
+  .project-home .project-row:has(.open-project:hover:not(:disabled)) { border-color: var(--accent); box-shadow: 0 4px 14px rgb(47 111 237 / 14%); transform: translateY(-1px); }
+  .project-home .project-row:has(.open-project:hover:not(:disabled)) .project-copy strong { color: var(--accent); }
+  .project-home .project-row:has(.open-project:focus-visible) { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-bg); }
   .project-home .small-button { min-height: 32px; padding: 5px 10px; font-weight: 600; }
-  .project-home .small-button.primary { background: var(--accent); color: white; }
-  .project-home .small-button.primary:hover:not(:disabled) { filter: brightness(.92); }
   .project-home .choice-grid { gap: 16px; }
   .project-home .choice { display: flex; align-items: center; gap: 14px; min-width: 0; min-height: 76px; padding: 12px 16px; border-radius: 12px; border-color: var(--border); transition: background .15s, border-color .15s; }
   .project-home .choice-title { font-size: var(--fs-sm); margin-bottom: 3px; }
@@ -994,7 +1006,6 @@
     .import-review .book-list { flex: none; max-height: 260px; }
   }
   .project-home .project-actions .action-icon { display: grid; place-items: center; width: 34px; height: 34px; min-height: 34px; padding: 0; border: 0; background: transparent; color: var(--text-2); border-radius: 8px; transition: color .15s, background .15s; }
-  .project-home .project-actions .action-icon.primary { color: var(--accent); }
   .project-home .project-actions .action-icon.danger { color: var(--danger); }
   .project-home .project-actions .action-icon:hover:not(:disabled), .project-home .project-actions .action-icon:focus-visible { background: var(--accent-bg); color: var(--accent); filter: none; }
   .project-home .project-actions .action-icon.danger:hover:not(:disabled), .project-home .project-actions .action-icon.danger:focus-visible { background: var(--danger-bg); color: var(--danger); }
@@ -1043,5 +1054,7 @@
   }
   @media (prefers-reduced-motion: reduce) {
     .project-home .project-actions .action-icon, .import-review .header-row .action-icon { transition: none; }
+    .project-home .project-row { transition: none; }
+    .project-home .project-row:has(.open-project:hover:not(:disabled)) { transform: none; }
   }
 </style>
