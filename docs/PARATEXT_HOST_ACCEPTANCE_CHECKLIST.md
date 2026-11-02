@@ -198,3 +198,35 @@ Local synthetic receipts and backup are under ignored
 The compatibility fix is published at **23497c0**; its GitHub CI run
 **41445384036** passed. The ordinary installed Bridge application was not
 replaced, and no public release or installer was produced by this walk.
+
+### 2026-11-03: connector 0.10.0 host follow-up, with two blockers
+
+Tested source **b9a43a1**, Paratext **9.5.110.1**, connector **0.10.0**.
+This table records actual native/API observations, not an unchecked desktop
+walk. Only the existing disposable **BQAT090** and **NSTest** were edited.
+
+| Check | Observed result |
+| --- | --- |
+| Compile/install/load 0.10.0 | PASS against the installed interfaces. Bridge's elevated installer succeeded; native state reports `text_regions` and `rename_marker`. |
+| Body and Tamil footnote edits | PASS through the real connector, with verified readback and complete native book restored byte-for-byte. BQAT090's other verse, footnote and chapter 2 were preserved. |
+| Bridge queue footnote apply and two-sided revert | PASS through real source RPCs and the native connector: both copies verified, then restored; native book matched its baseline bytes. |
+| Refusals | PASS: stale original, repeated original, body text requested as footnote, and a marker outside the rename allowlist changed no Scripture. |
+| Confirmed deletion | FAIL, [#442](https://github.com/Bridgeconn/bridge/issues/442): Bridge leaves `Alpha  body.`; Paratext saves `Alpha body.`. Native readback correctly stays unverified and the completion gate blocks closure. |
+| Deletion reverse | FAIL, #442: Bridge's checked revert restores its copy; Paratext refuses the reverse's double-space window. A separate exact supported native replacement restored the complete original book byte-for-byte. |
+| Reports | PASS: HTML generation, explicit report destination, CSV export and UTF-8 BOM. In-app/browser opening and destination-error UI were not verified. |
+| Automated/frozen gates | PASS: 249 Paratext-focused tests; Svelte check 0 errors/warnings; 1,108 Vitest tests in 108 files; both Vite production builds; cargo check and 18 Rust tests; both sidecars rebuilt and frozen smoke passed. |
+| Current desktop build | BLOCKED, [#441](https://github.com/Bridgeconn/bridge/issues/441): Tauri CLI refuses Rust `tauri 2.12.5` versus the locked JavaScript API `2.11.1`. No compatibility check was bypassed. |
+
+The two native QA threads created by this run were resolved after restoring the
+Scripture. Local synthetic scripts, baselines and receipts are under ignored
+`engine/build/joel-20261103/`; working translation data is not committed.
+Results were posted on [#423](https://github.com/Bridgeconn/bridge/issues/423#issuecomment-6586494290).
+
+The optional broader engine run was stopped at 26%; it is incomplete and is not
+counted as a full-suite pass. The completed focused engine result is 249 tests.
+
+**Still not verified:** positive cross-reference/heading/introduction writes or
+marker rename; live lock revocation and interrupted apply; two PCs/hub and
+Send/Receive; current Bridge desktop layout, keyboard/font/accessibility and
+monitor changes; the in-app report-opening/error flows; release-build alignment
+pointer-to-paint timing. The source and frozen passes do not close those rows.

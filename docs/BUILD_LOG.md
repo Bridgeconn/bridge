@@ -23739,3 +23739,63 @@ stage-3 DB on this machine, as on 2026-11-02); svelte-check 0/0; Vitest 1113;
 rebuilt (`build-sidecars.ps1`) and `scripts/smoke_sidecars.py` passed (real
 Wildebeest, hub `--serve`, indic-qa packs). **Not verified:** anything on a real
 Paratext (checklist E–G); connector 0.10.0 never compiled.
+
+## 2026-11-03 — Joel's comments checked against the real host; 0.10.0 loads, two acceptance blockers (#423, #436, #441, #442)
+
+Read Joel-C-Johnson's comments in 20 matching issue discussions and PR #437,
+including the latest PR #440 follow-ups. Fast-forwarded the clean checkout from
+fc5583c to b9a43a1 before testing. No runtime code, dependency, schema, golden or
+confidence setting was changed by this acceptance pass.
+
+Connector 0.10.0 compiled against the installed Paratext 9.5.110.1 interfaces.
+Direct deployment lacked Windows administrator rights; Bridge's existing
+elevated installer succeeded and native `get_state` confirmed 0.10.0,
+`text_regions` and `rename_marker`. Only disposable BQAT090 and NSTest were used
+for native writes. Body correction and Tamil footnote correction verified and
+restored the complete books byte-for-byte. A native footnote QA note was imported
+into an isolated Bridge profile, applied through the real review-queue RPC and
+native connector, verified in both copies, and reverted in both copies with
+native byte-exact restoration. Stale/repeated originals, wrong-region lookup and
+an unsupported rename were refused without Scripture changes. HTML, an explicit
+report destination, and UTF-8 BOM CSV exports passed.
+
+Two bugs were reproduced and filed separately, per the repository's rule about
+adjacent findings:
+
+- **#441:** the Tauri desktop build refuses Cargo.lock's tauri 2.12.5 versus
+  package-lock.json's @tauri-apps/api 2.11.1. `cargo check` and unit tests pass,
+  but they do not exercise the CLI's compatibility gate. The attempted
+  debug/no-bundle build used an ignored config to skip the already-built
+  frontend and request 1366×768; it did not change dependency versions. No
+  compatibility check was bypassed and no current desktop acceptance claimed.
+- **#442:** delete `original` from `Alpha original body.` through the native
+  review queue. Bridge's saved post-image is `Alpha  body.`; Paratext persists
+  `Alpha body.`. Native verification stays false and completion is correctly
+  blocked. Checked revert restores Bridge, but its double-space reverse window
+  is refused by Paratext. A separate exact supported native replacement restored
+  the entire original book byte-for-byte. Source stand-ins preserved the double
+  spaces and therefore did not expose this host serialization behavior.
+
+The run's two synthetic native QA threads were resolved after restoration.
+Receipts/scripts/baselines are ignored under `engine/build/joel-20261103/`.
+The existing installed Bridge app was not replaced; no release was published.
+
+Verified: **249 Paratext-focused pytest tests**, Svelte check **0 errors and
+0 warnings**, **1,108 Vitest tests / 108 files**, both production Vite builds,
+`cargo check`, **18 Rust tests**, both frozen sidecars rebuilt, and the complete
+frozen smoke (real Wildebeest/Uroman, language packs, hub and import/alignment/
+export/undo paths). The initial sandbox runs hit directory/process restrictions;
+the recorded passes were rerun outside that sandbox. A PowerShell redirected
+PyInstaller invocation treated normal stderr logging as a terminating error;
+the ordinary unredirected build completed successfully.
+
+The optional broader engine run (four workers, missing Stage 3 database tests
+excluded) was stopped at 26% after the host/build blockers were established.
+It is incomplete, not a full-suite pass; the 249-test focused pass above is the
+completed engine result for this acceptance task.
+
+Positive heading/cross-reference/introduction/marker-rename host checks, lock
+revocation/interrupted applies, two PCs/Send-Receive and actual desktop
+layout/browser/accessibility/performance acceptance remain unverified. See the
+2026-11-03 table in `PARATEXT_HOST_ACCEPTANCE_CHECKLIST.md`. The initial result
+reply is on #423, comment 6586494290; no issue was closed on source tests alone.
