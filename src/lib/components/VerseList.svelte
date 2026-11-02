@@ -392,9 +392,9 @@
         id: "paratext-note",
         label: hasSelection ? "Paratext note on selection…" : "Paratext notes…",
         separatorBefore: true,
-        title: hasSelection
+        title: (hasSelection
           ? "Open the Paratext notes on this verse and write a note attached to the selected text"
-          : "Open the Paratext notes on this verse (QA suggestions, threads) and write a note",
+          : "Open the Paratext notes on this verse (QA suggestions, threads) and write a note") + " (N on a focused verse)",
         tag: (() => { const n = noteCountFor($paratextNoteCountsByVerse, $currentChapter, verse).open; return n ? `${n} open` : ""; })(),
       },
       {
@@ -841,6 +841,19 @@
       return;
     }
     const isMenuKey = event.key === "ContextMenu" || (event.shiftKey && event.key === "F10");
+    // #426: the keyboard route to the Paratext note command the verse menu
+    // offers ("Paratext notes…" / "Paratext note on selection…"): N on a
+    // focused verse opens the notes panel's composer on it, on the selection
+    // when the row has one.
+    if ((event.key === "n" || event.key === "N") && !event.ctrlKey && !event.altKey && !event.metaKey && $project) {
+      event.preventDefault();
+      selectFromList(verse);
+      const text = (event.currentTarget as HTMLElement).querySelector(".vtext");
+      const selection = text ? selectionInVerse(text) : null;
+      const word = selection ? selectedWord(verse, selection) : null;
+      requestParatextNote($currentChapter, verse, selection && word ? word.word : "");
+      return;
+    }
     if (findingIds.length === 0) {
       if (!isMenuKey) return;
       event.preventDefault();

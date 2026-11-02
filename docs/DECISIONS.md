@@ -1468,3 +1468,68 @@ the remaining acceptance criteria stay tracked under #423.
 **Status:** confirmed product decisions, not a fresh proposal awaiting the same
 approval. API capability checks, safe synchronization design and implementation
 remain tasks. No runtime code or Scripture was changed in recording this answer.
+
+## 2026-11-03 — Paratext round trip completed in source: regions, marker rename, two-sided revert, reconciliation, project-wide queue (#424–#436; Joel, for Benz's host walk)
+
+**Decision (implementation of the approved policy, with one point raised for the maintainer):**
+
+1. **Regions.** A QA proposal is applied in its own region and never mapped into
+   another. Verse body, footnote and cross-reference text are edited on Bridge's
+   copy through the one Scripture writer (`edit_verse` → `apply_scripture_edit`:
+   a note lives inside the verse's raw string). A **heading** is edited on
+   Bridge's copy through a new journalled writer of `<chapter>.headings.json`
+   (`TranslationCoreProject.apply_heading_edit`): refused unless the heading
+   still reads as the reviewer saw it, backed up and journalled like a Scripture
+   edit, rolled back on failure. **Raised for the maintainer:** CLAUDE.md lists
+   "a second Scripture writer" among the stop-and-ask items. A heading is not
+   Scripture by the repository's own definition (#180: it is kept out of the
+   verse map because its words are not a translation of any source word), so
+   this writer is recorded here as a *heading-file* writer, not a Scripture
+   writer, and the verse map is never touched by it. If the maintainer reads
+   the rule more widely, the heading region drops back to review-only by
+   removing the `REGION_HEADING` branch in `paratext_review_decide`; nothing
+   else depends on it.
+2. **Paratext-only regions.** A book **introduction** (Bridge keeps no copy) and
+   a **heading-marker rename** (#430; ms/ms1–3, s/s1–4, cl, cd only, label
+   unchanged, unique at the anchor, round-tripped through Paratext's own parser
+   before the write) are applied only with "Also write to Paratext" and are
+   verified by Paratext's read-back alone. Bridge's heading tag follows a
+   rename. Everything else structural stays review-only.
+3. **Revert is two-sided and checked on each side.** The latest verified apply
+   is reverted on Bridge's copy only while it still equals its post-image; when
+   it was written into Paratext, the exact reverse replacement is queued there
+   (a deletion is undone by replacing the window around the gap), verified by
+   Paratext's read-back, and a comment records the revert on the thread. A
+   reverse that cannot be built exactly is reported as manual, never
+   approximated. The thread is not reopened (reopen stays a separate question).
+4. **Interrupted applies are classified, never retried blind.** An `applied`
+   decision without verification is compared with the current text: verified /
+   not applied / conflict. The reviewer reconciles it explicitly; an
+   unreconciled one blocks further applies on that verse.
+5. **Resolution gate, no automatic source-thread resolution.** A thread with QA
+   proposals is resolved from Bridge only when every current proposal (reloaded
+   from the notes as they are now) has a terminal decision — applied and
+   verified in Bridge and, when written there, in Paratext; rejected; completed
+   manually. A saved resolve that could not go is retried on its own and never
+   reapplies Scripture. Automatic resolution from Bridge decisions remains the
+   separate policy question #424 names; the resolve stays a click.
+6. **Project-wide queue.** The queue scans the books the reviewer chooses from
+   the Paratext notes index (a never-opened sibling is never materialized),
+   orders them from a chosen starting book and says where it wraps around, shows
+   a sibling's decisions read-only from its own workbench, and acts only on the
+   open book. Its state (filter, scope, position, drafts, session start) is kept
+   per linked Paratext project in the app settings so it survives a book switch,
+   a close and a restart; the workbench v12 table `paratext_review_state` is no
+   longer written (schema unchanged; removed at the next bump).
+7. **Evidence.** CSV and HTML name the Bridge user (id, display name), Paratext's
+   own editor of record, the save verification, the region, the reconciliation
+   and where the thread was resolved. Reports can be cumulative or per session,
+   saved to a chosen destination when the project folder cannot be written,
+   opened in the default browser, and an interrupted generation is cleared and
+   reported (the decisions are the evidence; a report is derived).
+
+**Status:** source complete and tested with the connector stand-in; connector
+0.10.0 (`text_regions`, `rename_marker`) compiled nowhere yet — Benz's host walk
+(`PARATEXT_HOST_ACCEPTANCE_CHECKLIST.md`, sections E–G) is the acceptance for
+every region but the verse body, for the rename, the reverse write, lock
+revocation, Send/Receive and two devices.

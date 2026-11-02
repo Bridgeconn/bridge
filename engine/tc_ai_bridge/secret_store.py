@@ -444,6 +444,20 @@ class AppSettings:
         self.data['recent_chapters'] = list(value)
         self.save_sanitized()
 
+    # #432: the Paratext review queue's own state (filter, scope, position,
+    # drafts, session start), per linked Paratext project, so it survives a
+    # book switch, a close and a restart; decisions are the book's rows.
+
+    @property
+    def paratext_review_queues(self) -> dict[str, dict[str, Any]]:
+        value = self.data.get('paratext_review_queues') or {}
+        return {str(k): dict(v) for k, v in value.items() if isinstance(v, dict)} if isinstance(value, dict) else {}
+
+    @paratext_review_queues.setter
+    def paratext_review_queues(self, value: dict[str, dict[str, Any]]) -> None:
+        self.data['paratext_review_queues'] = {str(k): dict(v) for k, v in dict(value).items()}
+        self.save_sanitized()
+
     @staticmethod
     def _seed_reviewer_name() -> str:
         """A brand-new profile has never had a reviewer name typed in.

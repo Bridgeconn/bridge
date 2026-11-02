@@ -16,3 +16,5 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 uuid = { version = "1", features = ["v4"] }
 tauri-plugin-updater = "2"
+# #435: remembered size and position of the main window, restored only on-screen.
+tauri-plugin-window-state = "2"

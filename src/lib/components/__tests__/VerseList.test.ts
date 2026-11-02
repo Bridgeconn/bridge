@@ -55,6 +55,7 @@ import { revealFinding } from "../../findingFocus";
 import { aiReviewRequest, aiJobActive } from "../../aiReviewUi";
 import type { QaFinding } from "../../types/finding";
 import { perfInFlight, perfSamples } from "../../perf";
+import { paratextNoteRequest } from "../../paratextNotes";
 
 /** The store holds full QaFindings; fixtures.ts only builds summaries/details. */
 function finding(overrides: Partial<QaFinding> = {}): QaFinding {
@@ -1685,5 +1686,34 @@ describe("VerseList word.select mark (#260)", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(perfInFlight("word.select")).toBe(false);
     expect(get(perfSamples).filter((s) => s.action === "word.select")).toEqual([]);
+  });
+});
+
+// #426: the keyboard route to the verse menu's Paratext note command.
+describe("VerseList Paratext note key (#426)", () => {
+  beforeEach(() => {
+    seed(PHP_1_6);
+    paratextNotesForChapter.mockResolvedValue({ state: "ready", book: "PHP", chapter: "1", verses: {}, counts: {} });
+    project.set({ path: "C:/p/php", bookId: "php", bookName: "Philippians", targetLanguage: "Hindi",
+                  tcVersion: "", chapters: ["1"], checkTypes: {} });
+  });
+  afterEach(() => {
+    project.set(null);
+    paratextNoteRequest.set(null);
+    setSidePanel("paratext", { open: false, width: 340 });
+  });
+
+  it("N on a focused verse asks the notes panel for a note on it and reveals the panel", async () => {
+    const onSelect = vi.fn();
+    render(VerseList, { props: { onSelect } });
+    const row = await waitFor(() => document.querySelector('[data-verse-key="1:6"]') as HTMLElement);
+    await fireEvent.keyDown(row, { key: "n" });
+    expect(onSelect).toHaveBeenCalledWith("6");
+    expect(get(paratextNoteRequest)).toEqual({ chapter: "1", verse: "6", selectedText: "", record: undefined });
+    expect(get(sidePanels).paratext.open).toBe(true);
+    // Ctrl+N is not the command (it stays the browser's / the app's).
+    paratextNoteRequest.set(null);
+    await fireEvent.keyDown(row, { key: "n", ctrlKey: true });
+    expect(get(paratextNoteRequest)).toBeNull();
   });
 });

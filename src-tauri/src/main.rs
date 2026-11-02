@@ -37,6 +37,10 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // #435: the main window's size and position are saved on close and
+        // restored on the next start; the plugin keeps a window that would
+        // land off every current monitor on screen instead.
+        .plugin(tauri_plugin_window_state::Builder::new().build())
         .manage(updates::AppUpdates::default())
         .manage(EngineSidecar::new())
         .setup(|app| {
@@ -78,6 +82,7 @@ fn main() {
             commands::pick_import_files,
             commands::pick_json_file,
             commands::pick_save_path,
+            commands::open_path,
         ])
         .build(tauri::generate_context!())
         .expect("error while running translationCore AI Bridge")

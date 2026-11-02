@@ -245,6 +245,16 @@ export interface ParatextReviewDecision {
     author?: string;
   };
   bridgeUser?: { userId: string; displayName: string };
+  /** #429: which region of the verse was edited; absent on older rows. */
+  region?: ParatextProposalRegion;
+  /** "none": the correction exists only in Paratext (introduction, marker rename). */
+  bridgeCopy?: "none" | "heading";
+  /** #431: the reviewer's reconciliation of an interrupted apply. */
+  reconciled?: { state: string; at: string; by: string; note: string; paratextChecked?: boolean };
+  /** #431: the reverse write queued for Paratext by a revert. */
+  paratextReverse?: { status: string; messageId?: string; verified?: boolean; reason?: string; lastError?: string };
+  /** The linked thread's closure, when it was resolved (DECISIONS 2026-11-02). */
+  threadClosure?: { status: string; origin: "bridge" | "paratext"; actor: string; resolvedAt: string };
   revision: number;
   updatedAt: string;
 }
@@ -275,10 +285,22 @@ export interface ParatextReviewItem {
   decision: ParatextReviewDecision | null;
   draft: ParatextReviewDraft | null;
   thread: ParatextReviewThreadCompletion;
+  /** #432: false for a proposal of a sibling book that is not open. */
+  openBook: boolean;
+  /** #432: this item comes after the wraparound of the forward pass. */
+  wrapped: boolean;
+}
+
+export interface ParatextReviewScope {
+  /** Paratext book codes in canon order; empty means the open book only. */
+  books: string[];
+  startBook: string;
 }
 
 export interface ParatextReviewState {
   status: ParatextReviewFilter;
+  /** #432: the books scanned and where the forward pass starts. */
+  scope: ParatextReviewScope;
   position: string;
   drafts: Record<string, ParatextReviewDraft>;
   sessionStartedAt: string;
@@ -290,6 +312,31 @@ export interface ParatextReviewPreset {
   text: string;
 }
 
+export interface ParatextReviewBook {
+  book: string;
+  bookId: string;
+  path: string;
+  lazy: boolean;
+  open: boolean;
+}
+
+export interface ParatextReviewScanned {
+  book: string;
+  threads: number;
+  unreadable: number;
+  proposals: number;
+}
+
+export interface ParatextReviewPendingResolve {
+  messageId: string;
+  threadId: string;
+  status: "queued" | "refused";
+  attempts: number;
+  lastError: string;
+  createdAt: string;
+  reference: string;
+}
+
 export interface ParatextReviewQueue {
   indexState: ParatextNotesIndexState;
   status: ParatextReviewFilter;
@@ -299,10 +346,22 @@ export interface ParatextReviewQueue {
   state: ParatextReviewState;
   presets: ParatextReviewPreset[];
   reviewer: string;
+  bridgeUser: { userId: string; displayName: string };
+  /** The collection's books the queue can scan (#432). */
+  books: ParatextReviewBook[];
+  scanned: ParatextReviewScanned[];
+  booksInScope: string[];
+  /** Whether the forward pass from the starting book wraps around to the books before it. */
+  wraparound: { occurs: boolean; books: string[]; count: number };
+  staleDraftsDropped: string[];
+  /** #431: applied decisions of the open book that need reconciliation. */
+  uncertain: string[];
+  pendingResolves: ParatextReviewPendingResolve[];
 }
 
 export interface ParatextReviewPreview {
   proposalId: string;
+  region: ParatextProposalRegion;
   plain: string;
   found: number;
   ok: boolean;
@@ -310,6 +369,10 @@ export interface ParatextReviewPreview {
   after: string;
   span: { plainStart: number; plainEnd: number } | null;
   matches: { plainStart: number; plainEnd: number; wholeWord: boolean }[];
+  /** An introduction correction or a marker rename exists only in Paratext. */
+  paratextOnly: boolean;
+  rename?: { fromMarker: string; toMarker: string; label: string };
+  bridgeHeadingIndex?: number;
 }
 
 export interface ParatextReviewReport {
@@ -318,11 +381,35 @@ export interface ParatextReviewReport {
   html: string;
   count: number;
   reason?: string;
+  cumulative?: boolean;
 }
 
-// #358: Paratext write-back (engine: tc_ai_bridge/paratext_outbox.py).
-// "note" (#426): a note from the notes panel with no Bridge record behind it.
+export interface ParatextReviewSavedReport {
+  path: string;
+  name: string;
+  size: number;
+  modifiedAt: string;
+}
+
+export type ParatextReconcileOutcome = "verified" | "notApplied" | "conflict" | "paratextChecked";
+
+export interface ParatextReviewUncertainItem {
+  decision: ParatextReviewDecision;
+  classified: "verified" | "notApplied" | "conflict";
+  observed: string;
+  paratextPending: string;
+}
+
+export interface ParatextReviewReports {
+  reports: ParatextReviewSavedReport[];
+  interrupted: string[];
+  folder: string;
+  pendingResolves: ParatextReviewPendingResolve[];
+  uncertain: ParatextReviewUncertainItem[];
+}
+
 export type ParatextWriteKind = "issue_resolution" | "finding" | "correction_proposal" | "note";
+
 export type ParatextOutboxOp = "create_thread" | "add_comment" | "resolve";
 
 export interface ParatextOutboxItem {

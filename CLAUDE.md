@@ -197,6 +197,15 @@ first, verifies it by read-back, and only then queues the same replacement for
 the linked Paratext project, where the plugin places the original once in the
 verse under the chapter write lock, writes, reads back, or refuses. That is still
 not an automatic path: it is the reviewer's click, on text the reviewer saw.
+Since 2026-11-03 (connector 0.10.0, #429/#430) the same click can target a
+footnote, a cross-reference or a heading (each located in its own region, never
+mapped into the body), a book introduction (Paratext only: Bridge keeps no copy)
+and an allowlisted heading-marker rename (Paratext only; Bridge's heading tag
+follows). A heading on Bridge's copy is written by
+`TranslationCoreProject.apply_heading_edit` -- a journalled writer of
+`<chapter>.headings.json`, not of Scripture (#180's definition), raised for the
+maintainer in DECISIONS 2026-11-03. The checked revert reverses the Paratext
+write too, with the exact reverse replacement, or says it cannot.
 Findings are untouched by any automatic path.
 
 ### Two different vendoring shapes for the same upstream repo
@@ -315,8 +324,11 @@ A raw Scripture import becomes a translationCore-compatible book project:
                                                 manual / deferred / reverted -- with before/after
                                                 snapshots and whether the saved verse was read back;
                                                 every revision is a change_log row) and
-                                                `paratext_review_state` (device-local: the reviewer's
-                                                queue position, filter and drafts).
+                                                `paratext_review_state` (device-local; unused since
+                                                2026-11-03: the queue's state lives in the app
+                                                settings per linked Paratext project, #432, so it
+                                                survives a book switch; the table goes at the next
+                                                bump).
 <project>/.apps/translationCoreAI/backups/      the backup files themselves, indexed by the DB
 %LOCALAPPDATA%\Bridge\data\workspace.sqlite3    app-level, schema v5 (#77, #236, #238, #240): users
                                                 with their role and the chosen one, devices, the

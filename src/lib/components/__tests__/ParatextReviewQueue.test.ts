@@ -4,18 +4,21 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/sve
 const {
   paratextReviewQueue, paratextReviewPreview, paratextReviewDecide, paratextReviewSaveState,
   paratextReviewRevertLatest, paratextReviewExportCsv, paratextReviewReport, paratextReviewLatestReport,
-  paratextResolveThread, pickSavePath,
+  paratextResolveThread, pickSavePath, paratextReviewReports, paratextReviewReconcile, paratextFlushOutbox,
+  paratextSetReference, openPath,
 } = vi.hoisted(() => ({
   paratextReviewQueue: vi.fn(), paratextReviewPreview: vi.fn(), paratextReviewDecide: vi.fn(),
   paratextReviewSaveState: vi.fn(), paratextReviewRevertLatest: vi.fn(), paratextReviewExportCsv: vi.fn(),
   paratextReviewReport: vi.fn(), paratextReviewLatestReport: vi.fn(), paratextResolveThread: vi.fn(),
-  pickSavePath: vi.fn(),
+  pickSavePath: vi.fn(), paratextReviewReports: vi.fn(), paratextReviewReconcile: vi.fn(), paratextFlushOutbox: vi.fn(),
+  paratextSetReference: vi.fn(), openPath: vi.fn(),
 }));
 vi.mock("../../api/bridgeClient", () => ({
   bridge: {
     paratextReviewQueue, paratextReviewPreview, paratextReviewDecide, paratextReviewSaveState,
     paratextReviewRevertLatest, paratextReviewExportCsv, paratextReviewReport, paratextReviewLatestReport,
-    paratextResolveThread, pickSavePath,
+    paratextResolveThread, pickSavePath, paratextReviewReports, paratextReviewReconcile, paratextFlushOutbox,
+    paratextSetReference, openPath,
   },
 }));
 const { askConfirmation } = vi.hoisted(() => ({ askConfirmation: vi.fn() }));
@@ -40,6 +43,7 @@ function item(overrides: Partial<ParatextReviewItem> = {}): ParatextReviewItem {
     proposalId: "p1", threadId: "T1", book: "TIT", chapter: "1", verse: "1", verseRef: "TIT 1:1",
     threadResolved: false, selectedText: "", contextBefore: "", contextAfter: "", proposal: proposal(),
     threadOutstanding: 1, decision: null, draft: null, thread: { complete: false, blocking: ["p1: undecided"] },
+    openBook: true, wrapped: false,
     ...overrides,
   };
 }
@@ -49,23 +53,32 @@ function queue(items: ParatextReviewItem[], overrides: Partial<Queue> = {}): Que
     applied: 0, rejected: 0, manual: 0, deferred: 0, reverted: 0 };
   return {
     indexState: "ready", status: "unresolved", book: "TIT", items, counts,
-    state: { status: "unresolved", position: "", drafts: {}, sessionStartedAt: "2026-11-02T00:00:00Z" },
+    state: { status: "unresolved", scope: { books: ["TIT"], startBook: "TIT" }, position: "", drafts: {},
+      sessionStartedAt: "2026-11-02T00:00:00Z" },
     presets: [
       { id: "accepted", label: "Accepted", text: "Accepted as suggested." },
       { id: "retained", label: "Existing wording retained", text: "The existing wording is retained." },
     ],
-    reviewer: "Joel", ...overrides,
+    reviewer: "Joel", bridgeUser: { userId: "u1", displayName: "Joel" },
+    books: [{ book: "TIT", bookId: "tit", path: "C:/p/tit", lazy: false, open: true },
+            { book: "PHM", bookId: "phm", path: "C:/p/phm", lazy: true, open: false }],
+    scanned: [{ book: "TIT", threads: items.length, unreadable: 0, proposals: items.length }],
+    booksInScope: ["TIT"], wraparound: { occurs: false, books: [], count: 0 }, staleDraftsDropped: [],
+    uncertain: [], pendingResolves: [], ...overrides,
   };
 }
 
-const okPreview = { proposalId: "p1", plain: "alpha beta gamma", found: 1, ok: true, reason: "",
-  after: "alpha BETA gamma", span: { plainStart: 6, plainEnd: 10 }, matches: [] };
+const okReports = { reports: [], interrupted: [], folder: "C:/p", pendingResolves: [], uncertain: [] };
+
+const okPreview = { proposalId: "p1", region: "body" as const, plain: "alpha beta gamma", found: 1, ok: true, reason: "",
+  after: "alpha BETA gamma", span: { plainStart: 6, plainEnd: 10 }, matches: [], paratextOnly: false };
 
 describe("ParatextReviewQueue (#428, #432, #433, #434)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     paratextReviewSaveState.mockImplementation(async (state) => ({ state: { status: "unresolved", position: "", drafts: {}, sessionStartedAt: "x", ...state } }));
     paratextReviewPreview.mockResolvedValue(okPreview);
+    paratextReviewReports.mockResolvedValue(okReports);
     askConfirmation.mockResolvedValue(true);
   });
   afterEach(() => vi.useRealTimers());
