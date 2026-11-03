@@ -222,7 +222,7 @@
       const extent = current.proposal.original;
       const ok = await askConfirmation({
         title: `Delete “${extent}” from ${current.verseRef}?`,
-        body: `Exactly this text is removed from the ${REGION_LABEL[region] ?? region}: “${extent}”. Nothing else changes.`,
+        body: `Exactly this text is removed from the ${REGION_LABEL[region] ?? region}: “${extent}”. When a space would be left doubled, one space goes with it. Nothing else changes.`,
         confirmLabel: "Delete it", danger: true,
       });
       if (!ok) return;
