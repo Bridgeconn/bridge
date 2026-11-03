@@ -25,9 +25,10 @@
   import { bridge } from "../api/bridgeClient";
   import { askConfirmation } from "../confirmAction";
   import { project } from "../stores";
+  import { refreshParatextReviewEditor } from "../paratextReviewRefresh";
   import type {
     ParatextReviewFilter, ParatextReviewItem, ParatextReviewPreview, ParatextReviewQueue, ParatextReviewReport,
-    ParatextReviewReports, ParatextReviewScope, ParatextReconcileOutcome,
+    ParatextReviewReports, ParatextReviewScope, ParatextReconcileOutcome, ParatextReviewDecision,
   } from "../types/paratext";
 
   export let onClose: () => void;
@@ -110,6 +111,16 @@
     error = cause instanceof Error ? cause.message : String(cause);
   }
 
+  async function refreshEditor(path: string, decision: ParatextReviewDecision): Promise<string> {
+    try {
+      await refreshParatextReviewEditor(path, decision);
+      return "";
+    } catch {
+      // The write already finished: a read failure must not invite Apply again.
+      return " The decision was saved, but the editor could not refresh. Reopen the book to reload its saved text.";
+    }
+  }
+
   async function load(status: ParatextReviewFilter | "" = "", scope: ParatextReviewScope | null = null): Promise<void> {
     try {
       loadedFor = $project?.path ?? "";
@@ -188,6 +199,7 @@
 
   async function decide(kind: "applied" | "rejected" | "manual" | "deferred"): Promise<void> {
     if (!current || busy) return;
+    const expectedPath = $project?.path ?? "";
     if (current.openBook === false) {
       notice = `This proposal is in ${current.book}; open that book first.`;
       return;
@@ -221,10 +233,11 @@
         writeParatext: kind === "applied" && (writeParatext || paratextOnly),
       });
       replaceItem(result.item);
+      const refreshNotice = kind === "applied" ? await refreshEditor(expectedPath, result.decision) : "";
       await load(data?.status ?? "");
       const verified = result.decision.decision === "applied" ? (result.decision.verified ? " and verified" : ", NOT verified") : "";
       await next(false);
-      notice = `${DECISION_LABEL[result.decision.decision]}${verified}.${paratextOutcome(result.decision)}`;
+      notice = `${DECISION_LABEL[result.decision.decision]}${verified}.${paratextOutcome(result.decision)}${refreshNotice}`;
     } catch (cause) {
       fail(cause);
     } finally {
@@ -322,6 +335,7 @@
 
   async function revertLatest(): Promise<void> {
     if (busy) return;
+    const expectedPath = $project?.path ?? "";
     const ok = await askConfirmation({
       title: "Revert the latest verified correction?",
       body: "The text is restored to what it was before that correction, only if nobody changed it since, in Bridge and -- when it was written there -- in Paratext. The decision history is kept.",
@@ -331,13 +345,14 @@
     busy = "revert";
     try {
       const result = await bridge.paratextReviewRevertLatest();
+      const refreshNotice = await refreshEditor(expectedPath, result.decision);
       const reverse = result.decision.paratextReverse;
       const paratext = !reverse ? "" : reverse.status === "sent"
         ? (reverse.verified ? " Paratext reversed and read back." : " Paratext reversed but NOT verified there.")
         : reverse.status === "manual" ? ` ${reverse.reason ?? ""}` : ` Paratext reverse ${reverse.status}: ${reverse.lastError ?? ""}`;
       await load(data?.status ?? "");
       await loadReports();
-      notice = `Reverted ${result.decision.verseRef}${result.decision.revertVerified ? " and verified" : " (NOT verified)"}.${paratext}`;
+      notice = `Reverted ${result.decision.verseRef}${result.decision.revertVerified ? " and verified" : " (NOT verified)"}.${paratext}${refreshNotice}`;
     } catch (cause) {
       fail(cause);
     } finally {
