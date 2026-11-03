@@ -153,6 +153,12 @@ did `build.ps1` compile 0.10.0? `get_state` lists `text_regions` and `rename_mar
       record whether the chapter survives the merge byte-for-byte.
 - [ ] Window placement: move/resize Bridge, close, reopen: same place; unplug the
       second monitor it was on, reopen: the window is on screen.
+- [ ] Startup visibility regression (#315, #435, fixed in daf1e3f): with an
+      existing saved visible main window, restart and confirm only the small
+      480×220 splash appears until startup completes. Check normal readiness,
+      failure/Retry and closing the splash; the main window remains usable
+      with remembered geometry. Rust checks pass; installed visual acceptance
+      of this fix remains pending.
 
 ## Result
 

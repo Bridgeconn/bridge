@@ -955,3 +955,10 @@ in DEVELOPER_SETUP.md; a green source suite is not updater release acceptance.
 | Native desktop | Detach/dock, editor usability, Follow/Pin across verses/books, main exit, second-monitor movement, close/reopen and placement recovery | NOT RUN: Windows helper initialization/list-apps timed out; browser fallback failed kernel initialization. #450's prior acceptance is not evidence for this new window. |
 | Layout/scripts | Move/resize/dock each area; Reset layout without alignment changes; uniform Greek/Hebrew/Aramaic cards, long glosses, RTL, narrow screens, zoom and mixed DPI | Component structure/logic checked; actual painting and physical monitor behavior NOT VERIFIED. These checks remain acceptance work before release. |
 | UI feedback refinement | Compact uniform cards, complete gloss hover, mixed horizontal/vertical docking with dividers/free floating, direct separation of a middle source card in both views | Full frontend: 1,148 tests / 117 files passed; final docking interaction tests: 3 passed. Svelte check 0 errors/warnings; production builds passed. DOM/geometry tests cover docking and content-preserving reset; actual desktop painting and pointer interaction NOT VERIFIED because UI tooling could not initialize. |
+
+## Startup visibility regression (#315, #435, 2026-11-03)
+
+| Layer | Gate | Evidence |
+|---|---|---|
+| Shell | Compile and existing Rust regressions after excluding saved visibility from window restoration | PASS: `cargo check --offline`; all 18 `cargo test --offline` tests passed outside the restricted sandbox. The initial two shutdown-test failures were sandbox restrictions on `taskkill`; no tests were weakened or skipped. Fix: daf1e3f. |
+| Installed desktop | Restart with saved `main.visible=true`: only the 480×220 splash appears until ready; failure/Retry and splash-close reveal the main window; remembered geometry remains usable after monitor changes | NOT RUN for this fix. Historical startup acceptance does not verify the new window-state interaction. Issues remain open for acceptance. |

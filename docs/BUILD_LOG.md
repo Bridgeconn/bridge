@@ -24139,3 +24139,21 @@ review/alignment windows retain their existing initial-state exclusions.
 the unchanged `sidecar::tests::kill_process_tree` tests because `taskkill` did
 not report success. Native startup painting and a rebuilt installer have not
 been verified; no release or installed-app replacement is claimed.
+
+### Shutdown-test failure investigation
+
+Reran the unchanged full Rust suite outside the restricted sandbox, where the
+shutdown tests can use `taskkill` against their own throwaway process trees:
+`cargo test --offline` passed all 18 tests, including both previously failing
+`kill_process_tree` tests. The earlier failures were sandbox-dependent; no
+application changes, skipped tests or weakened assertions were needed.
+
+### Tracking and documentation reconciliation
+
+Posted the fix and verified 18/18 Rust result to #315 (startup) and #435
+(remembered placement). #315 moves from Ready to In review on Bridge Project
+Board; #435 is added in In review. Both issues remain open for the outstanding
+installed desktop/accessibility/monitor acceptance. Updated the architecture,
+QA matrix and host checklist with the visibility contract and remaining checks.
+GitHub connector comment writes returned 403; the authenticated CLI completed
+the updates. No release, installer replacement or Defender exemption is claimed.

@@ -267,6 +267,12 @@ re-judges 7; 9B.4 never re-judges 7 and never sets `CORRECTED` on `PASSED` alone
 
 ## 5. UI surface map
 
+Startup (#315, #435) shows a fixed 480×220 splash while the main window loads
+hidden. The startup controller reveals the main window and closes the splash
+on readiness or failure, with a 45-second shell fallback. Window-state
+restoration preserves geometry but excludes visibility; saved `visible: true`
+must never reveal the main window early. The splash skips initial restoration.
+
 The Paratext review queue (#450) can move into a separate, non-modal native
 window (`review.html`, `ReviewQueueWindow.svelte`), leaving the main editor usable.
 `ReviewQueueHost` owns visibility and forwards navigation and saved-change
