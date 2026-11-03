@@ -7,7 +7,7 @@ export default defineConfig({
   // #287: two pages, the main window's and the splash window's.
   build: {
     rollupOptions: {
-      input: { main: "index.html", splash: "splash.html" },
+      input: { main: "index.html", splash: "splash.html", review: "review.html" },
     },
   },
   server: {

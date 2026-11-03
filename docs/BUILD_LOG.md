@@ -23889,3 +23889,116 @@ plus a step-summary line, `UPDATER_ENABLED` is exported from the build step,
 and the updater-feed step is skipped when it is `false` so no unsigned
 `latest.json` can ever be uploaded. v0.24.4 is the first tag with all three
 installers. Key provisioning is still outstanding (DECISIONS 2026-11-03).
+
+
+## 2026-11-03 ? Detached and organized Paratext review queue (#450)
+
+Implemented a separate native review-queue page over the existing Rust-owned
+sidecar and default project session. The main window owns visibility, receives
+explicit navigation requests and refreshes saved text through #445. Queue
+instances bind engine requests to their original project path; a dispatcher
+precondition rejects a request after the engine has switched books. No writer,
+schema, confidence threshold, golden or runtime network dependency changed.
+
+The panel has a compact header and scope toolbar, grouped source discussion /
+proposal and preview / correction columns, multiline replacement and comment
+fields, a persistent decision/navigation footer, responsive stacking and a
+separate Reports/Recovery tab. Confirmations sit above the panel (#444 overlap).
+Drafts save before detach/return/close, with a proposal-checked local emergency
+draft for abrupt teardown. Presentation and detached-mode preferences persist.
+The window-state plugin tracks placement; reopen restores on-screen and
+unminimizes, and main-window exit closes the auxiliary window before normal
+sidecar shutdown.
+
+Verification: Svelte check 0 errors/warnings; production application and
+dashboard builds passed. Full frontend run: 1,121 tests / 110 files passed;
+the final focused window/queue/guard run passed 23 tests (including the new host
+tests). Six project-precondition engine tests passed. Rust check passed and
+all 18 Rust tests passed outside the sandbox; the sandbox alone prevented the
+two existing taskkill tests from succeeding. Both frozen workers rebuilt and
+the expanded packaged smoke passed, including rejection of a stale-project
+verse.edit with unchanged Scripture bytes and a guarded current-project read.
+
+Full engine gate: 5,836 passed, 3 xfailed and one failure in
+test_a_verified_paratext_resolve_closes_the_linked_issue_resolution_and_note_once_with_the_external_actor.
+That test passed on isolated retry (1 passed in 1.51 s). The full-run failure
+returned an empty closure set and logged a semantic-runtime setup failure
+(no such table: alignment_cross_verse_links); it is retained as a failure, not
+a clean full-suite pass. No closure policy was changed in this issue.
+
+Desktop investigation uses the isolated UIQA450 synthetic project/profile and
+a separate org.bridge.review450 no-installer debug build. The first detach
+found the Windows/WebView2 synchronous-window-builder deadlock documented in
+the installed Tauri source. Changed the native command to async and rebuilt;
+no installed application or native Paratext project was modified. Final desktop
+results are recorded below.
+
+Final desktop boundary: the organized embedded panel was observed at the
+1366x768 test size, including both content columns, source discussion, current
+and proposed text, multiline fields and the visible fixed action footer. The
+asynchronous runtime-creation retry also stalled. The final design therefore
+creates one hidden review webview in tauri.conf.json at startup, opts it out of
+automatic initial visibility restore, and reveals/restores it on demand. The
+final production frontend and isolated native build passed. This is an
+implementation change from the initial dynamic-window attempt, not a claim
+that async creation alone fixed the observed stall.
+
+The final acceptance app was launched, but Computer Use then reported that the
+user stopped it with physical Escape. No further desktop input was issued.
+Final detach/return, concurrent editor use, apply/refresh, close/reopen, normal
+exit, two-monitor movement and DPI/disconnection acceptance remain NOT RUN for
+the final hidden-startup-window design. The isolated acceptance app was left
+running for the user; the installed app and native Paratext projects were not
+modified. #450 is not certified release-ready or closed.
+
+The last focused queue/host run passed 21 tests after the post-save busy-state
+refinement. Earlier 23-test focused coverage also includes the two request-guard
+unit tests. No commit or push was performed. Local build/test logs and synthetic
+fixture are retained under ignored engine/build/review-window-450/.
+
+
+### #450 desktop verification resumed ? 2026-11-03
+
+Benz authorized resuming Computer Use. The final hidden-startup-window
+no-installer acceptance build passed the following observed checks against
+the isolated UIQA450 synthetic profile (not an installed release package):
+
+- Opened a separate native review window with the organized layout and fixed
+  action footer. Main editor remained usable: navigated to TIT 1:2 while the
+  queue retained TIT 1:1, and opened/cancelled the main verse-edit control.
+- Entered a synthetic comment draft, returned the queue to the main window,
+  observed the same draft and position, then detached again with both retained.
+- Applied beta -> BETA from the detached queue with Also write to Paratext
+  unchecked. Queue reported Applied and verified and advanced to TIT 1:2.
+  Main editor displayed alpha BETA gamma immediately while its selection
+  remained on verse 2; history/alignment indicators refreshed.
+- Opened Reports/Recovery and observed the Revert confirmation visibly above
+  the queue. Confirmed the checked revert; queue reported Reverted TIT 1:1
+  and verified, and main editor displayed the original alpha beta gamma.
+  The append-only apply/revert history remained. Native Paratext was untouched.
+- Closed the queue using its native title-bar close: editor stayed running.
+  Reopened it from the editor: the exact same native window id returned, with
+  one queue window and Reports/Recovery retained.
+- Closed the main test app normally with Alt+F4 while the queue was open.
+  Both acceptance windows disappeared; the acceptance process and all
+  bridge-engine processes exited. No forced termination was needed for this
+  final design.
+
+This supersedes the earlier NOT RUN boundary for these specific desktop
+checks. Physical second-monitor placement, DPI changes/disconnection, long
+Tamil/RTL content in the detached window, cross-project switching on the real
+desktop and exact installed-package acceptance remain pending. No runtime
+code changed during the resumed check.
+
+After normal desktop shutdown, final cargo check passed and cargo test passed
+all 18 tests. No acceptance process or bridge-engine process remained.
+
+### #450 user acceptance - 2026-11-03
+
+Benz confirmed physical second-monitor testing was complete and supplied
+screenshots of the detached review queue with real Tamil content alongside
+the usable main editor. After discussing DPI testing, Benz accepted the
+current result ("this is fine"). Record physical second-monitor use and the
+visible Tamil layout as user-reported acceptance. Mixed-DPI transitions,
+monitor disconnection/reconnection and RTL remain unverified; this acceptance
+does not establish those checks. No runtime code changed for this update.

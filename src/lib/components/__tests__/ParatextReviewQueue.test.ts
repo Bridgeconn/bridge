@@ -268,4 +268,54 @@ describe("ParatextReviewQueue (#428, #432, #433, #434)", () => {
     await waitFor(() => expect(paratextReviewSaveState).toHaveBeenCalledWith({ position: "p2" }));
     expect(paratextReviewDecide).not.toHaveBeenCalled();
   });
+
+  it("saves the exact multiline draft before detaching without submitting a decision", async () => {
+    paratextReviewQueue.mockResolvedValue(queue([item()]));
+    const detach = vi.fn();
+    render(ParatextReviewQueue, { onClose: vi.fn(), onDetach: detach });
+    const button = await screen.findByRole("button", { name: "Move to separate window" });
+    await waitFor(() => expect(button).not.toBeDisabled());
+    await fireEvent.input(screen.getByLabelText(/Replacement/), { target: { value: "first\nsecond" } });
+    await fireEvent.input(screen.getByLabelText("Comment"), { target: { value: "review draft" } });
+    await fireEvent.click(button);
+    await waitFor(() => expect(detach).toHaveBeenCalledOnce());
+    expect(paratextReviewSaveState).toHaveBeenCalledWith({ drafts: { p1: { replacement: "first\nsecond", comment: "review draft" } } });
+    expect(paratextReviewDecide).not.toHaveBeenCalled();
+  });
+
+  it("keeps the panel open if its draft cannot be saved for transfer", async () => {
+    paratextReviewQueue.mockResolvedValue(queue([item()]));
+    const detach = vi.fn();
+    render(ParatextReviewQueue, { onClose: vi.fn(), onDetach: detach });
+    const button = await screen.findByRole("button", { name: "Move to separate window" });
+    await waitFor(() => expect(button).not.toBeDisabled());
+    paratextReviewSaveState.mockRejectedValueOnce(new Error("Disk unavailable"));
+    await fireEvent.click(button);
+    await screen.findByRole("alert");
+    expect(detach).not.toHaveBeenCalled();
+  });
+
+  it("recovers unsaved typing after an abrupt window teardown", async () => {
+    paratextReviewQueue.mockResolvedValue(queue([item()]));
+    const first = render(ParatextReviewQueue, { onClose: vi.fn() });
+    await screen.findByLabelText("Comment");
+    await fireEvent.input(screen.getByLabelText("Comment"), { target: { value: "last character!" } });
+    first.unmount();
+    render(ParatextReviewQueue, { onClose: vi.fn(), standalone: true });
+    const comment = await screen.findByLabelText("Comment");
+    expect(comment).toHaveValue("last character!");
+    expect(screen.getByRole("dialog")).not.toHaveAttribute("aria-modal");
+    expect(screen.getByRole("contentinfo", { name: "Review actions" })).toBeTruthy();
+  });
+
+  it("invalidates the preview while a new replacement is being typed", async () => {
+    paratextReviewQueue.mockResolvedValue(queue([item()]));
+    render(ParatextReviewQueue, { onClose: vi.fn() });
+    const apply = await screen.findByRole("button", { name: "Apply and next" });
+    await waitFor(() => expect(apply).not.toBeDisabled());
+    await fireEvent.input(screen.getByLabelText(/Replacement/), { target: { value: "different" } });
+    expect(apply).toBeDisabled();
+    await fireEvent.keyDown(window, { altKey: true, key: "a" });
+    expect(paratextReviewDecide).not.toHaveBeenCalled();
+  });
 });

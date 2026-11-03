@@ -930,3 +930,16 @@ and smoke pass. Native and installed desktop rows remain pending as above.
 Windows only for in-app installation. macOS/Linux installers remain manual.
 The first updater-enabled installer must be installed manually. Signing setup is
 in DEVELOPER_SETUP.md; a green source suite is not updater release acceptance.
+
+
+## Detached review notes queue (#450, 2026-11-03)
+
+| Layer | Gate | Evidence |
+|---|---|---|
+| Source/frontend | Organized layout, draft transfer/recovery, preview invalidation, project-switch event rejection and editor refresh | Full run: 1,121 tests / 110 files passed; focused queue/window/guard: 23 passed; last queue/host refinement: 21 passed. Svelte check 0 errors/warnings; final application/dashboard production builds passed. |
+| Source/engine | Old queue requests cannot act on a new project | Six dispatcher precondition regressions passed. Full engine: 5,836 passed, 3 xfailed, one Paratext closure failure that passed isolated retry; full run is not a clean pass. See BUILD_LOG.md. |
+| Shell | Compilation and existing Rust unit tests | Final cargo check and all 18 Rust tests passed after the resumed desktop check; hidden-window native debug/no-bundle build passed. |
+| Frozen | Rebuilt engine/checker pair, wrong-project write refusal and current-project read | PASS: expanded smoke passed; stale request changed no Scripture bytes. |
+| Desktop/layout | Review content and persistent actions at 1366x768 | PASS for sampled English content: embedded and detached layouts observed on synthetic UIQA450 with a separate app identifier/profile; fixed footer and grouped columns visible. Long Tamil/RTL and resizing/DPI still pending. |
+| Desktop/final design | Detach/return, main editor usable, saved-text refresh, confirmations, draft preservation, close/reopen and normal exit | PASS on resumed synthetic UIQA450 no-installer build: editor navigation and edit controls remained usable; draft survived docking; detached apply and checked revert refreshed editor text; Revert confirmation visible; native close/reopen reused one window and retained Reports tab; normal main exit closed both windows and sidecar. See BUILD_LOG.md for evidence boundary. |
+| Two monitors/DPI | Move to second monitor; resize; disconnect/reconnect; recover visible placement | Physical second-monitor use PASS, reported by Benz with screenshots; visible Tamil content and accessible footer accepted by Benz. Mixed-DPI transitions and monitor disconnection/reconnection NOT RUN. Native Paratext writes and installed release-package acceptance also NOT RUN in this task. |

@@ -1,3 +1,4 @@
+import { reviewProjectPath } from "../reviewProjectGuard";
 import type {
   LanguageQaDecisionIssue, LanguageQaHistory, LanguageQaInline, LanguageQaStatus, LanguageQaVerse, LanguageQaView,
   LearnedFix, LearnedFixesResponse, VerseEditLearned,
@@ -491,7 +492,9 @@ export type EngineMethod =
  * engine's dispatcher fills the same defaults the old per-method Rust
  * forwarders did, so callers pass their argument objects straight through. */
 async function call<T>(method: EngineMethod, params?: Record<string, unknown>): Promise<T> {
-  const envelope = await invoke<EngineEnvelope<T>>("engine_call", { method, params: params ?? {} });
+  const expectedPath = reviewProjectPath();
+  const guardedParams = expectedPath === undefined ? params ?? {} : { ...params, _expectedProjectPath: expectedPath };
+  const envelope = await invoke<EngineEnvelope<T>>("engine_call", { method, params: guardedParams });
   if (!envelope.success) {
     throw new Error(envelope.error?.message ?? `${method} failed`);
   }

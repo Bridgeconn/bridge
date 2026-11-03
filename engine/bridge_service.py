@@ -9360,6 +9360,17 @@ class BridgeEngine:
             except Exception as exc:  # noqa: BLE001
                 _trace(f"language QA rebind after a pull failed: {exc}")
         try:
+            # #450: detached review windows share the desktop session. Check on
+            # the dispatcher thread, not in a webview before a project.open can
+            # overtake the request. This is a precondition, never another writer.
+            if "_expectedProjectPath" in request.params:
+                expected = request.params["_expectedProjectPath"]
+                if (not isinstance(expected, str) or not expected or not self.project
+                        or not self._is_open_project_path(expected)):
+                    return EngineResponse.fail(
+                        request.id, "project_changed",
+                        "The open book changed. Reopen the review queue before continuing.",
+                    )
             return self._handle_request(request)
         finally:
             # One line per RPC that held the dispatcher for 100ms or more, so the

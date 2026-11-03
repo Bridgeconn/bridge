@@ -404,6 +404,22 @@ def main() -> int:
             opened = request("open", "project.open", {"path": str(project)})
             if not opened.get("success"):
                 raise SystemExit(f"Request open failed: {opened}")
+            # #450: the detached queue shares this sidecar. A request from its
+            # old project must be refused before even the existing writer runs.
+            scripture = project / "tit" / "1.json"
+            before_review_guard = scripture.read_bytes()
+            refused_review = request("review-old-project", "verse.edit", {
+                "chapter": "1", "verse": "1", "newText": "must never be written",
+                "_expectedProjectPath": str(Path(temp) / "another-book"),
+            })
+            if refused_review.get("error", {}).get("code") != "project_changed" or scripture.read_bytes() != before_review_guard:
+                raise SystemExit(f"Frozen review project guard failed: {refused_review}")
+            current_review = request("review-current-project", "verse.get", {
+                "chapter": "1", "verse": "1", "_expectedProjectPath": str(project),
+            })
+            if not current_review.get("success"):
+                raise SystemExit(f"Frozen current-project review read failed: {current_review}")
+            print("Frozen review queue project precondition passed; stale write changed no Scripture.")
             project_id = opened.get("result", {}).get("projectId")
             if not project_id:
                 raise SystemExit(f"Frozen project.open did not assign a stable project id: {opened}")

@@ -33,6 +33,17 @@
         "center": true,
         "backgroundColor": "#FFFFFF",
         "dragDropEnabled": false
+      },
+      {
+        "label": "review-queue",
+        "url": "review.html",
+        "title": "Review notes · Bridge",
+        "width": 1180,
+        "height": 740,
+        "minWidth": 640,
+        "minHeight": 480,
+        "visible": false,
+        "dragDropEnabled": false
       }
     ],
     "security": {

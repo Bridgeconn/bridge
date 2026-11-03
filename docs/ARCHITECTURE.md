@@ -267,6 +267,17 @@ re-judges 7; 9B.4 never re-judges 7 and never sets `CORRECTED` on `PASSED` alone
 
 ## 5. UI surface map
 
+The Paratext review queue (#450) can move into a separate, non-modal native
+window (`review.html`, `ReviewQueueWindow.svelte`), leaving the main editor usable.
+`ReviewQueueHost` owns visibility and forwards navigation and saved-change
+notifications. Both windows use the same Rust-owned sidecar/default project
+session. Queue instances bind requests to their original project path; the
+dispatcher checks `_expectedProjectPath` before dispatch, so a project switch
+cannot redirect a queued operation. Local presentation preferences and a
+proposal-checked emergency draft supplement the existing persisted queue state.
+Return/close saves the draft before transferring the UI; main-window exit also
+closes the auxiliary window and follows the existing sidecar shutdown path.
+
 ```mermaid
 flowchart TB
   Home["home: ImportScreen<br/>project list, import wizard, file drop"] --> Dash
