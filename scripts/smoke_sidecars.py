@@ -546,6 +546,50 @@ def main() -> int:
             if not undone.get("success") or undone["result"].get("status") != "partial":
                 raise SystemExit(f"Frozen alignment undo failed: {undone}")
 
+            # #381/#449: the packaged dispatcher includes arbitrary source
+            # separation and the combined native/link/null reset writer.
+            workspace = request("workspace-join", "alignment.realign", {
+                "chapter": "1", "verse": "1", "topIds": [t["id"] for t in undone["result"]["topTokens"]],
+                "bottomIds": [undone["result"]["bottomTokens"][0]["id"]],
+                "expectedOriginal": undone["result"]["alignment"],
+            })
+            if not workspace.get("success"):
+                raise SystemExit(f"Frozen workspace join failed: {workspace}")
+            split = request("workspace-split", "alignment.splitSource", {
+                "chapter": "1", "verse": "1", "topId": workspace["result"]["topTokens"][0]["id"],
+                "direction": "right", "expectedOriginal": workspace["result"]["alignment"],
+            })
+            if not split.get("success") or not split["result"]["contexts"][0].get("sourceLayout", {}).get("placements"):
+                raise SystemExit(f"Frozen source separation failed: {split}")
+            split_context = split["result"]["contexts"][0]
+            target = request("workspace-target-reset", "alignment.resetVerse", {
+                "expectedStateToken": request("workspace-target-preview", "alignment.resetStatus", {"chapter": "1", "verse": "3"})["result"]["token"],
+                "chapter": "1", "verse": "3", "expectedOriginal": request(
+                    "workspace-target", "alignment.get", {"chapter": "1", "verse": "3"})["result"]["alignment"],
+            })
+            if not target.get("success"):
+                raise SystemExit(f"Frozen target reset failed: {target}")
+            source_id = next(g["topIds"][0] for g in split_context["groups"] if not g["bottomIds"])
+            linked = request("workspace-cross-link", "alignment.crossVerse.link", {
+                "source": {"chapter": "1", "verse": "1", "topId": source_id},
+                "target": {"chapter": "1", "verse": "3", "bottomId": target["result"]["contexts"][0]["bottomTokens"][0]["id"]},
+            })
+            if not linked.get("success"):
+                raise SystemExit(f"Frozen workspace cross link failed: {linked}")
+            before_reset = linked["result"]["source"]
+            reset = request("workspace-reset", "alignment.resetVerse", {
+                "expectedStateToken": request("workspace-reset-preview", "alignment.resetStatus", {"chapter": "1", "verse": "1"})["result"]["token"],
+                "chapter": "1", "verse": "1", "expectedOriginal": before_reset["alignment"],
+            })
+            reset_context = next((c for c in reset.get("result", {}).get("contexts", []) if c["verse"] == "1"), {})
+            if not reset.get("success") or reset_context.get("crossVerseLinks") or any(g["bottomIds"] for g in reset_context.get("groups", [])):
+                raise SystemExit(f"Frozen workspace reset failed: {reset}")
+            restore_reset = request("workspace-restore-reset", "alignment.restoreReset", {"chapter": "1", "verse": "1"})
+            restored_context = next((c for c in restore_reset.get("result", {}).get("contexts", []) if c["verse"] == "1"), {})
+            if not restore_reset.get("success") or not restored_context.get("crossVerseLinks") or restored_context.get("alignment") != before_reset["alignment"]:
+                raise SystemExit(f"Frozen combined reset undo failed: {restore_reset}")
+            print("Frozen alignment workspace passed: source separation, cross-verse reset and combined undo.")
+
             started = request("start", "checks.start", {
                 "scope": "chapter", "chapters": ["1"], "checks": ["usfm"],
             })

@@ -179,6 +179,7 @@ from check_jobs import (
     finding_dict_check,
     groups_ran,
 )
+from tc_ai_bridge import alignment_reset, alignment_source_split, alignment_reset_jobs
 import alignment_auto_align_jobs as auto_align_jobs
 from tc_ai_bridge.model_router import estimate_cost
 from ai_review_jobs import (
@@ -592,6 +593,15 @@ class Methods:
     CHECK_SAVE_SELECTION = "check.saveSelection"
     CHECK_CLEAR_SELECTION = "check.clearSelection"
 
+    ALIGNMENT_RESET_CHAPTER_PREVIEW = "alignment.resetChapter.preview"
+    ALIGNMENT_RESET_CHAPTER_START = "alignment.resetChapter.start"
+    ALIGNMENT_RESET_CHAPTER_STEP = "alignment.resetChapter.step"
+    ALIGNMENT_RESET_CHAPTER_STATUS = "alignment.resetChapter.status"
+    ALIGNMENT_RESET_CHAPTER_CANCEL = "alignment.resetChapter.cancel"
+    ALIGNMENT_RESET_VERSE = "alignment.resetVerse"
+    ALIGNMENT_RESTORE_RESET = "alignment.restoreReset"
+    ALIGNMENT_RESET_STATUS = "alignment.resetStatus"
+    ALIGNMENT_SPLIT_SOURCE = "alignment.splitSource"
     ALIGNMENT_GET = "alignment.get"
     ALIGNMENT_GET_RANGE = "alignment.getRange"
     ALIGNMENT_GAP_SCAN = "alignment.gapScan"
@@ -3168,6 +3178,7 @@ class BridgeEngine:
             and not remaining_sources and not remaining_targets
         )
         return {
+            "sourceLayout": alignment_source_split.layout(self.project, str(chapter), str(verse)),
             "chapter": str(chapter), "verse": str(verse),
             "alignment": alignment.to_dict(),
             "topTokens": top_tokens, "bottomTokens": bottom_tokens, "groups": groups,
@@ -9372,7 +9383,7 @@ class BridgeEngine:
                         or not self._is_open_project_path(expected)):
                     return EngineResponse.fail(
                         request.id, "project_changed",
-                        "The open book changed. Reopen the review queue before continuing.",
+                        "The open book changed. Reopen this panel before continuing.",
                     )
             return self._handle_request(request)
         finally:
@@ -9783,6 +9794,77 @@ class BridgeEngine:
                     p.get("provenance", "human"), p.get("expectedFingerprint", ""),
                     p.get("metadata"),
                 ))
+            if m.startswith("alignment.resetChapter."):
+                self._require_project()
+                action = m.rsplit(".", 1)[-1]
+                chapter = str(p.get("chapter", ""))
+                if action == "status":
+                    result = alignment_reset_jobs.view(alignment_reset_jobs.status(self.project))
+                elif action == "preview":
+                    result = alignment_reset_jobs.preview(self.project, chapter)
+                    result.pop("data", None)
+                elif action == "start":
+                    try:
+                        auto_job = self._auto_align_jobs.status()
+                    except auto_align_jobs.AutoAlignJobNotFound:
+                        auto_job = None
+                    if auto_job and auto_job["state"] not in auto_align_jobs.TERMINAL_STATES:
+                        raise AlignmentError("Wait for automatic alignment before resetting a chapter.")
+                    if alignment_source_split.pending_split(self.project):
+                        raise AlignmentError("Resume the interrupted source separation first.")
+                    result = alignment_reset_jobs.start(self.project, chapter, str(p.get("token", "")))
+                elif action == "step":
+                    result = alignment_reset_jobs.step(self, str(p["jobId"]))
+                elif action == "cancel":
+                    result = alignment_reset_jobs.cancel(self.project, str(p["jobId"]))
+                else:
+                    raise AlignmentError("Unknown chapter reset action.")
+                return EngineResponse.ok(request.id, result=result)
+            if m.startswith("alignment.") and m not in {
+                "alignment.get", "alignment.getRange", "alignment.status", "alignment.gapScan", "alignment.resetStatus",
+                "alignment.backups", "alignment.autoAlign.status", "alignment.autoAlign.cancel", "alignment.autoAlign.verdict",
+            } and self.project is not None and alignment_reset_jobs.status(self.project)["state"] == "running":
+                raise AlignmentError("Finish or cancel the chapter reset before changing alignment.")
+            if m.startswith("alignment.") and m not in {
+                "alignment.get", "alignment.getRange", "alignment.status", "alignment.gapScan", "alignment.resetStatus",
+                "alignment.backups", "alignment.autoAlign.status", "alignment.autoAlign.cancel", "alignment.autoAlign.verdict", "alignment.splitSource",
+            } and self.project is not None:
+                pending_split = alignment_source_split.pending_split(self.project)
+                if pending_split:
+                    raise AlignmentError(f"Resume source separation at {pending_split['chapter']}:{pending_split['verse']} first.")
+            if m in {"alignment.resetVerse", "alignment.restoreReset", "alignment.resetStatus"}:
+                self._require_project()
+                if m == "alignment.resetStatus":
+                    return EngineResponse.ok(request.id, result=alignment_reset.summary(self.project, str(p["chapter"]), str(p["verse"])))
+                try:
+                    active_job = self._auto_align_jobs.status()
+                except auto_align_jobs.AutoAlignJobNotFound:
+                    active_job = None
+                if active_job and active_job["state"] not in auto_align_jobs.TERMINAL_STATES:
+                    raise AlignmentError("Wait for the automatic alignment job to finish before resetting.")
+                if m == "alignment.restoreReset":
+                    result = alignment_reset.restore(self, str(p["chapter"]), str(p["verse"]))
+                else:
+                    result = alignment_reset.reset(self, str(p["chapter"]), str(p["verse"]), p["expectedOriginal"], expected_state_token=str(p["expectedStateToken"]))
+                return EngineResponse.ok(request.id, result=result)
+            if m.startswith("alignment.") and m not in {
+                "alignment.get", "alignment.getRange", "alignment.status", "alignment.gapScan",
+                "alignment.autoAlign.status", "alignment.autoAlign.cancel", "alignment.autoAlign.verdict",
+                "alignment.backups", "alignment.resetVerse", "alignment.restoreReset", "alignment.resetStatus",
+            } and self.project is not None:
+                recovery = alignment_reset.record(self.project)
+                if recovery and recovery["state"] in {"resetting", "restoring"}:
+                    raise AlignmentError(f"Resume reset at {recovery['chapter']}:{recovery['verse']} before changing alignment.")
+            if m == "alignment.splitSource":
+                self._require_project()
+                try:
+                    active_job = self._auto_align_jobs.status()
+                except auto_align_jobs.AutoAlignJobNotFound:
+                    active_job = None
+                if active_job and active_job["state"] not in auto_align_jobs.TERMINAL_STATES:
+                    raise AlignmentError("Wait for automatic alignment before separating words.")
+                return EngineResponse.ok(request.id, result=alignment_source_split.split(self,
+                    str(p["chapter"]), str(p["verse"]), str(p["topId"]), str(p["direction"]), p["expectedOriginal"], bool(p.get("undo"))))
             if m == Methods.ALIGNMENT_GET:
                 return EngineResponse.ok(
                     request.id, result=self.get_alignment(p["chapter"], p["verse"]),
