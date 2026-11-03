@@ -1,7 +1,7 @@
 {
   "name": "bridge",
   "private": true,
-  "version": "0.23.0",
+  "version": "0.24.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -17,13 +17,13 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.0.0",
-    "@tauri-apps/plugin-dialog": "^2.0.0",
+    "@tauri-apps/api": "^2.12.4",
+    "@tauri-apps/plugin-dialog": "^2.7.2",
     "iso-639-3": "^3.0.1"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^3.1.0",
-    "@tauri-apps/cli": "^2.0.0",
+    "@tauri-apps/cli": "^2.12.4",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/svelte": "^4.2.3",
     "@testing-library/user-event": "^14.6.7",
