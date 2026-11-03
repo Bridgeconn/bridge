@@ -143,7 +143,7 @@
        --z-panel      a floating panel (Language QA)
        --z-dialog     an app dialog and its backdrop (Settings, Export,
                       Diagnostics, Align Words, Cross-verse alignment, a
-                      correction's confirm)
+                      correction's confirm, the Paratext review queue)
        --z-dialog-over-dialog  a dialog or popup opened from a dialog (Checker
                       settings, History, Lexicon, Flag, Scope confirm,
                       Occurrences, Verse notes, the cross-verse issue menu)
