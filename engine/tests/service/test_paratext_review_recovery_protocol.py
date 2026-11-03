@@ -48,13 +48,38 @@ def test_a_deletion_is_reversed_by_restoring_the_window_around_the_gap(tmp_path,
         {"thread": "D", "contents": qa_note("beta ", "(delete)", category="Addition not in source")}], connector=connector)
     [item] = queue(engine)["items"]
     deleted = decide(engine, item["proposalId"], "applied", confirmDelete=True, writeParatext=True)["result"]["decision"]
-    assert deleted["replacement"] == "" and verse_text(engine) == "alpha  gamma"
-    assert "\\v 1 alpha  gamma" in connector.scripture["TIT 1"]
+    # #442: one space remains, in Bridge and in Paratext (which would have
+    # collapsed a double space on save and left the write unverifiable).
+    assert deleted["replacement"] == "" and deleted["original"] == "beta " and verse_text(engine) == "alpha gamma"
+    assert "\\v 1 alpha gamma" in connector.scripture["TIT 1"]
+    sent = [c for a, c in connector.calls if a == "put_verse_text"][-1]
+    assert sent["original"] == "beta " and sent["before_context"] == "alpha" and sent["after_context"] == "gamma"
+    assert deleted["paratext"]["status"] == "sent" and deleted["paratext"]["verified"] is True
     reverted = call(engine, "paratextReview.revertLatest")["result"]["decision"]
-    assert reverted["paratextReverse"]["request"]["original"] == "alpha  gamma"
+    assert reverted["paratextReverse"]["request"]["original"] == "alpha gamma"
     assert reverted["paratextReverse"]["request"]["replacement"] == "alpha beta gamma"
     assert reverted["paratextReverse"]["status"] == "sent"
     assert "\\v 1 alpha beta gamma" in connector.scripture["TIT 1"] and verse_text(engine) == "alpha beta gamma"
+
+
+def test_a_deletion_not_between_two_spaces_takes_no_space_with_it(tmp_path, monkeypatch):
+    # #442's widening is only for the case Paratext normalises: a span with a
+    # space on both sides. At the start of the verse, before punctuation, or
+    # with markup between the span and the next space, exactly the Original goes.
+    from tc_ai_bridge.paratext_review import Match, widen_deletion
+    plain = "alpha beta gamma"
+    assert widen_deletion(plain, plain, Match(0, 5, 0, 5, True)).end == 5           # start of text
+    assert widen_deletion("alpha beta.", "alpha beta.", Match(6, 10, 6, 10, True)).end == 10   # punctuation follows
+    raw = "alpha beta\\f + \\ft n\\f* gamma"
+    assert widen_deletion(plain, raw, Match(6, 10, 6, 10, True)).end == 10           # a footnote follows in the raw
+    widened = widen_deletion(plain, plain, Match(6, 10, 6, 10, True))
+    assert (widened.start, widened.end, widened.raw_end) == (6, 11, 11)
+    connector = stand_in()
+    engine, _ = open_queue(tmp_path, monkeypatch, [
+        {"thread": "D", "contents": qa_note("alpha ", "(delete)", category="Addition not in source")}], connector=connector)
+    [item] = queue(engine)["items"]
+    deleted = decide(engine, item["proposalId"], "applied", confirmDelete=True)["result"]["decision"]
+    assert deleted["original"] == "alpha" and verse_text(engine) == "beta gamma"
 
 
 def test_an_interrupted_apply_is_classified_and_blocks_a_new_apply_until_reconciled(tmp_path, monkeypatch):

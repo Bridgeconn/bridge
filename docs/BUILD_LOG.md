@@ -23889,3 +23889,21 @@ plus a step-summary line, `UPDATER_ENABLED` is exported from the build step,
 and the updater-feed step is skipped when it is `false` so no unsigned
 `latest.json` can ever be uploaded. v0.24.4 is the first tag with all three
 installers. Key provisioning is still outstanding (DECISIONS 2026-11-03).
+
+## 2026-11-03 — #442: a deletion between two spaces takes one of them (Joel)
+
+Benz reproduced on Paratext 9.5.110.1 that deleting `original` from
+`Alpha original body.` saved `Alpha  body.` in Bridge while Paratext collapsed
+the double space to `Alpha body.`: the connector reported `verified: false`,
+the completion gate (correctly) blocked the resolve, and the automatic
+reverse looked for the two-space window and was refused. The earlier test
+pinned the double space on purpose ("the spacing is the reviewer's to see in
+the preview"); the host showed that is not a choice Bridge gets to make.
+`paratext_review.widen_deletion` widens a deletion's span by the space after
+it when both neighbours are whitespace and, for the body, the raw verse holds
+that same space (a footnote between them leaves the span alone); the apply,
+the heading apply and the preview all use it, so the decision's `original`
+(`beta `), the Paratext write and `reverse_write`'s window are built from
+the same text. The stand-in Paratext in `tests/support/paratext_writeback.py`
+now collapses a double space on save and reports the mismatch, so the old
+behaviour fails its test. No new writer: the same `edit_verse` call, once.

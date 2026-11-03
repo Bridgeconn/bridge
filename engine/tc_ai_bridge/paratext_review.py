@@ -284,6 +284,23 @@ def replaced_raw(raw_verse: str, match: Match, replacement: str) -> str:
     return raw_verse[:match.raw_start] + replacement + raw_verse[match.raw_end:]
 
 
+def widen_deletion(text: str, raw: str | None, match: Match) -> Match:
+    """#442: a deletion whose span sits between two spaces takes the space
+    after it, so one space remains. A bare deletion left a double space that
+    Paratext normalises on save, so its text no longer matched Bridge's, the
+    write could not be verified there and the exact reverse was unlocatable.
+    Widened only when both neighbours in the region text are whitespace and,
+    where a raw verse is given, the same character follows the span in it
+    (markup between the two is left alone). The decision's `original` then
+    carries the space, and so does every write and reverse built from it."""
+    end = match.end
+    if match.start <= 0 or end >= len(text) or not text[end].isspace() or not text[match.start - 1].isspace():
+        return match
+    if raw is not None and (match.raw_end >= len(raw) or raw[match.raw_end] != text[end]):
+        return match
+    return Match(match.start, end + 1, match.raw_start, match.raw_end + 1, match.whole_word, match.region, match.index)
+
+
 def check_replacement(replacement: str) -> None:
     if "\\" in replacement or "\n" in replacement or "\r" in replacement or "\0" in replacement:
         raise ReviewError("A replacement cannot carry USFM markers or line breaks; that is a structural change, review-only.")
@@ -541,6 +558,9 @@ def apply_proposal(
     match = location.chosen
     assert match is not None
     before_text = region_text(raw_verse, match)
+    if replacement == "":
+        match = widen_deletion(before_text, raw_verse, match)
+        original = before_text[match.start:match.end]
     new_raw = replaced_raw(raw_verse, match, replacement)
     result = edit(item["chapter"], item["verse"], new_raw, raw_verse)
     saved_raw = read_back(item["chapter"], item["verse"])
@@ -591,6 +611,9 @@ def apply_heading_proposal(
     match = location.chosen
     assert match is not None
     old_text = str(headings[match.index].get("text") or "")
+    if replacement == "":
+        match = widen_deletion(old_text, None, match)
+        original = old_text[match.start:match.end]
     new_text = old_text[:match.start] + replacement + old_text[match.end:]
     if not new_text.strip():
         raise ReviewError("The heading would be left empty; remove a heading in the editor instead.")
