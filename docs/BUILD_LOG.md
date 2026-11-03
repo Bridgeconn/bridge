@@ -23799,3 +23799,32 @@ revocation/interrupted applies, two PCs/Send-Receive and actual desktop
 layout/browser/accessibility/performance acceptance remain unverified. See the
 2026-11-03 table in `PARATEXT_HOST_ACCEPTANCE_CHECKLIST.md`. The initial result
 reply is on #423, comment 6586494290; no issue was closed on source tests alone.
+
+### 2026-11-03 — Paratext desktop walkthrough without an installer (#436, #444)
+
+Benz asked whether the walkthrough could proceed without the installer. It can:
+an isolated git archive of origin/main b1ffd40 (0.24.3), locked `npm ci`, both
+Vite builds and `tauri build --debug --no-bundle` passed, including the normal
+Tauri version check. Root checkout code/dependencies were not updated. The
+existing compiler cache and frozen b9a43a1 workers were reused (engine displays
+0.23.0), so this is development desktop evidence, not exact release acceptance.
+
+Launched existing Paratext 9.5.110.1 and read connector 0.10.0 state. With a new
+isolated synthetic UIQA100 two-book import/profile, visually walked the notes
+panel, long Tamil reason scrolling, visible actions, Alt+N, footnote preview,
+TIT/PHM scope starting at PHM and wrap notice, sibling opening with queue retained,
+comment preset, explicit local apply/verification/advance, and session HTML
+generation/in-app rendering/default-browser opening. Window config requested
+1366x768. Full scaling/keyboard/accessibility and restart persistence not tested.
+
+Found and filed #444: Revert confirmation is in the accessibility tree but hidden
+behind the queue. ConfirmDialog and the later-mounted queue both use z-index 60;
+that is the inferred cause. No invisible confirmation was accepted. Closed the
+isolated app normally, then the existing source revert RPC restored synthetic
+PHM 1:1 to `A second book.` with revertVerified true. Native Paratext Scripture
+and notes were not written. The UI revert row remains FAIL; API cleanup is not
+a substitute for it. Detailed evidence boundaries are appended to
+PARATEXT_HOST_ACCEPTANCE_CHECKLIST.md. Local receipts/scripts are under ignored
+engine/build/walkthrough-0243-data and engine/build/. No runtime fix, release or
+installer was produced; native regions/rename, lock/interruption, two-device,
+Send/Receive, installer and other unwalked gates remain open.

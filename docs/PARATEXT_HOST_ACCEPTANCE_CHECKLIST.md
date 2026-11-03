@@ -230,3 +230,37 @@ marker rename; live lock revocation and interrupted apply; two PCs/hub and
 Send/Receive; current Bridge desktop layout, keyboard/font/accessibility and
 monitor changes; the in-app report-opening/error flows; release-build alignment
 pointer-to-paint timing. The source and frozen passes do not close those rows.
+
+### 2026-11-03: no-installer desktop follow-up (#444)
+
+At Benz's request, built an isolated archive of origin/main **b1ffd40**
+(0.24.3) with locked npm dependencies and an ordinary Tauri debug/no-bundle
+build. Version compatibility checks passed; both Vite builds and the desktop
+build completed. The existing frozen workers from the earlier b9a43a1
+acceptance were reused; the engine displays **0.23.0**. This is development
+desktop evidence, not acceptance of an exact 0.24.3 release package or installer.
+The window config requested 1366x768; the actual desktop was visually inspected.
+
+Paratext was launched and its local connector state read: **9.5.110.1 /
+0.10.0**, with `text_regions` and `rename_marker`. No native Scripture or notes
+were written. Desktop actions used a new isolated UIQA100 synthetic two-book
+import/profile under ignored `engine/build/walkthrough-0243-data/`.
+
+| Check actually walked | Result |
+| --- | --- |
+| Long Tamil reason, review dialog | PASS: reason scrolls inside its field; action buttons remain visible at the inspected size. Other text-size/scaling steps were not tested. |
+| Keyboard next | PASS: Alt+N moves from body proposal to footnote proposal. This is not complete keyboard/screen-reader acceptance. |
+| Footnote region preview | PASS: current footnote and after preview use the footnote text. No native footnote write in this run. |
+| Two-book scope and starting book | PASS: TIT + PHM, start PHM; three proposals, PHM first, explicit wrap back to TIT, unopened book marked read-only. |
+| Open sibling with queue retained | PASS: Open PHM materializes/opens the sibling; queue, scope and selected proposal stay present. Restart/draft persistence not tested. |
+| Preset and confirmed local apply | PASS: Accepted fills comment without deciding; explicit Apply and next on PHM changes `second` to `other`, displays Applied and verified, and advances. Also write to Paratext was unchecked. |
+| Reports | PASS: no-decision session reports no output; after apply, session HTML saves and renders in-app with before/after, reviewer and comment; Open in browser launches Chrome on that report. Destination/error/recovery paths not tested. |
+| Desktop checked revert | FAIL: confirmation exists in accessibility tree but is hidden behind the queue; filed [#444](https://github.com/Bridgeconn/bridge/issues/444). No hidden confirmation was clicked. |
+| Cleanup | PASS through existing source RPC after normal app exit: checked revert restores PHM 1:1 to `A second book.` and reports revertVerified. This is cleanup, not a desktop revert pass. |
+
+The earlier #441 mismatch no longer blocks this isolated latest-source build.
+#442 deletion normalization remains untested/unresolved here. Other outstanding
+native regions, marker rename, locks/interruption, two-PC/hub, Send/Receive,
+installer behavior, monitor/scaling/accessibility and release timing remain open.
+No release/installer was created, no application logic was modified, and no
+acceptance issue was closed.
