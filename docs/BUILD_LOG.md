@@ -24125,3 +24125,17 @@ loaded older workspace module; restarted the whole suite with stable files for
 the clean result above. No assertions were weakened. Engine and Rust code are
 unchanged by this follow-up, so their earlier results remain the evidence for
 those layers; no new frozen/desktop acceptance is claimed.
+
+## 2026-11-03 — Keep only the splash visible during startup (#435 follow-up)
+
+The window-state plugin restored the main window's saved `visible: true`
+before the normal startup reveal, exposing the full background window behind
+the small splash. Excluded visibility from the plugin's restored state while
+retaining window geometry and maximized/fullscreen state. The splash skips
+initial state restoration so its fixed startup configuration applies; detached
+review/alignment windows retain their existing initial-state exclusions.
+
+`cargo check --offline` passed. `cargo test --offline`: 16 passed, 2 failed in
+the unchanged `sidecar::tests::kill_process_tree` tests because `taskkill` did
+not report success. Native startup painting and a rebuilt installer have not
+been verified; no release or installed-app replacement is claimed.

@@ -42,7 +42,19 @@ fn main() {
         // #435: the main window's size and position are saved on close and
         // restored on the next start; the plugin keeps a window that would
         // land off every current monitor on screen instead.
-        .plugin(tauri_plugin_window_state::Builder::new().skip_initial_state(review_window::LABEL).skip_initial_state(alignment_window::LABEL).build())
+        // Startup owns visibility: restoring a saved visible main window
+        // would reveal it behind the splash before the engine is ready.
+        .plugin(
+            tauri_plugin_window_state::Builder::new()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        & !tauri_plugin_window_state::StateFlags::VISIBLE,
+                )
+                .skip_initial_state("splash")
+                .skip_initial_state(review_window::LABEL)
+                .skip_initial_state(alignment_window::LABEL)
+                .build(),
+        )
         .manage(updates::AppUpdates::default())
         .manage(EngineSidecar::new())
         .setup(|app| {
