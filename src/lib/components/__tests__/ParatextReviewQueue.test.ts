@@ -207,6 +207,29 @@ describe("ParatextReviewQueue (#428, #432, #433, #434)", () => {
     expect(paratextReviewDecide).not.toHaveBeenCalled();
   });
 
+  it("shows a verified apply from its saved snapshots and never previews it a second time (#446)", async () => {
+    const applied = item({
+      proposal: proposal({ region: "footnote", original: "note", suggested: "footnote" }),
+      decision: {
+        proposalId: "p1", threadId: "T1", book: "TIT", chapter: "1", verse: "1", verseRef: "TIT 1:1", pass: "R2",
+        category: "Sandhi / word-joining", route: "literal", operation: "replace", decision: "applied", comment: "",
+        reviewer: "Joel", decidedAt: "2026-11-03T05:00:00Z", threadResolved: false, original: "note",
+        replacement: "footnote", verified: true, region: "footnote", revision: 1, updatedAt: "2026-11-03T05:00:00Z",
+        before: { raw: "\\f + \\ft a note\\f*", plain: "a note" }, after: { raw: "\\f + \\ft a footnote\\f*", plain: "a footnote" },
+        span: { plainStart: 2, plainEnd: 6, rawStart: 10, rawEnd: 14 },
+      },
+    });
+    paratextReviewQueue.mockResolvedValue(queue([applied], { status: "all" }));
+    paratextReviewPreview.mockResolvedValue({ ...okPreview, region: "footnote", plain: "a footnote", after: "a footfootnote",
+      span: { plainStart: 2, plainEnd: 6 } });
+    render(ParatextReviewQueue, { onClose: vi.fn() });
+    expect((await screen.findByTestId("applied-before")).textContent?.trim()).toBe("a note");
+    expect(screen.getByTestId("applied-after").textContent?.trim()).toBe("a footnote");
+    expect(screen.queryByText("a footfootnote")).toBeNull();
+    expect(paratextReviewPreview).not.toHaveBeenCalled();
+    expect((screen.getByRole("button", { name: "Apply and next" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("an Original the engine cannot locate once disables Apply and shows the reason", async () => {
     paratextReviewQueue.mockResolvedValue(queue([item()]));
     paratextReviewPreview.mockResolvedValue({ ...okPreview, ok: false, span: null, after: "", reason: "The exact Original was not found in this verse." });
