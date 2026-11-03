@@ -23828,3 +23828,19 @@ PARATEXT_HOST_ACCEPTANCE_CHECKLIST.md. Local receipts/scripts are under ignored
 engine/build/walkthrough-0243-data and engine/build/. No runtime fix, release or
 installer was produced; native regions/rename, lock/interruption, two-device,
 Send/Receive, installer and other unwalked gates remain open.
+
+## 2026-11-03 — Release 0.24.x: three Windows gates, two relaxed on Benz's approval (#413, #321; Joel)
+
+The first tagged release since #413 landed met three Windows gates in turn.
+v0.24.0 and v0.24.1 failed on the Authenticode gate (relaxed, `1b6265c`) and
+Linux/macOS on a Tauri npm/crate minor-version mismatch (`82b8bd4`, #443).
+v0.24.2 failed the Defender scan because GitHub's hosted Windows image ships
+with real-time protection off; `d3c74f0` switches it on before the scan, and
+dispatch run 41516813406 proved the whole Windows leg green. v0.24.3 then
+stopped at the #321 updater-key gate. Benz approved (#413 comment,
+2026-11-03) a Windows build without updater artifacts for the acceptance
+walk, keeping the Defender scan and hash checks: the throw is now a warning
+plus a step-summary line, `UPDATER_ENABLED` is exported from the build step,
+and the updater-feed step is skipped when it is `false` so no unsigned
+`latest.json` can ever be uploaded. v0.24.4 is the first tag with all three
+installers. Key provisioning is still outstanding (DECISIONS 2026-11-03).

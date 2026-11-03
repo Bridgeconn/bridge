@@ -19,6 +19,13 @@ the Defender scan, the 24-hour definition check and the hash rechecks still
 gate it. The original rule -- no unsigned public Windows release -- is restored
 by reverting that change once signing is provisioned.
 
+The second Windows gate, the Tauri updater key pair of #321, was relaxed the
+same day on Benz's approval for the acceptance-test build: a tagged release
+without `BRIDGE_UPDATER_PUBLIC_KEY` and `TAURI_SIGNING_PRIVATE_KEY` builds an
+installer with no updater artifacts and publishes no update feed, with a
+warning in the run summary. Installed apps from such a release never check for
+updates. Restore the throw in `release.yml` once the keys are provisioned.
+
 The workflow signs both Python sidecars before packaging. Tauri invokes the
 same signing wrapper for the application and installer via a temporary config
 overlay. Each signing call must produce a valid, timestamped Authenticode

@@ -271,10 +271,17 @@ jobs:
         run: |
           # Updater signatures are independent of Windows Authenticode signing.
           # Never publish an updater-enabled installer without a trusted key.
+          # Relaxed 2026-11-03 (Benz, #413 / DECISIONS.md): until the key pair
+          # is provisioned, a tagged release builds a Windows installer with
+          # NO updater artifacts and no feed, flagged in the run summary. The
+          # installed app then reports "no updater signing key" and never
+          # checks for updates. Restore the throw when the keys exist.
           $updater = $IsWindows -and -not [string]::IsNullOrWhiteSpace($env:BRIDGE_UPDATER_PUBLIC_KEY) -and -not [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)
           if ($IsWindows -and $env:RELEASE_TAG -ne '' -and -not $updater) {
-            throw 'Configure BRIDGE_UPDATER_PUBLIC_KEY and TAURI_SIGNING_PRIVATE_KEY before releasing Windows updates.'
+            Write-Host '::warning::BRIDGE_UPDATER_PUBLIC_KEY / TAURI_SIGNING_PRIVATE_KEY are not configured: this Windows installer carries no updater artifacts and no update feed is published (#413, DECISIONS 2026-11-03).'
+            "**Windows updater: not configured.** No updater artifacts or latest.json for this release; installed apps will not auto-update to or from it.`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
           }
+          "UPDATER_ENABLED=$(if ($updater) { 'true' } else { 'false' })" >> $env:GITHUB_ENV
           $overlay = @{ bundle = @{ createUpdaterArtifacts = $updater } }
           if ($IsWindows -and $env:WINDOWS_SIGNING_ENABLED -eq 'true') {
             $overlay.bundle.windows = (Get-Content -LiteralPath $env:WINDOWS_SIGNING_CONFIG -Raw | ConvertFrom-Json).bundle.windows
@@ -388,7 +395,7 @@ jobs:
 
       - name: Prepare the stable Windows updater feed
         id: updater
-        if: runner.os == 'Windows' && env.RELEASE_TAG != '' && !contains(env.RELEASE_TAG, '-')
+        if: runner.os == 'Windows' && env.RELEASE_TAG != '' && !contains(env.RELEASE_TAG, '-') && env.UPDATER_ENABLED == 'true'
         env:
           BUNDLE_PATHS: ${{ steps.bundles.outputs.paths }}
         run: |

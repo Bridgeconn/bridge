@@ -1545,3 +1545,15 @@ installer, flagged in the run summary, while the Defender scan and hash checks
 stay as gates. The unsigned-release prohibition of #413 is suspended, not
 withdrawn: revert the three `release.yml` lines when the identity exists.
 
+## 2026-11-03 — Windows updater-key gate relaxed for the acceptance-test build (Benz, #413, #321)
+
+**Decision:** v0.24.3's Windows leg stopped at the second gate: no Tauri
+updater key pair (`BRIDGE_UPDATER_PUBLIC_KEY`, `TAURI_SIGNING_PRIVATE_KEY`)
+has been provisioned. Benz approved (#413, 2026-11-03) a tagged Windows build
+**without updater artifacts**, with a warning in the run summary, so the
+Paratext acceptance walk can proceed; the Defender scan and exact-artifact hash
+checks stay. No `latest.json` feed is published, so an installed app reports
+"no updater signing key" and never checks for updates. **Rules out:** nothing
+from #321 — key provisioning remains outstanding and the original throw is
+restored once the keys exist.
+
