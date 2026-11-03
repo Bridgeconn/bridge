@@ -304,6 +304,27 @@ lifetime (guarded only by in-flight and engine-ready, not by whether a connectio
 enabled), check jobs every 750 ms, QA report jobs every 500 ms, triage every 1000 ms while
 running, and cancel-wait every 400 ms.
 
+**Alignment workspace (#447–#451).** `AlignmentHost` owns the one Word or
+Cross-Verse workspace, either embedded or in the hidden-at-startup `alignment`
+webview. `alignmentWindow.ts` carries explicit project/reference, Follow editor /
+Pin verse, busy and saved-state events. Both views use the existing Rust-owned
+sidecar and instance-bound project guards. A project switch closes alignment;
+navigation waits while its mutation is busy. Window position uses the existing
+window-state plugin. `AlignmentWorkspace` / `AlignmentPane` provide movable,
+resizable, undockable Read/Source/Target areas with personal localStorage layout
+and Reset layout. Shared card geometry preserves script-specific fonts and bidi
+isolation for Greek, Hebrew/Aramaic and target text.
+
+`alignment_reset.py` records an operator recovery intent in existing workbench
+`project_state` before clearing native groups, whole cross-verse groups and null
+decisions through their existing writers. Undo refuses changed affected snapshots.
+`alignment_reset_jobs.py` persists chapter progress and advances one verse per
+dispatcher request, allowing cancel/resume without a worker racing project switches.
+`alignment_source_split.py` separates any existing source member, retains targets
+with the residual group and records display placement separately from token identity.
+Cross-verse replacements/undo retain a resumable intent. These use existing generic
+state rows and append-only change history; no database schema or Scripture writer changed.
+
 ## 6. Engine subsystems (tc_ai_bridge/)
 
 | Subsystem | Main modules (LOC) |

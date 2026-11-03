@@ -24020,3 +24020,66 @@ the heading apply and the preview all use it, so the decision's `original`
 the same text. The stand-in Paratext in `tests/support/paratext_writeback.py`
 now collapses a double space on save and reports the mismatch, so the old
 behaviour fails its test. No new writer: the same `edit_verse` call, once.
+
+## 2026-11-03 - Alignment workspace (#447, #448, #381, #449, #451)
+
+Preserved and committed the completed detached review queue (#450) before
+pulling upstream Paratext changes. The alignment workspace builds on the same
+hidden-at-startup auxiliary-window pattern, sharing the existing engine.
+Word and cross-verse alignment use one host, with Follow editor / Pin verse,
+project-bound requests and stale-event rejection. Closing the main window
+also closes the alignment window. Saved placement uses the existing window-state
+plugin; monitor recovery behavior still needs native acceptance.
+
+Read, Source and Target each have dock/undock, ordering, movement and resize
+controls. Layout is persisted separately for word/cross-verse views. Reset layout
+clears only pane geometry/order. Shared source/target card geometry reserves
+space for glosses and uses script-aware direction, line height and isolated
+occurrence labels. Greek, Hebrew and Aramaic retain their full word text.
+
+Verse reset previews and confirms native groups, cross-verse groups, partner
+references and no-counterpart decisions, then clears them through existing
+writers and refreshes/rechecks affected verses. Persisted before/after snapshots
+support interruption recovery and combined Undo reset; compare-before-write
+guards refuse newer work. Chapter reset advances one verse per dispatcher
+request, with persisted progress, cancel/resume and competing-write exclusion.
+No schema change: operation state uses the existing project_state store and
+append-only change_log. Scripture is unchanged.
+
+Source separation chooses any existing member of a joined native or cross-verse
+group and places it physically left/right, including RTL. Targets stay with the
+remaining source group. Recorded signature-based presentation order preserves
+token identities; native history and cross-verse split recovery/undo retain
+the original grouping. Partial cross-verse group writes are rebuilt on recovery.
+
+Verification details are recorded below and in QA_TEST_MATRIX.md. Native UI
+automation was unavailable: repeated Windows helper initialization/list-apps
+timeouts prevented desktop testing, and the browser fallback failed creating
+its kernel assets. No monitor movement, mixed-DPI, rendering or installer
+acceptance is claimed for these five issues.
+
+Frontend verification: full frontend 1,132 tests / 114 files passed; the final
+detached-window regression plus host tests passed (3 tests). The latest
+alignment dispatcher regressions passed (12 tests), including failure between
+individual cross-verse pair writes during Undo reset. Svelte check reported
+0 errors/warnings; application/dashboard production builds passed. cargo check
+and all 18 Rust tests passed. Rebuilt the engine again after the interrupted-undo
+refinement, refreshed the local Tauri binary, and the complete expanded frozen
+smoke passed, including source separation, reset with cross-verse links and
+combined undo. Both frozen sidecars were rebuilt during this task. Full Python
+suite: 5,848 passed, 3 xfailed and one failure in
+`test_language_qa_clean_count_follows_the_stage_and_its_decisions` (expected
+clean count 2, observed 1), in 1882.69s. The isolated serial retry passed
+(1 test, 48.24s). This is not a clean full-suite pass. The progress code and
+existing test were not modified here; filed the intermittent result as #455
+instead of absorbing an unrelated fix. A startup Language QA/progress-write
+race is only a hypothesis. The final 12-test alignment recovery run also covers
+the interrupted-undo refinement made after full-suite collection.
+
+An initial Python full-suite attempt used the system interpreter without the
+declared spylls dependency and failed language-pack setup (one stopped run:
+1 failed / 1,262 passed). This is not counted as a passing gate. Re-ran with
+engine/.venv, where the declared dependency is installed. A sandboxed focused
+retry also failed temporary-directory setup before executing tests; its normal
+permissions retry produced the 12-test pass above. No tests or goldens were
+weakened to accommodate either environment failure.

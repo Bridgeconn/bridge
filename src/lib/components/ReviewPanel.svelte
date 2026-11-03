@@ -14,7 +14,6 @@
   import OccurrencesPopup from "./OccurrencesPopup.svelte";
   import type { FlagInput } from "../types/languageQa";
   import type { LanguageQaFinding, LanguageQaScope, LanguageQaSuggestion } from "../types/languageQa";
-  import AlignmentModal from "./AlignmentModal.svelte";
   import TranslationHelpsReview from "./TranslationHelpsReview.svelte";
   import { aiJobAppliesToReference, isAIReviewJobActive } from "../utils/aiJobScope";
   import { categoryClass, findingNumbers } from "../utils/highlight";
@@ -502,12 +501,6 @@
     if (aiPollTimer) clearTimeout(aiPollTimer);
   });
 
-  $: if (
-    $alignmentOpen && $selectedVerse &&
-    verseKey($currentChapter, $selectedVerse) !== $alignmentKey
-  ) {
-    alignmentOpen.set(false);
-  }
 
   function startEdit() {
     startVerseEdit($currentChapter, $selectedVerse ?? "");
@@ -1089,9 +1082,7 @@
   {/if}
 </div>
 
-{#if $alignmentOpen && $selectedVerse}
-  <AlignmentModal chapter={$currentChapter} verse={$selectedVerse} onClose={() => alignmentOpen.set(false)} />
-{/if}
+
 
 {#if occurrences && $project}
   <OccurrencesPopup projectPath={$project.path} word={occurrences.word} source={occurrences.source}

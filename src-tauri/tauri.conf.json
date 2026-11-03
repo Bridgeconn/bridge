@@ -44,6 +44,17 @@
         "minHeight": 480,
         "visible": false,
         "dragDropEnabled": false
+      },
+      {
+        "label": "alignment",
+        "url": "alignment.html",
+        "title": "Alignment ? Bridge",
+        "width": 1180,
+        "height": 740,
+        "minWidth": 640,
+        "minHeight": 480,
+        "visible": false,
+        "dragDropEnabled": false
       }
     ],
     "security": {
@@ -53,14 +64,23 @@
   "plugins": {
     "updater": {
       "pubkey": "",
-      "endpoints": ["https://github.com/Bridgeconn/bridge/releases/latest/download/latest.json"],
-      "windows": { "installMode": "passive" }
+      "endpoints": [
+        "https://github.com/Bridgeconn/bridge/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   },
   "bundle": {
     "active": true,
     "publisher": "Bridge Connectivity Solutions Pvt. Ltd.",
-    "targets": ["nsis", "dmg", "appimage", "deb"],
+    "targets": [
+      "nsis",
+      "dmg",
+      "appimage",
+      "deb"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -71,7 +91,10 @@
       "binaries/bridge-engine",
       "binaries/bridge-usfm-checker"
     ],
-    "resources": ["resources/", "language_packs/"],
+    "resources": [
+      "resources/",
+      "language_packs/"
+    ],
     "windows": {
       "nsis": {
         "installerHooks": "./windows/hooks.nsh"

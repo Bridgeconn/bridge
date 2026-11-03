@@ -45,7 +45,7 @@ import type {
   AIReviewJobSnapshot,
   AlignmentAiProposal,
   AlignmentAiProposeResponse,
-  AlignmentContext,
+  AlignmentContext, ChapterResetJob,
   AlignmentRange,
   AlignmentStatusResponse,
   CrossVerseLinkResult,
@@ -356,6 +356,15 @@ export type EngineMethod =
   | "alignment.autoAlign.retry"
   | "alignment.autoAlign.estimate"
   | "alignment.gapScan"
+  | "alignment.splitSource"
+  | "alignment.resetChapter.preview"
+  | "alignment.resetChapter.start"
+  | "alignment.resetChapter.step"
+  | "alignment.resetChapter.status"
+  | "alignment.resetChapter.cancel"
+  | "alignment.resetVerse"
+  | "alignment.restoreReset"
+  | "alignment.resetStatus"
   | "alignment.get"
   | "alignment.getRange"
   | "alignment.realign"
@@ -1190,6 +1199,29 @@ export const bridge = {
     return call("issueResolution.resolveFromParatext", { chapter, verse, resolutionId, threadId });
   },
 
+  splitAlignmentSource(chapter: string, verse: string, topId: string, direction: "left" | "right", expectedOriginal: VerseAlignment, undo = false): Promise<{ contexts: AlignmentContext[] }> {
+    return call("alignment.splitSource", { chapter, verse, topId, direction, expectedOriginal, undo });
+  },
+  previewChapterReset(chapter: string): Promise<{ token: string; verses: string[]; groups: number; links: number; decisions: number }> {
+    return call("alignment.resetChapter.preview", { chapter });
+  },
+  startChapterReset(chapter: string, token: string): Promise<ChapterResetJob> {
+    return call("alignment.resetChapter.start", { chapter, token });
+  },
+  stepChapterReset(jobId: string): Promise<{ job: ChapterResetJob; contexts: AlignmentContext[] }> {
+    return call("alignment.resetChapter.step", { jobId });
+  },
+  chapterResetStatus(): Promise<ChapterResetJob> { return call("alignment.resetChapter.status"); },
+  cancelChapterReset(jobId: string): Promise<ChapterResetJob> { return call("alignment.resetChapter.cancel", { jobId }); },
+  resetAlignment(chapter: string, verse: string, expectedOriginal: VerseAlignment, expectedStateToken: string): Promise<{ contexts: AlignmentContext[]; changed: boolean }> {
+    return call("alignment.resetVerse", { chapter, verse, expectedOriginal, expectedStateToken });
+  },
+  restoreAlignmentReset(chapter: string, verse: string): Promise<{ contexts: AlignmentContext[]; changed: boolean }> {
+    return call("alignment.restoreReset", { chapter, verse });
+  },
+  alignmentResetStatus(chapter: string, verse: string): Promise<{ pending: boolean; canUndo: boolean; chapter: string; verse: string; state: string; token: string; alignment: VerseAlignment; partners: string[]; groups: number; links: number; decisions: number }> {
+    return call("alignment.resetStatus", { chapter, verse });
+  },
   getAlignment(chapter: string, verse: string): Promise<AlignmentContext> {
     return call("alignment.get", { chapter, verse });
   },

@@ -3,8 +3,9 @@
 // groups replace only their own findings, the verse remembers what has run,
 // and its ✓ shows only once every selected check has.
 import { derived, get, writable } from "svelte/store";
+import { bindReviewProject } from "./reviewProjectGuard";
 import { bridge } from "./api/bridgeClient";
-import { chapterVerseNums, checkGroupsByVerse, checkStatusByVerse, currentChapter, findingsByVerse, verseKey } from "./stores";
+import { chapterVerseNums, checkGroupsByVerse, checkStatusByVerse, currentChapter, findingsByVerse, project, verseKey } from "./stores";
 import { coversSelection, editorCheckList, groupsOf, mergeFindings } from "./checkSelection";
 import type { QaFinding } from "./types/finding";
 
@@ -12,6 +13,7 @@ import type { QaFinding } from "./types/finding";
 export const greekRoomVerseRunning = writable("");
 
 export interface RecheckOptions {
+  expectedPath?: string;
   /** After an edit: findings of the checks not re-run were about the old
    *  text, so they go, and the verse's run record starts again. */
   replace?: boolean;
@@ -22,10 +24,11 @@ export interface RecheckOptions {
 /** Re-run `checks` on one verse; resolves to the verse's findings now. A
  *  failure rejects and leaves the verse's findings as they were. */
 export async function recheckVerse(chapter: string, verse: string, checks: readonly string[],
-                                   { replace = false, alsoRan = [] }: RecheckOptions = {}): Promise<QaFinding[]> {
+                                   { replace = false, alsoRan = [], expectedPath }: RecheckOptions = {}): Promise<QaFinding[]> {
   const key = verseKey(chapter, verse);
   const engineChecks = checks.filter((check) => check !== "languageQa");
-  const fresh = engineChecks.length ? await bridge.runVerseChecks(chapter, verse, engineChecks) : [];
+  const fresh = engineChecks.length ? await (expectedPath ? bindReviewProject(bridge, expectedPath) : bridge).runVerseChecks(chapter, verse, engineChecks) : [];
+  if (expectedPath && get(project)?.path !== expectedPath) return [];
   const groups = [...groupsOf(checks), ...alsoRan];
   let merged: QaFinding[] = [];
   findingsByVerse.update((all) => {

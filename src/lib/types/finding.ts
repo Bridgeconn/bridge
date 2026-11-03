@@ -365,6 +365,7 @@ export interface CrossVerseAiProposalResult extends CrossVerseProposalResult {
 }
 
 export interface AlignmentContext {
+  sourceLayout?: { lastSplit?: { signature: string; direction: "left" | "right" }; pending?: { signature: string; direction: "left" | "right" }; order?: string[]; placements?: Record<string, { direction: "left" | "right"; members: string[] }> };
   chapter: string;
   verse: string;
   alignment: VerseAlignment;
@@ -1586,3 +1587,8 @@ export const STATUS_COLOR: Record<string, string> = {
   not_checked: "#9ca3af",
   ignored: "#a855f7",
 };
+
+export interface ChapterResetJob {
+  id?: string; chapter?: string; state: "idle" | "running" | "succeeded" | "cancelled" | "failed";
+  completed: number; total: number; error?: string; currentVerse?: string;
+}

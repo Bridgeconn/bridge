@@ -5,6 +5,7 @@ mod commands;
 mod sidecar;
 mod updates;
 mod review_window;
+mod alignment_window;
 
 use sidecar::EngineSidecar;
 use tauri::{AppHandle, Manager, WindowEvent};
@@ -41,7 +42,7 @@ fn main() {
         // #435: the main window's size and position are saved on close and
         // restored on the next start; the plugin keeps a window that would
         // land off every current monitor on screen instead.
-        .plugin(tauri_plugin_window_state::Builder::new().skip_initial_state(review_window::LABEL).build())
+        .plugin(tauri_plugin_window_state::Builder::new().skip_initial_state(review_window::LABEL).skip_initial_state(alignment_window::LABEL).build())
         .manage(updates::AppUpdates::default())
         .manage(EngineSidecar::new())
         .setup(|app| {
@@ -67,6 +68,7 @@ fn main() {
         .on_window_event(|window, event| {
             if window.label() == "main" && matches!(event, WindowEvent::CloseRequested { .. }) {
                 review_window::close_with_main(window.app_handle());
+                alignment_window::close_with_main(window.app_handle());
             }
             if window.label() == "splash" && matches!(event, WindowEvent::Destroyed) {
                 reveal_main(window.app_handle());
@@ -74,6 +76,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             review_window::review_window,
+            alignment_window::alignment_window,
             updates::update_status,
             updates::configure_updates,
             updates::check_updates,

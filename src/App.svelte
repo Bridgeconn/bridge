@@ -33,7 +33,7 @@
     bookmarks, buildPlacesMenu, collectionOf, recentChapters, recordRecentChapter, setPlaces, toggleBookmark,
   } from "./lib/bookmarks";
   import AlignmentReview from "./lib/components/AlignmentReview.svelte";
-  import CrossVerseAlignmentModal from "./lib/components/CrossVerseAlignmentModal.svelte";
+  import AlignmentHost from "./lib/components/AlignmentHost.svelte";
   import AutoAlignChapterButton from "./lib/components/AutoAlignChapterButton.svelte";
   import {
     closeCrossVerse, crossVerseAnchor, crossVerseInitialVerses, crossVerseOpen, crossVerseRequest, openCrossVerse,
@@ -1870,16 +1870,7 @@
     {#if $scopeDialog}<ScopeConfirmDialog />{/if}
   {/if}
 
-  {#if $project && $crossVerseOpen && $crossVerseAnchor}
-    {#key `${$project.path}:${$currentChapter}:${$crossVerseAnchor}`}
-      <CrossVerseAlignmentModal
-        chapter={$currentChapter}
-        verse={$crossVerseAnchor}
-        initialVerses={$crossVerseInitialVerses}
-        onClose={closeCrossVerse}
-      />
-    {/key}
-  {/if}
+  <AlignmentHost />
 
   {#if placesMenu}
     <FindingContextMenu x={placesMenu.x} y={placesMenu.y} findingLabel="Bookmarks and recent chapters"

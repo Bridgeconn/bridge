@@ -1,0 +1,62 @@
+/* Shared card geometry (#451). Script direction belongs to the word, not
+   its gloss, occurrence label or controls. rem units follow text scaling. */
+:is(.modal, .page).alignment-cards {
+  --alignment-card-width: 10rem;
+  --alignment-card-height: 7rem;
+}
+:is(.modal, .page).alignment-cards .token.source {
+  box-sizing: border-box;
+  flex: none;
+  width: var(--alignment-card-width);
+  max-width: 100%;
+  min-width: 0;
+  height: var(--alignment-card-height);
+  padding: .4rem .5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: .15rem;
+  border-radius: 7px;
+}
+:is(.modal, .page).alignment-cards .token.source > .word {
+  display: block;
+  flex: none;
+  min-height: 2.8rem;
+  line-height: 2.2;
+  font-size: var(--fs-lg);
+  text-align: center;
+  white-space: nowrap;
+  overflow-x: auto;
+  unicode-bidi: isolate;
+}
+:is(.modal, .page).alignment-cards .token.source .gloss {
+  direction: ltr;
+  unicode-bidi: isolate;
+  font-family: var(--font-ui);
+  text-align: center;
+  max-width: 100%;
+  min-height: 2.5em;
+  line-height: 1.25;
+  white-space: normal;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+:is(.modal, .page).alignment-cards .occ { direction: ltr; unicode-bidi: isolate; display: inline-block; }
+:is(.modal, .page).alignment-cards .source-words { align-items: flex-start; flex-wrap: wrap; }
+:is(.modal, .page).alignment-cards .column.joined { border: 1px solid var(--accent); border-radius: 8px; padding: 4px; }
+:is(.modal, .page).alignment-cards .join-x { flex: none; align-self: center; min-width: 24px; min-height: 28px; }
+:is(.modal, .page).alignment-cards .token.target {
+  box-sizing: border-box;
+  width: 8rem;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 3.5rem;
+  height: 5rem;
+  overflow-y: auto;
+  padding: .4rem;
+  overflow-wrap: anywhere;
+}
+:is(.modal, .page).alignment-cards .token.target .word { line-height: 1.8; unicode-bidi: isolate; }
