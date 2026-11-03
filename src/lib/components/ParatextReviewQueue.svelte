@@ -790,7 +790,9 @@
 </div>
 
 <style>
-  .rq-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 60; display: flex; align-items: center; justify-content: center; padding: 12px; }
+  /* #444: an app dialog on --z-dialog, so the confirmation it asks (Revert, Delete, Rename, New session;
+     --z-dialog-over-dialog) renders above it. A literal 60 tied that layer and the queue, mounted later, won. */
+  .rq-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: var(--z-dialog); display: flex; align-items: center; justify-content: center; padding: 12px; }
   /* Fits a 1366x768 desktop: at most the window less the padding, never taller. */
   .rq-dialog { width: min(1180px, 100%); height: min(740px, 100%); display: flex; flex-direction: column; background: var(--surface); color: var(--text);
     border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: 0 12px 40px rgba(0,0,0,.3); font-size: var(--fs-xs); min-height: 0; }
