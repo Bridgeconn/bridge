@@ -22,6 +22,15 @@ const H430_USAGE = "angels, × exceeding, God (gods) (-dess, -ly), × (very) gre
 const G2316_USAGE = "X exceeding, God, god(-ly, -ward)";
 
 describe("shortUsage", () => {
+  it("retains all renderings for CSS ellipsis and the full hover text", async () => {
+    getLexiconEntry.mockResolvedValue({ segments: [{ lemma: "source", usage: G746_USAGE, meaning: G746 }] });
+    const token = { word: "source", occurrence: 1, occurrences: 1, strong: "G746" };
+    const cache = new SourceGlossCache();
+    await cache.load([token]);
+    expect(cache.cardGlossFor(token)).toBe("beginning, corner, first, magistrate, power, principality, principle, rule");
+    expect(cache.glossFor(token).title).toContain(G746_USAGE);
+    expect(cache.glossFor(token).title).toContain(G746);
+  });
   it("keeps the renderings that fit and stops at the character budget", () => {
     expect(shortUsage(G746_USAGE)).toBe("beginning, corner, first, magistrate");
     expect(shortUsage(G2632_USAGE)).toBe("condemn, damn");
@@ -107,7 +116,7 @@ describe("SourceGlossCache", () => {
     expect(gloss.short).toBe("exceeding, God, god");
     expect(gloss.short).not.toContain("θεός");
     // The definition is what moved out of the label, so it has to be in the tooltip.
-    expect(gloss.title).toBe("θεός · G23160 · Gr,N\na deity, especially the supreme Divinity");
+    expect(gloss.title).toBe(`θεός · G23160 · Gr,N\na deity, especially the supreme Divinity\nRenderings: ${G2316_USAGE}`);
   });
 
   it("falls back to the definition when the entry carries no usage list", async () => {

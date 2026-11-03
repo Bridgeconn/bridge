@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/svelte";
 import { get } from "svelte/store";
+import { answerConfirmation, confirmRequest } from "../../confirmAction";
 import CrossVerseAlignmentModal from "../CrossVerseAlignmentModal.svelte";
 import {
   alignmentRevisionByVerse, alignmentStatusByVerse, chapterVerseNums, checkStatusByVerse, checkGroupsByVerse,
@@ -13,9 +14,10 @@ import type {
 const {
   getAlignmentRange, realignWords, unalignWords, runVerseChecks, getLexiconEntry, crossVerseLink, crossVerseUnlink,
   analysisJobGetScopeStatus, semanticLocationGetRange, targetSemanticGetRange, crossVersePropose,
-  crossVerseAiPropose, getSettings, autoAlignWindow, autoAlignRevert, autoAlignVerdict, nullSet, nullClear,
+  crossVerseAiPropose, getSettings, autoAlignWindow, autoAlignRevert, autoAlignVerdict, nullSet, nullClear, splitAlignmentSource,
 } = vi.hoisted(() => ({
   crossVerseAiPropose: vi.fn(),
+  splitAlignmentSource: vi.fn(),
   autoAlignWindow: vi.fn(),
   autoAlignRevert: vi.fn(),
   autoAlignVerdict: vi.fn(),
@@ -39,7 +41,7 @@ vi.mock("../../api/bridgeClient", () => ({
   bridge: {
     getAlignmentRange, realignWords, unalignWords, runVerseChecks, getLexiconEntry, crossVerseLink, crossVerseUnlink,
     analysisJobGetScopeStatus, semanticLocationGetRange, targetSemanticGetRange, crossVersePropose,
-    crossVerseAiPropose, getSettings, autoAlignWindow, autoAlignRevert, autoAlignVerdict, nullSet, nullClear,
+    crossVerseAiPropose, getSettings, autoAlignWindow, autoAlignRevert, autoAlignVerdict, nullSet, nullClear, splitAlignmentSource,
   },
 }));
 
@@ -194,6 +196,19 @@ async function pickUp(word: string, verse: string) {
 }
 
 describe("CrossVerseAlignmentModal", () => {
+  it.each(["left", "right"] as const)("separates the middle grouped source card to the %s", async direction => {
+    const ctx = context("2", ["Alpha", "Beta", "Gamma"], ["target"], 1);
+    ctx.groups = [{ id: "joined", topIds: ctx.topTokens.map(t => t.id), bottomIds: [ctx.bottomTokens[0].id] }];
+    ctx.alignment = { alignments: [{ topWords: ctx.topTokens, bottomWords: ctx.bottomTokens }], wordBank: [] };
+    getAlignmentRange.mockImplementation(async (_chapter: string, verses: string[]) => rangeFor(verses, { "1": V1, "2": ctx, "3-4": V34 }));
+    splitAlignmentSource.mockResolvedValue({ contexts: [ctx] });
+    await renderPage();
+    await fireEvent.click(screen.getByLabelText("Separate Beta (1/1)"));
+    await fireEvent.click(screen.getByRole("button", { name: `Separate Beta ${direction}` }));
+    expect(get(confirmRequest)?.confirmLabel).toBe(`Separate ${direction}`);
+    answerConfirmation(true);
+    await waitFor(() => expect(splitAlignmentSource).toHaveBeenCalledWith("1", "2", "H002", direction, ctx.alignment, false));
+  });
   it("opens on the selected verse ±1 and shows every verse in both columns plus the verdict strip", async () => {
     await renderPage("2");
     expect(getAlignmentRange).toHaveBeenCalledWith("1", ["1", "2", "3-4"]);

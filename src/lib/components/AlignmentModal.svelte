@@ -2,6 +2,7 @@
   import "../alignmentCards.css";
   import AlignmentWorkspace from "./AlignmentWorkspace.svelte";
   import SourceSplitControls from "./SourceSplitControls.svelte";
+  import SourceWordActions from "./SourceWordActions.svelte";
   import AlignmentResetControls from "./AlignmentResetControls.svelte";
   import AlignmentPane from "./AlignmentPane.svelte";
   import { onMount } from "svelte";
@@ -26,7 +27,7 @@
   import { openCrossVerse } from "../alignmentUi";
   import {
     alignedTargetsFor, bottomIdsAfterDrop, groupForSource, groupForTarget, occurrenceLabel as occurrence,
-    sourceColumns, topIdsFor, unaccountedTargets, undoTargetId,
+    sourceColumns, topIdsFor, unaccountedTargets, undoTargetId, canSeparateSource,
   } from "../alignmentGroups";
   import { SourceGlossCache } from "../lexiconGloss";
   import LexiconPopup from "./LexiconPopup.svelte";
@@ -40,6 +41,7 @@
   onDestroy(() => alignmentBusy.set(false));
 
   let context: AlignmentContext | null = null;
+  let splitControls: SourceSplitControls;
   // #409: the verse as continuous text, with its punctuation, to read while
   // aligning (translationCore's "Step 1. Read", target language only). It is
   // the verse's `display.plain` -- the engine's one USFM reader, never a
@@ -133,7 +135,7 @@
   // `glossVersion` is read, not used, so Svelte re-invokes these once the
   // lexicon lookups resolve.
   function sourceGloss(token: AlignmentToken, _version: number): string {
-    return glosses.glossFor(token).short;
+    return glosses.cardGlossFor(token);
   }
 
   function sourceTitle(token: AlignmentToken, _version: number): string {
@@ -468,7 +470,7 @@
             <span>Source words</span>
             <small>Click a word for its lexicon entry — its target words sit in the column beneath it</small>
           </div>
-          <SourceSplitControls {context} {busy} onBusy={(value) => busy = value} onChanged={(values) => { context = values.find((v) => v.chapter === chapter && v.verse === verse) || context; }} />
+          <SourceSplitControls bind:this={splitControls} {context} {busy} onBusy={(value) => busy = value} onChanged={(values) => { context = values.find((v) => v.chapter === chapter && v.verse === verse) || context; }} />
           <div class="interlinear" dir={context.sourceDirection}>
           {#each columns as column, index (column.ids.join("+"))}
             {@const src = column.tokens[0]}
@@ -488,6 +490,7 @@
                   >⟵</button>
                 {/if}
                 {#each column.tokens as token (token.id)}
+                  <div class="source-card">
                   <button
                     class="token source"
                     dir={context.sourceDirection}
@@ -496,8 +499,10 @@
                     title={sourceTitle(token, glossVersion)}
                   >
                     <span class="word">{token.word}{#if token.occurrences > 1}<span class="occ">{occurrence(token)}</span>{/if}</span>
-                    {#if sourceGloss(token, glossVersion)}<small class="gloss">{sourceGloss(token, glossVersion)}</small>{/if}
+                    {#if sourceGloss(token, glossVersion)}<small class="gloss" title={sourceTitle(token, glossVersion)}>{sourceGloss(token, glossVersion)}</small>{/if}
                   </button>
+                  {#if canSeparateSource(context, token.id)}<SourceWordActions {token} disabled={busy} onSeparate={(direction) => { void splitControls.separateWord(token.id, direction); }} />{/if}
+                  </div>
                 {/each}
                 {#if column.ids.length > 1}
                   <button

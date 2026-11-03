@@ -3,6 +3,14 @@
 // so both surfaces agree on what "aligned", "unaligned" and "gap" mean.
 import type { AlignmentContext, AlignmentGroupView, AlignmentToken } from "./types/finding";
 
+/** Any existing member may leave a native or active cross-verse source group. */
+export function canSeparateSource(context: AlignmentContext, id: string): boolean {
+  const token = context.topTokens.find(t => t.id === id);
+  return Boolean(token && (context.sourceLayout?.pending?.signature === `${token.word}\u241f${token.occurrence}\u241f${token.occurrences}` ||
+    context.groups.some(g => g.topIds.length > 1 && g.topIds.includes(id)) ||
+    context.crossVerseGroups?.some(g => g.state === "active" && g.sourceTopIds.length > 1 && g.sourceTopIds.includes(id))));
+}
+
 type GroupsView = Pick<AlignmentContext, "groups" | "topTokens" | "bottomTokens">
   & Partial<Pick<AlignmentContext, "crossVerseAccountedIds" | "crossVerseRealizedIds" | "nullDecisions">>;
 

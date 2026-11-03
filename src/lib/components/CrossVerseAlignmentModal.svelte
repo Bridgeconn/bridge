@@ -2,6 +2,7 @@
   import "../alignmentCards.css";
   import AlignmentWorkspace from "./AlignmentWorkspace.svelte";
   import SourceSplitControls from "./SourceSplitControls.svelte";
+  import SourceWordActions from "./SourceWordActions.svelte";
   import AlignmentChapterReset from "./AlignmentChapterReset.svelte";
   import AlignmentResetControls from "./AlignmentResetControls.svelte";
   import AlignmentPane from "./AlignmentPane.svelte";
@@ -40,7 +41,7 @@
   import { createPointerDrag } from "../alignmentDrag";
   import {
     alignedTargetsFor, bottomIdsAfterDrop, groupForTarget, occurrenceLabel as occurrence, unaccountedTargets,
-    unrealizedSources, topIdsFor, sourceColumns,
+    unrealizedSources, topIdsFor, sourceColumns, canSeparateSource,
   } from "../alignmentGroups";
   import { defaultRange, joinVerseId, rangeBetween, spanOf, splitVerseId, toggleVerse } from "../crossVerseRange";
   import { suggestCrossVerseRange, unionInChapterOrder } from "../crossVerseSuggest";
@@ -70,6 +71,7 @@
   /** Verses the last Stage 6B run marked CROSS_VERSE that the picker added (#118). */
   let suggested: string[] = [];
   let contexts: Record<string, AlignmentContext> = {};
+  let splitControls: Record<string, SourceSplitControls> = {};
   let chapterStatus: AlignmentCounts | null = null;
   let reading: Record<string, string> = {};
   let loading = true;
@@ -499,7 +501,7 @@
   // `glossVersion` is read, not used, so Svelte re-invokes these once the
   // lexicon lookups resolve.
   function sourceGloss(token: AlignmentToken, _version: number): string {
-    return glosses.glossFor(token).short;
+    return glosses.cardGlossFor(token);
   }
 
   function sourceTitle(token: AlignmentToken, _version: number): string {
@@ -857,18 +859,21 @@
                   {#if !context.sourceAvailable}<span class="warn">no original-language source</span>{/if}
                   {#if context.issues.length}<span class="warn" title={context.issues.join("\n")}>⚠ {context.issues.length} issue{context.issues.length === 1 ? "" : "s"}</span>{/if}
                 </div>
-                <SourceSplitControls {context} busy={busy || autoBusy} onBusy={(value) => busy = value} onChanged={(values) => { for (const value of values) if (value.chapter === chapter) contexts = { ...contexts, [value.verse]: value }; }} />
+                <SourceSplitControls bind:this={splitControls[v]} {context} busy={busy || autoBusy} onBusy={(value) => busy = value} onChanged={(values) => { for (const value of values) if (value.chapter === chapter) contexts = { ...contexts, [value.verse]: value }; }} />
                 <div class="rows" dir={context.sourceDirection}>
                 {#each sourceRows(context) as src (src.id)}
                   {@const columnKey = joinVerseId(v, src.id)}
                   <div class="row">
                     <div class="source-words" class:joined={src.members.length > 1}>
                     {#each src.members as member (member.id)}
+                      <div class="source-card">
                       <button type="button" class="token source" dir={context.sourceDirection} class:hebrew={context.sourceDirection === "rtl"}
                         on:click={() => openLexicon(member, context.sourceDirection)} disabled={busy} title={sourceTitle(member, glossVersion)}>
                         <span class="word">{member.word}{#if member.occurrences > 1}<span class="occ">{occurrence(member)}</span>{/if}</span>
-                        {#if sourceGloss(member, glossVersion)}<small class="gloss">{sourceGloss(member, glossVersion)}</small>{/if}
+                        {#if sourceGloss(member, glossVersion)}<small class="gloss" title={sourceTitle(member, glossVersion)}>{sourceGloss(member, glossVersion)}</small>{/if}
                       </button>
+                      {#if canSeparateSource(context, member.id)}<SourceWordActions token={member} disabled={busy || autoBusy} onSeparate={(direction) => { void splitControls[v].separateWord(member.id, direction); }} />{/if}
+                      </div>
                     {/each}
                     </div>
                     <div

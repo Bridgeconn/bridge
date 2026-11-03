@@ -24083,3 +24083,45 @@ engine/.venv, where the declared dependency is installed. A sandboxed focused
 retry also failed temporary-directory setup before executing tests; its normal
 permissions retry produced the 12-test pass above. No tests or goldens were
 weakened to accommodate either environment failure.
+
+## 2026-11-03 - Alignment UI feedback (#448, #449, #451)
+
+Benz's screenshots showed oversized cards, a layout limited to reordering/overlays,
+and no discoverable way to separate an interior source member. Reduced the shared
+source cards from 160x112 to 128x72 CSS px and target cards from 128x80 to 112x44
+at the default 16px root size. Card dimensions still scale with rem. Render the
+whole normalized usage list in a two-line CSS ellipsis box instead of silently
+dropping later renderings before layout; hover retains all renderings and the
+full definition. Greek/Hebrew/Aramaic direction/font rules remain shared.
+
+Replaced the linear layout with a three-leaf binary docking tree. Drag an area's
+handle to a neighbor's edge for left/right/above/below docking with a destination
+preview; drop away from edges to float, or hold Alt to float anywhere. Horizontal
+and vertical dividers resize adjacent areas and accept arrow keys. Arrange menus
+provide the same placements without dragging. Floating positions are clamped to
+the available workspace. Word and Cross-Verse views persist separate v2 layouts;
+the earlier linear preferences are superseded. Reset layout restores the default
+split tree without remounting panes or discarding their content.
+
+Each grouped source card now exposes a compact separation menu that passes that
+exact token to the existing confirmed split operation. This includes the middle
+member of a native group and active cross-verse source groups, with left/right
+placement and targets retained on the remaining group. The existing dropdown
+remains an alternative. No engine, schema, Scripture writer or token identity
+change was needed.
+
+Focused verification passed 93 tests across docking geometry, actual handle/drop
+and Arrange interactions, layout persistence/reset preserving content, gloss
+hover content and middle-card separation left/right in both alignment views.
+Native painting is not verified: the browser UI tool again failed to initialize
+its kernel assets. Final frontend gate results follow.
+
+Final gate: all 1,148 frontend tests / 117 files passed; the final docking
+interaction file passed all 3 tests after the divider accessibility labels
+were refined. Svelte check reported 0 errors/warnings and application/dashboard
+production builds passed. An earlier full run overlapped the last floating
+behavior edit and failed its newly added free-floating test against the already
+loaded older workspace module; restarted the whole suite with stable files for
+the clean result above. No assertions were weakened. Engine and Rust code are
+unchanged by this follow-up, so their earlier results remain the evidence for
+those layers; no new frozen/desktop acceptance is claimed.

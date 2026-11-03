@@ -1,8 +1,8 @@
 /* Shared card geometry (#451). Script direction belongs to the word, not
    its gloss, occurrence label or controls. rem units follow text scaling. */
 :is(.modal, .page).alignment-cards {
-  --alignment-card-width: 10rem;
-  --alignment-card-height: 7rem;
+  --alignment-card-width: 8rem;
+  --alignment-card-height: 4.5rem;
 }
 :is(.modal, .page).alignment-cards .token.source {
   box-sizing: border-box;
@@ -11,7 +11,7 @@
   max-width: 100%;
   min-width: 0;
   height: var(--alignment-card-height);
-  padding: .4rem .5rem;
+  padding: .25rem .4rem;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -22,8 +22,8 @@
 :is(.modal, .page).alignment-cards .token.source > .word {
   display: block;
   flex: none;
-  min-height: 2.8rem;
-  line-height: 2.2;
+  min-height: 1.8rem;
+  line-height: 1.7;
   font-size: var(--fs-lg);
   text-align: center;
   white-space: nowrap;
@@ -36,27 +36,31 @@
   font-family: var(--font-ui);
   text-align: center;
   max-width: 100%;
-  min-height: 2.5em;
-  line-height: 1.25;
+  min-height: 2.4em;
+  line-height: 1.2;
   white-space: normal;
   overflow: hidden;
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
+  text-overflow: ellipsis;
 }
+:is(.modal, .page).alignment-cards .source-card { position: relative; flex: none; width: var(--alignment-card-width); height: var(--alignment-card-height); }
+:is(.modal, .page).alignment-cards .source-card:has(details[open]) { z-index: 10; }
 :is(.modal, .page).alignment-cards .occ { direction: ltr; unicode-bidi: isolate; display: inline-block; }
 :is(.modal, .page).alignment-cards .source-words { align-items: flex-start; flex-wrap: wrap; }
 :is(.modal, .page).alignment-cards .column.joined { border: 1px solid var(--accent); border-radius: 8px; padding: 4px; }
 :is(.modal, .page).alignment-cards .join-x { flex: none; align-self: center; min-width: 24px; min-height: 28px; }
 :is(.modal, .page).alignment-cards .token.target {
   box-sizing: border-box;
-  width: 8rem;
+  width: 7rem;
   max-width: 100%;
   min-width: 0;
-  min-height: 3.5rem;
-  height: 5rem;
+  min-height: 2.75rem;
+  height: 2.75rem;
   overflow-y: auto;
-  padding: .4rem;
+  padding: .25rem .4rem;
   overflow-wrap: anywhere;
 }
 :is(.modal, .page).alignment-cards .token.target .word { line-height: 1.8; unicode-bidi: isolate; }

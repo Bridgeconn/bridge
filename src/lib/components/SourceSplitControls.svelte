@@ -6,6 +6,7 @@
   import { recheckVerse } from "../verseChecks";
   import { askConfirmation } from "../confirmAction";
   import { alignmentBusy } from "../alignmentWindow";
+  import { canSeparateSource } from "../alignmentGroups";
   import type { AlignmentContext } from "../types/finding";
   export let context: AlignmentContext;
   export let busy = false;
@@ -14,8 +15,12 @@
   const path = get(project)?.path || "";
   const bridge = bindReviewProject(api, path);
   let chosen = "", working = false, error = "";
-  $: eligible = context.topTokens.filter((t) => context.sourceLayout?.pending?.signature === `${t.word}\u241f${t.occurrence}\u241f${t.occurrences}` || context.groups.some((g) => g.topIds.length > 1 && g.topIds.includes(t.id))
-    || context.crossVerseGroups?.some((g) => g.state === "active" && g.sourceTopIds.length > 1 && g.sourceTopIds.includes(t.id)));
+  $: eligible = context.topTokens.filter((t) => canSeparateSource(context, t.id));
+  export async function separateWord(id: string, direction: "left" | "right") {
+    if (busy || working || !canSeparateSource(context, id)) return;
+    chosen = id;
+    await separate(direction);
+  }
   $: if (context.sourceLayout?.pending && !chosen) chosen = eligible[0]?.id || "";
   async function separate(direction: "left" | "right", undo = false) {
     if (undo) chosen = context.topTokens.find((t) => `${t.word}\u241f${t.occurrence}\u241f${t.occurrences}` === context.sourceLayout?.lastSplit?.signature)?.id || "";

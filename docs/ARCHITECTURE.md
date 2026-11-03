@@ -311,9 +311,14 @@ Pin verse, busy and saved-state events. Both views use the existing Rust-owned
 sidecar and instance-bound project guards. A project switch closes alignment;
 navigation waits while its mutation is busy. Window position uses the existing
 window-state plugin. `AlignmentWorkspace` / `AlignmentPane` provide movable,
-resizable, undockable Read/Source/Target areas with personal localStorage layout
-and Reset layout. Shared card geometry preserves script-specific fonts and bidi
-isolation for Greek, Hebrew/Aramaic and target text.
+resizable Read/Source/Target areas. A persisted binary split tree supports docking
+to any neighbor's left/right/top/bottom, mixed horizontal/vertical layouts and
+adjustable dividers. Areas can also float at a chosen position; keyboard-accessible
+Arrange controls mirror dragging. Reset layout restores the tree without remounting
+the content. Compact shared card geometry preserves script-specific fonts and bidi
+isolation for Greek, Hebrew/Aramaic and target text. Glosses are clamped with an
+ellipsis; hover includes the full definition and renderings. Every joined source
+card has its own separation menu, including interior group members.
 
 `alignment_reset.py` records an operator recovery intent in existing workbench
 `project_state` before clearing native groups, whole cross-verse groups and null

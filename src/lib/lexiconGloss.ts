@@ -37,7 +37,7 @@ const SHORT_GLOSS_LIMIT = 42;
  * H430, an ASCII `X` in G2316 -- so both are stripped, but only where the
  * concordance puts one: alone at the head of a rendering, never inside a word.
  */
-export function shortUsage(usage: string | null | undefined): string {
+export function shortUsage(usage: string | null | undefined, limit = SHORT_GLOSS_LIMIT): string {
   const text = String(usage ?? "").replace(/\([^()]*\)/g, " ");
   const renderings = text
     .split(",")
@@ -54,12 +54,12 @@ export function shortUsage(usage: string | null | undefined): string {
   for (const rendering of renderings) {
     const next = kept.length ? length + 2 + rendering.length : rendering.length;
     // Always keep the first, however long: an empty label is worse than a wide one.
-    if (kept.length && next > SHORT_GLOSS_LIMIT) break;
+    if (kept.length && next > limit) break;
     kept.push(rendering);
     length = next;
   }
   const joined = kept.join(", ");
-  return joined.length > SHORT_GLOSS_LIMIT ? `${joined.slice(0, SHORT_GLOSS_LIMIT).replace(/\s+$/, "")}…` : joined;
+  return joined.length > limit ? `${joined.slice(0, limit).replace(/\s+$/, "")}…` : joined;
 }
 
 /**
@@ -113,11 +113,12 @@ export interface SourceGloss {
 /** The lexicon-backed half of a token's labels, before the token's own lemma is folded in. */
 interface ResolvedEntry {
   short: string;
+  card: string;
   /** The unabridged meaning, one line per morpheme segment, for the tooltip. */
   detail: string;
 }
 
-const EMPTY: ResolvedEntry = { short: "", detail: "" };
+const EMPTY: ResolvedEntry = { short: "", card: "", detail: "" };
 
 /**
  * A Hebrew proclitic has no Strong's entry of its own: the engine leaves
@@ -133,12 +134,15 @@ function prefixLabel(segment: LexiconSegment): string {
 
 function resolve(segments: readonly LexiconSegment[]): ResolvedEntry {
   const shorts: string[] = [];
+  const cards: string[] = [];
   const details: string[] = [];
   for (const segment of segments) {
     // Renderings first, definition only as a fallback: what the word gets
     // translated as is more use under a source word than what it is defined as.
     const gloss = shortUsage(segment.usage) || prefixLabel(segment) || shortGloss(segment.meaning);
     if (gloss) shorts.push(gloss);
+    const card = shortUsage(segment.usage, Infinity) || prefixLabel(segment) || shortGloss(segment.meaning);
+    if (card) cards.push(card);
     const full = (segment.meaning ?? "").replace(/\s+/g, " ").trim();
     const lemma = (segment.lemma ?? "").trim();
     // With one segment the tooltip's first line already names the lemma, so
@@ -146,11 +150,13 @@ function resolve(segments: readonly LexiconSegment[]): ResolvedEntry {
     // plus its lexeme) the reader needs to know which meaning is whose.
     if (full && lemma && segments.length > 1) details.push(`${lemma} — ${full}`);
     else if (full) details.push(full);
+    const usage = (segment.usage ?? "").replace(/\s+/g, " ").trim();
+    if (usage && usage !== full) details.push(`Renderings: ${usage}`);
   }
   // A Hebrew proclitic is its own segment ("b:H7225" is a preposition plus a
   // lexeme), so the word's gloss is the segments joined in order -- not the
   // lexeme's gloss alone.
-  return { short: shorts.join(" + "), detail: details.join("\n") };
+  return { short: shorts.join(" + "), card: cards.join(" + "), detail: details.join("\n") };
 }
 
 /**
@@ -164,6 +170,11 @@ export class SourceGlossCache {
   private readonly entries = new Map<string, ResolvedEntry>();
   /** Bumped after every batch so a Svelte `$:` can depend on it and re-render. */
   version = 0;
+
+  /** Let the compact card's CSS add an ellipsis at its actual rendered width. */
+  cardGlossFor(token: TokenRef): string {
+    return this.entries.get(lexiconKey(token))?.card || (token.lemma ?? "").trim();
+  }
 
   /** Resolve every distinct `strong|morph` in `tokens`, skipping ones already cached. */
   async load(tokens: readonly TokenRef[]): Promise<void> {
