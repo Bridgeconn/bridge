@@ -29,6 +29,7 @@ What Bridge can do with a Paratext Project Note through the connector
 | Identity: who wrote it | **Host-defined** | Paratext records its logged-in user as the author of everything the plugin writes. The Bridge user is named on the first line (`[Name (id) via Bridge]`) and in Bridge's evidence; never impersonated. |
 | Permissions | **Host-enforced** | `CanEdit` is asked before every Scripture write; a note write fails with the host's own error when the user may not write notes. |
 | Scripture: verse body text | **Supported** (observed) | `put_verse_text`, region `body`. |
+| Deleting text between two spaces | **Supported** (source) | #442: the deletion takes the space after it, so one space remains. Paratext 9.5.110.1 collapses a double space on save, which left the bare deletion unverifiable and its reverse unlocatable. The decision's `original`, the Paratext write and the reverse all carry that space. Not widened at the start of the text, before punctuation, or across markup. |
 | Scripture: footnote / cross-reference text | **Supported** (source) | `put_verse_text`, region `footnote` / `crossReference`: the verse's note tokens only. NOT RUN on the host. |
 | Scripture: heading text | **Supported** (source) | region `heading`: the heading tokens the verse introduces (Paratext anchors them on the verse before). NOT RUN on the host. |
 | Scripture: book introduction | **Supported** (source) | region `introduction`: chapter 0 to the token API. Bridge keeps no copy; Paratext-only. NOT RUN on the host. |

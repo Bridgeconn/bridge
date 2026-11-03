@@ -5914,6 +5914,9 @@ class BridgeEngine:
         after = ""
         if location.ok and location.chosen is not None:
             m = location.chosen
+            if text == "":     # #442: the deletion takes one of the two spaces around it, as the apply does
+                m = paratext_review.widen_deletion(location.text, None if region == REGION_HEADING else raw, m)
+                location.chosen = m
             after = location.text[:m.start] + text + location.text[m.end:]
         return {
             **base, "plain": location.text, "found": len(location.found), "ok": location.ok, "reason": location.reason,

@@ -121,10 +121,14 @@ def test_a_deletion_needs_confirmation_and_an_alternative_is_applied_as_chosen(t
     assert needs["success"] is False and "confirm the deletion" in needs["error"]["message"]
     chosen = decide(engine, items["C"]["proposalId"], "applied", replacement="Gamma")["result"]["decision"]
     assert chosen["replacement"] == "Gamma" and verse_text(engine) == "alpha beta Gamma"
+    preview = call(engine, "paratextReview.preview", {"proposalId": items["D"]["proposalId"], "replacement": ""})["result"]
+    assert preview["after"] == "alpha Gamma" and preview["span"] == {"plainStart": 6, "plainEnd": 11}
     deleted = decide(engine, items["D"]["proposalId"], "applied", confirmDelete=True)["result"]["decision"]
-    # The parser trims field values, so the Original is "beta" and exactly that
-    # span goes; the spacing around it is the reviewer's to see in the preview.
-    assert deleted["replacement"] == "" and verse_text(engine) == "alpha  Gamma"
+    # The parser trims field values, so the Original is "beta"; a deletion
+    # between two spaces takes one of them (#442), and the decision records
+    # exactly what went.
+    assert deleted["replacement"] == "" and deleted["original"] == "beta " and verse_text(engine) == "alpha Gamma"
+    assert deleted["span"]["plainStart"] == 6 and deleted["span"]["plainEnd"] == 11
 
 
 def test_revert_restores_the_latest_verified_apply_only_while_the_verse_still_matches(tmp_path, monkeypatch):

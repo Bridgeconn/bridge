@@ -4,6 +4,8 @@ ready, and a stand-in for connector 0.8.0 on its pipe."""
 
 from __future__ import annotations
 
+import re
+
 from pathlib import Path
 from typing import Any
 
@@ -159,9 +161,13 @@ def stand_in(*, projects=(DVT, IRVT), active=DVT, capabilities=CAPABILITIES_0100
                                              "and the context does not identify one; nothing was changed.")
             at = base + hay.index(original)
             new_span = span[:at] + replacement + span[at + len(original):]
-            StandIn.scripture[key] = usfm[:span_start] + new_span + usfm[span_end:]
-            return {"ok": True, "scripture_written": True, "verified": True, "usfm_before": span,
-                    "usfm_after": new_span, "author": "Yesu Selva Benz", "bridge_user": bridge_user,
+            # #442, seen on Paratext 9.5.110.1: a double space inside the text
+            # is collapsed on save, and the readback then differs from what
+            # was written, which the plugin reports as verified: false.
+            saved_span = re.sub(r"(?<=\S) {2,}(?=\S)", " ", new_span)
+            StandIn.scripture[key] = usfm[:span_start] + saved_span + usfm[span_end:]
+            return {"ok": True, "scripture_written": True, "verified": saved_span == new_span, "usfm_before": span,
+                    "usfm_after": saved_span, "author": "Yesu Selva Benz", "bridge_user": bridge_user,
                     "created": "2026-11-02T12:00:00.0000000+05:30"}
 
         def rename_marker(self, project_id, book, chapter, verse, from_marker, to_marker, label, *, bridge_user=""):

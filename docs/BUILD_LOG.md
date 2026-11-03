@@ -24002,3 +24002,21 @@ current result ("this is fine"). Record physical second-monitor use and the
 visible Tamil layout as user-reported acceptance. Mixed-DPI transitions,
 monitor disconnection/reconnection and RTL remain unverified; this acceptance
 does not establish those checks. No runtime code changed for this update.
+
+## 2026-11-03 — #442: a deletion between two spaces takes one of them (Joel)
+
+Benz reproduced on Paratext 9.5.110.1 that deleting `original` from
+`Alpha original body.` saved `Alpha  body.` in Bridge while Paratext collapsed
+the double space to `Alpha body.`: the connector reported `verified: false`,
+the completion gate (correctly) blocked the resolve, and the automatic
+reverse looked for the two-space window and was refused. The earlier test
+pinned the double space on purpose ("the spacing is the reviewer's to see in
+the preview"); the host showed that is not a choice Bridge gets to make.
+`paratext_review.widen_deletion` widens a deletion's span by the space after
+it when both neighbours are whitespace and, for the body, the raw verse holds
+that same space (a footnote between them leaves the span alone); the apply,
+the heading apply and the preview all use it, so the decision's `original`
+(`beta `), the Paratext write and `reverse_write`'s window are built from
+the same text. The stand-in Paratext in `tests/support/paratext_writeback.py`
+now collapses a double space on save and reports the mismatch, so the old
+behaviour fails its test. No new writer: the same `edit_verse` call, once.
