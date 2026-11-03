@@ -98,6 +98,16 @@
     && (region === "structure" || ["replace", "alternatives", "delete"].includes(current!.proposal.operation))
     && !(current!.decision?.decision === "applied" && current!.decision.verified);
   $: isDeletion = Boolean(current) && region !== "structure" && (current!.proposal.operation === "delete" || replacement.trim() === "");
+  // #446: a verified apply is shown from its saved before/after snapshots.
+  // Locating the Original in the already-corrected text previewed the
+  // correction applied a second time ("a footfootnote") whenever the
+  // replacement contains the Original; the preview RPC is not called at all.
+  $: applied = appliedSnapshot(current);
+
+  function appliedSnapshot(item: ParatextReviewItem | null): ParatextReviewDecision | null {
+    const d = item?.decision;
+    return d && d.decision === "applied" && d.verified && d.before && d.after ? d : null;
+  }
   $: uncertain = items.filter((item) => item.decision?.decision === "applied" && !item.decision.verified);
   $: resolvable = items.filter((item) => item.thread.complete && !item.threadResolved && item.openBook !== false);
   $: pendingResolves = reports?.pendingResolves ?? data?.pendingResolves ?? [];
@@ -164,7 +174,7 @@
 
   async function refreshPreview(item: ParatextReviewItem | null = current): Promise<void> {
     preview = null;
-    if (!item || item.openBook === false) return;
+    if (!item || item.openBook === false || appliedSnapshot(item)) return;
     const mine = ++previewRequest;
     try {
       const result = await bridge.paratextReviewPreview(item.proposalId, replacement);
@@ -632,6 +642,14 @@
               <h3>Current {REGION_LABEL[region] ?? "text"}{preview?.paratextOnly ? " · in Paratext only" : ""}</h3>
               {#if current.openBook === false}
                 <p class="rq-msg">Open {current.book} to see its current text.</p>
+              {:else if applied}
+                <p class="rq-msg">Applied {when(applied.decidedAt)}. This is the saved before and after of that correction, not a new preview.</p>
+                <h3>Before</h3>
+                <p class="target rq-verse" data-testid="applied-before">
+                  {#if applied.span}{applied.before?.plain.slice(0, applied.span.plainStart)}<mark>{applied.before?.plain.slice(applied.span.plainStart, applied.span.plainEnd)}</mark>{applied.before?.plain.slice(applied.span.plainEnd)}{:else}{applied.before?.plain}{/if}
+                </p>
+                <h3>After · saved and verified</h3>
+                <p class="target rq-verse rq-after" data-testid="applied-after">{applied.after?.plain}</p>
               {:else if preview}
                 <p class="target rq-verse">
                   {#if preview.span}{preview.plain.slice(0, preview.span.plainStart)}<mark>{preview.plain.slice(preview.span.plainStart, preview.span.plainEnd)}</mark>{preview.plain.slice(preview.span.plainEnd)}{:else}{preview.plain}{/if}
