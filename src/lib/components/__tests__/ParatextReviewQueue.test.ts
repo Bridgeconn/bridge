@@ -1,30 +1,32 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import { get } from "svelte/store";
 
 const {
   paratextReviewQueue, paratextReviewPreview, paratextReviewDecide, paratextReviewSaveState,
   paratextReviewRevertLatest, paratextReviewExportCsv, paratextReviewReport, paratextReviewLatestReport,
   paratextResolveThread, pickSavePath, paratextReviewReports, paratextReviewReconcile, paratextFlushOutbox,
-  paratextSetReference, openPath,
+  paratextSetReference, openPath, chapterVerseData,
 } = vi.hoisted(() => ({
   paratextReviewQueue: vi.fn(), paratextReviewPreview: vi.fn(), paratextReviewDecide: vi.fn(),
   paratextReviewSaveState: vi.fn(), paratextReviewRevertLatest: vi.fn(), paratextReviewExportCsv: vi.fn(),
   paratextReviewReport: vi.fn(), paratextReviewLatestReport: vi.fn(), paratextResolveThread: vi.fn(),
   pickSavePath: vi.fn(), paratextReviewReports: vi.fn(), paratextReviewReconcile: vi.fn(), paratextFlushOutbox: vi.fn(),
-  paratextSetReference: vi.fn(), openPath: vi.fn(),
+  paratextSetReference: vi.fn(), openPath: vi.fn(), chapterVerseData: vi.fn(),
 }));
 vi.mock("../../api/bridgeClient", () => ({
   bridge: {
     paratextReviewQueue, paratextReviewPreview, paratextReviewDecide, paratextReviewSaveState,
     paratextReviewRevertLatest, paratextReviewExportCsv, paratextReviewReport, paratextReviewLatestReport,
     paratextResolveThread, pickSavePath, paratextReviewReports, paratextReviewReconcile, paratextFlushOutbox,
-    paratextSetReference, openPath,
+    paratextSetReference, openPath, chapterVerseData,
   },
 }));
 const { askConfirmation } = vi.hoisted(() => ({ askConfirmation: vi.fn() }));
 vi.mock("../../confirmAction", () => ({ askConfirmation }));
 
 import ParatextReviewQueue from "../ParatextReviewQueue.svelte";
+import { project, resetBookState, verseTexts, verseDisplay, verseKey } from "../../stores";
 import type { ParatextProposal, ParatextReviewItem, ParatextReviewQueue as Queue } from "../../types/paratext";
 
 function proposal(overrides: Partial<ParatextProposal> = {}): ParatextProposal {
@@ -76,12 +78,73 @@ const okPreview = { proposalId: "p1", region: "body" as const, plain: "alpha bet
 describe("ParatextReviewQueue (#428, #432, #433, #434)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetBookState();
+    project.set(null);
     paratextReviewSaveState.mockImplementation(async (state) => ({ state: { status: "unresolved", position: "", drafts: {}, sessionStartedAt: "x", ...state } }));
     paratextReviewPreview.mockResolvedValue(okPreview);
     paratextReviewReports.mockResolvedValue(okReports);
     askConfirmation.mockResolvedValue(true);
   });
   afterEach(() => vi.useRealTimers());
+
+  it("refreshes the editor's raw and displayed text from the saved verse after a Paratext apply", async () => {
+    project.set({ path: "C:/p/tit", bookId: "tit" } as never);
+    const key = verseKey("1", "1");
+    verseTexts.set({ [key]: "alpha beta gamma" });
+    verseDisplay.set({ [key]: { plain: "alpha beta gamma", removed: [], notes: [], styles: [] } as never });
+    const first = item();
+    paratextReviewQueue.mockResolvedValue(queue([first]));
+    paratextReviewDecide.mockResolvedValue({
+      decision: { book: "TIT", chapter: "1", verse: "1", region: "body", decision: "applied", verified: true,
+        paratext: { status: "sent", verified: true } }, item: first,
+    });
+    chapterVerseData.mockResolvedValue({ chapter: "1", headings: {}, editCounts: { "1": 1 },
+      verses: { "1": { text: "alpha BETA gamma", display: { plain: "alpha BETA gamma", removed: [], notes: [], styles: [] },
+        alignmentStatus: "invalid" } } });
+    render(ParatextReviewQueue, { onClose: vi.fn() });
+    const apply = await screen.findByRole("button", { name: "Apply and next" });
+    await waitFor(() => expect((apply as HTMLButtonElement).disabled).toBe(false));
+    await fireEvent.click(screen.getByLabelText("Also write to Paratext"));
+    await fireEvent.click(apply);
+    await screen.findByText("Applied and verified. Written to Paratext and read back.");
+    expect(get(verseTexts)[key]).toBe("alpha BETA gamma");
+    expect(get(verseDisplay)[key].plain).toBe("alpha BETA gamma");
+  });
+
+  it("shows the saved original in the editor after a checked revert", async () => {
+    project.set({ path: "C:/p/tit", bookId: "tit" } as never);
+    const key = verseKey("1", "1");
+    verseTexts.set({ [key]: "alpha BETA gamma" });
+    paratextReviewQueue.mockResolvedValue(queue([item()]));
+    paratextReviewRevertLatest.mockResolvedValue({ decision: {
+      book: "TIT", chapter: "1", verse: "1", verseRef: "TIT 1:1", decision: "reverted", region: "body", revertVerified: true,
+    } });
+    chapterVerseData.mockResolvedValue({ chapter: "1", headings: {}, verses: {
+      "1": { text: "alpha beta gamma", display: { plain: "alpha beta gamma", removed: [] }, alignmentStatus: "invalid" },
+    } });
+    render(ParatextReviewQueue, { onClose: vi.fn() });
+    await screen.findByRole("button", { name: "Apply and next" });
+    await fireEvent.click(screen.getByRole("tab", { name: /Reports \/ recovery/ }));
+    await fireEvent.click(screen.getByRole("button", { name: "Revert latest verified correction…" }));
+    await screen.findByText("Reverted TIT 1:1 and verified.");
+    expect(get(verseTexts)[key]).toBe("alpha beta gamma");
+    expect(get(verseDisplay)[key].plain).toBe("alpha beta gamma");
+  });
+
+  it("keeps a successful apply distinct from an editor refresh failure", async () => {
+    project.set({ path: "C:/p/tit", bookId: "tit" } as never);
+    paratextReviewQueue.mockResolvedValue(queue([item()]));
+    paratextReviewDecide.mockResolvedValue({ item: item(), decision: {
+      book: "TIT", chapter: "1", verse: "1", region: "body", decision: "applied", verified: true,
+    } });
+    chapterVerseData.mockRejectedValue(new Error("Read failed"));
+    render(ParatextReviewQueue, { onClose: vi.fn() });
+    const apply = await screen.findByRole("button", { name: "Apply and next" });
+    await waitFor(() => expect((apply as HTMLButtonElement).disabled).toBe(false));
+    await fireEvent.click(apply);
+    await screen.findByText(/Applied and verified\. The decision was saved, but the editor could not refresh/);
+    expect(paratextReviewDecide).toHaveBeenCalledTimes(1);
+  });
 
   it("shows the first undecided proposal with its source fields, the located span and the after text", async () => {
     paratextReviewQueue.mockResolvedValue(queue([

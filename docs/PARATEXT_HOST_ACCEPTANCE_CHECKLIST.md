@@ -264,3 +264,27 @@ native regions, marker rename, locks/interruption, two-PC/hub, Send/Receive,
 installer behavior, monitor/scaling/accessibility and release timing remain open.
 No release/installer was created, no application logic was modified, and no
 acceptance issue was closed.
+
+### 2026-11-03: editor cache regression follow-up (#445)
+
+Frontend-only fix: queue apply/revert now re-reads the saved affected chapter
+and refreshes the editor's text/display or heading, edit count and alignment
+readers, guarded against a project/book switch. The component regression failed
+before this change and passed after it. Check 0 errors/warnings; full Vitest
+1,115 passed in 109 files; both Vite builds and debug/no-bundle desktop build
+passed in the isolated 0.24.3 acceptance copy, using the existing frozen workers
+(engine reports 0.23.0).
+
+On-screen, fresh disposable UIQA100: queue Apply `beta` -> `BETA` reports
+Applied and verified; closing only the queue immediately shows `alpha BETA …
+gamma` in the editor, edit count 1 and invalid alignment. No book reload or
+restart was needed. Also write to Paratext was unchecked. A second footnote
+apply/readback passed in the queue, but its editor popup was not walked after
+concurrent user input was detected. Both test corrections were restored and
+verified using the source checked-revert API. No native Scripture/notes were
+written, and no working translation was edited.
+
+Automated coverage also verifies refresh after revert, heading-only changes,
+verse bridges, stale project responses and a read failure after successful
+apply. #444 still prevents claiming desktop Revert acceptance; this run does
+not repeat or complete the native two-application round trip or release gate.

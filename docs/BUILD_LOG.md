@@ -23828,3 +23828,48 @@ PARATEXT_HOST_ACCEPTANCE_CHECKLIST.md. Local receipts/scripts are under ignored
 engine/build/walkthrough-0243-data and engine/build/. No runtime fix, release or
 installer was produced; native regions/rename, lock/interruption, two-device,
 Send/Receive, installer and other unwalked gates remain open.
+
+### 2026-11-03 — Refresh the editor after Paratext review applies (#445)
+
+Benz reported that the queue marked a change applied and native Paratext showed
+the replacement, while Bridge's editor retained the old text. The engine's
+existing apply writes/read-verifies Bridge first; the frontend queue reloaded
+only its own data. `ensureChapterData` then reused the cached verse text and
+display. A new component regression reproduced Applied and verified with the
+editor still holding `alpha beta gamma` instead of `alpha BETA gamma`.
+
+Added `paratextReviewRefresh.ts`: after apply and checked revert, read the
+affected chapter through the existing RPC, refresh the affected raw/display
+text or heading, authoritative edit count/alignment state, and notify alignment
+readers. Reuse the existing engine-change path to discard stale AI/native/
+Language QA marks. Heading-only writes leave body/alignment unchanged;
+introductions kept only in Paratext are skipped. Check project path and book
+before and after the read so a delayed response cannot populate another
+project. A failed refresh preserves the successful save notice and asks the
+reviewer to reopen the book; it does not invite applying the change again.
+No engine/writer/schema/ledger/golden/threshold changes.
+
+Verification: the regression failed before the fix and passed after it;
+18 targeted tests passed; the full frontend suite passed **1,115 tests / 109
+files**; `npm run check` reported 0 errors/warnings. Both production Vite builds
+and an ordinary Tauri debug/no-bundle build passed in the isolated 0.24.3
+acceptance copy with these two runtime files copied in. Existing frozen workers
+were reused (engine displays 0.23.0); this does not certify an exact release
+installer. Tests include revert, heading-only refresh, exact verse bridges,
+project-switch discard and a refresh-read failure after a successful apply.
+
+Desktop: with Benz's permission, closed the running Bridge normally and built
+the updated executable. Fresh synthetic UIQA100 profile under ignored
+`engine/build/editor-refresh-445-data/`: applied `beta` -> `BETA`, closed only
+the queue, and directly observed the editor's `alpha BETA … gamma`, history
+count 1 and invalid alignment without reopening the book. A second footnote
+apply succeeded and the queue re-read `a footnote`; the editor popup was not
+verified because concurrent desktop input was detected. Both disposable edits
+were restored and verified through the existing source revert RPC. Native
+Paratext Scripture and notes were not written. The unrelated #444 confirmation
+stacking issue was not changed, so desktop Revert is not claimed as passed.
+
+Also filed #446 from the footnote walk: inspecting the already-applied
+`note` -> `footnote` proposal shows hypothetical AFTER `footfootnote`, although
+saved text is correct and Apply remains disabled. No duplicate write observed;
+preview presentation stays a separate follow-up.
