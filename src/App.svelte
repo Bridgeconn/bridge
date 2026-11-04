@@ -23,6 +23,7 @@
   import ReferencePanel from "./lib/components/ReferencePanel.svelte";
   import SourceTextPanel from "./lib/components/SourceTextPanel.svelte";
   import ParatextNotesPanel from "./lib/components/ParatextNotesPanel.svelte";
+  import ReviewQueueHost from "./lib/components/ReviewQueueHost.svelte";
   import FindingContextMenu from "./lib/components/FindingContextMenu.svelte";
   import { TEXT_SCALES, bumpTextScale, rawView, sidePanelOrder, sidePanels, textScale, toggleSidePanel } from "./lib/editorPrefs";
   import { verseMin } from "./lib/panelFit";
@@ -32,7 +33,7 @@
     bookmarks, buildPlacesMenu, collectionOf, recentChapters, recordRecentChapter, setPlaces, toggleBookmark,
   } from "./lib/bookmarks";
   import AlignmentReview from "./lib/components/AlignmentReview.svelte";
-  import CrossVerseAlignmentModal from "./lib/components/CrossVerseAlignmentModal.svelte";
+  import AlignmentHost from "./lib/components/AlignmentHost.svelte";
   import AutoAlignChapterButton from "./lib/components/AutoAlignChapterButton.svelte";
   import {
     closeCrossVerse, crossVerseAnchor, crossVerseInitialVerses, crossVerseOpen, crossVerseRequest, openCrossVerse,
@@ -77,6 +78,7 @@
   import { estimateReportSeconds, recordReportBuild } from "./lib/reportEstimate";
   import { bindCollectionStrip, cancelStripJob } from "./lib/collectionStrip";
   import { prepareDetail, prepareProgress } from "./lib/openProgress";
+  import { startUpdates, stopUpdates, updateStatus } from "./lib/updates";
 
   let opened = false;
   let engineStatus: "checking" | "ready" | "error" = "checking";
@@ -505,6 +507,7 @@
       await refreshNavigationStatus();
       try {
         const settings = await bridge.getSettings();
+        if (!appDisposed) void startUpdates(settings.automaticUpdates ?? true).catch((error) => console.warn("Could not start updater", error));
         reviewerMode.set(settings.reviewerMode);
         needsUserChoice = Boolean(settings.needsUserChoice);
         localUserId.set(settings.localUserId || "");
@@ -580,6 +583,7 @@
     })();
     return () => {
       appDisposed = true;
+      stopUpdates();
       unlistenFileDrop?.();
       unlistenLog?.();
       unlistenRespawn?.();
@@ -1843,6 +1847,7 @@
         </button>
       {/if}
       {#if engineNotice}<span class="engine-notice" title={engineNotice}>{engineNotice}</span>{/if}
+      {#if $updateStatus.phase === "ready"}<span title={$updateStatus.message}>Bridge {$updateStatus.version} will install on close.</span>{/if}
       <span>Engine: {engineStatus}</span>
       <button class="diagnostics-btn" on:click={() => diagnosticsOpen.set(true)}>
         Diagnostics
@@ -1865,16 +1870,7 @@
     {#if $scopeDialog}<ScopeConfirmDialog />{/if}
   {/if}
 
-  {#if $project && $crossVerseOpen && $crossVerseAnchor}
-    {#key `${$project.path}:${$currentChapter}:${$crossVerseAnchor}`}
-      <CrossVerseAlignmentModal
-        chapter={$currentChapter}
-        verse={$crossVerseAnchor}
-        initialVerses={$crossVerseInitialVerses}
-        onClose={closeCrossVerse}
-      />
-    {/key}
-  {/if}
+  <AlignmentHost />
 
   {#if placesMenu}
     <FindingContextMenu x={placesMenu.x} y={placesMenu.y} findingLabel="Bookmarks and recent chapters"
@@ -1889,6 +1885,8 @@
        Outside the project block: Settings can ask with no project open. -->
   {#if workspaceRecovery}<WorkspaceRecoveryDialog summary={workspaceRecovery} onClose={() => (workspaceRecovery = null)} />{/if}
   {#if $confirmRequest}<ConfirmDialog />{/if}
+  <!-- #432: one review queue for the project; it stays open across a book switch. -->
+  <ReviewQueueHost onNavigate={navigateToReportRow} />
 
   {#if $diagnosticsOpen}
     <DiagnosticsPanel onClose={() => diagnosticsOpen.set(false)} />

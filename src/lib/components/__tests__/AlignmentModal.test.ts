@@ -5,13 +5,15 @@ import AlignmentModal from "../AlignmentModal.svelte";
 // @ts-expect-error Vite's test-only raw loader is not part of the app tsconfig.
 import alignmentModalSource from "../AlignmentModal.svelte?raw";
 import { get } from "svelte/store";
+import { answerConfirmation, confirmRequest } from "../../confirmAction";
 import { alignmentRevisionByVerse, project, verseDisplay, verseKey } from "../../stores";
 import type { AlignmentContext, AlignmentToken, ProjectInfo } from "../../types/finding";
 
 const {
-  getAlignment, realignWords, unalignWords, undoAlignment, restoreAlignment, runVerseChecks, getLexiconEntry, getVerse,
+  getAlignment, realignWords, unalignWords, undoAlignment, restoreAlignment, runVerseChecks, getLexiconEntry, getVerse, splitAlignmentSource,
 } = vi.hoisted(() => ({
   getAlignment: vi.fn(),
+  splitAlignmentSource: vi.fn(),
   getVerse: vi.fn(),
   realignWords: vi.fn(),
   unalignWords: vi.fn(),
@@ -23,7 +25,7 @@ const {
 
 vi.mock("../../api/bridgeClient", () => ({
   bridge: {
-    getAlignment, realignWords, unalignWords, undoAlignment, restoreAlignment, runVerseChecks, getLexiconEntry, getVerse,
+    getAlignment, realignWords, unalignWords, undoAlignment, restoreAlignment, runVerseChecks, getLexiconEntry, getVerse, splitAlignmentSource,
   },
 }));
 
@@ -253,6 +255,21 @@ describe("AlignmentModal joined columns (#207) and Undo (#122)", () => {
       ...extra,
     });
   }
+
+  it.each(["left", "right"] as const)("separates the middle word directly from its card to the %s", async direction => {
+    const base = context(), topTokens = [token("H001", "Alpha"), token("H002", "Beta"), token("H003", "Gamma")];
+    const ctx = context({ topTokens, sourceDirection: "ltr",
+      alignment: { alignments: [{ topWords: topTokens, bottomWords: [base.bottomTokens[0]] }], wordBank: base.bottomTokens.slice(1) },
+      groups: [{ id: "joined", topIds: topTokens.map(t => t.id), bottomIds: [base.bottomTokens[0].id] }] });
+    splitAlignmentSource.mockResolvedValue({ contexts: [base] });
+    await open(ctx);
+    await fireEvent.click(screen.getByLabelText("Separate Beta (1/1)"));
+    await fireEvent.click(screen.getByRole("button", { name: `Separate Beta ${direction}` }));
+    expect(get(confirmRequest)?.confirmLabel).toBe(`Separate ${direction}`);
+    expect(splitAlignmentSource).not.toHaveBeenCalled();
+    answerConfirmation(true);
+    await waitFor(() => expect(splitAlignmentSource).toHaveBeenCalledWith("1", "1", "H002", direction, ctx.alignment, false));
+  });
 
   it("draws a group with two source words as one column, not two columns with the same targets", async () => {
     await open(joined());

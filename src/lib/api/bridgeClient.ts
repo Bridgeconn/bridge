@@ -1,3 +1,4 @@
+import { reviewProjectPath } from "../reviewProjectGuard";
 import type {
   LanguageQaDecisionIssue, LanguageQaHistory, LanguageQaInline, LanguageQaStatus, LanguageQaVerse, LanguageQaView,
   LearnedFix, LearnedFixesResponse, VerseEditLearned,
@@ -10,6 +11,9 @@ import type {
   ParatextBookNames, ParatextLinkStatus, ParatextNoteKind, ParatextNoteThread, ParatextNotesForChapter,
   ParatextNotesForVerse, ParatextNotesIndexState, ParatextOutboxItem, ParatextThreadLink, ParatextThreadsFor,
   ParatextWriteKind,
+  ParatextReviewDecision, ParatextReviewDecisionKind, ParatextReviewFilter, ParatextReviewItem, ParatextReviewPreview,
+  ParatextReviewQueue, ParatextReviewReport, ParatextReviewState, ParatextReviewScope, ParatextReconcileOutcome,
+  ParatextReviewReports,
 } from "../types/paratext";
 import type {
   HouseStyleEntry, HouseStyleEntryInput, HouseStyleListResponse,
@@ -41,7 +45,7 @@ import type {
   AIReviewJobSnapshot,
   AlignmentAiProposal,
   AlignmentAiProposeResponse,
-  AlignmentContext,
+  AlignmentContext, ChapterResetJob,
   AlignmentRange,
   AlignmentStatusResponse,
   CrossVerseLinkResult,
@@ -352,6 +356,15 @@ export type EngineMethod =
   | "alignment.autoAlign.retry"
   | "alignment.autoAlign.estimate"
   | "alignment.gapScan"
+  | "alignment.splitSource"
+  | "alignment.resetChapter.preview"
+  | "alignment.resetChapter.start"
+  | "alignment.resetChapter.step"
+  | "alignment.resetChapter.status"
+  | "alignment.resetChapter.cancel"
+  | "alignment.resetVerse"
+  | "alignment.restoreReset"
+  | "alignment.resetStatus"
   | "alignment.get"
   | "alignment.getRange"
   | "alignment.realign"
@@ -404,6 +417,7 @@ export type EngineMethod =
   | "navigation.status"
   | "paratext.connectorStatus"
   | "paratext.getState"
+  | "paratext.setReference"
   | "paratext.installConnector"
   | "paratext.linkStatus"
   | "paratext.relink"
@@ -416,6 +430,19 @@ export type EngineMethod =
   | "paratext.replyThread"
   | "paratext.resolveThread"
   | "paratext.linkThread"
+  | "paratext.createNote"
+  | "paratext.queueRecord"
+  | "paratextReview.queue"
+  | "paratextReview.preview"
+  | "paratextReview.decide"
+  | "paratextReview.saveState"
+  | "paratextReview.revertLatest"
+  | "paratextReview.exportCsv"
+  | "paratextReview.report"
+  | "paratextReview.latestReport"
+  | "paratextReview.reconcile"
+  | "paratextReview.uncertain"
+  | "paratextReview.reports"
   | "paratext.outbox"
   | "paratext.flushOutbox"
   | "ping"
@@ -474,7 +501,9 @@ export type EngineMethod =
  * engine's dispatcher fills the same defaults the old per-method Rust
  * forwarders did, so callers pass their argument objects straight through. */
 async function call<T>(method: EngineMethod, params?: Record<string, unknown>): Promise<T> {
-  const envelope = await invoke<EngineEnvelope<T>>("engine_call", { method, params: params ?? {} });
+  const expectedPath = reviewProjectPath();
+  const guardedParams = expectedPath === undefined ? params ?? {} : { ...params, _expectedProjectPath: expectedPath };
+  const envelope = await invoke<EngineEnvelope<T>>("engine_call", { method, params: guardedParams });
   if (!envelope.success) {
     throw new Error(envelope.error?.message ?? `${method} failed`);
   }
@@ -1170,6 +1199,29 @@ export const bridge = {
     return call("issueResolution.resolveFromParatext", { chapter, verse, resolutionId, threadId });
   },
 
+  splitAlignmentSource(chapter: string, verse: string, topId: string, direction: "left" | "right", expectedOriginal: VerseAlignment, undo = false): Promise<{ contexts: AlignmentContext[] }> {
+    return call("alignment.splitSource", { chapter, verse, topId, direction, expectedOriginal, undo });
+  },
+  previewChapterReset(chapter: string): Promise<{ token: string; verses: string[]; groups: number; links: number; decisions: number }> {
+    return call("alignment.resetChapter.preview", { chapter });
+  },
+  startChapterReset(chapter: string, token: string): Promise<ChapterResetJob> {
+    return call("alignment.resetChapter.start", { chapter, token });
+  },
+  stepChapterReset(jobId: string): Promise<{ job: ChapterResetJob; contexts: AlignmentContext[] }> {
+    return call("alignment.resetChapter.step", { jobId });
+  },
+  chapterResetStatus(): Promise<ChapterResetJob> { return call("alignment.resetChapter.status"); },
+  cancelChapterReset(jobId: string): Promise<ChapterResetJob> { return call("alignment.resetChapter.cancel", { jobId }); },
+  resetAlignment(chapter: string, verse: string, expectedOriginal: VerseAlignment, expectedStateToken: string): Promise<{ contexts: AlignmentContext[]; changed: boolean }> {
+    return call("alignment.resetVerse", { chapter, verse, expectedOriginal, expectedStateToken });
+  },
+  restoreAlignmentReset(chapter: string, verse: string): Promise<{ contexts: AlignmentContext[]; changed: boolean }> {
+    return call("alignment.restoreReset", { chapter, verse });
+  },
+  alignmentResetStatus(chapter: string, verse: string): Promise<{ pending: boolean; canUndo: boolean; chapter: string; verse: string; state: string; token: string; alignment: VerseAlignment; partners: string[]; groups: number; links: number; decisions: number }> {
+    return call("alignment.resetStatus", { chapter, verse });
+  },
   getAlignment(chapter: string, verse: string): Promise<AlignmentContext> {
     return call("alignment.get", { chapter, verse });
   },
@@ -1390,6 +1442,17 @@ export const bridge = {
     return call("paratext.getState");
   },
 
+  /** #432: move Paratext's active window (its scroll group A-E) to a
+   *  reference; the plugin refuses when the window is in no group. */
+  paratextSetReference(reference: string): Promise<unknown> {
+    return call("paratext.setReference", { reference });
+  },
+
+  /** #433: try every queued Paratext write now (a saved resolve retry). */
+  paratextFlushOutbox(): Promise<unknown> {
+    return call("paratext.flushOutbox");
+  },
+
   /** #282: whether Bridge's Paratext connector is installed on this PC. */
   paratextConnectorStatus(): Promise<ParatextConnectorStatus> {
     return call("paratext.connectorStatus");
@@ -1456,6 +1519,88 @@ export const bridge = {
   paratextLinkThread(threadId: string, kind: ParatextWriteKind, localId: string):
     Promise<{ link: Omit<ParatextThreadLink, "thread"> }> {
     return call("paratext.linkThread", { threadId, kind, localId });
+  },
+
+  /** #426: a Project Note on this verse from the notes panel, with no Bridge
+   *  record behind it. Queued in the outbox and sent now when Paratext is
+   *  available; `selectedText`, when given, must occur once in the verse. */
+  paratextCreateNote(chapter: string, verse: string, text: string, selectedText = ""):
+    Promise<{ item: ParatextOutboxItem | null }> {
+    return call("paratext.createNote", { chapter, verse, text, selectedText });
+  },
+
+  /** #426/#433: a Paratext thread for a finding or a correction proposal.
+   *  `lines` is what the card says about the record; `text` the reviewer's
+   *  own note. Same outbox, footer and linked-project rules as a note; the
+   *  link is made once Bridge reads the thread back, and a verified Paratext
+   *  resolve then closes the record. Same record + same note sends nothing twice. */
+  paratextQueueRecord(
+    kind: "finding" | "correction_proposal", localId: string, chapter: string, verse: string,
+    text: string, lines: string[] = [], selectedText = "",
+  ): Promise<{ item: ParatextOutboxItem | null } & ParatextThreadsFor> {
+    return call("paratext.queueRecord", { kind, localId, chapter, verse, text, lines, selectedText });
+  },
+
+  // #428-#434: the Paratext QA review queue over the books in scope. An apply
+  // edits Bridge's copy through the one Scripture writer (or the heading
+  // writer) and is read back; with writeParatext the same exact replacement
+  // is then queued for the linked Paratext project.
+  paratextReviewQueue(status: ParatextReviewFilter | "" = "", scope: ParatextReviewScope | null = null): Promise<ParatextReviewQueue> {
+    return call("paratextReview.queue", scope ? { status, scope } : { status });
+  },
+
+  paratextReviewPreview(proposalId: string, replacement: string | null = null): Promise<ParatextReviewPreview> {
+    return call("paratextReview.preview", { proposalId, replacement });
+  },
+
+  paratextReviewDecide(
+    proposalId: string, decision: Exclude<ParatextReviewDecisionKind, "reverted">,
+    options: { comment?: string; replacement?: string | null; confirmDelete?: boolean; writeParatext?: boolean } = {},
+  ): Promise<{ decision: ParatextReviewDecision; item: ParatextReviewItem }> {
+    return call("paratextReview.decide", { proposalId, decision, comment: options.comment ?? "",
+      replacement: options.replacement ?? null, confirmDelete: options.confirmDelete ?? false,
+      // DECISIONS 2026-11-02: after a verified Bridge apply, the same exact
+      // replacement may also be written into the linked Paratext project.
+      writeParatext: options.writeParatext ?? false });
+  },
+
+  /** #431: the reviewer's classification of an interrupted apply. */
+  paratextReviewReconcile(proposalId: string, outcome: ParatextReconcileOutcome, note = ""): Promise<{ decision: ParatextReviewDecision; classified: string }> {
+    return call("paratextReview.reconcile", { proposalId, outcome, note });
+  },
+
+  paratextReviewSaveState(state: Partial<ParatextReviewState>): Promise<{ state: ParatextReviewState }> {
+    return call("paratextReview.saveState", { state });
+  },
+
+  paratextReviewRevertLatest(): Promise<{ decision: ParatextReviewDecision }> {
+    return call("paratextReview.revertLatest");
+  },
+
+  paratextReviewExportCsv(outputPath: string): Promise<{ written: boolean; path: string; count: number }> {
+    return call("paratextReview.exportCsv", { outputPath });
+  },
+
+  /** `cumulative` reports every decision of the book; otherwise this session's.
+   *  `outputPath` writes somewhere other than the project's own folder. */
+  paratextReviewReport(options: { since?: string; outputPath?: string; cumulative?: boolean } = {}): Promise<ParatextReviewReport> {
+    return call("paratextReview.report", { since: options.since ?? "", outputPath: options.outputPath ?? "",
+      cumulative: options.cumulative ?? false });
+  },
+
+  /** #434: the book's saved reports (interrupted generations cleared) and
+   *  what the recovery tab shows beside them. */
+  paratextReviewReports(): Promise<ParatextReviewReports> {
+    return call("paratextReview.reports");
+  },
+
+  paratextReviewLatestReport(path = ""): Promise<{ path: string; html: string }> {
+    return call("paratextReview.latestReport", { path });
+  },
+
+  /** #434: open a report Bridge wrote in the default browser (Tauri shell). */
+  openPath(path: string): Promise<void> {
+    return invoke<void>("open_path", { path });
   },
 
   navigationStatus(context?: string): Promise<NavigationSyncState> {

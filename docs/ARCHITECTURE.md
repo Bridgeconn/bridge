@@ -267,6 +267,23 @@ re-judges 7; 9B.4 never re-judges 7 and never sets `CORRECTED` on `PASSED` alone
 
 ## 5. UI surface map
 
+Startup (#315, #435) shows a fixed 480×220 splash while the main window loads
+hidden. The startup controller reveals the main window and closes the splash
+on readiness or failure, with a 45-second shell fallback. Window-state
+restoration preserves geometry but excludes visibility; saved `visible: true`
+must never reveal the main window early. The splash skips initial restoration.
+
+The Paratext review queue (#450) can move into a separate, non-modal native
+window (`review.html`, `ReviewQueueWindow.svelte`), leaving the main editor usable.
+`ReviewQueueHost` owns visibility and forwards navigation and saved-change
+notifications. Both windows use the same Rust-owned sidecar/default project
+session. Queue instances bind requests to their original project path; the
+dispatcher checks `_expectedProjectPath` before dispatch, so a project switch
+cannot redirect a queued operation. Local presentation preferences and a
+proposal-checked emergency draft supplement the existing persisted queue state.
+Return/close saves the draft before transferring the UI; main-window exit also
+closes the auxiliary window and follows the existing sidecar shutdown path.
+
 ```mermaid
 flowchart TB
   Home["home: ImportScreen<br/>project list, import wizard, file drop"] --> Dash
@@ -292,6 +309,32 @@ maps, `verseKey()`), `reviewStores.ts` (Stage 9A queue), `alignmentUi.ts`, `vers
 lifetime (guarded only by in-flight and engine-ready, not by whether a connection is
 enabled), check jobs every 750 ms, QA report jobs every 500 ms, triage every 1000 ms while
 running, and cancel-wait every 400 ms.
+
+**Alignment workspace (#447–#451).** `AlignmentHost` owns the one Word or
+Cross-Verse workspace, either embedded or in the hidden-at-startup `alignment`
+webview. `alignmentWindow.ts` carries explicit project/reference, Follow editor /
+Pin verse, busy and saved-state events. Both views use the existing Rust-owned
+sidecar and instance-bound project guards. A project switch closes alignment;
+navigation waits while its mutation is busy. Window position uses the existing
+window-state plugin. `AlignmentWorkspace` / `AlignmentPane` provide movable,
+resizable Read/Source/Target areas. A persisted binary split tree supports docking
+to any neighbor's left/right/top/bottom, mixed horizontal/vertical layouts and
+adjustable dividers. Areas can also float at a chosen position; keyboard-accessible
+Arrange controls mirror dragging. Reset layout restores the tree without remounting
+the content. Compact shared card geometry preserves script-specific fonts and bidi
+isolation for Greek, Hebrew/Aramaic and target text. Glosses are clamped with an
+ellipsis; hover includes the full definition and renderings. Every joined source
+card has its own separation menu, including interior group members.
+
+`alignment_reset.py` records an operator recovery intent in existing workbench
+`project_state` before clearing native groups, whole cross-verse groups and null
+decisions through their existing writers. Undo refuses changed affected snapshots.
+`alignment_reset_jobs.py` persists chapter progress and advances one verse per
+dispatcher request, allowing cancel/resume without a worker racing project switches.
+`alignment_source_split.py` separates any existing source member, retains targets
+with the residual group and records display placement separately from token identity.
+Cross-verse replacements/undo retain a resumable intent. These use existing generic
+state rows and append-only change history; no database schema or Scripture writer changed.
 
 ## 6. Engine subsystems (tc_ai_bridge/)
 
@@ -333,7 +376,11 @@ survive re-running checks.
 - No neural retraining; "human approvals become corpus evidence" means local statistics.
 - No dependency on an AI API for core QA; Greek Room checks and the Stage 4 to 8 pipeline
   run with zero connectivity.
-- No second Scripture writer, no server or login on a translator's runtime path.
+- Paratext Scripture writes and automatic linked QA closure are approved
+  extensions (DECISIONS 2026-11-02, #423). The connector supports body-text writes;
+  see PARATEXT_HOST_ACCEPTANCE_CHECKLIST.md for closure evidence and remaining
+  region/recovery work. Other additional Scripture writers need a decision. No
+  server or login on a translator's runtime path.
 
 ## 9. Where the direction is recorded
 
@@ -356,6 +403,8 @@ This is the repository's one doc map; `CLAUDE.md`, `DEVELOPER_GUIDE.md` and
 | `TEAM_ARCHITECTURE.md` | Direction for #44 to #47. Its §3 to §5 describe shipped code (the workbench and workspace databases, identity and roles); §6 to §8 are the hub design, reviewed in the note below. |
 | `HUB_ARCHITECTURE_REVIEW_2026-10-15.md` | The architecture review SRS §14 requires before `FUTURE-002`/`FUTURE-003` (#227): which tables sync and which never do, how a project is linked across devices, conflict semantics for links and batches, where `authorize()` runs on the hub, packaging and the hub machine, the acceptance restated as tests, and the order #79 → #80 → #81. |
 | `QA_TEST_MATRIX.md` | The release gate: what is tested, how, and the current pass state per row. |
+| `PARATEXT_WRITE_CONTRACT.md` | #424/#425: the native-note parity inventory (what the connector can and cannot do with a Project Note, which Scripture regions it writes, what stays review-only), the ownership of the text between Bridge's copy and Paratext's, and the recovery contract for every interrupted or refused write, revert, resolve and external closure. |
+| `PARATEXT_HOST_ACCEPTANCE_CHECKLIST.md` | The real-Paratext walk for the notes round trip, automatic closure and the reviewer-confirmed Scripture write (#423, #436): disposable project, connector 0.9.0, what to expect at each step, where to record the result. NOT RUN until someone with Paratext records it. |
 | `LANGUAGE_QA_PLAN.md` | Offline Language QA (#169): scope, coverage, the layered-rules phase table. `LANGUAGE_QA_BENCHMARK.md` holds the per-rule precision and recall against the IRV review reports and how to run them; `LANGUAGE_QA_HOUSESTYLE.md` is house style as project data (entries, scopes, the learner's thresholds, export ledger); `LANGUAGE_QA_PACKS.md` is the three tiers (core, `indic` rule kinds, data-only packs), the `index.json` registry, where packs live at runtime, and how to add a language with no code; `LANGUAGE_QA_RULE_PACK.md` is the rule-pack schema (the bundled `ta-irv` pack, examples-as-tests, narrowing-only project overrides, inline sign-off); `LANGUAGE_QA_TAMIL_SPECIFICATION.md` maps the 56-item Tamil proofreading framework to pack ids, status and owner; `LANGUAGE_QA_REVIEW_FIXES_ACCEPTANCE.md` holds the desktop cases for A52–A55; `TAMIL_UI_STRINGS.md` is every Tamil string on screen with its English, screen and source, for native review, generated by `scripts/export_tamil_ui_strings.py` and kept current by a test (#235). |
 | `SIMPLIFICATION_AUDIT_2026-09.md` | What is slowing the codebase down, ranked, with the decisions taken. Point-in-time (2026-09-16). |
 | `USER_MANUAL.md` | What the app does, screen by screen, for translators and checkers. |

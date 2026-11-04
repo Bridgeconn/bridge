@@ -81,6 +81,50 @@ export interface ParatextNoteTag {
   name: string;
 }
 
+// #427: what a QA pass proposed in a note, parsed by the engine
+// (tc_ai_bridge/paratext_proposals.py). Read-only: a route is the strongest
+// claim the parser makes about the Suggested field, never a decision.
+export type ParatextProposalRoute = "literal" | "review" | "structure" | "noChange" | "legacy" | "unreadable";
+export type ParatextProposalOperation =
+  "replace" | "insert" | "delete" | "alternatives" | "noChange" | "structural" | "markerRename" | "instruction" | "none";
+export type ParatextProposalRegion = "body" | "introduction" | "heading" | "footnote" | "crossReference" | "structure";
+
+export interface ParatextProposalSummary {
+  total: number;
+  outstanding: number;
+  unreadable: number;
+  byRoute: Record<ParatextProposalRoute, number>;
+}
+
+export interface ParatextProposal {
+  proposalId: string;
+  commentIndex: number;
+  block: number;
+  route: ParatextProposalRoute;
+  operation: ParatextProposalOperation;
+  region: ParatextProposalRegion;
+  pass: string;
+  topic: string;
+  category: string;
+  categoryKnown: boolean;
+  original: string;
+  suggested: string;
+  reason: string;
+  location: string;
+  reference: string;
+  severity: string;
+  confidence: string;
+  reviewerDecision: boolean;
+  anchorWarning: boolean;
+  historical: boolean;
+  outstanding: boolean;
+  alternatives: string[];
+  structural: { fromMarker: string; toMarker: string; label: string } | null;
+  diagnostics: string[];
+  author: string;
+  date: string;
+}
+
 export interface ParatextNoteSummary {
   id: string;
   kind: ParatextNoteKind;
@@ -98,6 +142,8 @@ export interface ParatextNoteSummary {
   tags: ParatextNoteTag[];
   hidden: boolean;
   commentCount: number;
+  /** #427: the QA proposals in the thread, counted. */
+  proposals: ParatextProposalSummary;
 }
 
 export interface ParatextNoteComment {
@@ -117,6 +163,10 @@ export interface ParatextNoteThread extends ParatextNoteSummary {
   contextBefore: string;
   contextAfter: string;
   comments: ParatextNoteComment[];
+  /** #427: every proposal in the thread, in comment order. */
+  proposalItems: ParatextProposal[];
+  /** #433: the Bridge records this thread is linked to, with their closure. */
+  links?: { kind: ParatextWriteKind; localId: string; closure: ParatextThreadLink["closure"] }[];
 }
 
 export interface ParatextNoteCount {
@@ -138,10 +188,228 @@ export interface ParatextNotesForVerse {
   chapter: string;
   verse: string;
   threads: ParatextNoteThread[];
+  /** #426: this verse's writes still in the outbox: a note queued, refused
+   *  or sent but not yet read back from Paratext's file; a reply or resolve
+   *  on one of its threads not yet sent. Never shown as made. */
+  pending: ParatextOutboxItem[];
 }
 
-// #358: Paratext write-back (engine: tc_ai_bridge/paratext_outbox.py).
-export type ParatextWriteKind = "issue_resolution" | "finding" | "correction_proposal";
+// #428/#431/#432/#433/#434: the Paratext QA review queue (engine:
+// tc_ai_bridge/paratext_review.py). An apply goes through verse.edit's writer
+// on Bridge's copy of the verse; nothing here writes into Paratext.
+export type ParatextReviewFilter = "unresolved" | "resolved" | "all";
+export type ParatextReviewDecisionKind = "applied" | "rejected" | "manual" | "deferred" | "reverted";
+
+export interface ParatextReviewSnapshot {
+  raw: string;
+  plain: string;
+}
+
+export interface ParatextReviewDecision {
+  proposalId: string;
+  threadId: string;
+  book: string;
+  chapter: string;
+  verse: string;
+  verseRef: string;
+  pass: string;
+  category: string;
+  route: ParatextProposalRoute;
+  operation: ParatextProposalOperation;
+  decision: ParatextReviewDecisionKind;
+  comment: string;
+  reviewer: string;
+  decidedAt: string;
+  threadResolved: boolean;
+  original: string;
+  replacement: string;
+  verified: boolean;
+  before?: ParatextReviewSnapshot;
+  after?: ParatextReviewSnapshot;
+  observed?: ParatextReviewSnapshot;
+  span?: { plainStart: number; plainEnd: number; rawStart: number; rawEnd: number };
+  journalTransactionId?: string;
+  unverifiedReason?: string;
+  revertedAt?: string;
+  revertVerified?: boolean;
+  /** DECISIONS 2026-11-02: the same replacement written into the linked
+   *  Paratext project through the outbox (connector 0.9.0 put_verse_text),
+   *  after the verified Bridge apply. `verified` is Paratext's read-back. */
+  paratext?: {
+    status: "queued" | "refused" | "sent" | "not_sent" | "unknown";
+    messageId: string;
+    lastError: string;
+    attempts?: number;
+    sentAt?: string;
+    verified?: boolean;
+    author?: string;
+  };
+  bridgeUser?: { userId: string; displayName: string };
+  /** #429: which region of the verse was edited; absent on older rows. */
+  region?: ParatextProposalRegion;
+  /** "none": the correction exists only in Paratext (introduction, marker rename). */
+  bridgeCopy?: "none" | "heading";
+  /** #431: the reviewer's reconciliation of an interrupted apply. */
+  reconciled?: { state: string; at: string; by: string; note: string; paratextChecked?: boolean };
+  /** #431: the reverse write queued for Paratext by a revert. */
+  paratextReverse?: { status: string; messageId?: string; verified?: boolean; reason?: string; lastError?: string };
+  /** The linked thread's closure, when it was resolved (DECISIONS 2026-11-02). */
+  threadClosure?: { status: string; origin: "bridge" | "paratext"; actor: string; resolvedAt: string };
+  revision: number;
+  updatedAt: string;
+}
+
+export interface ParatextReviewDraft {
+  replacement: string;
+  comment: string;
+}
+
+export interface ParatextReviewThreadCompletion {
+  complete: boolean;
+  blocking: string[];
+}
+
+export interface ParatextReviewItem {
+  proposalId: string;
+  threadId: string;
+  book: string;
+  chapter: string;
+  verse: string;
+  verseRef: string;
+  threadResolved: boolean;
+  selectedText: string;
+  contextBefore: string;
+  contextAfter: string;
+  proposal: ParatextProposal;
+  threadOutstanding: number;
+  decision: ParatextReviewDecision | null;
+  draft: ParatextReviewDraft | null;
+  thread: ParatextReviewThreadCompletion;
+  /** #432: false for a proposal of a sibling book that is not open. */
+  openBook: boolean;
+  /** #432: this item comes after the wraparound of the forward pass. */
+  wrapped: boolean;
+}
+
+export interface ParatextReviewScope {
+  /** Paratext book codes in canon order; empty means the open book only. */
+  books: string[];
+  startBook: string;
+}
+
+export interface ParatextReviewState {
+  status: ParatextReviewFilter;
+  /** #432: the books scanned and where the forward pass starts. */
+  scope: ParatextReviewScope;
+  position: string;
+  drafts: Record<string, ParatextReviewDraft>;
+  sessionStartedAt: string;
+}
+
+export interface ParatextReviewPreset {
+  id: string;
+  label: string;
+  text: string;
+}
+
+export interface ParatextReviewBook {
+  book: string;
+  bookId: string;
+  path: string;
+  lazy: boolean;
+  open: boolean;
+}
+
+export interface ParatextReviewScanned {
+  book: string;
+  threads: number;
+  unreadable: number;
+  proposals: number;
+}
+
+export interface ParatextReviewPendingResolve {
+  messageId: string;
+  threadId: string;
+  status: "queued" | "refused";
+  attempts: number;
+  lastError: string;
+  createdAt: string;
+  reference: string;
+}
+
+export interface ParatextReviewQueue {
+  indexState: ParatextNotesIndexState;
+  status: ParatextReviewFilter;
+  book: string;
+  items: ParatextReviewItem[];
+  counts: Record<"total" | "undecided" | ParatextReviewDecisionKind, number>;
+  state: ParatextReviewState;
+  presets: ParatextReviewPreset[];
+  reviewer: string;
+  bridgeUser: { userId: string; displayName: string };
+  /** The collection's books the queue can scan (#432). */
+  books: ParatextReviewBook[];
+  scanned: ParatextReviewScanned[];
+  booksInScope: string[];
+  /** Whether the forward pass from the starting book wraps around to the books before it. */
+  wraparound: { occurs: boolean; books: string[]; count: number };
+  staleDraftsDropped: string[];
+  /** #431: applied decisions of the open book that need reconciliation. */
+  uncertain: string[];
+  pendingResolves: ParatextReviewPendingResolve[];
+}
+
+export interface ParatextReviewPreview {
+  proposalId: string;
+  region: ParatextProposalRegion;
+  plain: string;
+  found: number;
+  ok: boolean;
+  reason: string;
+  after: string;
+  span: { plainStart: number; plainEnd: number } | null;
+  matches: { plainStart: number; plainEnd: number; wholeWord: boolean }[];
+  /** An introduction correction or a marker rename exists only in Paratext. */
+  paratextOnly: boolean;
+  rename?: { fromMarker: string; toMarker: string; label: string };
+  bridgeHeadingIndex?: number;
+}
+
+export interface ParatextReviewReport {
+  written: boolean;
+  path: string;
+  html: string;
+  count: number;
+  reason?: string;
+  cumulative?: boolean;
+}
+
+export interface ParatextReviewSavedReport {
+  path: string;
+  name: string;
+  size: number;
+  modifiedAt: string;
+}
+
+export type ParatextReconcileOutcome = "verified" | "notApplied" | "conflict" | "paratextChecked";
+
+export interface ParatextReviewUncertainItem {
+  decision: ParatextReviewDecision;
+  classified: "verified" | "notApplied" | "conflict";
+  observed: string;
+  paratextPending: string;
+}
+
+export interface ParatextReviewReports {
+  reports: ParatextReviewSavedReport[];
+  interrupted: string[];
+  folder: string;
+  pendingResolves: ParatextReviewPendingResolve[];
+  uncertain: ParatextReviewUncertainItem[];
+}
+
+export type ParatextWriteKind = "issue_resolution" | "finding" | "correction_proposal" | "note";
+
 export type ParatextOutboxOp = "create_thread" | "add_comment" | "resolve";
 
 export interface ParatextOutboxItem {
@@ -156,6 +424,10 @@ export interface ParatextOutboxItem {
   createdAt: string;
   kind?: ParatextWriteKind;
   localId?: string;
+  /** On a create: where it goes and what it says (with the Bridge footer). */
+  reference?: string;
+  selectedText?: string;
+  text?: string;
 }
 
 export interface ParatextThreadLink {
@@ -166,6 +438,17 @@ export interface ParatextThreadLink {
   direction: "bridge_to_paratext" | "paratext_to_bridge";
   /** The thread as the notes index has it; null until Bridge has read it. */
   thread: ParatextNoteThread | null;
+  /** DECISIONS 2026-11-02: set once the thread was seen resolved. "resolved in
+   *  Paratext" with the external actor, or "resolved in Bridge" when Bridge
+   *  sent the resolve. The linked Bridge record was closed with it. */
+  closure?: {
+    status: "resolved in Paratext" | "resolved in Bridge";
+    origin: "paratext" | "bridge";
+    actor: string;
+    resolvedAt: string;
+    seenAt: string;
+    evidence?: { threadId: string; verseRef: string; commentCount: number };
+  } | null;
 }
 
 export interface ParatextThreadsFor {

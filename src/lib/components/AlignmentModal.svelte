@@ -1,6 +1,19 @@
 <script lang="ts">
+  import "../alignmentCards.css";
+  import AlignmentWorkspace from "./AlignmentWorkspace.svelte";
+  import SourceSplitControls from "./SourceSplitControls.svelte";
+  import SourceWordActions from "./SourceWordActions.svelte";
+  import AlignmentResetControls from "./AlignmentResetControls.svelte";
+  import AlignmentPane from "./AlignmentPane.svelte";
   import { onMount } from "svelte";
-  import { bridge } from "../api/bridgeClient";
+  import { bridge as apiBridge } from "../api/bridgeClient";
+  import { get } from "svelte/store";
+  import { onDestroy } from "svelte";
+  import { project as activeProject } from "../stores";
+  import { bindReviewProject } from "../reviewProjectGuard";
+  import { alignmentBusy, alignmentPinned } from "../alignmentWindow";
+  const expectedPath = get(activeProject)?.path || "";
+  const bridge = bindReviewProject(apiBridge, expectedPath);
   import { recheckVerse } from "../verseChecks";
   import { perfAbort, perfBegin, perfEnd, perfResponded } from "../perf";
   import {
@@ -14,7 +27,7 @@
   import { openCrossVerse } from "../alignmentUi";
   import {
     alignedTargetsFor, bottomIdsAfterDrop, groupForSource, groupForTarget, occurrenceLabel as occurrence,
-    sourceColumns, topIdsFor, unaccountedTargets, undoTargetId,
+    sourceColumns, topIdsFor, unaccountedTargets, undoTargetId, canSeparateSource,
   } from "../alignmentGroups";
   import { SourceGlossCache } from "../lexiconGloss";
   import LexiconPopup from "./LexiconPopup.svelte";
@@ -22,8 +35,13 @@
   export let chapter: string;
   export let verse: string;
   export let onClose: () => void;
+  export let onDetach: (() => void) | null = null;
+  export let onPin: (() => void) | null = null;
+  export let standalone = false;
+  onDestroy(() => alignmentBusy.set(false));
 
   let context: AlignmentContext | null = null;
+  let splitControls: SourceSplitControls;
   // #409: the verse as continuous text, with its punctuation, to read while
   // aligning (translationCore's "Step 1. Read", target language only). It is
   // the verse's `display.plain` -- the engine's one USFM reader, never a
@@ -44,6 +62,7 @@
   let lexiconToken: AlignmentToken | null = null;
   let loading = true;
   let busy = false;
+  $: alignmentBusy.set(busy);
   let error = "";
   let notice = "";
   let restoreId = "";
@@ -116,7 +135,7 @@
   // `glossVersion` is read, not used, so Svelte re-invokes these once the
   // lexicon lookups resolve.
   function sourceGloss(token: AlignmentToken, _version: number): string {
-    return glosses.glossFor(token).short;
+    return glosses.cardGlossFor(token);
   }
 
   function sourceTitle(token: AlignmentToken, _version: number): string {
@@ -180,6 +199,7 @@
   }
 
   async function refreshChecks(updated: AlignmentContext, message: string) {
+    if (expectedPath && get(activeProject)?.path !== expectedPath) return;
     context = updated;
     restoreId = updated.history[0]?.id ?? "";
     const key = verseKey(chapter, verse);
@@ -191,9 +211,11 @@
     try {
       // Only the alignment checks: the verse's other findings are kept, and
       // Greek Room runs on demand (#251, #252).
-      await recheckVerse(chapter, verse, ["alignment"]);
+      await recheckVerse(chapter, verse, ["alignment"], { expectedPath });
+      if (expectedPath && get(activeProject)?.path !== expectedPath) return;
       notice = `${message} The alignment checks are current.`;
     } catch (value) {
+      if (expectedPath && get(activeProject)?.path !== expectedPath) return;
       checkStatusByVerse.update((values) => ({ ...values, [key]: "failed" }));
       error = `${message} The save succeeded, but rechecking failed: ${value instanceof Error ? value.message : String(value)}`;
     }
@@ -356,9 +378,13 @@
 
 <svelte:window on:keydown={(event) => event.key === "Escape" && onEscape()} />
 
-<div class="overlay" role="presentation">
-  <section class="modal" role="dialog" aria-modal="true" aria-label={`Word alignment ${reference}`}>
+<div class="overlay" class:standalone role="presentation">
+  <section class="modal alignment-cards" role="dialog" aria-modal="true" aria-label={`Word alignment ${reference}`}>
     <header>
+      <div class="window-controls">
+        <button type="button" disabled={busy} on:click={() => onPin ? onPin() : alignmentPinned.update((v) => !v)} aria-pressed={$alignmentPinned}>{$alignmentPinned ? "Pinned verse" : "Follow editor"}</button>
+        {#if onDetach}<button type="button" disabled={busy} on:click={onDetach}>{standalone ? "Dock in Bridge" : "Move to separate window"}</button>{/if}
+      </div>
       <div>
         <div class="eyebrow">WORD ALIGNMENT</div>
         <h2>{reference} — align source and target words</h2>
@@ -426,6 +452,8 @@
       {#if notice}<div class="notice">✓ {notice}</div>{/if}
       {#if error}<div class="error">{error}</div>{/if}
 
+      <AlignmentWorkspace>
+      <AlignmentPane id="read" label="Read">
       <section class="reading" aria-label={`Read ${reference}`}>
         <div class="panel-title"><span class="panel-label">Read <small>{reference} · {$project?.targetLanguage || "target language"}</small></span></div>
         {#if readingText}
@@ -435,12 +463,14 @@
         {/if}
       </section>
 
-      <div class="workspace">
+      </AlignmentPane>
+      <AlignmentPane id="source" label="Source">
         <section class="source-bank">
           <div class="panel-title">
             <span>Source words</span>
             <small>Click a word for its lexicon entry — its target words sit in the column beneath it</small>
           </div>
+          <SourceSplitControls bind:this={splitControls} {context} {busy} onBusy={(value) => busy = value} onChanged={(values) => { context = values.find((v) => v.chapter === chapter && v.verse === verse) || context; }} />
           <div class="interlinear" dir={context.sourceDirection}>
           {#each columns as column, index (column.ids.join("+"))}
             {@const src = column.tokens[0]}
@@ -460,15 +490,19 @@
                   >⟵</button>
                 {/if}
                 {#each column.tokens as token (token.id)}
+                  <div class="source-card">
                   <button
                     class="token source"
+                    dir={context.sourceDirection}
                     on:click={() => (lexiconToken = token)}
                     disabled={busy}
                     title={sourceTitle(token, glossVersion)}
                   >
-                    <span>{token.word}{#if token.occurrences > 1}<span class="occ">{occurrence(token)}</span>{/if}</span>
-                    {#if sourceGloss(token, glossVersion)}<small class="gloss">{sourceGloss(token, glossVersion)}</small>{/if}
+                    <span class="word">{token.word}{#if token.occurrences > 1}<span class="occ">{occurrence(token)}</span>{/if}</span>
+                    {#if sourceGloss(token, glossVersion)}<small class="gloss" title={sourceTitle(token, glossVersion)}>{sourceGloss(token, glossVersion)}</small>{/if}
                   </button>
+                  {#if canSeparateSource(context, token.id)}<SourceWordActions {token} disabled={busy} onSeparate={(direction) => { void splitControls.separateWord(token.id, direction); }} />{/if}
+                  </div>
                 {/each}
                 {#if column.ids.length > 1}
                   <button
@@ -527,6 +561,8 @@
           </div>
         </section>
 
+      </AlignmentPane>
+      <AlignmentPane id="target" label="Target">
         <section class="word-bank">
           <div class="panel-title">
             <span class="panel-label">
@@ -577,8 +613,10 @@
             {/each}
           </div>
         </section>
-      </div>
+      </AlignmentPane>
+      </AlignmentWorkspace>
 
+      <AlignmentResetControls {context} {busy} onBusy={(value) => busy = value} onChanged={(values) => { context = values.find((v) => v.chapter === chapter && v.verse === verse) || context; restoreId = context?.history[0]?.id || ""; }} />
       <footer>
         <div class="history-controls">
           <button on:click={undo} disabled={busy || !undoId}
@@ -613,6 +651,9 @@
 {/if}
 
 <style>
+  .standalone { padding: 0; background: var(--surface); }
+  .standalone .modal, .standalone .page { width: 100%; height: 100vh; max-height: 100vh; border-radius: 0; }
+  .window-controls { display: flex; flex-wrap: wrap; gap: 4px; }
   .overlay { position: fixed; inset: 0; z-index: var(--z-dialog); background: rgba(15, 20, 26, .58); display: grid; place-items: center; padding: 24px; }
   .modal { width: min(1040px, 100%); max-height: calc(100vh - 48px); overflow: auto; background: var(--surface); border-radius: 16px; box-shadow: 0 24px 80px rgba(0,0,0,.24); padding: 20px; color: var(--text); }
   header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; border-bottom: 1px solid var(--border); padding-bottom: 14px; }
@@ -656,7 +697,6 @@
   .already-aligned.accounted small { color: var(--accent); font-weight: 700; }
   .notice { background: #EAF7EF; color: var(--success); }
   .error { background: #FFF0F0; color: var(--danger); }
-  .workspace { display: flex; flex-direction: column; gap: 14px; }
   /* #409: the reading area. The editor's verse type (font, size, leading), on
      a quiet surface so it reads as text to read, not a card to drag. Wraps at
      any width; `dir`/`lang` come from the project, as in the editor. */
@@ -716,7 +756,7 @@
     display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
   }
   .occ { margin-left: 3px; font-size: 0.8em; font-weight: 400; color: var(--text-3); }
-  .column .token.source { width: 100%; background: #F6F1FF; cursor: pointer; }
+  .column .token.source { background: #F6F1FF; cursor: pointer; }
   /* On the target token itself, not on .aligned-card .word: this one rule
      covers the aligned cards inside the interlinear -- where it also has to
      undo the source face inherited from .interlinear -- and the word bank
@@ -749,7 +789,7 @@
      the arrow buttons join a column with the one before it or split the last
      word out again. */
   .source-words { display: flex; align-items: stretch; gap: 3px; width: 100%; }
-  .column.joined .source-words .token.source { width: auto; flex: 1; }
+  .column.joined .source-words .token.source { flex: none; }
   .join-x { border: 1px solid var(--border); background: var(--surface); color: var(--text-2); border-radius: 4px; font-size: var(--fs-xs); padding: 0 3px; cursor: pointer; line-height: 1; }
   .join-x:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
   .join-x:disabled { opacity: 0.4; cursor: default; }

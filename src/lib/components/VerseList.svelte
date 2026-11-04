@@ -16,7 +16,7 @@
   import VerseHistoryPopover from "./VerseHistoryPopover.svelte";
   import { rawView, revealSidePanel } from "../editorPrefs";
   import { openIssueSummary } from "../verseIssues";
-  import { loadParatextNoteCounts, noteCountFor } from "../paratextNotes";
+  import { loadParatextNoteCounts, noteCountFor, requestParatextNote } from "../paratextNotes";
   import type { FlagInput, LanguageQaFlag } from "../types/languageQa";
   import type { VerseDisplay } from "../types/finding";
   import VerseNotesPopup from "./VerseNotesPopup.svelte";
@@ -157,7 +157,20 @@
       // finding's words are selected when the verse opens.
       { id: "edit", label: "Edit…", separatorBefore: true, disabled: busy,
         title: "Open this verse for editing, with the flagged text selected." },
+      // #433: a Paratext thread for this finding, through the notes panel's
+      // composer; a resolve in Paratext then closes the finding's link.
+      { id: "paratext", label: "Send to Paratext…", disabled: busy || !$project,
+        title: "Write a Paratext Project Note about this finding on this verse, linked to it" },
     ];
+  }
+
+  /** What the Paratext note says about a finding (#433), before the reviewer's own words. */
+  function findingNoteLines(finding: QaFinding): string[] {
+    const lines = [`Bridge finding · ${finding.check_type} (${finding.engine})`];
+    if (finding.original_text?.trim()) lines.push(`Text: ${finding.original_text.trim()}`);
+    if (finding.explanation?.trim()) lines.push(`Finding: ${finding.explanation.trim()}`);
+    if (finding.suggested_replacement) lines.push(`Proposed: ${finding.suggested_replacement}`);
+    return lines;
   }
 
   /**
@@ -373,6 +386,18 @@
         ],
       },
       {
+        // #426: the visible command for Paratext notes on this verse: opens
+        // the notes panel (existing QA suggestions and threads) with a
+        // composer for a new note, on the selection when there is one.
+        id: "paratext-note",
+        label: hasSelection ? "Paratext note on selection…" : "Paratext notes…",
+        separatorBefore: true,
+        title: (hasSelection
+          ? "Open the Paratext notes on this verse and write a note attached to the selected text"
+          : "Open the Paratext notes on this verse (QA suggestions, threads) and write a note") + " (N on a focused verse)",
+        tag: (() => { const n = noteCountFor($paratextNoteCountsByVerse, $currentChapter, verse).open; return n ? `${n} open` : ""; })(),
+      },
+      {
         id: "edit-verse",
         label: "Edit verse",
         separatorBefore: true,
@@ -514,6 +539,10 @@
     }
     if (id === "edit-verse") {
       startVerseEdit($currentChapter, verse);
+      return;
+    }
+    if (id === "paratext-note") {
+      requestParatextNote($currentChapter, verse, selection && word ? word.word : "");
       return;
     }
     if (id === "change-history") {
@@ -812,6 +841,19 @@
       return;
     }
     const isMenuKey = event.key === "ContextMenu" || (event.shiftKey && event.key === "F10");
+    // #426: the keyboard route to the Paratext note command the verse menu
+    // offers ("Paratext notes…" / "Paratext note on selection…"): N on a
+    // focused verse opens the notes panel's composer on it, on the selection
+    // when the row has one.
+    if ((event.key === "n" || event.key === "N") && !event.ctrlKey && !event.altKey && !event.metaKey && $project) {
+      event.preventDefault();
+      selectFromList(verse);
+      const text = (event.currentTarget as HTMLElement).querySelector(".vtext");
+      const selection = text ? selectionInVerse(text) : null;
+      const word = selection ? selectedWord(verse, selection) : null;
+      requestParatextNote($currentChapter, verse, selection && word ? word.word : "");
+      return;
+    }
     if (findingIds.length === 0) {
       if (!isMenuKey) return;
       event.preventDefault();
@@ -861,6 +903,14 @@
     if (event.detail.id === "edit") {
       contextMenu = null;
       editWithSelection(finding, $currentChapter, verse);
+      return;
+    }
+    if (event.detail.id === "paratext") {
+      contextMenu = null;
+      requestParatextNote($currentChapter, verse, word, {
+        kind: "finding", localId: finding.id, title: `${finding.check_type} · ${finding.engine}`,
+        lines: findingNoteLines(finding),
+      });
       return;
     }
     if (event.detail.id === "flag") {

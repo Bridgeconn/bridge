@@ -10,6 +10,7 @@
     "shell:allow-spawn",
     "dialog:allow-open",
     "dialog:allow-save",
+    "window-state:default",
     {
       "identifier": "shell:allow-execute",
       "allow": [

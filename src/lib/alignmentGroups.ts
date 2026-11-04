@@ -3,6 +3,14 @@
 // so both surfaces agree on what "aligned", "unaligned" and "gap" mean.
 import type { AlignmentContext, AlignmentGroupView, AlignmentToken } from "./types/finding";
 
+/** Any existing member may leave a native or active cross-verse source group. */
+export function canSeparateSource(context: AlignmentContext, id: string): boolean {
+  const token = context.topTokens.find(t => t.id === id);
+  return Boolean(token && (context.sourceLayout?.pending?.signature === `${token.word}\u241f${token.occurrence}\u241f${token.occurrences}` ||
+    context.groups.some(g => g.topIds.length > 1 && g.topIds.includes(id)) ||
+    context.crossVerseGroups?.some(g => g.state === "active" && g.sourceTopIds.length > 1 && g.sourceTopIds.includes(id))));
+}
+
 type GroupsView = Pick<AlignmentContext, "groups" | "topTokens" | "bottomTokens">
   & Partial<Pick<AlignmentContext, "crossVerseAccountedIds" | "crossVerseRealizedIds" | "nullDecisions">>;
 
@@ -118,10 +126,13 @@ export interface SourceColumn {
  *  `word1 word2` → `joinedword`, #207) is one column at the place of its
  *  first word, carrying all of them. Drawing one column per source word
  *  showed the same targets under each and a drop broke the group. */
-export function sourceColumns(context: GroupsView): SourceColumn[] {
+export function sourceColumns(context: GroupsView & { sourceLayout?: AlignmentContext["sourceLayout"]; sourceDirection?: "rtl" | "ltr" }): SourceColumn[] {
   const columns: SourceColumn[] = [];
   const placed = new Set<string>();
-  for (const token of context.topTokens) {
+  const order = context.sourceLayout?.order || [];
+  const signature = (t: AlignmentToken) => `${t.word}\u241f${t.occurrence}\u241f${t.occurrences}`;
+  const tokensInOrder = [...context.topTokens].sort((a, b) => { const ia = order.indexOf(signature(a)), ib = order.indexOf(signature(b)); return (ia < 0 ? 1e6 : ia) - (ib < 0 ? 1e6 : ib); });
+  for (const token of tokensInOrder) {
     if (placed.has(token.id)) continue;
     const ids = topIdsFor(context, token.id);
     const tokens = ids.length > 1
@@ -129,6 +140,16 @@ export function sourceColumns(context: GroupsView): SourceColumn[] {
       : [token];
     tokens.forEach((t) => placed.add(t.id));
     columns.push({ ids: tokens.map((t) => t.id), tokens });
+  }
+  for (const [sig, placement] of Object.entries(context.sourceLayout?.placements || {})) {
+    const index = columns.findIndex((c) => c.tokens.length === 1 && signature(c.tokens[0]) === sig);
+    if (index < 0) continue;
+    const residual = columns.find((c) => c.tokens.some((t) => signature(t) !== sig && placement.members.includes(signature(t))));
+    if (!residual || residual.tokens.some((t) => signature(t) === sig)) continue;
+    const [separated] = columns.splice(index, 1);
+    const at = columns.indexOf(residual);
+    const after = context.sourceDirection === "rtl" ? placement.direction === "left" : placement.direction === "right";
+    columns.splice(at + (after ? 1 : 0), 0, separated);
   }
   return columns;
 }

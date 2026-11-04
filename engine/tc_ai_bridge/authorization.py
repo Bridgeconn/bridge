@@ -153,7 +153,7 @@ _READ = (
     "verse.get", "verse.history", "check.listForVerse", "check.validateSelection", "check.loadChapterFindings",
     "alignment.get", "alignment.getRange", "alignment.gapScan", "alignment.crossVerse.propose",
     "alignment.autoAlign.verdict", "alignment.autoAlign.status", "alignment.autoAlign.estimate",
-    "alignment.status", "alignment.backups",
+    "alignment.status", "alignment.backups", "alignment.resetStatus", "alignment.resetChapter.status", "alignment.resetChapter.preview",
     "lexicon.getEntry", "settings.get", "terminology.list",
     "ai.review.status", "ai.review.listForChapter",
     "passageSemantic.status", "passageSemantic.getProjectMetadata", "passageSemantic.getCurrentPassage",
@@ -181,6 +181,9 @@ _READ = (
     "paratext.notesForChapter", "paratext.notesForVerse", "paratext.noteThread",
     # #358: this device's outbox and the book's thread links, read-only.
     "paratext.outbox", "paratext.threadsFor",
+    # #432: the review queue, a preview of one apply, and the latest report, read-only.
+    "paratextReview.queue", "paratextReview.preview", "paratextReview.latestReport",
+    "paratextReview.uncertain", "paratextReview.reports",
     "navigation.status", "navigation.poll", "navigation.bridgeChanged", "navigation.resolve",
     "users.list", "users.setCurrent",
     "assignments.list",
@@ -207,6 +210,8 @@ _WRITE = (
     "verse.decide", "verse.edit", "check.saveSelection", "check.clearSelection",
     "alignment.crossVerse.link", "alignment.crossVerse.unlink", "alignment.null.set", "alignment.null.clear",
     "alignment.autoAlign.revert", "alignment.realign", "alignment.unalign", "alignment.save",
+    "alignment.resetChapter.start", "alignment.resetChapter.step", "alignment.resetChapter.cancel",
+    "alignment.splitSource", "alignment.resetVerse", "alignment.restoreReset",
     "alignment.complete", "alignment.undo", "alignment.restore", "alignment.aiApplyProposal",
     "housestyle.record", "housestyle.setState", "housestyle.import",
     "languageQa.inline", "languageQa.setPack", "languageQa.checkerSettings.set", "languageQa.setReference",
@@ -228,6 +233,15 @@ _WRITE = (
     # #358: Paratext write-back. Any Bridge write role may post (decision 4):
     # a note, a reply, a resolve, a link to an existing thread, a send now.
     "paratext.flushOutbox", "paratext.replyThread", "paratext.resolveThread", "paratext.linkThread",
+    # #426: a note from the Paratext notes panel with no Bridge record behind it,
+    # and a thread for a finding or a correction proposal (#433).
+    "paratext.createNote", "paratext.queueRecord",
+    # #432/#433: a decision on a QA proposal (an apply goes through edit_verse),
+    # the reviewer's queue state, the checked revert, and the evidence files.
+    "paratextReview.decide", "paratextReview.saveState", "paratextReview.revertLatest",
+    "paratextReview.exportCsv", "paratextReview.report",
+    # #431: the reviewer's reconciliation of an interrupted apply.
+    "paratextReview.reconcile",
 )
 
 _MANAGE_PROJECTS = (

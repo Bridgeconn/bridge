@@ -86,6 +86,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "svelte-check failed" }
           npm run test
           if ($LASTEXITCODE -ne 0) { throw "vitest failed" }
+          node --test scripts/tests/update-manifest.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Updater manifest tests failed' }
 
       - name: Draft the release if the tag has none
         if: env.RELEASE_TAG != ''
@@ -143,8 +145,15 @@ jobs:
         run: |
           Import-Module ./scripts/WindowsRelease.psm1
           $enabled = -not [string]::IsNullOrWhiteSpace($env:BRIDGE_WINDOWS_SIGN_COMMAND)
-          if ($enabled -or $env:RELEASE_TAG -ne '') {
+          # 2026-11-03 (Benz, DECISIONS.md): until a trusted signing identity
+          # exists, a tagged release builds and attaches an unsigned Windows
+          # installer, flagged in the run summary. The Defender scan and the
+          # hash checks still gate it; only the signature requirement is lifted.
+          if ($enabled) {
             $null = Get-BridgeSigningConfiguration
+          } elseif ($env:RELEASE_TAG -ne '') {
+            '::warning::Windows release is UNSIGNED: BRIDGE_WINDOWS_SIGN_COMMAND is not set (gate relaxed 2026-11-03, #413).'
+            '**Windows installer is unsigned** (no signing identity configured; gate relaxed 2026-11-03, #413).' >> $env:GITHUB_STEP_SUMMARY
           }
           "WINDOWS_SIGNING_ENABLED=$($enabled.ToString().ToLowerInvariant())" >> $env:GITHUB_ENV
           if ($enabled) {
@@ -253,15 +262,33 @@ jobs:
 
       - name: Build desktop app
         env:
+          BRIDGE_UPDATER_PUBLIC_KEY: ${{ vars.BRIDGE_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # Ad-hoc signature on macOS (see the header). The Windows and Linux
           # bundlers never read this variable.
           APPLE_SIGNING_IDENTITY: "-"
         run: |
-          if ($IsWindows -and $env:WINDOWS_SIGNING_ENABLED -eq 'true') {
-            npm run tauri build -- --config $env:WINDOWS_SIGNING_CONFIG
-          } else {
-            npm run tauri build
+          # Updater signatures are independent of Windows Authenticode signing.
+          # Never publish an updater-enabled installer without a trusted key.
+          # Relaxed 2026-11-03 (Benz, #413 / DECISIONS.md): until the key pair
+          # is provisioned, a tagged release builds a Windows installer with
+          # NO updater artifacts and no feed, flagged in the run summary. The
+          # installed app then reports "no updater signing key" and never
+          # checks for updates. Restore the throw when the keys exist.
+          $updater = $IsWindows -and -not [string]::IsNullOrWhiteSpace($env:BRIDGE_UPDATER_PUBLIC_KEY) -and -not [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)
+          if ($IsWindows -and $env:RELEASE_TAG -ne '' -and -not $updater) {
+            Write-Host '::warning::BRIDGE_UPDATER_PUBLIC_KEY / TAURI_SIGNING_PRIVATE_KEY are not configured: this Windows installer carries no updater artifacts and no update feed is published (#413, DECISIONS 2026-11-03).'
+            "**Windows updater: not configured.** No updater artifacts or latest.json for this release; installed apps will not auto-update to or from it.`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
           }
+          "UPDATER_ENABLED=$(if ($updater) { 'true' } else { 'false' })" >> $env:GITHUB_ENV
+          $overlay = @{ bundle = @{ createUpdaterArtifacts = $updater } }
+          if ($IsWindows -and $env:WINDOWS_SIGNING_ENABLED -eq 'true') {
+            $overlay.bundle.windows = (Get-Content -LiteralPath $env:WINDOWS_SIGNING_CONFIG -Raw | ConvertFrom-Json).bundle.windows
+          }
+          $config = Join-Path $env:RUNNER_TEMP 'bridge-release-config.json'
+          $overlay | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $config -Encoding utf8
+          npm run tauri build -- --config $config
           if ($LASTEXITCODE -ne 0) { throw 'Desktop build failed' }
 
       # The bundler signs the externalBin sidecars along with the app (the
@@ -305,6 +332,18 @@ jobs:
           $lines += "BUNDLE_PATHS"
           $lines | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
+      # GitHub's hosted Windows images ship with Defender real-time protection
+      # switched off, so the #413 scan gate (which refuses to run without it)
+      # had never passed in CI. Switch it on for this job and show the state;
+      # the scan still fails honestly if the service cannot be brought up.
+      - name: Enable Defender real-time protection on the runner
+        if: runner.os == 'Windows'
+        run: |
+          try { Set-MpPreference -DisableRealtimeMonitoring $false -ErrorAction Stop } catch { "Set-MpPreference: $($_.Exception.Message)" }
+          try { Update-MpSignature -ErrorAction Stop } catch { "Update-MpSignature: $($_.Exception.Message)" }
+          Start-Sleep -Seconds 10
+          Get-MpComputerStatus | Select-Object AMServiceEnabled, AntivirusEnabled, RealTimeProtectionEnabled, AMRunningMode, AntivirusSignatureLastUpdated | Format-List
+
       - name: Scan final Windows executables and installer
         if: runner.os == 'Windows'
         env:
@@ -312,7 +351,7 @@ jobs:
         run: |
           $files = @('src-tauri/target/release/translationcore-ai-bridge.exe', 'src-tauri/target/release/bridge-engine.exe', 'src-tauri/target/release/bridge-usfm-checker.exe')
           $files += @($env:BUNDLE_PATHS -split "`r?`n" | Where-Object { $_.Trim() -ne '' })
-          $signed = $env:RELEASE_TAG -ne '' -or $env:WINDOWS_SIGNING_ENABLED -eq 'true'
+          $signed = $env:WINDOWS_SIGNING_ENABLED -eq 'true'
           ./scripts/check-windows-release.ps1 -Path $files -ReportPath "$env:RUNNER_TEMP/windows-security-report.json" -RequireSignature:$signed
 
       - name: Smoke-test the final Windows sidecars
@@ -328,7 +367,7 @@ jobs:
         run: |
           $files = @('src-tauri/target/release/translationcore-ai-bridge.exe', 'src-tauri/target/release/bridge-engine.exe', 'src-tauri/target/release/bridge-usfm-checker.exe')
           $files += @($env:BUNDLE_PATHS -split "`r?`n" | Where-Object { $_.Trim() -ne '' })
-          $signed = $env:RELEASE_TAG -ne '' -or $env:WINDOWS_SIGNING_ENABLED -eq 'true'
+          $signed = $env:WINDOWS_SIGNING_ENABLED -eq 'true'
           ./scripts/check-windows-release.ps1 -VerifyOnly -Path $files -ReportPath "$env:RUNNER_TEMP/windows-security-report.json" -RequireSignature:$signed
 
       - name: Preserve Windows security report
@@ -354,6 +393,20 @@ jobs:
           } | Set-Content -LiteralPath $manifest -Encoding utf8
           "path=$manifest" >> $env:GITHUB_OUTPUT
 
+      - name: Prepare the stable Windows updater feed
+        id: updater
+        if: runner.os == 'Windows' && env.RELEASE_TAG != '' && !contains(env.RELEASE_TAG, '-') && env.UPDATER_ENABLED == 'true'
+        env:
+          BUNDLE_PATHS: ${{ steps.bundles.outputs.paths }}
+        run: |
+          $installer = @($env:BUNDLE_PATHS -split "`r?`n" | Where-Object { $_ -like '*-setup.exe' })
+          if ($installer.Count -ne 1) { throw 'Expected exactly one Windows updater installer' }
+          $manifest = Join-Path (Split-Path $installer[0] -Parent) 'latest.json'
+          node scripts/write-update-manifest.mjs '${{ github.repository }}' $env:RELEASE_TAG $installer[0] $manifest
+          if ($LASTEXITCODE -ne 0) { throw 'Updater manifest generation failed' }
+          "manifest=$manifest" >> $env:GITHUB_OUTPUT
+          "signature=$($installer[0]).sig" >> $env:GITHUB_OUTPUT
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -361,6 +414,8 @@ jobs:
           path: |
             ${{ steps.bundles.outputs.paths }}
             ${{ steps.checksums.outputs.path }}
+            ${{ steps.updater.outputs.manifest }}
+            ${{ steps.updater.outputs.signature }}
           if-no-files-found: error
           retention-days: 90
 
@@ -373,6 +428,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           BUNDLE_PATHS: ${{ steps.bundles.outputs.paths }}
           CHECKSUM_PATH: ${{ steps.checksums.outputs.path }}
+          UPDATE_MANIFEST: ${{ steps.updater.outputs.manifest }}
+          UPDATE_SIGNATURE: ${{ steps.updater.outputs.signature }}
         run: |
           # @(...) is load-bearing: with one bundle, Where-Object hands back a
           # bare string, and splatting a string passes every character as its
@@ -380,7 +437,12 @@ jobs:
           $paths = @($env:BUNDLE_PATHS -split "`r?`n" | Where-Object { $_.Trim() -ne "" })
           if ($IsWindows) {
             $files = @('src-tauri/target/release/translationcore-ai-bridge.exe', 'src-tauri/target/release/bridge-engine.exe', 'src-tauri/target/release/bridge-usfm-checker.exe') + $paths
-            ./scripts/check-windows-release.ps1 -VerifyOnly -Path $files -ReportPath "$env:RUNNER_TEMP/windows-security-report.json" -RequireSignature
+            ./scripts/check-windows-release.ps1 -VerifyOnly -Path $files -ReportPath "$env:RUNNER_TEMP/windows-security-report.json" -RequireSignature:($env:WINDOWS_SIGNING_ENABLED -eq 'true')
           }
           gh release upload $env:RELEASE_TAG @paths $env:CHECKSUM_PATH --repo ${{ github.repository }} --clobber
           if ($LASTEXITCODE -ne 0) { throw "Release upload failed" }
+          # Publish the feed last, after its installer is present and checked.
+          if ($env:UPDATE_MANIFEST) {
+            gh release upload $env:RELEASE_TAG $env:UPDATE_SIGNATURE $env:UPDATE_MANIFEST --repo ${{ github.repository }} --clobber
+            if ($LASTEXITCODE -ne 0) { throw 'Updater feed upload failed' }
+          }

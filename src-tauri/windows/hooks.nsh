@@ -13,6 +13,9 @@
 
 !macro NSIS_HOOK_POSTINSTALL
   IfSilent bridge_connector_done
+  ; Tauri's updater uses passive /UPDATE mode, which is not a silent install.
+  ; Keep background app upgrades free of the optional connector prompt (#321).
+  StrCmp $UpdateMode "1" bridge_connector_done
   ; A 32-bit installer reads the WOW6432Node view, which is where Paratext 9 registers.
   ReadRegStr $1 HKLM "SOFTWARE\Paratext\8" "Paratext9_Full_Release_AppPath"
   StrCmp $1 "" bridge_connector_done

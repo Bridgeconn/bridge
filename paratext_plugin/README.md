@@ -16,9 +16,54 @@ The connector (0.8.0, #358) supports:
   a thread found by its anchor and first comment (`key`). A Paratext note has no
   id, so author + created is its identity.
 
-It deliberately contains no Scripture-writing (`PutUSFM`/`PutUSX`) operation and
-never deletes a note. The logged-in Paratext user is the author of every note
-and comment; ambiguous repeated-text anchors are refused.
+Since 0.9.0 (#429, DECISIONS 2026-11-02, decided by Benz) it also has **one**
+Scripture write, `put_verse_text`: `CanEdit`, then under Paratext's chapter
+write lock the chapter's tokens are read (`GetUSFMTokens(book, chapter)`), the
+exact `original` located once in the verse's Scripture text tokens (never in a
+footnote or cross-reference token, never across two tokens, on text-element
+boundaries; repeats told apart by the note's before/after context), that one
+token's text replaced, the chapter written with `PutUSFMTokens(lock, tokens,
+book)`, notifications sent, and the tokens read again; `verified` is true only
+when the chapter's USFM reads exactly as expected. A history point is taken
+before and after. (#438: the installed 9.5.110.1 interfaces' `PutUSFM` takes
+`(lock, usfm, bookNum)` -- a whole-book write -- so the first cut, which called
+it with a chapter, did not compile; the token route is the one the reference
+plugin ran on this host.)
+Bridge sends it only after a reviewer confirmed the correction in the review
+queue and it was applied and verified on Bridge's own copy. The plugin never
+deletes or reopens a note and never restructures USFM. The logged-in Paratext
+user is the author of every note, comment and edit; the Bridge user who
+confirmed it travels as `bridge_user` for the evidence, never as the author.
+
+**0.9.0's first cut failed to compile on Benz's Paratext PC (#438, 2026-11-02)**;
+the token route above replaces it and has not yet been compiled there. The
+machine it was written on has no Paratext, so `build.ps1` on a Paratext PC is
+the compile check and `docs/PARATEXT_HOST_ACCEPTANCE_CHECKLIST.md` the live
+one. The members used (`CanEdit(plugin, book, chapter)`, `RequestWriteLock(plugin,
+release, book, chapter)`, `GetUSFMTokens`, `PutUSFMTokens`, `SendNotifications`,
+`ConvertToUSFMString`, `MakeHistoryPoint`, and the `IUSFMTextToken` members of
+`ChangedTextToken`) are exactly those selvabenz/Paratext-sug-in-context-menu
+compiled and ran against the same 2.0.100.0 interfaces.
+
+Since 0.10.0 (#429, #430, 2026-11-03) `put_verse_text` takes a `region`:
+`body` (as before), `footnote` / `crossReference` (the verse's note tokens, by
+note kind), `heading` (the heading tokens the verse introduces -- Paratext
+anchors them on the verse before, so `firstVerse - 1` is accepted) and
+`introduction` (chapter 0 to the token API, the `\i*` paragraphs). The token
+classification is the reference plugin's `TokenMapping.Parts`, compiled and run
+on the host. A region is never a fallback for another. The second write,
+`rename_marker`, is the reference plugin's `ApplyMarkerRename`: an exact
+heading / chapter-label marker rename (ms, ms1-3, s, s1-4, cl, cd) with the
+label unchanged, unique at the anchor, no attributes, the edited chapter
+rendered to USFM and parsed again by Paratext (`ConvertToUSFMTokens`) before
+`PutUSFMTokens`, read back after. Capabilities `text_regions` and
+`rename_marker` tell Bridge which connector it is talking to; an older one keeps
+a region write queued with the reason. **0.10.0 has not been compiled anywhere
+yet** (no Paratext on the machine it was written on); the members it adds
+(`IUSFMMarkerToken.Marker/Type/Data/EndMarker/Attributes`, `MarkerType.Verse/
+Paragraph`, `ConvertToUSFMTokens(string, int, int, int)`) are exactly those the
+reference plugin's `ChangedMarkerToken` and `ApplyMarkerRename` compiled against
+2.0.100.0.
 
 ## Live verification
 

@@ -11,10 +11,20 @@ Microsoft has not yet confirmed whether this detection is a false positive.
 
 ## Release gates
 
-`release.yml` requires signing configuration for a Windows job that attaches to
-a GitHub release. Missing configuration fails before the expensive build. A
-manually dispatched run with `upload_to_release` blank may produce unsigned
-internal artifacts; those are not eligible for public release.
+`release.yml` signs when `BRIDGE_WINDOWS_SIGN_COMMAND` is set and requires the
+signatures to verify. **Relaxed on 2026-11-03 (Benz, DECISIONS.md):** until a
+trusted signing identity exists, a tagged release without that variable builds
+and attaches an *unsigned* Windows installer, with a warning in the run summary;
+the Defender scan, the 24-hour definition check and the hash rechecks still
+gate it. The original rule -- no unsigned public Windows release -- is restored
+by reverting that change once signing is provisioned.
+
+The second Windows gate, the Tauri updater key pair of #321, was relaxed the
+same day on Benz's approval for the acceptance-test build: a tagged release
+without `BRIDGE_UPDATER_PUBLIC_KEY` and `TAURI_SIGNING_PRIVATE_KEY` builds an
+installer with no updater artifacts and publishes no update feed, with a
+warning in the run summary. Installed apps from such a release never check for
+updates. Restore the throw in `release.yml` once the keys are provisioned.
 
 The workflow signs both Python sidecars before packaging. Tauri invokes the
 same signing wrapper for the application and installer via a temporary config

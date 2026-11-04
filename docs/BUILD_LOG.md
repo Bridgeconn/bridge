@@ -23208,3 +23208,952 @@ and determination, and clean-Windows installed acceptance are still pending.
 Public Windows release uploads intentionally fail until signing is configured;
 unsigned internal artifact-only builds remain available. No credential, paid
 service, tag, release or installer replacement was created.
+
+## 2026-11-02 — #423 Paratext notes epic: scope triage, #427 parser and #426 panel writes shipped in source (branch `paratext-notes`, Joel)
+
+**The ask and what it is.** #423 is a thirteen-child planning epic (#424–#436) for app-wide
+Paratext notes with a QA-correction round trip; every child says "Planning only; implementation
+is not authorized in this task", and four carry an "Approved policy update — 2026-11-02" that
+reverses two recorded decisions (Scripture writes through Paratext's API; automatic closure of a
+Bridge record on a Paratext resolve). The session was asked to implement the lot. Triage, from
+the code and this machine, before any code was written:
+
+| Child | Can it be built and verified here? | Why |
+| --- | --- | --- |
+| #424 spike, #436 validation | No | They need a real Paratext 9.5 host. This PC has no Paratext (registry empty, no projects folder, no connector pipe). |
+| #429, #430, #431 | Not without a decision | A Scripture writer through `PutUSFM`/`PutUSX`; `CLAUDE.md` stop-and-ask and DECISIONS 2026-10-26 "rules out". Recorded as PROPOSED in DECISIONS, not implemented. |
+| #425 automatic closure, #433 | Not without a decision | Reverses decision 3 ("never applied without a click"). Same PROPOSED entry. The rest of #425 (identity, footer idempotency, refused/queued states, independent retry) already exists from #358. |
+| #428, #432, #434, #435 | Later | A review window with Apply, a project-wide queue, reports and layout all sit on top of #429/#433 or need the real desktop at 1366x768. |
+| **#427** | **Yes, done** | Pure parser, synthetic fixtures, no host, no policy. |
+| **#426 core** | **Yes, done** | Notes created / replied / resolved from the panel ride the existing outbox and connector 0.8.0 calls; the stand-in exercises them. The real round trip is NOT RUN. |
+
+**#427 — `engine/tc_ai_bridge/paratext_proposals.py`.** Reads the `[AI-QA <pass>] <topic> — <category>`
+header, the `Original` / `Suggested` / `Reason` / `Reference` / `Location` / `Severity` fields and the
+`Confidence · Reviewer decision needed · Severity` metadata line, for every block in a comment.
+The format came from the reference plugin's `Domain.cs` and `CATEGORY_HANDLING.md` (format only;
+no code copied, and that repository has no licence file — DECISIONS). Each proposal carries a
+`route` (`literal`, `review`, `structure`, `noChange`, `legacy`, `unreadable`), an `operation`
+(`replace`, `insert`, `delete`, `alternatives`, `instruction`, `structural`, `markerRename`,
+`noChange`, `none`), a `region`, the sixteen canonical categories (seven of them "literal"
+categories; the rest route to review whatever the Suggested field holds), `reviewerDecision`
+(missing metadata = Yes), `anchorWarning`, `historical` (a `Changed to:` is not outstanding), and
+a `proposalId` hashed from thread, author, date, block and NFC/whitespace-normalized content.
+Prose detection generalizes the reference's Tamil-only rule: parentheses, ellipsis, line breaks,
+an instruction verb at the start, or Latin letters against a non-Latin Original. A parser that
+cannot read a structured-looking comment answers `unreadable` with diagnostics and never raises,
+so one bad note never stops the thread or the verse. Nothing here applies anything: `literal` is
+the strongest claim the parser makes, not a permission. Wire: `proposals` (counts) on every
+thread summary, `proposalItems` on the full thread (`notesForVerse`, `noteThread`, `threadsFor`).
+
+**#426 core.** `paratext_outbox.KINDS` gains `note` (local id = own message id for a create, the
+thread id for a reply or resolve). `paratext.createNote` {chapter, verse, text, selectedText?}
+validates a selection with `require_unique_selection`, adds the neighbouring-word context (#358 h),
+enqueues `create_thread` with the `[Bridge ref …]` footer and flushes only that id; the
+destination and author rules are #358's. `paratext.notesForVerse` now returns `pending`: this
+verse's creates that are queued, refused, or sent but not yet read back from Paratext's file, and
+replies/resolves on its threads not yet sent — so the panel never shows a note as made before the
+file holds it. Classified as a write-role method in `authorization.py` (decision 4 on #358).
+Frontend: the Paratext notes panel has "New note…" (composer with optional "Attach to text"),
+Reply and "Resolve in Paratext" on every thread (kind `note`), a pending list, read-only proposal
+blocks with the parser's route label, and drafts kept per project+verse for the session
+(`paratextNotes.ts`). The verse context menu gains "Paratext notes…" / "Paratext note on
+selection…" (`requestParatextNote` reveals the panel and seeds the composer): the visible,
+keyboard-reachable command #426 asks for beside the panel itself. One Svelte gotcha hit and
+fixed: `$: switchDraft(currentDraftKey())` never re-ran because the stores were read inside the
+function, not in the statement; the statement now names them.
+
+**Not done, deliberately.** No Apply control anywhere (#428/#429). No automatic closure
+(#425/#433). The notes panel is still the editor layout's side panel; alignment review and
+Project Home do not host it (#426's "every work area"). `pending` polls the engine for a bounded
+while after a write; the background outbox flush on the navigation probe is unchanged.
+
+**Ran and watched (source, this branch at `7786d39` + these changes).**
+- `tests/project_io/test_paratext_proposals.py`: 57 passed. `tests/service/test_paratext_notes_panel_protocol.py`:
+  6 passed. The Paratext suites plus `test_authorize_roles.py` together: 171 passed.
+- Full engine `pytest -n auto`: 5,716 passed, 29 failed, 1 skipped, 3 xfailed in 12m05s. All 29 are
+  environmental and none touches Paratext: 17 pass when rerun with `--basetemp C:\t\pt` (they
+  failed on `WinError 206`, the OneDrive path plus pytest's temp nesting exceeding MAX_PATH), and
+  the 12 `test_semantic_mapping_stage3.py` failures are `Semantic source database not found:
+  resources/semantic_mapping/bridge_semantic_source_v0.3.sqlite` (the `stage3db` resource is not
+  on this machine). Not fixed here; neither is a code failure.
+- Frontend: `npm run check` 0 errors / 0 warnings; `npm run test` 104 files, 1,083 passed;
+  `npm run build` passed (existing chunk-size warning).
+- Frozen pair: see the line below this entry.
+- NOT RUN: any real Paratext (create here → see there → reply there → refresh here), the
+  installed desktop at 1366x768, Rust (`src-tauri` untouched).
+- Frozen pair: `scripts/build-sidecars.ps1` built both executables and
+  `scripts/smoke_sidecars.py engine/dist/bridge-engine.exe` passed (real Wildebeest/Uroman, both
+  indic-qa layers, desktop connectors, alignment/export/undo, hub `/health`).
+
+## 2026-11-02 — #423 batch 2: review queue, Benz's decided policy (Paratext Scripture write, automatic closure, attribution), host checklist (branch `paratext-notes`, Joel)
+
+**What changed between batch 1 and this.** Joel asked for the rest of #423 to be built, and
+Benz answered the policy questions on the issue (comment 6573021022, 2026-11-02): the two
+reversals are approved, attribution is named, closure covers all three record types, the
+reference repo is his and may be reused, and he will run the host test. DECISIONS.md carries
+the decided entry (the PROPOSED text kept below it for the record) and the two 2026-10-26
+entries are amended in place, not deleted. CLAUDE.md's automatic-path paragraph and stop-and-ask
+bullet record the new boundary.
+
+**Review queue (#428, #431, #432, #433, #434) -- `tc_ai_bridge/paratext_review.py`, workbench v12.**
+Two tables: `paratext_review_decisions` (synced; one row per proposal decision, every revision a
+change_log row) and `paratext_review_state` (device-local position, filter, drafts).
+`queue_items` lists the open book's outstanding proposals in Scripture order from the notes
+index (never a sibling's files); `locate` finds the Original once in the verse body on
+text-element boundaries (a span that would end before a vowel sign or virama is skipped),
+narrowed by the note's own before/after context then by whole-word matches, never across markup
+or into a footnote; `apply_proposal` goes through `edit_verse` with `expected_old_text` -- the one
+Scripture writer -- and marks `verified` only when the read-back equals what was written at the
+span; rejected / manual need a comment and record the observed text; deferred is non-terminal;
+`thread_completion` is what lets "Resolve thread in Paratext" be offered as a click;
+`revert_latest` restores the latest verified apply only while the verse still equals its
+post-image; `decisions_csv` is UTF-8 BOM, formula-safe (`'` before `= + - @`); the HTML session
+report is fully escaped, written atomically, recoverable as "latest report". The dialog
+(`ParatextReviewQueue.svelte`, from the notes panel's "Review queue…") has the list, filters,
+the source proposal, the located span and After preview, alternatives, editable replacement,
+five presets that only fill the comment, the four decisions, Previous / Next / Go to verse, and
+a Reports / recovery tab. Browsing never changes a stored target: the engine locates at apply time.
+
+**Decided policy.**
+- *Scripture write into Paratext* (#429): connector **0.9.0** adds `put_verse_text` (C#:
+  chapter write lock via `RequestWriteLock(plugin, release, bookNum, chapterNum)`, `GetUSFM`,
+  verse span by `\v N`, the original located once outside `\f`/`\x`/`\fe` notes with
+  whitespace-collapsed context, `PutUSFM`, `GetUSFM` again, `verified` only on an exact match;
+  refuses markers/line breaks in the replacement, empty replacement without `allow_delete`,
+  resources). Python: `ParatextConnectorClient.put_verse_text`, outbox op `put_verse_text`
+  (no footer; a "not found"/"occurs N times" refusal is final and never retried in the
+  background), `paratextReview.decide` with `writeParatext` queues it **after** the verified
+  Bridge apply and records the outbox status on the decision; the queue shows it; an older
+  connector keeps it queued with the update hint. **The C# has not been compiled**: no Paratext
+  (and so no `PluginInterfaces.dll`) on this machine. The API shapes are as the Paratext 9.5
+  plugin interfaces document them; Benz's `build.ps1` is the first compile.
+- *Automatic closure* (#425, #433): `_reconcile_paratext_closures` runs on `paratext.threadsFor`,
+  `paratext.refresh` and `paratext.flushOutbox`: a linked thread the index shows resolved closes
+  its record once -- `closure` on the `paratext_links` row ("resolved in Paratext", actor, resolve
+  date, seen-at; "resolved in Bridge" when the resolve was Bridge's own), plus `resolved` with the
+  `resolved_from_paratext` event for an issue resolution. Findings and proposals get the closure
+  only: no Apply/Reject invented, CORRECTED never set. The one-click RPC stays and is refused as
+  already resolved. The thread panel shows the closure and offers no click.
+- *Attribution*: `outbox.attributed()` puts `[<display name> (<user id>) via Bridge]` on the first
+  line of every note, reply and the "Resolved in Bridge." comment that now precedes a Bridge
+  resolve; the outbox row carries `bridgeUser`; Paratext's author stays the PC's user.
+
+**Not done.** Findings and correction proposals still have no UI that creates a Paratext link
+(the thread panel is mounted on issue-resolution cards only), so their closure path is engine-only
+until a card offers "Send to Paratext" for them; #430 heading markers stay review-only; the
+revert is Bridge-side only (Paratext is not reverted; the checklist says so); #435's desktop
+layout and #436's host validation are Benz's walk (`docs/PARATEXT_HOST_ACCEPTANCE_CHECKLIST.md`).
+
+**Ran and watched (source).**
+- New: `tests/service/test_paratext_review_queue_protocol.py` 11, `test_paratext_decided_policy_protocol.py` 6;
+  updated: outbox, notes-panel, connector-client, v7-upgrade, hub-sync and workbench suites for the
+  changed expectations (closure on links, the "Resolved in Bridge." comment, the attribution line,
+  v12, 14 synced tables, exactly one `PutUSFM` followed by a read-back).
+- Full engine `pytest -n auto --basetemp C:\t\pt2`: 5,752 passed, 14 failed, 1 skipped, 3 xfailed
+  in 7m00s. Twelve are `test_semantic_mapping_stage3.py` (missing `bridge_semantic_source_v0.3.sqlite`
+  on this PC, as in batch 1); two were `test_workbench_v7_upgrade.py` pinning v11, fixed to v12 and
+  rerun (6 passed). The short temp path removed batch 1's MAX_PATH failures.
+- Frontend: `npm run check` 0/0; `npm run test` 105 files, 1,091 passed; `npm run build` ok.
+- Frozen pair rebuilt (`scripts/build-sidecars.ps1`) and `scripts/smoke_sidecars.py` passed
+  (real Wildebeest/Uroman, both indic-qa layers, desktop connectors, alignment/export/undo, hub `/health`).
+- NOT RUN: connector 0.9.0 compile and every real-Paratext step (the checklist); the desktop at 1366×768.
+
+## 2026-11-02 — #438: connector 0.9.0 did not compile on the real host; verse write moved to the token API (Joel)
+
+Benz's live walk (comment on #423, 10:34 UTC) passed the notes round trip on Paratext 9.5.110.1
+with connector 0.8.1 against PR commit `d5da598`: create / reply / resolve with read-back, the
+attribution line, "resolved in Bridge" on the link, idempotent re-resolve, wrong project and
+stale key refused. Scripture SHA-256 unchanged. But `build.ps1` on 0.9.0 failed:
+`CS1501: No overload for method 'PutUSFM' takes 4 arguments` -- the installed interfaces
+(2.0.100.0) expose `PutUSFM(IWriteLock, String, Int32)` (lock, usfm, bookNum: a whole-book
+write) and `PutUSFMTokens(IWriteLock, IReadOnlyList<IUSFMToken>, Int32)`. CLAUDE.md's rule
+("never trust a doc's description of what it does -- run it") applied to me: I wrote the call
+from memory of the API and nothing here could compile it.
+
+**Fix.** `PutVerseText` now takes the route selvabenz/Paratext-sug-in-context-menu compiled
+and ran on that host: `CanEdit(plugin, book, chapter)`; history point; chapter-scoped
+`RequestWriteLock(plugin, release, book, chapter)`; `GetUSFMTokens(book, chapter)`; the verse's
+Scripture text tokens (not metadata/figure/special/footnote tokens, `IsScripture`, the verse
+number or bridge range) concatenated into a plain string with a map back to each token; the
+original located once on text-element boundaries (`StringInfo.ParseCombiningCharacters`),
+never across two tokens, repeats narrowed by the note's context; that one token replaced by a
+`ChangedTextToken`; `ConvertToUSFMString` for the expected chapter; `PutUSFMTokens(lock,
+tokens, book)`; `SendNotifications`; `GetUSFMTokens` again and `verified` only on an exact
+match; history point after. `FindVerseSpan` / `InsideNote` / `StripMarkup` are gone. The
+protocol shape to Bridge is unchanged (`usfm_before`/`usfm_after` are now the edited token's
+text). The source test pins exactly one `PutUSFMTokens`, no `PutUSFM`/`PutUSX`/delete/reopen,
+and the write-then-notify-then-reread order.
+
+**Still not compiled here.** Benz's next `build.ps1` is the check; #438's acceptance (one
+correction persists, other verses/chapters/notes/markers preserved, refusals) is his walk.
+
+## 2026-11-02 — #433: findings and correction proposals get their Paratext thread (branch `paratext-cards`, Joel)
+
+The gap left after #437: closure on a verified Paratext resolve covered all three record kinds
+in the engine, but only issue-resolution cards could create a thread. Now:
+- `paratext.queueRecord` {kind: finding | correction_proposal, localId, chapter, verse, lines,
+  text, selectedText?}: the card's `lines` (check and text for a finding; current / proposed /
+  why for a proposal) and the reviewer's own note, attributed, footered, through the outbox
+  with the record's kind and id as the link key. Message id from kind + id + body, so the same
+  record with the same note sends nothing twice and a new note is a new thread. The link is
+  made when the index shows the thread; a verified resolve closes it (link only, no finding
+  status invented -- the protocol test checks no qa decision row appears).
+- `paratext.notesForVerse` threads carry `links` (kind, localId, closure), so the notes panel
+  badges "finding · resolved in Paratext" wherever the thread shows.
+- Greek Room finding menu: "Send to Paratext…" opens the notes panel's composer for the
+  finding (`requestParatextNote` with a `record`); the composer shows what the note will say
+  about the record and allows an empty reviewer note. Correction review panel: "Send to
+  Paratext…" and the thread panel mounted on the proposal (`kind="correction_proposal"`).
+- Ran: `tests/service/test_paratext_record_threads_protocol.py` 3 passed; notes-panel, roles
+  suites; svelte-check 0/0; ParatextNotesPanel 12, VerseList 115 (menu label list updated),
+  CorrectionReviewPanel 66, ThreadPanel 7. Full gates below.
+
+### Paratext notes policy reversal (#423–#436, 2026-11-02)
+
+Benz explicitly approved Bridge writing Scripture through Paratext and a
+Paratext thread resolution automatically closing its linked Bridge QA record.
+Appended the superseding decision in DECISIONS.md, preserving the historical
+2026-10-26 decisions. Updated contributor/agent guidance and the Paratext notes
+plan to distinguish these approved capabilities from implementation work still
+needed: API inspection, ownership/concurrency checks, supported locked writes,
+saved-USFM verification, durable external-resolution history and recovery.
+
+Automatic external closure does not fabricate a correction decision or bypass
+Stage 9B's positive verification and human CORRECTED acknowledgement. No source
+code, schema, project data, Scripture, connector installation or runtime behavior
+was changed. Verification is documentation diff/whitespace review and issue
+readback; application tests and real-host acceptance were not run for this work.
+
+### Paratext notes follow-up answers and pull (#423, #437, 2026-11-02)
+
+At Benz's request ran `git pull --ff-only --autostash origin main`: already up
+to date at c6f3bb1; existing local policy documentation was preserved. PR #437
+is not merged by this command. Recorded that Bridge owns the reviewed save
+workflow, the actual Bridge user must be named for changes/saves, and resolution
+origin is "resolved in Bridge" or "resolved in Paratext". Automatic external
+closure covers findings, correction proposals and issue resolutions without
+discarding their history or claiming a verified correction.
+
+Benz explicitly granted use and redistribution of his reference plugin. A fresh
+GitHub repository/root/README check still showed no licence file/text and
+`license: null`; documented the owner's grant without claiming an upstream
+licence change. Benz will perform real-Paratext testing; live acceptance remains
+NOT RUN. Updated planning issues and the PR discussion with these answers.
+No application implementation, merge, release, installer or Scripture edit was
+performed. Documentation whitespace checks and GitHub readback are the checks
+for this follow-up.
+
+### Live Paratext walkthrough and connector API blocker (#423, #424, #429, #436, #438, 2026-11-02)
+
+At Benz's request, exercised the actual local Paratext 9.5.110.1 host and
+installed connector 0.8.1. Used only NSTest ("Note Suggestions Disposable Test")
+for native writes, with synthetic notes. The working translation's active
+project/reference was preserved. Created two test threads in total, both left
+resolved; no native note was deleted and no Scripture was edited.
+
+Live connector checks passed: requested-project targeting while another project
+was active; native create/list/reply/resolve and disk-index readback; rejection
+of invalid project, unmatched selection, genuinely repeated Unicode selection
+and stale thread key; idempotent repeated resolution. Paratext 9.5 persisted
+resolution as Status `deleted`. The disposable Scripture file's SHA-256 matched
+before/after all writes.
+
+Fetched PR #437 and created an isolated detached checkout of d5da598 under the
+ignored `engine/build/paratext-walk-20261102/` directory; did not merge it or
+change the current main checkout. With isolated settings and an import of
+NSTest (Tamil metadata supplied explicitly), the PR's real Bridge RPCs passed
+create/native readback, named Bridge actor attribution, reply/native readback,
+and resolve/native readback with `closure.origin = bridge` and status "resolved
+in Bridge". Resolve initially queued behind the freshly written attribution
+comment until the notes index refreshed; flushing the existing intent completed
+it with one resolve row. This was correct outbox safety behavior, not a failed
+resolution or a reason to create another intent.
+
+The PR's four focused parser/panel/policy/review suites passed: **80 passed in
+30.54 s**. A sandboxed attempt could not create pytest files; reran outside the
+sandbox with isolated temporary storage. A separate native external-closure
+attempt could not surface its synthetic check fixture and stopped before
+creating any native note: automatic closure of findings/proposals/issue
+resolutions is therefore **not live-host verified** by this walk. Stand-in
+policy tests passing must not be presented as real-host closure acceptance.
+
+Reflected the actual installed public interfaces (assembly version 2.0.100.0):
+`IProject` exposes `CanEdit`, chapter/book locks, GetUSFM, PutUSFM,
+PutUSFMTokens and PutUSX; `IProjectNote` exposes AddNewComment/Resolve and
+read-only author/assignment/status evidence. `SyncReferenceGroup` includes
+None and A–E; `IPluginHost.SetReferenceForSyncGroup` is present. API presence is
+not proof of live writes/navigation. The inspected note interface has no
+reopen/delete or native author setter; preserve true native author and include
+Bridge actor attribution in comment/audit content.
+
+Compiling connector 0.9.0 against this installed host failed, without deployment:
+`AiBridgeConnectorPlugin.cs(246,23): CS1501: No overload for method 'PutUSFM'
+takes 4 arguments`. The source calls
+`PutUSFM(writeLock, bookNum, newUsfm, chapterNum)`; reflected signature is
+`PutUSFM(IWriteLock, String, Int32)`. Filed #438 with reproduction and a required
+write-scope preservation check; do not simply drop an argument and risk replacing
+other chapter content. This blocks the real Scripture-write walk in #429/#436.
+Paratext was not restarted and its installed connector was not replaced.
+
+Local receipts: `engine/build/paratext-walk-20261102/note-roundtrip.json`,
+`pr437-live-roundtrip.json`, `api-inventory.json` (ignored; no real-project
+notes or identities uploaded). Installed Bridge UI capture timed out waiting for
+app approval; desktop layout, UI clicks, connector 0.9.0 loading, real Scripture
+writes/revert/export/Send-Receive, offline application restart and multi-device
+closure remain NOT RUN. Updated the issue/PR discussions with this separation of
+observed results and remaining work for Joel. No application code was changed.
+
+### Default-on signed GitHub updates (#321, 2026-11-02)
+
+Benz approved the previously blocked update network exception and explicitly
+requested automatic updates enabled by default, an opt-out and manual checks.
+This supersedes the earlier click-only proposal in #321. The GitHub integration
+returned 403 for an issue comment and gh's stored authentication is invalid, so
+the approval/implementation record is local rather than posted to the issue.
+
+AppSettings now stores automatic_updates in the existing workspace settings KV
+(default true); settings.get/set expose automaticUpdates. No schema changes.
+The app starts an independent updater listener/six-hour scheduler after reading
+settings, without awaiting network activity during startup. Settings > App updates
+saves its toggle immediately and offers a manual check and explicit download.
+The Rust wrapper uses Tauri's mandatory signature verification and newer-version
+comparison; it stages verified bytes in memory, never installs because a download
+finished, invalidates in-flight results on opt-out, and starts installation only
+on ExitRequested. Its Windows before-exit hook explicitly stops the frozen engine
+and performs Tauri cleanup because plugin installation exits the process directly.
+
+In-app installation is initially Windows-only. Debug builds and builds without a
+public updater key do not contact GitHub. release.yml embeds the public key from
+BRIDGE_UPDATER_PUBLIC_KEY, uses TAURI_SIGNING_PRIVATE_KEY[_PASSWORD] to produce
+updater signatures independently of Authenticode, requires credentials for tagged
+Windows builds, and uploads latest.json last for stable versions only. The feed
+names the exact versioned signed installer; a manifest script rejects absent
+signatures, prereleases and mismatched tag/config versions. Existing installations
+need one manual upgrade to bootstrap the updater. Developer setup and QA matrix
+record the maintainer setup and installed-to-installed acceptance still required.
+
+Verification in progress: svelte-check passed with 0 errors/warnings; both Vite
+production builds passed (existing large-chunk advisory). Both PyInstaller
+sidecars rebuilt. Node manifest test passed. Initial sandbox test/build attempts
+hit process/temp-directory permissions, so executable test gates were rerun with
+appropriate permissions. The first frozen smoke timed out during an import while
+full pytest, Vitest and Rust compilation were running concurrently; no timeout
+threshold or smoke expectation was changed. Final results follow below.
+
+Updater verification results (2026-11-02):
+
+- Frontend full suite: 106 files / 1,087 tests passed. Final review found that the
+  update toggle needed a two-way binding to its Settings parent, otherwise changing
+  panes could visually reset it. Added that regression: final affected suite passed
+  all 46 tests (including the new navigation case); svelte-check again reported
+  0 errors and 0 warnings, and both production Vite builds passed.
+- Manifest generation test passed; release YAML parsed and all 19 PowerShell run
+  steps parsed after substituting GitHub expressions. These are local syntax and
+  fixture checks, not evidence of a GitHub Actions release execution.
+- Settings persistence module: 5 passed. Full Python run: 5,722 passed, 3 xfailed,
+  3 failed in 2,394.81 s. The failures were Logos helper state round-trip/close
+  and continuous foreground polling versus Language QA. All three passed serially
+  in 19.48 s, without code or timeout changes, once the full run ended. Retain the
+  original non-green run as evidence; this was not a clean full-suite pass.
+- Both frozen sidecars rebuilt. The full smoke passed on retry, including real
+  Wildebeest/Uroman, source tokens, versification, names, alignment, connectors,
+  registry/import, export/undo, language packs and hub. The first smoke timeout
+  remains recorded above; no smoke expectation was changed to obtain the pass.
+- cargo check passed. Rust unit-test result follows once linking finishes.
+- Tauri's passive updater install is not NSIS silent mode, so the optional
+  Paratext connector post-install prompt now explicitly skips /UPDATE installs.
+- NOT RUN: actual signed Windows installer upgrade, invalid-signature/offline
+  installed acceptance, and macOS/Linux upgrade acceptance. No release was
+  published and no GitHub signing secret was created or changed. The first
+  updater-enabled version still requires manual installation.
+
+Final Rust result: all 18 tests passed outside the sandbox (including the three
+new updater policy cases and both real Windows process-tree termination tests).
+The first sandboxed Rust run passed 16 but could not terminate the two throwaway
+child process trees; rerunning with process-management permission passed without
+code changes. cargo check had already passed. Final local implementation gates
+are complete, with the original full-Python timing failures and successful retries
+recorded above. Signed installed-upgrade/release acceptance remains NOT RUN.
+
+
+### Connector 0.9.0 host compatibility and live acceptance (#438, 2026-11-02)
+
+Pulled merged main with autostash, preserved all unrelated local updater work,
+and resolved the two documentation conflicts by retaining both histories. The
+revised connector still failed CS0266 at its two GetUSFMTokens assignments:
+the installed public API returns IEnumerable, not IReadOnlyList. Accept the
+enumerables and materialize them into the existing lists; matching, locking,
+write scope and readback verification are unchanged.
+
+The connector compiled against Paratext 9.5.110.1 / interfaces 2.0.100.0.
+Backed up 0.8.1, installed 0.9.0 through the existing elevated installer with
+Paratext closed, and verified its live put_verse_text capability. On NSTest,
+native exact write/readback and refusal checks passed; Bridge's isolated
+review queue applied to both copies, verified the native result and generated
+CSV/HTML evidence. Restored native Scripture byte-for-byte, including after
+host restart. Checked Bridge revert is confirmed Bridge-only: native restore
+was a separate supported operation, not an automatic round-trip revert.
+
+External native resolution closed an actual isolated issue-resolution record
+once; finding/proposal link closures passed with synthetic record references
+and actual native threads. Repeated refresh was idempotent. An offline note
+survived host and Bridge-process restart and delivered exactly once. A
+post-check cleanup comment hit a busy-pipe timeout before send; retried only
+native resolution. Focused tests: 87 passed. No working translation was edited.
+
+Detailed observations and limits are appended to
+PARATEXT_HOST_ACCEPTANCE_CHECKLIST.md. UI/layout, multi-chapter preservation,
+live lock revocation, Send/Receive and two-device acceptance remain separate
+checks; non-body/marker operations remain review-only. An isolated acceptance
+app build excludes the unrelated unfinished updater changes.
+
+
+
+### Completed native and build verification after #438 (2026-11-02)
+
+Published the focused connector fix and first host record as 23497c0; GitHub CI
+run 41445384036 passed. The isolated merged source then passed Svelte check
+(0 errors/warnings), all 1,095 frontend tests, both production frontend builds,
+the rebuilt frozen-pair smoke, cargo check and all 15 Rust tests. The isolated
+build used the existing engine/.venv release environment; global Python lacked
+spylls metadata and was not used for the successful frozen build.
+
+Initialized a new synthetic BQAT090 project while Paratext was closed, without
+overwriting an existing project. Live chapter-1 correction left chapter 2,
+the other verse and footnote intact. Paratext normalized the initial fixture's
+line endings; repeating against its persisted native-format baseline preserved
+chapter 2 byte-for-byte and restored the full file byte-for-byte. All original
+fixture text was preserved.
+
+Built an internal debug/no-bundle Bridge executable in the isolated checkout
+and launched it with separate settings/WebView data. Observed startup and the
+one-project NSTest list. Native folder-picker/input automation was unreliable;
+registered the disposable project through the supported project.open API and
+reopened the task-owned app. Concurrent desktop input was detected, so the
+full notes/queue UI walk is not claimed. The normal installed Bridge was not
+replaced and no public release/installer was produced. The test app remains
+available for manual screen acceptance.
+
+Issue results distinguish real native writes/record closure, synthetic
+finding/proposal link closure, and the unverified screens/lock-revocation/
+Send-Receive/multi-device checks. Bridge-only revert and the outstanding
+non-body/marker/multi-book queue requirements remain open follow-ups.
+
+### Commit readiness and Paratext issue audit (2026-11-02)
+
+Reviewed the full acceptance criteria for #423?#436. #427 and #438 are already
+closed with evidence; remaining issues retain incomplete scope. Published the
+completion audit on #423 (issuecomment-6577967177). No additional issue was
+closed on the strength of the merged PR alone. Prepared the previously local
+owner decisions and walkthrough history for publication; updated current-state
+guidance to point to the merged body-write implementation and acceptance limits.
+
+### Final combined checkout validation before push (#321, #423, 2026-11-02)
+
+Committed Paratext decision/audit documentation separately from the updater
+settings persistence. Rechecked the combined merged checkout: svelte-check
+reported 0 errors/warnings, all 1,102 frontend tests in 107 files passed, settings
+persistence passed all 5 tests, cargo check passed and all 18 Rust tests passed.
+Sandbox attempts hit directory/process permissions; frontend/settings gates and
+Rust process-tree tests passed outside the sandbox without changing expectations.
+Release workflow YAML parsed with the existing global Python environment (the
+engine virtual environment has no PyYAML). The earlier full-engine/frozen results
+and pending signed installed-upgrade acceptance remain recorded above; the full
+engine suite and frozen rebuild were not repeated during this commit-only pass.
+
+Both production Vite builds and the signed-feed manifest fixture passed. The
+existing large-chunk advisory remains; no installer or release was published.
+
+## 2026-11-03 — #423 batch 4: every remaining Paratext child built in source (branch `paratext-finish`, Joel)
+
+Benz's completion audit of 2026-11-02 left #424–#426 and #428–#436 open with
+named remaining scope. This batch builds all of it that can be built without a
+Paratext host and leaves the host walk to Benz (checklist sections E–G).
+
+**Engine (`tc_ai_bridge/paratext_review.py`, `bridge_service.py`):**
+- `locate(raw, original, region=…)`: body as before; `footnote` / `crossReference`
+  inside one of the verse's notes of that kind (raw text, unique across them);
+  `locate_heading` over `<chapter>.headings.json` entries. A region never falls
+  back into another. `apply_proposal` edits notes through the verse writer;
+  `apply_heading_proposal` through `TranslationCoreProject.apply_heading_edit`
+  (new: journal label `headingEdit`, `expected_old_text` check, rollback).
+- Introduction and marker rename (`marker_rename` allowlist) are Paratext-only:
+  `paratext_review_decide` requires `write_paratext`, records `bridgeCopy`, and
+  takes `verified` from Paratext's read-back. A rename also updates the Bridge
+  heading's `tag` (`new_tag` on the heading writer).
+- `reverse_write(decision)`: the exact Paratext reverse (replace → swap with
+  context words; delete → replace the window around the gap). `revert_latest`
+  reverts headings too; the engine queues the reverse as `put_verse_text`
+  (`bridge-ptrev-…`) and comments on the thread.
+- `classify_apply` / `reconcile` / `uncertain_decisions`;
+  `paratextReview.reconcile` (outcomes verified / notApplied / conflict /
+  paratextChecked), `paratextReview.uncertain`; `_review_require_reconciled`
+  blocks an apply on a verse with an unreconciled interrupted apply.
+- `thread_completion` now blocks on a queued / refused / unverified Paratext
+  write and on a recorded conflict; `_review_completion_gate` in
+  `paratext_resolve_thread` reloads the thread's proposals before a resolve.
+  `pendingResolves` lists queued / refused `resolve` rows; `paratext.flushOutbox`
+  is the retry.
+- Multi-book: `queue_items(threads, status, start_book)` orders across books by
+  canon from the starting book and flags `wrapped`; `_review_scope_books` from
+  `collection_projects` (lazy siblings included, never materialized);
+  `peek_review_decisions` (read-only sibling workbench); `_review_item` refuses
+  a non-open book with `OPEN_BOOK:<code>`. Queue state moved to
+  `AppSettings.paratext_review_queues[guid]` (`normalize_state`,
+  `prune_drafts` drops stale drafts and reports them).
+- Evidence: CSV columns (region, bridgeUserId/Name, paratextWrite/Verified/
+  Author, reconciled, resolutionOrigin, resolvedBy); HTML names the same;
+  `paratextReview.report(since, outputPath, cumulative)`,
+  `paratextReview.reports` (lists, clears `.html.tmp` leftovers),
+  `paratextReview.latestReport(path)` restricted to the book's folder.
+- Connector client: `put_verse_text(..., region=)`, `rename_marker(...)`; outbox
+  `OP_RENAME_MARKER`, `SCRIPTURE_OPS`, a region write needs capability
+  `text_regions` (0.10.0) or waits with that reason.
+
+**Plugin 0.10.0 (`paratext_plugin/AiBridgeConnectorPlugin.cs`, not compiled here):**
+`Parts()` region mapping copied from the reference plugin's `TokenMapping.Parts`;
+`put_verse_text` takes `region` (introduction = chapter 0 to the token API;
+heading tokens may sit on `firstVerse - 1`); `rename_marker` as the reference
+plugin's `ApplyMarkerRename` with `ChangedMarkerToken` (the member set that
+compiled on the host) and the `ConvertToUSFMTokens` round trip; capabilities
+`text_regions`, `rename_marker`.
+
+**Frontend:** `ParatextReviewQueue.svelte` rewritten (Books… scope picker with
+start book, wraparound notice, read-only sibling items with "Open <book>",
+region labels, Paratext-only applies, "Show in Paratext", Alt+letter keyboard
+commands, Reports / recovery: saved reports list, Open in browser via the new
+Tauri `open_path` command, Save report as…, cumulative report, new session,
+reconciliation buttons, pending resolves retry). The queue is mounted once by
+`App.svelte` (`paratextReviewQueueOpen`) so it survives a book switch.
+Notes-panel composer drafts persist in localStorage (`bridge.paratextNoteDrafts.v1`).
+VerseList: `N` on a focused verse is the keyboard route to the Paratext note
+command. Rust: `tauri-plugin-window-state` (remembered placement, #435) and
+`open_path` (file must exist and be html/htm/csv/txt).
+
+**Verified:** engine `-k paratext` 241 passed (new: regions 6, recovery 6,
+scope 3, closure recovery 4; `tests/support/paratext_review.py` holds the
+shared helpers, no cross-test imports); full engine suite **5809 passed, 1
+skipped, 3 xfailed** with `test_semantic_mapping_stage3.py` deselected (no
+stage-3 DB on this machine, as on 2026-11-02); svelte-check 0/0; Vitest 1113;
+`npm run build`; `cargo check` + `cargo test` 18 passed; both frozen sidecars
+rebuilt (`build-sidecars.ps1`) and `scripts/smoke_sidecars.py` passed (real
+Wildebeest, hub `--serve`, indic-qa packs). **Not verified:** anything on a real
+Paratext (checklist E–G); connector 0.10.0 never compiled.
+
+## 2026-11-03 — Joel's comments checked against the real host; 0.10.0 loads, two acceptance blockers (#423, #436, #441, #442)
+
+Read Joel-C-Johnson's comments in 20 matching issue discussions and PR #437,
+including the latest PR #440 follow-ups. Fast-forwarded the clean checkout from
+fc5583c to b9a43a1 before testing. No runtime code, dependency, schema, golden or
+confidence setting was changed by this acceptance pass.
+
+Connector 0.10.0 compiled against the installed Paratext 9.5.110.1 interfaces.
+Direct deployment lacked Windows administrator rights; Bridge's existing
+elevated installer succeeded and native `get_state` confirmed 0.10.0,
+`text_regions` and `rename_marker`. Only disposable BQAT090 and NSTest were used
+for native writes. Body correction and Tamil footnote correction verified and
+restored the complete books byte-for-byte. A native footnote QA note was imported
+into an isolated Bridge profile, applied through the real review-queue RPC and
+native connector, verified in both copies, and reverted in both copies with
+native byte-exact restoration. Stale/repeated originals, wrong-region lookup and
+an unsupported rename were refused without Scripture changes. HTML, an explicit
+report destination, and UTF-8 BOM CSV exports passed.
+
+Two bugs were reproduced and filed separately, per the repository's rule about
+adjacent findings:
+
+- **#441:** the Tauri desktop build refuses Cargo.lock's tauri 2.12.5 versus
+  package-lock.json's @tauri-apps/api 2.11.1. `cargo check` and unit tests pass,
+  but they do not exercise the CLI's compatibility gate. The attempted
+  debug/no-bundle build used an ignored config to skip the already-built
+  frontend and request 1366×768; it did not change dependency versions. No
+  compatibility check was bypassed and no current desktop acceptance claimed.
+- **#442:** delete `original` from `Alpha original body.` through the native
+  review queue. Bridge's saved post-image is `Alpha  body.`; Paratext persists
+  `Alpha body.`. Native verification stays false and completion is correctly
+  blocked. Checked revert restores Bridge, but its double-space reverse window
+  is refused by Paratext. A separate exact supported native replacement restored
+  the entire original book byte-for-byte. Source stand-ins preserved the double
+  spaces and therefore did not expose this host serialization behavior.
+
+The run's two synthetic native QA threads were resolved after restoration.
+Receipts/scripts/baselines are ignored under `engine/build/joel-20261103/`.
+The existing installed Bridge app was not replaced; no release was published.
+
+Verified: **249 Paratext-focused pytest tests**, Svelte check **0 errors and
+0 warnings**, **1,108 Vitest tests / 108 files**, both production Vite builds,
+`cargo check`, **18 Rust tests**, both frozen sidecars rebuilt, and the complete
+frozen smoke (real Wildebeest/Uroman, language packs, hub and import/alignment/
+export/undo paths). The initial sandbox runs hit directory/process restrictions;
+the recorded passes were rerun outside that sandbox. A PowerShell redirected
+PyInstaller invocation treated normal stderr logging as a terminating error;
+the ordinary unredirected build completed successfully.
+
+The optional broader engine run (four workers, missing Stage 3 database tests
+excluded) was stopped at 26% after the host/build blockers were established.
+It is incomplete, not a full-suite pass; the 249-test focused pass above is the
+completed engine result for this acceptance task.
+
+Positive heading/cross-reference/introduction/marker-rename host checks, lock
+revocation/interrupted applies, two PCs/Send-Receive and actual desktop
+layout/browser/accessibility/performance acceptance remain unverified. See the
+2026-11-03 table in `PARATEXT_HOST_ACCEPTANCE_CHECKLIST.md`. The initial result
+reply is on #423, comment 6586494290; no issue was closed on source tests alone.
+
+### 2026-11-03 — Paratext desktop walkthrough without an installer (#436, #444)
+
+Benz asked whether the walkthrough could proceed without the installer. It can:
+an isolated git archive of origin/main b1ffd40 (0.24.3), locked `npm ci`, both
+Vite builds and `tauri build --debug --no-bundle` passed, including the normal
+Tauri version check. Root checkout code/dependencies were not updated. The
+existing compiler cache and frozen b9a43a1 workers were reused (engine displays
+0.23.0), so this is development desktop evidence, not exact release acceptance.
+
+Launched existing Paratext 9.5.110.1 and read connector 0.10.0 state. With a new
+isolated synthetic UIQA100 two-book import/profile, visually walked the notes
+panel, long Tamil reason scrolling, visible actions, Alt+N, footnote preview,
+TIT/PHM scope starting at PHM and wrap notice, sibling opening with queue retained,
+comment preset, explicit local apply/verification/advance, and session HTML
+generation/in-app rendering/default-browser opening. Window config requested
+1366x768. Full scaling/keyboard/accessibility and restart persistence not tested.
+
+Found and filed #444: Revert confirmation is in the accessibility tree but hidden
+behind the queue. ConfirmDialog and the later-mounted queue both use z-index 60;
+that is the inferred cause. No invisible confirmation was accepted. Closed the
+isolated app normally, then the existing source revert RPC restored synthetic
+PHM 1:1 to `A second book.` with revertVerified true. Native Paratext Scripture
+and notes were not written. The UI revert row remains FAIL; API cleanup is not
+a substitute for it. Detailed evidence boundaries are appended to
+PARATEXT_HOST_ACCEPTANCE_CHECKLIST.md. Local receipts/scripts are under ignored
+engine/build/walkthrough-0243-data and engine/build/. No runtime fix, release or
+installer was produced; native regions/rename, lock/interruption, two-device,
+Send/Receive, installer and other unwalked gates remain open.
+
+### 2026-11-03 — Refresh the editor after Paratext review applies (#445)
+
+Benz reported that the queue marked a change applied and native Paratext showed
+the replacement, while Bridge's editor retained the old text. The engine's
+existing apply writes/read-verifies Bridge first; the frontend queue reloaded
+only its own data. `ensureChapterData` then reused the cached verse text and
+display. A new component regression reproduced Applied and verified with the
+editor still holding `alpha beta gamma` instead of `alpha BETA gamma`.
+
+Added `paratextReviewRefresh.ts`: after apply and checked revert, read the
+affected chapter through the existing RPC, refresh the affected raw/display
+text or heading, authoritative edit count/alignment state, and notify alignment
+readers. Reuse the existing engine-change path to discard stale AI/native/
+Language QA marks. Heading-only writes leave body/alignment unchanged;
+introductions kept only in Paratext are skipped. Check project path and book
+before and after the read so a delayed response cannot populate another
+project. A failed refresh preserves the successful save notice and asks the
+reviewer to reopen the book; it does not invite applying the change again.
+No engine/writer/schema/ledger/golden/threshold changes.
+
+Verification: the regression failed before the fix and passed after it;
+18 targeted tests passed; the full frontend suite passed **1,115 tests / 109
+files**; `npm run check` reported 0 errors/warnings. Both production Vite builds
+and an ordinary Tauri debug/no-bundle build passed in the isolated 0.24.3
+acceptance copy with these two runtime files copied in. Existing frozen workers
+were reused (engine displays 0.23.0); this does not certify an exact release
+installer. Tests include revert, heading-only refresh, exact verse bridges,
+project-switch discard and a refresh-read failure after a successful apply.
+
+Desktop: with Benz's permission, closed the running Bridge normally and built
+the updated executable. Fresh synthetic UIQA100 profile under ignored
+`engine/build/editor-refresh-445-data/`: applied `beta` -> `BETA`, closed only
+the queue, and directly observed the editor's `alpha BETA … gamma`, history
+count 1 and invalid alignment without reopening the book. A second footnote
+apply succeeded and the queue re-read `a footnote`; the editor popup was not
+verified because concurrent desktop input was detected. Both disposable edits
+were restored and verified through the existing source revert RPC. Native
+Paratext Scripture and notes were not written. The unrelated #444 confirmation
+stacking issue was not changed, so desktop Revert is not claimed as passed.
+
+Also filed #446 from the footnote walk: inspecting the already-applied
+`note` -> `footnote` proposal shows hypothetical AFTER `footfootnote`, although
+saved text is correct and Apply remains disabled. No duplicate write observed;
+preview presentation stays a separate follow-up.
+
+## 2026-11-03 — Release 0.24.x: three Windows gates, two relaxed on Benz's approval (#413, #321; Joel)
+
+The first tagged release since #413 landed met three Windows gates in turn.
+v0.24.0 and v0.24.1 failed on the Authenticode gate (relaxed, `1b6265c`) and
+Linux/macOS on a Tauri npm/crate minor-version mismatch (`82b8bd4`, #443).
+v0.24.2 failed the Defender scan because GitHub's hosted Windows image ships
+with real-time protection off; `d3c74f0` switches it on before the scan, and
+dispatch run 41516813406 proved the whole Windows leg green. v0.24.3 then
+stopped at the #321 updater-key gate. Benz approved (#413 comment,
+2026-11-03) a Windows build without updater artifacts for the acceptance
+walk, keeping the Defender scan and hash checks: the throw is now a warning
+plus a step-summary line, `UPDATER_ENABLED` is exported from the build step,
+and the updater-feed step is skipped when it is `false` so no unsigned
+`latest.json` can ever be uploaded. v0.24.4 is the first tag with all three
+installers. Key provisioning is still outstanding (DECISIONS 2026-11-03).
+
+
+## 2026-11-03 ? Detached and organized Paratext review queue (#450)
+
+Implemented a separate native review-queue page over the existing Rust-owned
+sidecar and default project session. The main window owns visibility, receives
+explicit navigation requests and refreshes saved text through #445. Queue
+instances bind engine requests to their original project path; a dispatcher
+precondition rejects a request after the engine has switched books. No writer,
+schema, confidence threshold, golden or runtime network dependency changed.
+
+The panel has a compact header and scope toolbar, grouped source discussion /
+proposal and preview / correction columns, multiline replacement and comment
+fields, a persistent decision/navigation footer, responsive stacking and a
+separate Reports/Recovery tab. Confirmations sit above the panel (#444 overlap).
+Drafts save before detach/return/close, with a proposal-checked local emergency
+draft for abrupt teardown. Presentation and detached-mode preferences persist.
+The window-state plugin tracks placement; reopen restores on-screen and
+unminimizes, and main-window exit closes the auxiliary window before normal
+sidecar shutdown.
+
+Verification: Svelte check 0 errors/warnings; production application and
+dashboard builds passed. Full frontend run: 1,121 tests / 110 files passed;
+the final focused window/queue/guard run passed 23 tests (including the new host
+tests). Six project-precondition engine tests passed. Rust check passed and
+all 18 Rust tests passed outside the sandbox; the sandbox alone prevented the
+two existing taskkill tests from succeeding. Both frozen workers rebuilt and
+the expanded packaged smoke passed, including rejection of a stale-project
+verse.edit with unchanged Scripture bytes and a guarded current-project read.
+
+Full engine gate: 5,836 passed, 3 xfailed and one failure in
+test_a_verified_paratext_resolve_closes_the_linked_issue_resolution_and_note_once_with_the_external_actor.
+That test passed on isolated retry (1 passed in 1.51 s). The full-run failure
+returned an empty closure set and logged a semantic-runtime setup failure
+(no such table: alignment_cross_verse_links); it is retained as a failure, not
+a clean full-suite pass. No closure policy was changed in this issue.
+
+Desktop investigation uses the isolated UIQA450 synthetic project/profile and
+a separate org.bridge.review450 no-installer debug build. The first detach
+found the Windows/WebView2 synchronous-window-builder deadlock documented in
+the installed Tauri source. Changed the native command to async and rebuilt;
+no installed application or native Paratext project was modified. Final desktop
+results are recorded below.
+
+Final desktop boundary: the organized embedded panel was observed at the
+1366x768 test size, including both content columns, source discussion, current
+and proposed text, multiline fields and the visible fixed action footer. The
+asynchronous runtime-creation retry also stalled. The final design therefore
+creates one hidden review webview in tauri.conf.json at startup, opts it out of
+automatic initial visibility restore, and reveals/restores it on demand. The
+final production frontend and isolated native build passed. This is an
+implementation change from the initial dynamic-window attempt, not a claim
+that async creation alone fixed the observed stall.
+
+The final acceptance app was launched, but Computer Use then reported that the
+user stopped it with physical Escape. No further desktop input was issued.
+Final detach/return, concurrent editor use, apply/refresh, close/reopen, normal
+exit, two-monitor movement and DPI/disconnection acceptance remain NOT RUN for
+the final hidden-startup-window design. The isolated acceptance app was left
+running for the user; the installed app and native Paratext projects were not
+modified. #450 is not certified release-ready or closed.
+
+The last focused queue/host run passed 21 tests after the post-save busy-state
+refinement. Earlier 23-test focused coverage also includes the two request-guard
+unit tests. No commit or push was performed. Local build/test logs and synthetic
+fixture are retained under ignored engine/build/review-window-450/.
+
+
+### #450 desktop verification resumed ? 2026-11-03
+
+Benz authorized resuming Computer Use. The final hidden-startup-window
+no-installer acceptance build passed the following observed checks against
+the isolated UIQA450 synthetic profile (not an installed release package):
+
+- Opened a separate native review window with the organized layout and fixed
+  action footer. Main editor remained usable: navigated to TIT 1:2 while the
+  queue retained TIT 1:1, and opened/cancelled the main verse-edit control.
+- Entered a synthetic comment draft, returned the queue to the main window,
+  observed the same draft and position, then detached again with both retained.
+- Applied beta -> BETA from the detached queue with Also write to Paratext
+  unchecked. Queue reported Applied and verified and advanced to TIT 1:2.
+  Main editor displayed alpha BETA gamma immediately while its selection
+  remained on verse 2; history/alignment indicators refreshed.
+- Opened Reports/Recovery and observed the Revert confirmation visibly above
+  the queue. Confirmed the checked revert; queue reported Reverted TIT 1:1
+  and verified, and main editor displayed the original alpha beta gamma.
+  The append-only apply/revert history remained. Native Paratext was untouched.
+- Closed the queue using its native title-bar close: editor stayed running.
+  Reopened it from the editor: the exact same native window id returned, with
+  one queue window and Reports/Recovery retained.
+- Closed the main test app normally with Alt+F4 while the queue was open.
+  Both acceptance windows disappeared; the acceptance process and all
+  bridge-engine processes exited. No forced termination was needed for this
+  final design.
+
+This supersedes the earlier NOT RUN boundary for these specific desktop
+checks. Physical second-monitor placement, DPI changes/disconnection, long
+Tamil/RTL content in the detached window, cross-project switching on the real
+desktop and exact installed-package acceptance remain pending. No runtime
+code changed during the resumed check.
+
+After normal desktop shutdown, final cargo check passed and cargo test passed
+all 18 tests. No acceptance process or bridge-engine process remained.
+
+### #450 user acceptance - 2026-11-03
+
+Benz confirmed physical second-monitor testing was complete and supplied
+screenshots of the detached review queue with real Tamil content alongside
+the usable main editor. After discussing DPI testing, Benz accepted the
+current result ("this is fine"). Record physical second-monitor use and the
+visible Tamil layout as user-reported acceptance. Mixed-DPI transitions,
+monitor disconnection/reconnection and RTL remain unverified; this acceptance
+does not establish those checks. No runtime code changed for this update.
+
+## 2026-11-03 — #442: a deletion between two spaces takes one of them (Joel)
+
+Benz reproduced on Paratext 9.5.110.1 that deleting `original` from
+`Alpha original body.` saved `Alpha  body.` in Bridge while Paratext collapsed
+the double space to `Alpha body.`: the connector reported `verified: false`,
+the completion gate (correctly) blocked the resolve, and the automatic
+reverse looked for the two-space window and was refused. The earlier test
+pinned the double space on purpose ("the spacing is the reviewer's to see in
+the preview"); the host showed that is not a choice Bridge gets to make.
+`paratext_review.widen_deletion` widens a deletion's span by the space after
+it when both neighbours are whitespace and, for the body, the raw verse holds
+that same space (a footnote between them leaves the span alone); the apply,
+the heading apply and the preview all use it, so the decision's `original`
+(`beta `), the Paratext write and `reverse_write`'s window are built from
+the same text. The stand-in Paratext in `tests/support/paratext_writeback.py`
+now collapses a double space on save and reports the mismatch, so the old
+behaviour fails its test. No new writer: the same `edit_verse` call, once.
+
+## 2026-11-03 - Alignment workspace (#447, #448, #381, #449, #451)
+
+Preserved and committed the completed detached review queue (#450) before
+pulling upstream Paratext changes. The alignment workspace builds on the same
+hidden-at-startup auxiliary-window pattern, sharing the existing engine.
+Word and cross-verse alignment use one host, with Follow editor / Pin verse,
+project-bound requests and stale-event rejection. Closing the main window
+also closes the alignment window. Saved placement uses the existing window-state
+plugin; monitor recovery behavior still needs native acceptance.
+
+Read, Source and Target each have dock/undock, ordering, movement and resize
+controls. Layout is persisted separately for word/cross-verse views. Reset layout
+clears only pane geometry/order. Shared source/target card geometry reserves
+space for glosses and uses script-aware direction, line height and isolated
+occurrence labels. Greek, Hebrew and Aramaic retain their full word text.
+
+Verse reset previews and confirms native groups, cross-verse groups, partner
+references and no-counterpart decisions, then clears them through existing
+writers and refreshes/rechecks affected verses. Persisted before/after snapshots
+support interruption recovery and combined Undo reset; compare-before-write
+guards refuse newer work. Chapter reset advances one verse per dispatcher
+request, with persisted progress, cancel/resume and competing-write exclusion.
+No schema change: operation state uses the existing project_state store and
+append-only change_log. Scripture is unchanged.
+
+Source separation chooses any existing member of a joined native or cross-verse
+group and places it physically left/right, including RTL. Targets stay with the
+remaining source group. Recorded signature-based presentation order preserves
+token identities; native history and cross-verse split recovery/undo retain
+the original grouping. Partial cross-verse group writes are rebuilt on recovery.
+
+Verification details are recorded below and in QA_TEST_MATRIX.md. Native UI
+automation was unavailable: repeated Windows helper initialization/list-apps
+timeouts prevented desktop testing, and the browser fallback failed creating
+its kernel assets. No monitor movement, mixed-DPI, rendering or installer
+acceptance is claimed for these five issues.
+
+Frontend verification: full frontend 1,132 tests / 114 files passed; the final
+detached-window regression plus host tests passed (3 tests). The latest
+alignment dispatcher regressions passed (12 tests), including failure between
+individual cross-verse pair writes during Undo reset. Svelte check reported
+0 errors/warnings; application/dashboard production builds passed. cargo check
+and all 18 Rust tests passed. Rebuilt the engine again after the interrupted-undo
+refinement, refreshed the local Tauri binary, and the complete expanded frozen
+smoke passed, including source separation, reset with cross-verse links and
+combined undo. Both frozen sidecars were rebuilt during this task. Full Python
+suite: 5,848 passed, 3 xfailed and one failure in
+`test_language_qa_clean_count_follows_the_stage_and_its_decisions` (expected
+clean count 2, observed 1), in 1882.69s. The isolated serial retry passed
+(1 test, 48.24s). This is not a clean full-suite pass. The progress code and
+existing test were not modified here; filed the intermittent result as #455
+instead of absorbing an unrelated fix. A startup Language QA/progress-write
+race is only a hypothesis. The final 12-test alignment recovery run also covers
+the interrupted-undo refinement made after full-suite collection.
+
+An initial Python full-suite attempt used the system interpreter without the
+declared spylls dependency and failed language-pack setup (one stopped run:
+1 failed / 1,262 passed). This is not counted as a passing gate. Re-ran with
+engine/.venv, where the declared dependency is installed. A sandboxed focused
+retry also failed temporary-directory setup before executing tests; its normal
+permissions retry produced the 12-test pass above. No tests or goldens were
+weakened to accommodate either environment failure.
+
+## 2026-11-03 - Alignment UI feedback (#448, #449, #451)
+
+Benz's screenshots showed oversized cards, a layout limited to reordering/overlays,
+and no discoverable way to separate an interior source member. Reduced the shared
+source cards from 160x112 to 128x72 CSS px and target cards from 128x80 to 112x44
+at the default 16px root size. Card dimensions still scale with rem. Render the
+whole normalized usage list in a two-line CSS ellipsis box instead of silently
+dropping later renderings before layout; hover retains all renderings and the
+full definition. Greek/Hebrew/Aramaic direction/font rules remain shared.
+
+Replaced the linear layout with a three-leaf binary docking tree. Drag an area's
+handle to a neighbor's edge for left/right/above/below docking with a destination
+preview; drop away from edges to float, or hold Alt to float anywhere. Horizontal
+and vertical dividers resize adjacent areas and accept arrow keys. Arrange menus
+provide the same placements without dragging. Floating positions are clamped to
+the available workspace. Word and Cross-Verse views persist separate v2 layouts;
+the earlier linear preferences are superseded. Reset layout restores the default
+split tree without remounting panes or discarding their content.
+
+Each grouped source card now exposes a compact separation menu that passes that
+exact token to the existing confirmed split operation. This includes the middle
+member of a native group and active cross-verse source groups, with left/right
+placement and targets retained on the remaining group. The existing dropdown
+remains an alternative. No engine, schema, Scripture writer or token identity
+change was needed.
+
+Focused verification passed 93 tests across docking geometry, actual handle/drop
+and Arrange interactions, layout persistence/reset preserving content, gloss
+hover content and middle-card separation left/right in both alignment views.
+Native painting is not verified: the browser UI tool again failed to initialize
+its kernel assets. Final frontend gate results follow.
+
+Final gate: all 1,148 frontend tests / 117 files passed; the final docking
+interaction file passed all 3 tests after the divider accessibility labels
+were refined. Svelte check reported 0 errors/warnings and application/dashboard
+production builds passed. An earlier full run overlapped the last floating
+behavior edit and failed its newly added free-floating test against the already
+loaded older workspace module; restarted the whole suite with stable files for
+the clean result above. No assertions were weakened. Engine and Rust code are
+unchanged by this follow-up, so their earlier results remain the evidence for
+those layers; no new frozen/desktop acceptance is claimed.
+
+## 2026-11-03 — Keep only the splash visible during startup (#435 follow-up)
+
+The window-state plugin restored the main window's saved `visible: true`
+before the normal startup reveal, exposing the full background window behind
+the small splash. Excluded visibility from the plugin's restored state while
+retaining window geometry and maximized/fullscreen state. The splash skips
+initial state restoration so its fixed startup configuration applies; detached
+review/alignment windows retain their existing initial-state exclusions.
+
+`cargo check --offline` passed. `cargo test --offline`: 16 passed, 2 failed in
+the unchanged `sidecar::tests::kill_process_tree` tests because `taskkill` did
+not report success. Native startup painting and a rebuilt installer have not
+been verified; no release or installed-app replacement is claimed.
+
+### Shutdown-test failure investigation
+
+Reran the unchanged full Rust suite outside the restricted sandbox, where the
+shutdown tests can use `taskkill` against their own throwaway process trees:
+`cargo test --offline` passed all 18 tests, including both previously failing
+`kill_process_tree` tests. The earlier failures were sandbox-dependent; no
+application changes, skipped tests or weakened assertions were needed.
+
+### Tracking and documentation reconciliation
+
+Posted the fix and verified 18/18 Rust result to #315 (startup) and #435
+(remembered placement). #315 moves from Ready to In review on Bridge Project
+Board; #435 is added in In review. Both issues remain open for the outstanding
+installed desktop/accessibility/monitor acceptance. Updated the architecture,
+QA matrix and host checklist with the visibility contract and remaining checks.
+GitHub connector comment writes returned 403; the authenticated CLI completed
+the updates. No release, installer replacement or Defender exemption is claimed.

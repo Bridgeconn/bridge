@@ -361,6 +361,18 @@ class AppSettings:
         self.save_sanitized()
 
     @property
+    def automatic_updates(self) -> bool:
+        """Optional GitHub app updates, enabled unless explicitly disabled (#321)."""
+        return self.data.get('automatic_updates', True) is not False
+
+    @automatic_updates.setter
+    def automatic_updates(self, value: bool) -> None:
+        if not isinstance(value, bool):
+            raise ValueError('automaticUpdates must be a boolean')
+        self.data['automatic_updates'] = value
+        self.save_sanitized()
+
+    @property
     def language_qa_learned_fixes(self) -> bool:
         """Settings > Language QA: learn a word the reviewer replaced and offer
         the same change where it recurs. On by default."""
@@ -430,6 +442,20 @@ class AppSettings:
     @recent_chapters.setter
     def recent_chapters(self, value: list[dict[str, Any]]) -> None:
         self.data['recent_chapters'] = list(value)
+        self.save_sanitized()
+
+    # #432: the Paratext review queue's own state (filter, scope, position,
+    # drafts, session start), per linked Paratext project, so it survives a
+    # book switch, a close and a restart; decisions are the book's rows.
+
+    @property
+    def paratext_review_queues(self) -> dict[str, dict[str, Any]]:
+        value = self.data.get('paratext_review_queues') or {}
+        return {str(k): dict(v) for k, v in value.items() if isinstance(v, dict)} if isinstance(value, dict) else {}
+
+    @paratext_review_queues.setter
+    def paratext_review_queues(self, value: dict[str, dict[str, Any]]) -> None:
+        self.data['paratext_review_queues'] = {str(k): dict(v) for k, v in dict(value).items()}
         self.save_sanitized()
 
     @staticmethod

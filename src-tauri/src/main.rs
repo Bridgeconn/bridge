@@ -3,6 +3,9 @@
 
 mod commands;
 mod sidecar;
+mod updates;
+mod review_window;
+mod alignment_window;
 
 use sidecar::EngineSidecar;
 use tauri::{AppHandle, Manager, WindowEvent};
@@ -35,6 +38,24 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        // #435: the main window's size and position are saved on close and
+        // restored on the next start; the plugin keeps a window that would
+        // land off every current monitor on screen instead.
+        // Startup owns visibility: restoring a saved visible main window
+        // would reveal it behind the splash before the engine is ready.
+        .plugin(
+            tauri_plugin_window_state::Builder::new()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        & !tauri_plugin_window_state::StateFlags::VISIBLE,
+                )
+                .skip_initial_state("splash")
+                .skip_initial_state(review_window::LABEL)
+                .skip_initial_state(alignment_window::LABEL)
+                .build(),
+        )
+        .manage(updates::AppUpdates::default())
         .manage(EngineSidecar::new())
         .setup(|app| {
             let handle = app.handle().clone();
@@ -57,11 +78,20 @@ fn main() {
         // A splash closed by any route (Alt+F4 included) must not leave the
         // app running with no visible window: the main window shows instead.
         .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, WindowEvent::CloseRequested { .. }) {
+                review_window::close_with_main(window.app_handle());
+                alignment_window::close_with_main(window.app_handle());
+            }
             if window.label() == "splash" && matches!(event, WindowEvent::Destroyed) {
                 reveal_main(window.app_handle());
             }
         })
         .invoke_handler(tauri::generate_handler![
+            review_window::review_window,
+            alignment_window::alignment_window,
+            updates::update_status,
+            updates::configure_updates,
+            updates::check_updates,
             commands::engine_call,
             commands::engine_log_recent,
             commands::frontend_log,
@@ -72,6 +102,7 @@ fn main() {
             commands::pick_import_files,
             commands::pick_json_file,
             commands::pick_save_path,
+            commands::open_path,
         ])
         .build(tauri::generate_context!())
         .expect("error while running translationCore AI Bridge")
@@ -82,6 +113,9 @@ fn main() {
         // inside tauri-build with a bare "Access is denied" as it tried to
         // refresh target/'s copy of that binary.
         .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { ref api, .. } = event {
+                updates::install_on_exit(app, api);
+            }
             if matches!(event, tauri::RunEvent::Exit) {
                 app.state::<EngineSidecar>().shutdown(app);
             }

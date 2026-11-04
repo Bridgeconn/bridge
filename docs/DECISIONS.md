@@ -1,5 +1,20 @@
 # Decisions
 
+## 2026-11-02 — Automatic app updates, enabled by default (#321)
+
+**Decision:** Benz approved the optional GitHub update network path and asked for
+automatic updates enabled by default, with a Settings opt-out and manual checks.
+This supersedes #321's earlier click-only proposal. Windows checks at startup and
+every six hours, downloads a newer signed stable release, and installs only on
+normal app exit, after explicitly stopping the frozen sidecar. Offline failures
+never gate startup, project open/import or QA. Disabling discards pending downloads.
+**Rules out:** forced restarts during work, unsigned packages, login/token requirements
+on client devices, automatic prerelease adoption, and extending this network exception
+to translation/QA paths. macOS/Linux updates require separate desktop verification.
+**Release prerequisite:** the maintainer holds the private updater key in GitHub
+Actions secrets; public-key configuration, a signed release, and installed-to-installed
+upgrade acceptance remain required before calling this release-ready.
+
 Architectural and product decisions, newest first. Five lines each — this is a log, not
 a design document.
 
@@ -1274,9 +1289,14 @@ a resolve. The plugin API writes through Paratext's own write lock and records t
 version. A Paratext note has no id in the plugin API, so the footer is the idempotency key, checked
 against the notes index before every send; an outbox that synced would let a second device send the
 same note again.
-**Rules out:** writing any file in a Paratext project folder; Scripture writes from any Paratext
-path (`PutUSFM`/`PutUSX`); deleting or reopening a Paratext note; applying a Paratext reply or
-`done` to a Bridge record automatically; posting to the active project instead of the linked one.
+**Rules out:** writing any file in a Paratext project folder; ~~Scripture writes from any Paratext
+path (`PutUSFM`/`PutUSX`)~~; deleting or reopening a Paratext note; ~~applying a Paratext reply or
+`done` to a Bridge record automatically~~; posting to the active project instead of the linked one.
+**Amended 2026-11-02 (Benz, #423):** the two struck items are reversed. Bridge may write one
+reviewer-confirmed exact verse replacement through the plugin (`put_verse_text`, connector 0.9.0,
+under Paratext's chapter write lock, read back after writing), after and never instead of the
+verified apply on Bridge's own copy; and a verified Paratext resolve closes the linked Bridge
+record with no click. See the 2026-11-02 entry below. Everything else here stands.
 **Revisit when:** Paratext's plugin API gains note ids or tags (the footer becomes redundant), or a
 team needs notes written while Paratext is closed (that would need Paratext's own data layer and is
 a fresh question).
@@ -1290,5 +1310,250 @@ as resolved, #358 g.) The engine refuses unless the thread is linked to that res
 the notes index shows it resolved. Nothing is sent to Paratext, and no new status is introduced.
 **Because:** the six answers said "offered as one click" without saying what the click does; the
 existing `resolved` status is what the reviewer means, and the event keeps the reason auditable.
-**Rules out:** applying it without a click; offering it on a thread that is still open in Paratext.
-**Revisit when:** findings (not only issue resolutions) carry Paratext links.
+**Rules out:** ~~applying it without a click~~; offering it on a thread that is still open in Paratext.
+**Revisit when:** ~~findings (not only issue resolutions) carry Paratext links~~ (they do since 2026-11-02, `paratext.queueRecord`, #433).
+**Amended 2026-11-02 (Benz, #423):** the click is gone. A verified Paratext resolve closes the
+linked record as Bridge reads it (`_reconcile_paratext_closures`), for issue resolutions,
+findings and correction proposals alike, recording "resolved in Paratext", the external actor and
+the resolve comment on the link and, for an issue resolution, the same `resolved_from_paratext`
+event. The click's RPC stays and is refused as already resolved. See the 2026-11-02 entry below.
+
+## 2026-11-02 — Paratext Scripture write, automatic closure, named attribution, all three record types (Benz, #423 / #424 / #425 / #429 / #433)
+**Status:** DECIDED by Benz on #423 (comment 6573021022, 2026-11-02 08:54 UTC) and implemented
+the same day on PR #437. Benz's five answers, as taken:
+1. **Bridge saves.** Bridge owns the reviewed, human-confirmed correction. For a linked project
+   the same exact replacement is written through Paratext's supported API and locks
+   (`put_verse_text`, connector 0.9.0), persistence is verified by reading the chapter back, and
+   Bridge refreshes. Ownership: the apply happens on Bridge's copy first (one writer,
+   `edit_verse`, `expected_old_text`) and is verified there; only then is the Paratext write
+   queued, with the note's before/after context; Paratext places the original exactly once in
+   the verse outside notes or refuses; a refusal is final (never retried blind, the reviewer
+   looks first); neither side's text is ever silently overwritten. "Also write to Paratext" is a
+   per-apply choice in the review queue, off by default.
+2. **Named attribution.** Every note, reply and resolve Bridge sends names the authenticated
+   Bridge user (display name and id) on its first line and on the outbox row; a Bridge-origin
+   resolve is preceded by a "Resolved in Bridge." comment. Paratext's logged-in user stays the
+   author and the editor of record; the Scripture write carries `bridge_user` as evidence only.
+3. **All three record types.** A verified Paratext resolve closes the linked issue resolution,
+   finding or correction proposal: the link gets `closure` ("resolved in Paratext", external
+   actor, resolve comment date, when Bridge saw it); an issue resolution also becomes `resolved`
+   with its `resolved_from_paratext` event; a finding or proposal gets the closure and nothing
+   else -- no Apply/Reject is invented and CORRECTED is never set. One closure per link; a resolve
+   Bridge itself sent is recorded as "resolved in Bridge".
+4. **Reference permission.** selvabenz/Paratext-sug-in-context-menu is Benz's; he permits use and
+   redistribution. The repository still carries no licence file; this records the owner's
+   permission, not a licence. Only its note format was used; no code was copied.
+5. **Host acceptance.** Benz tests Paratext. Real-host rows stay NOT RUN until his results are
+   recorded; `docs/PARATEXT_HOST_ACCEPTANCE_CHECKLIST.md` is the disposable-project checklist.
+**Because:** the maintainer's explicit answers to the questions this entry held while PROPOSED
+(kept below for the record).
+**Rules out (still):** deleting or reopening a Paratext note; token-level or USX writes; any
+automatic resolution of a *source* thread from Bridge decisions (that stays a click once every
+proposal in the thread has a terminal decision); writing into a Paratext project folder.
+**Revisit when:** Benz's host results land (connector 0.9.0 has not been compiled or run against
+Paratext yet), or the plugin API gains note ids.
+
+*The questions as they stood before the decision, for the record:*
+**What #423 asks for:**
+1. Bridge writing human-confirmed Scripture corrections through Paratext's supported editing
+   APIs (`PutUSFM`/`PutUSX`, #429, #430, #431). The 2026-10-26 decision *rules out* "Scripture
+   writes from any Paratext path", and `CLAUDE.md` lists "a second Scripture writer, or an
+   alternative path for applying corrections to the text" under stop-and-ask: Stage 9B.3b's
+   authorized write is deliberately the only one.
+2. A verified Paratext thread resolution automatically closing its linked Bridge QA record with
+   no second click (#425, #433). The 2026-10-26 "decision 3" entry *rules out* "applying it
+   without a click"; today the card offers "Mark resolved in Bridge".
+**What was done instead (same day):** the two children that need neither reversal nor a real
+Paratext host were implemented and verified in source: #427 (the QA proposal parser, read-only)
+and the core of #426 (notes created, replied to and resolved from the Paratext notes panel,
+pending state shown, drafts kept). See BUILD_LOG 2026-11-02.
+**Questions the maintainer has to answer before either reversal lands:**
+- Does the Paratext-API Scripture write replace Stage 9B.3b as the writer for Paratext-linked
+  books, or sit beside it? Two writers over one verse need one ownership rule (#424's
+  "stale-baseline detection, two-sided refresh, recovery when only one save succeeds").
+- Is automatic closure a status change (`resolved`) with an `external` actor in the append-only
+  history, as #425 describes, and does it apply to findings and correction proposals as well as
+  issue resolutions? Today only issue resolutions carry Paratext links.
+- The reference plugin (selvabenz/Paratext-sug-in-context-menu) has no licence file (checked
+  2026-11-02 through the GitHub API: `license: null`). Its parser shape was used as a format
+  reference only; no code was copied. Reusing more than that is a licensing question (#424).
+**If approved:** amend the two 2026-10-26 entries (do not delete them), then the "Rules out"
+lines there, then this entry's status. The implementation order in #423 (#424 spike first, on a
+real Paratext 9.5 host) still holds; this machine has no Paratext installation.
+
+## 2026-11-02 — Paratext Scripture writes and automatic linked QA closure approved (Benz, #423–#436)
+
+**Decision:** at Benz's explicit request, reverse two restrictions in the
+2026-10-26 Paratext write-back decision and its one-click follow-up:
+
+1. **Bridge may write Scripture through Paratext.** The Paratext notes workflow
+   may submit human-confirmed corrections through the companion and Paratext's
+   supported Scripture editing APIs. This is an approved extension of the
+   correction workflow, including the supported text regions and limited marker
+   operations planned in #429 and #430. The former blanket prohibition on
+   `PutUSFM`/`PutUSX` or equivalent supported Scripture APIs no longer applies.
+2. **Resolving a Paratext thread may automatically close its linked Bridge QA
+   record.** A second "Mark resolved in Bridge" click is no longer required.
+   Implement this for verified links to QA records, not only the existing
+   translation-help issue resolutions (#425, #433). Record the external
+   resolution, actor, thread/comment identity and time in append-only history;
+   repeated refreshes must not create duplicate closure events or sync loops.
+
+**Required behavior:** validate the linked project, current permissions, locks,
+source discussion and current Scripture before writing; verify saved USFM and
+refresh Bridge from the result. Specify text ownership, concurrent-change
+checks and partial-save recovery in #424 before implementing #429. Never
+overwrite intervening edits or report an uncertain save as verified. Do not
+write Paratext project files directly or use private host data layers.
+
+Automatic QA closure records "resolved in Paratext"; it does not invent an
+Apply/Reject decision, assert a Scripture change occurred, or establish semantic
+verification. The existing positive-verification and human acknowledgement
+requirements for Stage 9B's `CORRECTED` remain. Define a separate closure state
+or event where the QA model needs one, with a forward migration as required.
+Missing/ambiguous links and conflicting record revisions require reconciliation
+rather than guessing which record to close. Handle offline/reconnect delivery
+durably and do not silently reopen a record on unrelated note activity.
+
+**Because:** the requested round trip treats Paratext as a supported Scripture
+editing host and allows a reviewer's resolution there to complete linked work
+in Bridge without repeating the same action.
+
+**Scope:** this supersedes only the Scripture-write ban and mandatory local
+closure click in the two 2026-10-26 entries. Other restrictions, including direct
+project-file writes and unapproved note delete/reopen actions, remain. Automatic
+resolution of a Paratext source thread after all Bridge proposals have terminal
+decisions still needs its own completion rules in #433.
+
+**Status when recorded:** policy and planning only. Subsequent merged work and
+live-host evidence are recorded in PARATEXT_HOST_ACCEPTANCE_CHECKLIST.md;
+the remaining acceptance criteria stay tracked under #423.
+
+## 2026-11-02 — Bridge save ownership, named attribution and resolution scope confirmed (Benz, #423, #437)
+
+**Decision:** Benz answered the remaining questions on the Paratext notes plan:
+
+1. **Bridge initiates and saves the reviewed changes.** Keep one Bridge-owned,
+   human-confirmed correction workflow. For a linked Paratext project it submits
+   the save through Paratext's supported APIs, permissions and locks, verifies
+   the saved result and refreshes Bridge. This is not a choice to replace Bridge's
+   workflow with a separate Paratext-only editing workflow. Define concurrent
+   changes and partial-save recovery without silently overwriting either copy.
+2. **Name the Bridge user who changed and saved the text.** Persist the actual
+   authenticated Bridge actor's id and display name with the edit, save and
+   resolution history. Surface that name in the linked discussion/audit evidence
+   and reports. A resolution initiated there records "resolved in Bridge". If
+   Paratext's API records the logged-in Paratext user as native author, retain that
+   real author too and distinguish "changed/saved by <Bridge user> through Bridge"
+   rather than impersonating another native account. Inspect API support for
+   attribution in #424; any host limitation must be visible.
+3. **Automatic external closure covers findings, correction proposals and issue
+   resolutions.** A verified resolution in Paratext closes the explicitly linked
+   work record and records "resolved in Paratext", the external actor and source
+   evidence. Keep the underlying proposal, prior decisions and lifecycle events;
+   closure does not imply that a proposal was applied or positively verified.
+   Stage 9B's separate `CORRECTED` requirements remain. Bridge-origin resolution
+   retains its Bridge origin when its echo returns from Paratext.
+4. **Reference reuse permission:** Benz states that
+   `selvabenz/Paratext-sug-in-context-menu` is his repository and explicitly permits
+   its use and redistribution for this work. A fresh repository/API check still
+   finds no licence file, no licence text in README and `license: null`. Record
+   the owner's grant rather than inventing a standard licence identifier. This
+   entry does not claim that the upstream repository's files were changed or
+   that third-party material has been relicensed.
+5. **Real-host acceptance:** Benz will test Paratext. Prepare the disposable-project
+   round-trip checks and evidence checklist under #424/#436; live compatibility
+   remains NOT RUN until his results are recorded.
+
+**Status:** confirmed product decisions, not a fresh proposal awaiting the same
+approval. API capability checks, safe synchronization design and implementation
+remain tasks. No runtime code or Scripture was changed in recording this answer.
+
+## 2026-11-03 — Paratext round trip completed in source: regions, marker rename, two-sided revert, reconciliation, project-wide queue (#424–#436; Joel, for Benz's host walk)
+
+**Decision (implementation of the approved policy, with one point raised for the maintainer):**
+
+1. **Regions.** A QA proposal is applied in its own region and never mapped into
+   another. Verse body, footnote and cross-reference text are edited on Bridge's
+   copy through the one Scripture writer (`edit_verse` → `apply_scripture_edit`:
+   a note lives inside the verse's raw string). A **heading** is edited on
+   Bridge's copy through a new journalled writer of `<chapter>.headings.json`
+   (`TranslationCoreProject.apply_heading_edit`): refused unless the heading
+   still reads as the reviewer saw it, backed up and journalled like a Scripture
+   edit, rolled back on failure. **Raised for the maintainer:** CLAUDE.md lists
+   "a second Scripture writer" among the stop-and-ask items. A heading is not
+   Scripture by the repository's own definition (#180: it is kept out of the
+   verse map because its words are not a translation of any source word), so
+   this writer is recorded here as a *heading-file* writer, not a Scripture
+   writer, and the verse map is never touched by it. If the maintainer reads
+   the rule more widely, the heading region drops back to review-only by
+   removing the `REGION_HEADING` branch in `paratext_review_decide`; nothing
+   else depends on it.
+2. **Paratext-only regions.** A book **introduction** (Bridge keeps no copy) and
+   a **heading-marker rename** (#430; ms/ms1–3, s/s1–4, cl, cd only, label
+   unchanged, unique at the anchor, round-tripped through Paratext's own parser
+   before the write) are applied only with "Also write to Paratext" and are
+   verified by Paratext's read-back alone. Bridge's heading tag follows a
+   rename. Everything else structural stays review-only.
+3. **Revert is two-sided and checked on each side.** The latest verified apply
+   is reverted on Bridge's copy only while it still equals its post-image; when
+   it was written into Paratext, the exact reverse replacement is queued there
+   (a deletion is undone by replacing the window around the gap), verified by
+   Paratext's read-back, and a comment records the revert on the thread. A
+   reverse that cannot be built exactly is reported as manual, never
+   approximated. The thread is not reopened (reopen stays a separate question).
+4. **Interrupted applies are classified, never retried blind.** An `applied`
+   decision without verification is compared with the current text: verified /
+   not applied / conflict. The reviewer reconciles it explicitly; an
+   unreconciled one blocks further applies on that verse.
+5. **Resolution gate, no automatic source-thread resolution.** A thread with QA
+   proposals is resolved from Bridge only when every current proposal (reloaded
+   from the notes as they are now) has a terminal decision — applied and
+   verified in Bridge and, when written there, in Paratext; rejected; completed
+   manually. A saved resolve that could not go is retried on its own and never
+   reapplies Scripture. Automatic resolution from Bridge decisions remains the
+   separate policy question #424 names; the resolve stays a click.
+6. **Project-wide queue.** The queue scans the books the reviewer chooses from
+   the Paratext notes index (a never-opened sibling is never materialized),
+   orders them from a chosen starting book and says where it wraps around, shows
+   a sibling's decisions read-only from its own workbench, and acts only on the
+   open book. Its state (filter, scope, position, drafts, session start) is kept
+   per linked Paratext project in the app settings so it survives a book switch,
+   a close and a restart; the workbench v12 table `paratext_review_state` is no
+   longer written (schema unchanged; removed at the next bump).
+7. **Evidence.** CSV and HTML name the Bridge user (id, display name), Paratext's
+   own editor of record, the save verification, the region, the reconciliation
+   and where the thread was resolved. Reports can be cumulative or per session,
+   saved to a chosen destination when the project folder cannot be written,
+   opened in the default browser, and an interrupted generation is cleared and
+   reported (the decisions are the evidence; a report is derived).
+
+**Status:** source complete and tested with the connector stand-in; connector
+0.10.0 (`text_regions`, `rename_marker`) compiled nowhere yet — Benz's host walk
+(`PARATEXT_HOST_ACCEPTANCE_CHECKLIST.md`, sections E–G) is the acceptance for
+every region but the verse body, for the rename, the reverse write, lock
+revocation, Send/Receive and two devices.
+
+## 2026-11-03 — Windows signing gate relaxed until a signing identity exists (Benz, #413)
+
+**Decision:** The v0.24.0/v0.24.1 release runs failed the Windows leg because
+`BRIDGE_WINDOWS_SIGN_COMMAND` is not set: no certificate has been provisioned
+(Microsoft's Artifact Signing does not accept the Indian publisher; another CA
+must be chosen). Benz decided, relayed by Joel, that a release must not wait on
+that: a tagged release now builds and attaches an **unsigned** Windows
+installer, flagged in the run summary, while the Defender scan and hash checks
+stay as gates. The unsigned-release prohibition of #413 is suspended, not
+withdrawn: revert the three `release.yml` lines when the identity exists.
+
+## 2026-11-03 — Windows updater-key gate relaxed for the acceptance-test build (Benz, #413, #321)
+
+**Decision:** v0.24.3's Windows leg stopped at the second gate: no Tauri
+updater key pair (`BRIDGE_UPDATER_PUBLIC_KEY`, `TAURI_SIGNING_PRIVATE_KEY`)
+has been provisioned. Benz approved (#413, 2026-11-03) a tagged Windows build
+**without updater artifacts**, with a warning in the run summary, so the
+Paratext acceptance walk can proceed; the Defender scan and exact-artifact hash
+checks stay. No `latest.json` feed is published, so an installed app reports
+"no updater signing key" and never checks for updates. **Rules out:** nothing
+from #321 — key provisioning remains outstanding and the original throw is
+restored once the keys exist.
+

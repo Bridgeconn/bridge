@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/svelte";
 import { get } from "svelte/store";
+import { answerConfirmation, confirmRequest } from "../../confirmAction";
 import CrossVerseAlignmentModal from "../CrossVerseAlignmentModal.svelte";
 import {
   alignmentRevisionByVerse, alignmentStatusByVerse, chapterVerseNums, checkStatusByVerse, checkGroupsByVerse,
@@ -13,9 +14,10 @@ import type {
 const {
   getAlignmentRange, realignWords, unalignWords, runVerseChecks, getLexiconEntry, crossVerseLink, crossVerseUnlink,
   analysisJobGetScopeStatus, semanticLocationGetRange, targetSemanticGetRange, crossVersePropose,
-  crossVerseAiPropose, getSettings, autoAlignWindow, autoAlignRevert, autoAlignVerdict, nullSet, nullClear,
+  crossVerseAiPropose, getSettings, autoAlignWindow, autoAlignRevert, autoAlignVerdict, nullSet, nullClear, splitAlignmentSource,
 } = vi.hoisted(() => ({
   crossVerseAiPropose: vi.fn(),
+  splitAlignmentSource: vi.fn(),
   autoAlignWindow: vi.fn(),
   autoAlignRevert: vi.fn(),
   autoAlignVerdict: vi.fn(),
@@ -39,7 +41,7 @@ vi.mock("../../api/bridgeClient", () => ({
   bridge: {
     getAlignmentRange, realignWords, unalignWords, runVerseChecks, getLexiconEntry, crossVerseLink, crossVerseUnlink,
     analysisJobGetScopeStatus, semanticLocationGetRange, targetSemanticGetRange, crossVersePropose,
-    crossVerseAiPropose, getSettings, autoAlignWindow, autoAlignRevert, autoAlignVerdict, nullSet, nullClear,
+    crossVerseAiPropose, getSettings, autoAlignWindow, autoAlignRevert, autoAlignVerdict, nullSet, nullClear, splitAlignmentSource,
   },
 }));
 
@@ -194,12 +196,25 @@ async function pickUp(word: string, verse: string) {
 }
 
 describe("CrossVerseAlignmentModal", () => {
+  it.each(["left", "right"] as const)("separates the middle grouped source card to the %s", async direction => {
+    const ctx = context("2", ["Alpha", "Beta", "Gamma"], ["target"], 1);
+    ctx.groups = [{ id: "joined", topIds: ctx.topTokens.map(t => t.id), bottomIds: [ctx.bottomTokens[0].id] }];
+    ctx.alignment = { alignments: [{ topWords: ctx.topTokens, bottomWords: ctx.bottomTokens }], wordBank: [] };
+    getAlignmentRange.mockImplementation(async (_chapter: string, verses: string[]) => rangeFor(verses, { "1": V1, "2": ctx, "3-4": V34 }));
+    splitAlignmentSource.mockResolvedValue({ contexts: [ctx] });
+    await renderPage();
+    await fireEvent.click(screen.getByLabelText("Separate Beta (1/1)"));
+    await fireEvent.click(screen.getByRole("button", { name: `Separate Beta ${direction}` }));
+    expect(get(confirmRequest)?.confirmLabel).toBe(`Separate ${direction}`);
+    answerConfirmation(true);
+    await waitFor(() => expect(splitAlignmentSource).toHaveBeenCalledWith("1", "2", "H002", direction, ctx.alignment, false));
+  });
   it("opens on the selected verse ±1 and shows every verse in both columns plus the verdict strip", async () => {
     await renderPage("2");
     expect(getAlignmentRange).toHaveBeenCalledWith("1", ["1", "2", "3-4"]);
-    // Two columns, so each verse header appears twice; the bridge verse keeps its string.
-    expect(screen.getAllByText("1:1")).toHaveLength(2);
-    expect(screen.getAllByText("1:3-4")).toHaveLength(2);
+    // Two columns, so each verse appears in Read and both alignment areas; the bridge verse keeps its string.
+    expect(screen.getAllByText("1:1")).toHaveLength(3);
+    expect(screen.getAllByText("1:3-4")).toHaveLength(3);
     const strip = screen.getByLabelText("Verse verdicts");
     // No automatic pass has run: every verse is "Not aligned yet".
     expect(within(strip).getAllByText(/Not aligned yet/)).toHaveLength(3);
@@ -327,7 +342,7 @@ describe("CrossVerseAlignmentModal", () => {
     expect(screen.queryByText("word")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "was" })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Show all" }));
-    expect(screen.getAllByText("1:1")).toHaveLength(2);
+    expect(screen.getAllByText("1:1")).toHaveLength(3);
   });
 
   it("changing the range refetches with the new verse strings and toggling a chip drops a verse", async () => {
@@ -364,7 +379,7 @@ describe("CrossVerseAlignmentModal", () => {
     await renderPage("2");
     await waitFor(() => expect(getAlignmentRange).toHaveBeenLastCalledWith("1", ["1", "2", "3-4", "5"]));
     expect(await screen.findByText(/widened with v\.5/)).toBeInTheDocument();
-    expect(screen.getAllByText("1:5")).toHaveLength(2);
+    expect(screen.getAllByText("1:5")).toHaveLength(3);
     await fireEvent.click(screen.getByRole("button", { name: "Back to 2 ±1" }));
     await waitFor(() => expect(getAlignmentRange).toHaveBeenLastCalledWith("1", ["1", "2", "3-4"]));
     expect(screen.queryByText(/widened with/)).not.toBeInTheDocument();

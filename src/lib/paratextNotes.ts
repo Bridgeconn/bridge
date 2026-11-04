@@ -3,10 +3,104 @@
 // paratextNoteCountsByVerse (verseKey()-keyed, cleared by resetBookState()).
 // While the engine's index is still building, the chapter is asked again a
 // few times; a late answer for a chapter the reviewer has left is dropped.
-import { get } from "svelte/store";
+import { get, writable } from "svelte/store";
 import { bridge } from "./api/bridgeClient";
+import { revealSidePanel } from "./editorPrefs";
 import { currentChapter, paratextNoteCountsByVerse, project, verseKey } from "./stores";
 import type { ParatextNoteCount } from "./types/paratext";
+
+// #426: a request from elsewhere in the editor (the verse context menu) to
+// write a Paratext note on a verse, optionally on its selected text. The
+// notes panel opens its composer with these and clears the request.
+export interface ParatextNoteRecord {
+  /** The Bridge record the thread will be linked to (#433): a finding or a
+   *  correction proposal. A verified Paratext resolve then closes it. */
+  kind: "finding" | "correction_proposal";
+  localId: string;
+  /** Shown above the composer: "Finding · names.spelling_similarity". */
+  title: string;
+  /** What the note says about the record before the reviewer's own words. */
+  lines: string[];
+}
+
+export interface ParatextNoteRequest {
+  chapter: string;
+  verse: string;
+  selectedText: string;
+  record?: ParatextNoteRecord;
+}
+export const paratextNoteRequest = writable<ParatextNoteRequest | null>(null);
+
+/** #432: the review queue is one dialog for the whole project, mounted by
+ *  App outside the per-book panels, so a "Go to verse" into another book
+ *  does not close it. */
+export const paratextReviewQueueOpen = writable(false);
+
+/** Open the Paratext notes panel on `verse` with its composer ready. The
+ *  verse is already the selected one when the menu was opened on it. With
+ *  `record`, the note is sent for that record and linked to it. */
+export function requestParatextNote(chapter: string, verse: string, selectedText = "",
+                                    record?: ParatextNoteRecord): void {
+  paratextNoteRequest.set({ chapter, verse, selectedText, record });
+  revealSidePanel("paratext");
+}
+
+/** #426: composer drafts, kept while the reviewer moves between verses and
+ *  books, and across closing and reopening Bridge (this browser's
+ *  localStorage, keyed by project path and verse; a draft never leaves the
+ *  device). A draft is dropped once its note is queued. Storage may be
+ *  unavailable (a private window, cleared site data): then drafts last the
+ *  session only.
+ */
+const DRAFTS_KEY = "bridge.paratextNoteDrafts.v1";
+const drafts = new Map<string, { text: string; selectedText: string }>();
+
+function loadDrafts(): void {
+  try {
+    const raw = localStorage.getItem(DRAFTS_KEY);
+    if (!raw) return;
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") {
+      for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+        if (value && typeof value === "object" && typeof (value as { text?: unknown }).text === "string") {
+          const v = value as { text: string; selectedText?: unknown };
+          drafts.set(key, { text: v.text, selectedText: typeof v.selectedText === "string" ? v.selectedText : "" });
+        }
+      }
+    }
+  } catch {
+    // unreadable storage: start with no drafts
+  }
+}
+
+function persistDrafts(): void {
+  try {
+    localStorage.setItem(DRAFTS_KEY, JSON.stringify(Object.fromEntries(drafts)));
+  } catch {
+    // storage unavailable: the draft lives for this session
+  }
+}
+
+loadDrafts();
+
+export function draftKey(projectPath: string, chapter: string, verse: string): string {
+  return `${projectPath}|${verseKey(chapter, verse)}`;
+}
+
+export function readDraft(key: string): { text: string; selectedText: string } | null {
+  return drafts.get(key) ?? null;
+}
+
+export function saveDraft(key: string, draft: { text: string; selectedText: string }): void {
+  if (draft.text.trim() || draft.selectedText.trim()) drafts.set(key, draft);
+  else drafts.delete(key);
+  persistDrafts();
+}
+
+export function dropDraft(key: string): void {
+  drafts.delete(key);
+  persistDrafts();
+}
 
 const RETRY_MS = 2000;
 const MAX_TRIES = 30;

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "alignment",
+  "description": "Alignment window events and close interception over the existing engine",
+  "windows": ["alignment"],
+  "permissions": ["core:event:default", "core:window:allow-close"]
+}

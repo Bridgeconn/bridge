@@ -365,6 +365,7 @@ export interface CrossVerseAiProposalResult extends CrossVerseProposalResult {
 }
 
 export interface AlignmentContext {
+  sourceLayout?: { lastSplit?: { signature: string; direction: "left" | "right" }; pending?: { signature: string; direction: "left" | "right" }; order?: string[]; placements?: Record<string, { direction: "left" | "right"; members: string[] }> };
   chapter: string;
   verse: string;
   alignment: VerseAlignment;
@@ -1547,6 +1548,8 @@ export interface SettingsData {
   languageQaInlineConfidence: InlineConfidence;
   /** Learn a word the reviewer replaced and offer the change where it recurs. Default on. */
   languageQaLearnedFixes?: boolean;
+  /** Check/download signed app updates in the background; install on close. Default on. */
+  automaticUpdates?: boolean;
   /** The open project's reference Bible (#289), null with no project open.
    *  origin "project" = chosen for this project on this machine; "bundled" =
    *  the Language QA pack's own text; "none" = neither. */
@@ -1584,3 +1587,8 @@ export const STATUS_COLOR: Record<string, string> = {
   not_checked: "#9ca3af",
   ignored: "#a855f7",
 };
+
+export interface ChapterResetJob {
+  id?: string; chapter?: string; state: "idle" | "running" | "succeeded" | "cancelled" | "failed";
+  completed: number; total: number; error?: string; currentVerse?: string;
+}

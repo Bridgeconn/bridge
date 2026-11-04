@@ -1,4 +1,11 @@
 <script lang="ts">
+  import "../alignmentCards.css";
+  import AlignmentWorkspace from "./AlignmentWorkspace.svelte";
+  import SourceSplitControls from "./SourceSplitControls.svelte";
+  import SourceWordActions from "./SourceWordActions.svelte";
+  import AlignmentChapterReset from "./AlignmentChapterReset.svelte";
+  import AlignmentResetControls from "./AlignmentResetControls.svelte";
+  import AlignmentPane from "./AlignmentPane.svelte";
   // Cross-verse alignment page, slice 1 (#116): several verses of one
   // chapter side by side -- source tokens down the left, each verse's word
   // bank down the right, a gap overview across the top. In this slice a
@@ -9,10 +16,17 @@
   // the linked source token's group stays empty and the target word stays
   // in its own verse's word bank; only the annotations change.
   import { onMount } from "svelte";
-  import { bridge } from "../api/bridgeClient";
+  import { bridge as apiBridge } from "../api/bridgeClient";
+  import { get, derived } from "svelte/store";
+  import { onDestroy } from "svelte";
+  import { project as activeProject } from "../stores";
+  import { bindReviewProject } from "../reviewProjectGuard";
+  import { alignmentBusy, alignmentPinned } from "../alignmentWindow";
+  const expectedPath = get(activeProject)?.path || "";
+  const bridge = bindReviewProject(apiBridge, expectedPath);
   import { recheckVerse } from "../verseChecks";
   import {
-    alignmentStatusByVerse, checkStatusByVerse, currentChapter, noteAlignmentChanged, targetLang, verseKey, verseNums,
+    alignmentStatusByVerse, checkStatusByVerse, currentChapter, noteAlignmentChanged, targetLang, verseKey, chapterVerseNums,
   } from "../stores";
   import { alignmentStatusLabel } from "../alignmentStatus";
   import type {
@@ -27,7 +41,7 @@
   import { createPointerDrag } from "../alignmentDrag";
   import {
     alignedTargetsFor, bottomIdsAfterDrop, groupForTarget, occurrenceLabel as occurrence, unaccountedTargets,
-    unrealizedSources,
+    unrealizedSources, topIdsFor, sourceColumns, canSeparateSource,
   } from "../alignmentGroups";
   import { defaultRange, joinVerseId, rangeBetween, spanOf, splitVerseId, toggleVerse } from "../crossVerseRange";
   import { suggestCrossVerseRange, unionInChapterOrder } from "../crossVerseSuggest";
@@ -35,9 +49,14 @@
   import LexiconPopup from "./LexiconPopup.svelte";
 
   export let chapter: string;
+  const verseNums = derived(chapterVerseNums, (chapters) => chapters[chapter] || []);
   /** The verse the page was opened on; the default range is this ±1. */
   export let verse: string;
   export let onClose: () => void;
+  export let onDetach: (() => void) | null = null;
+  export let onPin: (() => void) | null = null;
+  export let standalone = false;
+  onDestroy(() => alignmentBusy.set(false));
   /** Verses to start with instead of anchor ±1 (#118): the editor's
    *  multi-selection or a finding's references. */
   export let initialVerses: string[] = [];
@@ -52,9 +71,12 @@
   /** Verses the last Stage 6B run marked CROSS_VERSE that the picker added (#118). */
   let suggested: string[] = [];
   let contexts: Record<string, AlignmentContext> = {};
+  let splitControls: Record<string, SourceSplitControls> = {};
   let chapterStatus: AlignmentCounts | null = null;
+  let reading: Record<string, string> = {};
   let loading = true;
   let busy = false;
+  $: alignmentBusy.set(busy || autoBusy || proposalsBusy);
   let error = "";
   /** The raw text behind a plain error (#243), shown under "Show details"
    *  only while `error` is still the message it explains. */
@@ -116,7 +138,7 @@
 
   // The page is chapter-scoped: navigating to another chapter underneath it
   // would leave the range pointing at verses of the old one.
-  $: if ($currentChapter !== chapter) onClose();
+  $: if (!standalone && !$alignmentPinned && $currentChapter !== chapter && !busy && !autoBusy) onClose();
 
   // Composite ids in the DOM: a draggable token is "verse|T001", a drop
   // column is "verse|H001", a word bank is the verse. The drop handler
@@ -177,6 +199,7 @@
     error = "";
     try {
       const range = await bridge.getAlignmentRange(chapter, selection);
+      void Promise.all(selection.map(async (v) => { try { const data = await bridge.getVerse(chapter, v); return [v, data.display?.plain ?? data.text ?? ""] as const; } catch { return [v, ""] as const; } })).then((lines) => { if (sequence === loadSequence) reading = Object.fromEntries(lines); });
       if (sequence !== loadSequence) return; // a newer selection superseded this load
       const next: Record<string, AlignmentContext> = {};
       for (const context of range.verses) next[context.verse] = context;
@@ -478,7 +501,7 @@
   // `glossVersion` is read, not used, so Svelte re-invokes these once the
   // lexicon lookups resolve.
   function sourceGloss(token: AlignmentToken, _version: number): string {
-    return glosses.glossFor(token).short;
+    return glosses.cardGlossFor(token);
   }
 
   function sourceTitle(token: AlignmentToken, _version: number): string {
@@ -521,6 +544,7 @@
   // ---- mutations (same-verse only in this slice) --------------------------
 
   async function refreshChecks(v: string, updated: AlignmentContext, message: string) {
+    if (expectedPath && get(activeProject)?.path !== expectedPath) return;
     contexts = { ...contexts, [v]: updated };
     chapterStatus = updated.chapterStatus;
     const key = verseKey(chapter, v);
@@ -532,13 +556,15 @@
     try {
       // Only the alignment checks, as AlignmentModal does after a save: the
       // verse's other findings are kept (#251), Greek Room is on demand (#252).
-      await recheckVerse(chapter, v, ["alignment"]);
+      await recheckVerse(chapter, v, ["alignment"], { expectedPath });
       // `message` is empty when the caller reports its own aggregate result
       // (the AI auto-link batch, #146), so join rather than interpolate --
       // otherwise every notice starts with a stray space.
+      if (expectedPath && get(activeProject)?.path !== expectedPath) return;
       notice = [message, `The alignment checks for ${chapter}:${v} are current.`]
         .filter(Boolean).join(" ");
     } catch (value) {
+      if (expectedPath && get(activeProject)?.path !== expectedPath) return;
       checkStatusByVerse.update((values) => ({ ...values, [key]: "failed" }));
       error = [message, `The save succeeded, but rechecking failed: ${value instanceof Error ? value.message : String(value)}`]
         .filter(Boolean).join(" ");
@@ -564,7 +590,7 @@
     if (!context) return;
     const bottomIds = bottomIdsAfterDrop(context, topId, bottomId);
     if (!bottomIds) return; // already in this column
-    void mutate(v, () => bridge.realignWords(chapter, v, [topId], bottomIds, context.alignment), "Alignment saved.");
+    void mutate(v, () => bridge.realignWords(chapter, v, topIdsFor(context, topId), bottomIds, context.alignment), "Alignment saved.");
   }
 
   function returnToBank(v: string, bottomId: string) {
@@ -666,8 +692,11 @@
     lexiconDirection = direction;
   }
 
-  function sourceRows(context: AlignmentContext): AlignmentToken[] {
-    return gapFilterVerse ? unrealizedSources(context) : context.topTokens;
+  function sourceRows(context: AlignmentContext): Array<AlignmentToken & { members: AlignmentToken[] }> {
+    if (gapFilterVerse) return unrealizedSources(context).map((token) => ({ ...token, members: [token] }));
+    const linked = (context.crossVerseGroups || []).filter((g) => g.state === "active" && g.sourceTopIds.length > 1)
+      .map((g) => ({ id: g.groupId, topIds: g.sourceTopIds, bottomIds: [] }));
+    return sourceColumns({ ...context, groups: [...linked, ...context.groups] }).map((column) => ({ ...column.tokens[0], members: column.tokens }));
   }
 
   function bankTokens(context: AlignmentContext): AlignmentToken[] {
@@ -684,9 +713,13 @@
 
 <svelte:window on:keydown={(event) => { if (event.key !== "Escape") return; if (menu) { menu = null; return; } if (!busy && !lexiconToken) onClose(); }} />
 
-<div class="overlay" role="presentation">
-  <section class="page" role="dialog" aria-modal="true" aria-label={`Cross-verse alignment, chapter ${chapter}`}>
+<div class="overlay" class:standalone role="presentation">
+  <section class="page alignment-cards" role="dialog" aria-modal="true" aria-label={`Cross-verse alignment, chapter ${chapter}`}>
     <header>
+      <div class="window-controls">
+        <button type="button" disabled={busy} on:click={() => onPin ? onPin() : alignmentPinned.update((v) => !v)} aria-pressed={$alignmentPinned}>{$alignmentPinned ? "Pinned verse" : "Follow editor"}</button>
+        {#if onDetach}<button type="button" disabled={busy} on:click={onDetach}>{standalone ? "Dock in Bridge" : "Move to separate window"}</button>{/if}
+      </div>
       <div class="title">
         <div class="eyebrow">CROSS-VERSE ALIGNMENT</div>
         <h2>Chapter {chapter} · verses {span ? (span[0] === span[1] ? span[0] : `${span[0]}–${span[1]}`) : verse}</h2>
@@ -809,7 +842,12 @@
       {/if}
       {#if loading}<div class="reloading"><span class="spin" /> Updating range…</div>{/if}
 
-      <div class="columns">
+      <AlignmentChapterReset {chapter} busy={busy || autoBusy} onBusy={(value) => busy = value} onChanged={(values) => { for (const value of values) if (value.chapter === chapter) contexts = { ...contexts, [value.verse]: value }; }} />
+      <AlignmentWorkspace kind="cross">
+        <AlignmentPane id="read" label="Read">
+          {#each visibleVerses as v}<p class="range-reading" dir={contexts[v].targetDirection} lang={$targetLang}><strong>{chapter}:{v}</strong> {reading[v] ?? ""}</p>{/each}
+        </AlignmentPane>
+        <AlignmentPane id="source" label="Source">
         <section class="col sources" aria-label="Source words">
           <div class="col-title">Source words <small>click a word for its lexicon entry · drop target words into the cell beside it</small></div>
           <div class="scroll">
@@ -821,22 +859,23 @@
                   {#if !context.sourceAvailable}<span class="warn">no original-language source</span>{/if}
                   {#if context.issues.length}<span class="warn" title={context.issues.join("\n")}>⚠ {context.issues.length} issue{context.issues.length === 1 ? "" : "s"}</span>{/if}
                 </div>
-                <div class="rows">
+                <SourceSplitControls bind:this={splitControls[v]} {context} busy={busy || autoBusy} onBusy={(value) => busy = value} onChanged={(values) => { for (const value of values) if (value.chapter === chapter) contexts = { ...contexts, [value.verse]: value }; }} />
+                <div class="rows" dir={context.sourceDirection}>
                 {#each sourceRows(context) as src (src.id)}
                   {@const columnKey = joinVerseId(v, src.id)}
                   <div class="row">
-                    <button
-                      type="button"
-                      class="token source"
-                      dir={context.sourceDirection}
-                      class:hebrew={context.sourceDirection === "rtl"}
-                      on:click={() => openLexicon(src, context.sourceDirection)}
-                      disabled={busy}
-                      title={sourceTitle(src, glossVersion)}
-                    >
-                      <span class="word">{src.word}{#if src.occurrences > 1}<span class="occ">{occurrence(src)}</span>{/if}</span>
-                      {#if sourceGloss(src, glossVersion)}<small class="gloss">{sourceGloss(src, glossVersion)}</small>{/if}
-                    </button>
+                    <div class="source-words" class:joined={src.members.length > 1}>
+                    {#each src.members as member (member.id)}
+                      <div class="source-card">
+                      <button type="button" class="token source" dir={context.sourceDirection} class:hebrew={context.sourceDirection === "rtl"}
+                        on:click={() => openLexicon(member, context.sourceDirection)} disabled={busy} title={sourceTitle(member, glossVersion)}>
+                        <span class="word">{member.word}{#if member.occurrences > 1}<span class="occ">{occurrence(member)}</span>{/if}</span>
+                        {#if sourceGloss(member, glossVersion)}<small class="gloss" title={sourceTitle(member, glossVersion)}>{sourceGloss(member, glossVersion)}</small>{/if}
+                      </button>
+                      {#if canSeparateSource(context, member.id)}<SourceWordActions token={member} disabled={busy || autoBusy} onSeparate={(direction) => { void splitControls[v].separateWord(member.id, direction); }} />{/if}
+                      </div>
+                    {/each}
+                    </div>
                     <div
                       class="drop-cell"
                       class:drop-hover={$dragState.overColumn === columnKey}
@@ -941,6 +980,8 @@
           </div>
         </section>
 
+        </AlignmentPane>
+        <AlignmentPane id="target" label="Target">
         <section class="col targets" aria-label="Target words">
           <div class="col-title">Target words <small>in verse order · drag a blue word into a source cell, or click it then click a cell</small></div>
           <div class="scroll">
@@ -950,6 +991,7 @@
                 <div class="verse-head">
                   <span class="vnum">{chapter}:{v}</span>
                   <span class="status {context.status}">{alignmentStatusLabel(context.status)}</span>
+                  <AlignmentResetControls {context} busy={busy || autoBusy} onBusy={(value) => busy = value} onChanged={(values) => { for (const value of values) if (value.chapter === chapter) contexts = { ...contexts, [value.verse]: value }; }} />
                 </div>
                 <div
                   class="bank"
@@ -1032,7 +1074,8 @@
             {/each}
           </div>
         </section>
-      </div>
+        </AlignmentPane>
+      </AlignmentWorkspace>
     {/if}
   </section>
 </div>
@@ -1063,6 +1106,11 @@
 {/if}
 
 <style>
+  .source-words { display: flex; flex-wrap: wrap; gap: 4px; }
+  .source-words.joined { border: 1px solid var(--accent); padding: 3px; border-radius: 8px; }
+  .standalone { padding: 0; background: var(--surface); }
+  .standalone .modal, .standalone .page { width: 100%; height: 100vh; max-height: 100vh; border-radius: 0; }
+  .window-controls { display: flex; flex-wrap: wrap; gap: 4px; }
   .overlay { position: fixed; inset: 0; z-index: var(--z-dialog); background: rgba(15, 20, 26, .58); display: grid; place-items: center; padding: 16px; }
   .page {
     width: min(1340px, 100%); height: calc(100vh - 32px); display: flex; flex-direction: column; min-height: 0;
@@ -1166,7 +1214,7 @@
   .error-detail code { display: block; margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-xs); }
 
   /* Two vertically scrolling columns: the range view never scrolls sideways (#72). */
-  .columns { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 12px; flex: 1; min-height: 0; }
+  .range-reading { font-family: var(--font-target); line-height: 1.8; }
   .col { display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--border); border-radius: 10px; }
   .col-title { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; padding: 8px 12px; font-size: var(--fs-sm); font-weight: 700; border-bottom: 1px solid var(--border); flex-shrink: 0; }
   .col-title small { color: var(--text-3); font-weight: 400; }
@@ -1185,7 +1233,7 @@
      scroll (#72) -- wrapping is what replaces it, and min(150px, 100%) rather
      than a bare 150px because below that width a bare minimum would size the
      track wider than the column and `.scroll`'s overflow-x would clip it. */
-  .rows { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(150px, 100%), 1fr)); gap: 4px 10px; align-items: start; }
+  .rows { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(var(--alignment-card-width), 100%), var(--alignment-card-width))); gap: 4px 10px; align-items: start; }
   .rows .empty { grid-column: 1 / -1; }
   /* Source word above its drop cell rather than beside it, matching the
      single-verse interlinear. A stacked cell needs roughly half the width of a
@@ -1211,8 +1259,8 @@
   .occ { margin-left: 3px; font-size: 0.8em; font-weight: 400; color: var(--text-3); }
   /* min-width: 0 overrides `.token`'s 62px so the source cell can shrink inside
      a flowed track (#136) and ellipsize, instead of overflowing it. */
-  .token.source { width: 100%; min-width: 0; background: #F6F1FF; cursor: pointer; align-items: flex-start; font-family: var(--font-greek); }
-  .token.source.hebrew { font-family: var(--font-hebrew); align-items: flex-end; }
+  .token.source { width: 100%; min-width: 0; background: #F6F1FF; cursor: pointer; align-items: stretch; font-family: var(--font-greek); }
+  .token.source.hebrew { font-family: var(--font-hebrew); align-items: stretch; }
   .token.source .word { font-size: var(--fs-lg); }
   .drop-cell { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-height: 38px; padding: 4px 6px; border-radius: 8px; border: 1px dashed var(--border); }
   .drop-cell.drop-hover, .bank.drop-hover { background: var(--accent-bg); outline: 2px dashed var(--accent); }
@@ -1232,7 +1280,7 @@
   .drag-ghost { position: fixed; z-index: var(--z-popover); transform: translate(-50%, -130%); pointer-events: none; background: var(--accent); color: white; font-family: var(--font-target); font-size: var(--fs-sm); font-weight: 700; border-radius: 7px; padding: 6px 10px; box-shadow: 0 8px 20px rgba(0,0,0,.28); }
   .empty { color: var(--text-3); font-size: var(--fs-xs); margin: 6px; }
   @media (max-width: 900px) {
-    .columns { grid-template-columns: 1fr; }
+
     .page { padding: 10px; }
   }
 </style>

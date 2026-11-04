@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "review-queue",
+  "description": "Review queue events and native close interception; shares the existing engine",
+  "windows": ["review-queue"],
+  "permissions": ["core:event:default", "core:window:allow-close"]
+}

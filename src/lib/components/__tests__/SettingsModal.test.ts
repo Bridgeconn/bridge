@@ -97,6 +97,20 @@ describe("SettingsModal connections", () => {
     });
   });
 
+  it("keeps the saved update opt out when switching settings panes", async () => {
+    getNavigationStatus.mockResolvedValue(navigationState());
+    setSettings.mockResolvedValueOnce({ automaticUpdates: false });
+    render(SettingsModal, { props: { initialPane: "updates", onClose: vi.fn() } });
+    const toggle = await screen.findByRole("checkbox", { name: "Automatically update Bridge" });
+    expect(toggle).toBeChecked();
+    await fireEvent.click(toggle);
+    await waitFor(() => expect(setSettings).toHaveBeenCalledWith({ automaticUpdates: false }));
+    await waitFor(() => expect(toggle).not.toBeDisabled());
+    await fireEvent.click(screen.getByRole("button", { name: "AI provider" }));
+    await fireEvent.click(screen.getByRole("button", { name: "App updates" }));
+    expect(screen.getByRole("checkbox", { name: "Automatically update Bridge" })).not.toBeChecked();
+  });
+
   it("keeps the last connected status visible during a background refresh", async () => {
     getNavigationStatus.mockResolvedValue(navigationState({
       connected: true,

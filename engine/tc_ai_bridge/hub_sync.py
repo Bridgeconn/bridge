@@ -47,6 +47,9 @@ SYNCED_TABLES: tuple[str, ...] = (
     # that made it is this device's and stays out (a hub carrying it would
     # send the note again from another PC).
     "paratext_links",
+    # #432/#433: a reviewer's decisions on QA proposals are the team's; the
+    # queue position and drafts (`paratext_review_state`) are this device's.
+    "paratext_review_decisions",
 )
 
 NOT_SYNCED_TABLES: tuple[str, ...] = tuple(t for t in MUTABLE_TABLES if t not in SYNCED_TABLES)
