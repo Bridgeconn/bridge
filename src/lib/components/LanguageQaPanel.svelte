@@ -807,6 +807,17 @@
               {#if finding.context === "heading" && finding.contextText}<p class="muted">Heading: {finding.contextText}</p>{/if}
               {#if finding.context === "introduction" && finding.contextText}<p class="muted">Book introduction: {finding.contextText}</p>{/if}
               <p>{finding.message}</p>
+              {#if finding.referenceEvidence}
+                <details>
+                  <summary>Reference evidence · {finding.referenceEvidence.label}</summary>
+                  <p>{finding.referenceEvidence.range}</p>
+                  <p>{finding.referenceEvidence.openingText}</p>
+                  {#if finding.referenceEvidence.closingText !== finding.referenceEvidence.openingText}
+                    <p>{finding.referenceEvidence.closingText}</p>
+                  {/if}
+                  <p class="muted">{finding.referenceEvidence.path}</p>
+                </details>
+              {/if}
               {#if finding.reference}
                 <p class="reference"><b>{finding.reference.label} {finding.reference.ref}:</b> {finding.reference.text}</p>
               {/if}

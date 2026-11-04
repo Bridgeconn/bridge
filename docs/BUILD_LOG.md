@@ -24157,3 +24157,87 @@ installed desktop/accessibility/monitor acceptance. Updated the architecture,
 QA matrix and host checklist with the visibility contract and remaining checks.
 GitHub connector comment writes returned 403; the authenticated CLI completed
 the updates. No release, installer replacement or Defender exemption is claimed.
+
+## 2026-11-04 — Quotation rules and local reference-assisted QA (#456)
+
+Benz clarified quotation requirements and authorized reference-assisted detection
+of passages where both target marks are absent. Updated #456 through the GitHub
+CLI after the connector refused the issue-body write (403). The confirmed scope
+supersedes the proposed chapter boundary and wait for Malayalam examples.
+
+Implemented a validated, versioned common quotation policy, independent target
+and reference conventions, symmetric or directional marks, configured nesting,
+permissive paragraph/verse-leading continuation or strict no-repeat mode, and
+book-wide state. Matthew 5–7 is a regression fixture. Inline USFM is lifted through
+the existing wrapper; findings retain raw Unicode spans, exact bridge/segment
+keys, stable identity and no automatic correction. Rule/evidence versions change
+when settings/reference evidence change so earlier decisions are rechecked
+without deleting history.
+
+Reference comparison uses existing local ReferenceText resources, complete outer
+quotation spans and exact verse correspondence. A target passage with no
+quotation evidence produces a possible-missing finding with source/range/boundary
+text evidence. Indirect speech and different boundaries remain human judgements.
+Unavailable/unbalanced reference conventions and ambiguous correspondence are
+limitations. A shared fingerprinted loader prevents simultaneous panel/QA
+cache-file writes and refreshes an edited reference. Collection hash coverage is
+v3; reference changes and common overrides invalidate completed-run skip hashes.
+
+Settings → Language QA now exposes the form, scope, preview, reset, enable and
+reference switches. The dedicated Quotations filter includes both finding types;
+reference evidence expands in the panel. Saves use existing authorization,
+atomic overrides and project-state mirroring, including lazy roots. No schema
+change, Scripture write, confidence threshold, golden rebaseline or network
+dependency. Older indic-qa quotation checks delegate to this common policy and
+their obsolete switches are hidden. New coverage wording awaits human Tamil
+review.
+
+Validation is recorded below after source and frozen checks finish. Installed
+Windows acceptance at 1366×768 remains a separate release gate; no installed
+app update or release is claimed.
+
+Verified:
+
+- 363 focused Python cases passed across quotation policy/settings, Language QA,
+  collection jobs, cached book stages, checker settings and role authorization.
+  Follow-up final quotation runs passed 24 policy/service cases, 21 pure-policy
+  cases after the trailing-apostrophe addition, and the explicit reporter refusal
+  (overlap is intentional; these counts are not added).
+- Real `43LUKIRVTam.SFM` (24 chapters) and `51PHPIRVTam.SFM` (4 chapters) completed
+  with zero unmatched quotation findings under the preset. This demonstrates
+  execution on real input, not human-labelled precision/recall.
+- `npm run check`: 0 errors/warnings. `npm run test -- --maxWorkers=2
+  --minWorkers=2`: 1,152 passed in 118 files. `npm run build`: app and dashboard
+  passed. The first full frontend run exposed the old category-list fixture;
+  it was extended to include quotations, then the complete suite passed.
+- Final isolated engine/helper binaries built in `.test-temp-quotation-dist`.
+  `scripts/smoke_sidecars.py .test-temp-quotation-dist/bridge-engine.exe` passed
+  the complete frozen suite, including quotation defaults/save, Matthew 5–7
+  and local reference evidence. The first attempt identified missing alignment
+  data in the new throwaway fixture; the fixture was completed and rerun.
+- `git diff --check` passes. Initial sandbox denials prevented pytest temporary
+  fixtures and Vitest's worker launch; normal test permissions resolved these.
+
+The full Python run and its reported failure are reconciled below. Installed
+desktop acceptance has not run; no golden was regenerated and no release made.
+
+Full-suite reconciliation: `pytest -n 4 --maxfail=5 -q` finished with **5,504
+passed, 3 xfailed, 5 failed**, stopping before the entire collected suite ran.
+The broad run was started before the category vocabulary edits were finished;
+three metadata/TypeScript vocabulary failures came from workers holding the old
+`CATEGORIES` tuple while reading the new files. The final 363-case focused run
+and an explicit final-source serial rerun pass those contracts. Starting that
+broad run before freezing the implementation made its vocabulary result stale;
+it is not claimed as a clean full-suite pass.
+
+The other failures were `test_an_existing_book_is_skipped_unless_named_to_be_replaced`
+(add-books replacement job failed in commit) and
+`test_continuous_foreground_polling_does_not_starve_worker` (three-second polling
+deadline). **All five failed nodes passed together serially against final source**
+in 48.77 s. Their behavior under parallel load and the baseline remain unconfirmed;
+filed separate investigations [#464](https://github.com/Bridgeconn/bridge/issues/464)
+and [#465](https://github.com/Bridgeconn/bridge/issues/465), without changing the
+replacement logic or weakening a deadline. A complete clean full-suite run and
+installed desktop acceptance remain release gates. #456 stays open with this
+evidence and those limits. The working-tree implementation is not committed or
+published in this session.

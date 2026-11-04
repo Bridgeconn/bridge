@@ -58,6 +58,7 @@ def test_the_role_table_is_what_the_requirement_says():
 
 
 REPORTER_REFUSED = [
+    ("languageQa.quotationRules.set", {"rules": {}}),
     ("languageQa.reviewImport.apply", {"filePath": "review.json"}),
     ("verse.decide", {"chapter": "1", "verse": "1", "findingId": "f", "status": "accepted"}),
     ("verse.edit", {"chapter": "1", "verse": "1", "newText": "x"}),

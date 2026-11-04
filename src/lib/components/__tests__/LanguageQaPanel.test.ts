@@ -76,6 +76,20 @@ function publish(overrides: Partial<LanguageQaStatus> = {}, error = ""): void {
   languageQaChannel.set({ projectPath: "C:/project", status: snapshot({ findings: [], ...overrides }), error });
 }
 
+it("filters quotation findings directly and exposes the reference evidence", async () => {
+  const finding = lqaFinding({ category: "quotation", rule: "quotation.reference-missing",
+    message: "Possible missing quotation marks", referenceEvidence: { label: "English local", path: "local/ref",
+      range: "MAT 5:3–7:27", openingText: "“Blessed", closingText: "It fell.”" } });
+  statusCall.mockResolvedValue(snapshot({ findings: [finding], categoryCounts: { quotation: 1 } }));
+  render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
+  await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
+  await fireEvent.click(await screen.findByRole("button", { name: /Kinds ·/ }));
+  await fireEvent.click(await screen.findByRole("button", { name: /Quotations/ }));
+  await waitFor(() => expect(statusCall).toHaveBeenLastCalledWith("C:/project", 0, 50, "findings", { categories: ["quotation"] }));
+  expect(await screen.findByText("Reference evidence · English local")).toBeTruthy();
+  expect(screen.getByText("MAT 5:3–7:27")).toBeTruthy();
+});
+
 beforeEach(() => {
   // statusCall now serves only the panel's own page requests (limit 50).
   statusCall.mockReset().mockImplementation(async (_path, _offset, limit) =>

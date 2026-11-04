@@ -20,7 +20,7 @@ CHAPTER_2 = {
     "2": "தேவன் தாம் செய்த தம்முடைய கிரியையை ஏழாம் நாளிலே முடித்து \\f + \\fr 2:2 \\ft ஓய்ந்திருந்தார்.\\f*",
 }
 # Stages that read neither headings nor anything a verse edit changes besides text.
-NOT_HEADINGS = ("lqa.book.note_callers", "lqa.book.xrefs", "lqa.book.header", "lqa.book.learned", "lqa.book.names")
+NOT_HEADINGS = ("lqa.book.note_callers", "lqa.book.xrefs", "lqa.book.header", "lqa.book.learned", "lqa.book.names", "lqa.book.quotations")
 
 
 def _project(tmp_path):

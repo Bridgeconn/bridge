@@ -962,3 +962,12 @@ in DEVELOPER_SETUP.md; a green source suite is not updater release acceptance.
 |---|---|---|
 | Shell | Compile and existing Rust regressions after excluding saved visibility from window restoration | PASS: `cargo check --offline`; all 18 `cargo test --offline` tests passed outside the restricted sandbox. The initial two shutdown-test failures were sandbox restrictions on `taskkill`; no tests were weakened or skipped. Fix: daf1e3f. |
 | Installed desktop | Restart with saved `main.visible=true`: only the 480×220 splash appears until ready; failure/Retry and splash-close reveal the main window; remembered geometry remains usable after monitor changes | NOT RUN for this fix. Historical startup acceptance does not verify the new window-state interaction. Issues remain open for acceptance. |
+
+## Quotation rules and reference evidence (#456, 2026-11-04)
+
+| Layer | Required evidence | Status |
+|---|---|---|
+| Source engine | Config validation, nesting/apostrophes/USFM spans, Matthew 5–7, reference styles and missing-both-marks evidence, exact bridges/segments and ambiguous correspondence, lazy collection persistence, role/path guard and invalidation | Focused gates PASS (363 cases plus final targeted runs). Broad run: 5,504 passed, 3 xfailed, stopped after 5 failures; all five passed serial rerun. Three were earlier-worker vocabulary snapshots; #464/#465 track the two parallel-load failures. A clean complete full-suite gate remains pending. |
+| Source frontend | Settings scope/preview/save/reset/error, dedicated Quotations filter and expandable reference evidence; check/test/build | PASS: Svelte 0 errors/warnings; all 1,152 tests in 118 files; app/dashboard production builds. |
+| Frozen pair | Build the isolated engine/helper and run `scripts/smoke_sidecars.py`, including quotation settings/save, Matthew 5–7 and local reference evidence | PASS: isolated final engine/helper built and complete smoke passed. Installed app untouched. |
+| Installed Windows | At 1366×768, configure target/reference styles, navigate both finding types and evidence, save/restart/reset, cross chapters, unavailable reference, reporter refusal and collection/lazy-book scope on real multilingual projects | NOT RUN. Source/jsdom/frozen checks do not establish desktop acceptance. |

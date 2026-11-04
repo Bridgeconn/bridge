@@ -42,6 +42,12 @@ vi.mock("../../api/bridgeClient", () => ({
     languageQaSetPack,
     languageQaCheckerSettingsGet: checkerGet,
     languageQaCheckerSettingsSet: checkerSet,
+    languageQaQuotationRulesGet: async () => ({
+      rules: { version: 1, enabled: true, referenceEnabled: true,
+        target: { pairs: [{ open: '“', close: '”' }], continuation: 'repeat-opening' },
+        reference: { pairs: [{ open: '“', close: '”' }], continuation: 'repeat-opening' } },
+      defaults: {}, scope: 'project', books: ['rut'],
+    }),
     languageQaWordsList: wordsList,
     pickFolder,
     languageQaSetReference: setReference,

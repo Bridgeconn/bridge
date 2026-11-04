@@ -11,6 +11,7 @@
   import type { HouseStyleEntry, HouseStyleListResponse, HouseStyleProposal } from "../types/houseStyle";
   import type { CheckerSettings } from "../types/languageQa";
   import CheckerSettingsDialog from "./CheckerSettingsDialog.svelte";
+  import QuotationSettings from "./QuotationSettings.svelte";
 
   type Pane = "ai" | "quality" | "connections" | "resources" | "terminology" | "languageQa" | "security" | "users" | "team" | "updates";
 
@@ -846,6 +847,9 @@
           <button class="btn primary" on:click={saveInlineThreshold} disabled={inlineSaving}>{inlineSaving ? "Saving…" : "Apply"}</button>
           {#if inlineMessage}<span class="save-msg" role="status">{inlineMessage}</span>{/if}
         </div>
+        {#if $project}
+          {#key $project.path}<QuotationSettings projectPath={$project.path} />{/key}
+        {/if}
         {#if !$project}
           <p class="muted">Open a project to choose its Language QA rules and manage its house style.</p>
         {:else}

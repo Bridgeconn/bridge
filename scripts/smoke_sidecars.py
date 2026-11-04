@@ -795,6 +795,55 @@ def main() -> int:
                                  f"rules={sorted({f.get('ruleId') for f in lqa.get('findings', [])})} "
                                  f"limitations={lqa.get('limitations')}")
             print(f"Frozen ta-irv indic-qa layer passed in {time.monotonic() - lqa_started:.2f}s.")
+            # #456: exercise the new common quotation module inside the frozen
+            # process, including local reference loading and persisted rules.
+            quoted = Path(temp) / 'quotation-matthew'
+            _write_json(quoted / 'manifest.json', {
+                'project': {'id': 'mat', 'name': 'Matthew'},
+                'target_language': {'id': 'eng', 'name': 'English'}, 'tc_version': '8',
+            })
+            for chapter, verses in {'5': {'3': '“Blessed are the poor.'},
+                                    '6': {'1': 'Take care.'}, '7': {'27': 'It fell.”'},
+                                    '8': {'1': 'Come.'}}.items():
+                _write_json(quoted / 'mat' / f'{chapter}.json', verses)
+                _write_json(quoted / '.apps/translationCore/alignmentData/mat' / f'{chapter}.json',
+                            {verse: {'alignments': [], 'wordBank': []} for verse in verses})
+            (quoted / 'mat.usfm').write_text(
+                '\\id MAT\n\\c 5\n\\v 3 “Blessed are the poor.\n\\c 6\n\\v 1 Take care.\n'
+                '\\c 7\n\\v 27 It fell.”\n\\c 8\n\\v 1 Come.\n', encoding='utf-8')
+            reference = Path(temp) / 'quotation-reference'
+            reference.mkdir()
+            (reference / 'verses.tsv').write_text(
+                'ref\tbook\tbook_idx\tchapter\tverse\tseg\ttext\n'
+                'MAT 8:1\tMAT\t40\t8\t1\tv\t“Come.”\n', encoding='utf-8')
+            for rid, method, params in [
+                ('quote-open', 'project.open', {'path': str(quoted)}),
+                ('quote-reference', 'languageQa.setReference', {'projectPath': str(quoted), 'folder': str(reference)}),
+            ]:
+                response = request(rid, method, params)
+                if not response.get('success'):
+                    raise SystemExit(f'Frozen quotation setup failed: {response}')
+            model = request('quote-rules', 'languageQa.quotationRules.get', {'projectPath': str(quoted)})
+            if not model.get('success') or model['result']['rules']['target']['pairs'][0] != {'open': '“', 'close': '”'}:
+                raise SystemExit(f'Frozen quotation defaults failed: {model}')
+            saved = request('quote-save', 'languageQa.quotationRules.set', {
+                'projectPath': str(quoted), 'rules': model['result']['rules']})
+            if not saved.get('success'):
+                raise SystemExit(f'Frozen quotation settings save failed: {saved}')
+            started = time.monotonic()
+            while time.monotonic() - started < 60:
+                lqa = request(f'quote-status-{time.monotonic_ns()}', 'languageQa.status',
+                              {'projectPath': str(quoted), 'limit': 100}).get('result') or {}
+                if lqa.get('state') in {'completed', 'failed'}:
+                    break
+                time.sleep(.2)
+            quote_findings = [f for f in lqa.get('findings', []) if f.get('category') == 'quotation']
+            if (lqa.get('state') != 'completed' or len(quote_findings) != 1
+                    or quote_findings[0].get('rule') != 'quotation.reference-missing'
+                    or quote_findings[0].get('chapter') != '8'
+                    or not quote_findings[0].get('referenceEvidence')):
+                raise SystemExit(f'Frozen quotation check failed: {lqa}')
+            print('Frozen quotation defaults/save, Matthew 5–7 pairing and reference evidence passed.')
         finally:
             process.terminate()
             try:

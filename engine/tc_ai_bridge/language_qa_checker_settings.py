@@ -25,7 +25,7 @@ from typing import Any, Callable, Iterable
 
 from .language_packs import indic_qa_settings as checker_settings
 from .language_packs import indic_qa_tamil, indic_qa_vendor
-from .language_packs.indic_qa_adapter import indic_config, with_resident
+from .language_packs.indic_qa_adapter import delegated_quotation_rule, indic_config, with_resident
 from .language_packs.loader import RulePack, default_pack, load_project_overrides, overrides_path
 
 SCHEMA_VERSION = 1
@@ -40,7 +40,8 @@ def catalogue(pack: RulePack) -> dict[str, tuple[str, bool]]:
     if checker_settings.is_layer(pack):
         return {rid: (label, on) for rid, (_group, label, _inline, on) in indic_qa_tamil.RULES.items()}
     profile = indic_qa_vendor.profile(str((indic_config(pack.meta) or {}).get("profile") or ""))
-    return {rid: (label, on) for rid, (_group, label, _inline, on) in profile.RULES.items()}
+    return {rid: (label, on) for rid, (_group, label, _inline, on) in profile.RULES.items()
+            if not delegated_quotation_rule(rid)}
 
 
 def _legend(pack: RulePack) -> str:

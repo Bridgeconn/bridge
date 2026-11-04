@@ -2,7 +2,25 @@
 export type LanguageQaLayer = "pattern" | "lexicon" | "housestyle" | "integrity";
 export type LanguageQaCategory =
   "typo" | "sandhi" | "word-joining" | "punctuation" | "unicode" | "spacing" | "termbase" | "name" | "usfm"
-  | "consistency" | "grammar" | "learned";
+  | "consistency" | "grammar" | "learned" | "quotation";
+
+export interface QuotationStyle {
+  pairs: { open: string; close: string }[];
+  continuation: "none" | "repeat-opening";
+}
+export interface QuotationRules {
+  version: number;
+  enabled: boolean;
+  referenceEnabled: boolean;
+  target: QuotationStyle;
+  reference: QuotationStyle;
+}
+export interface QuotationRulesSettings {
+  rules: QuotationRules;
+  defaults: QuotationRules;
+  scope: "project" | "collection";
+  books: string[];
+}
 export type LanguageQaConfidence = "high" | "medium" | "low";
 
 /** One ranked fix (language_qa.suggestion). */
@@ -21,6 +39,7 @@ export interface LanguageQaSuggestion {
 }
 
 export interface LanguageQaFinding {
+  referenceEvidence?: { label: string; path: string; range: string; openingText: string; closingText: string };
   id: string;
   book: string;
   chapter: string;

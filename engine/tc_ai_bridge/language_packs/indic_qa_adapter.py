@@ -551,6 +551,10 @@ def word_statuses(pack_name: str, words: list[str]) -> dict[str, tuple[str, int,
         return out
 
 
+def delegated_quotation_rule(rule: str) -> bool:
+    return 'quote' in rule and ('.punct.' in rule or '.norm.' in rule)
+
+
 def _settings(pack: RulePack) -> dict[str, Any]:
     """What the checker runs with, over its language defaults (the checker
     merges one level deep): the project's own settings (pack.checker_settings,
@@ -560,6 +564,13 @@ def _settings(pack: RulePack) -> dict[str, Any]:
     (indic_qa_tamil.SETTINGS), which a project cannot change."""
     settings: dict[str, Any] = json.loads(json.dumps(pack.checker_settings))
     settings["rules"] = {r.id: r.enabled for r in pack.rules}
+    # #456: the common book-wide checker owns quotation conventions. The
+    # vendored chapter counts/direction/curly-normalisation would contradict
+    # configured target pairs and cross-chapter speech. Adapt here, never in
+    # the vendor tree. Quote checks in notes remain outside this scope.
+    for rid in settings['rules']:
+        if delegated_quotation_rule(rid):
+            settings['rules'][rid] = False
     config = indic_config(pack.meta)
     if config is not None and config["layer"]:
         for section, values in indic_qa_tamil.SETTINGS.items():

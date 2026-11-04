@@ -89,6 +89,7 @@ from tc_ai_bridge.language_qa import FINDING_SOURCE as LANGUAGE_QA_SOURCE, UNSPE
 from tc_ai_bridge.language_qa_jobs import LanguageQaManager, project_pack_name, project_rule_pack
 from tc_ai_bridge import check_timing
 from tc_ai_bridge import language_qa_checker_settings as checker_settings_rpc
+from tc_ai_bridge import quotation_rules
 from tc_ai_bridge.language_packs import indic_qa_adapter
 from tc_ai_bridge.language_qa_learned import learned_pair
 from tc_ai_bridge import language_qa_scope
@@ -556,6 +557,8 @@ class Methods:
     LANGUAGE_QA_SET_PACK = "languageQa.setPack"
     LANGUAGE_QA_CHECKER_SETTINGS_GET = "languageQa.checkerSettings.get"
     LANGUAGE_QA_CHECKER_SETTINGS_SET = "languageQa.checkerSettings.set"
+    LANGUAGE_QA_QUOTATION_RULES_GET = "languageQa.quotationRules.get"
+    LANGUAGE_QA_QUOTATION_RULES_SET = "languageQa.quotationRules.set"
     LANGUAGE_QA_LEARNED_LIST = "languageQa.learned.list"
     LANGUAGE_QA_LEARNED_FORGET = "languageQa.learned.forget"
     LANGUAGE_QA_LEARNED_RESTORE = "languageQa.learned.restore"
@@ -1767,7 +1770,7 @@ class BridgeEngine:
             timer.mark("project_info")
             _trace(f"project.open {candidate.book_id} RECOVERY_REQUIRED {timer.summary()}")
             if not getattr(self, '_active_session', ''):  # #79: the scan follows the desktop session only
-                self._language_qa.bind(candidate, blocked_reason="Project recovery requires attention.")
+                self._bind_language_qa(candidate, blocked_reason="Project recovery requires attention.")
             return info
         self._passage_semantic_status = {
             "available": False, "readOnly": True, "state": "BUILDING",
@@ -1798,7 +1801,7 @@ class BridgeEngine:
         timer.mark("project_info")
         _trace(f"project.open {candidate.book_id} {timer.summary()}")
         if not getattr(self, '_active_session', ''):  # #79: the scan follows the desktop session only
-            self._language_qa.bind(candidate)
+            self._bind_language_qa(candidate)
         # Rebuilt from the book's decisions on first use: anything recorded
         # while the book was closed (an import, another device) is picked up.
         self._housestyle_learner.forget(str(candidate.path))
@@ -7418,6 +7421,7 @@ class BridgeEngine:
             run_book=lambda book, cancel: self._run_collection_book(book, selected, cancel),
             record_run=lambda entry: record_collection_qa_run(collection_path, entry),
             final_stage=lambda done, cancel: self._collection_final_stage(collection_path, done, cancel),
+            book_hash=self._quotation_book_hash,
         )
 
     def _run_collection_book(self, book: dict[str, Any], checks: tuple[str, ...],
@@ -7435,7 +7439,7 @@ class BridgeEngine:
         manager = CheckJobManager()
         try:
             if language_qa is not None:
-                language_qa.bind(project, autostart=False)
+                language_qa.bind(project, autostart=False, reference_provider=self._quotation_reference_provider())
             snapshot = self._start_check_job_from_spec(spec, project, language_qa=language_qa, check_jobs=manager)
             # Progress polls ask for no results at all (a cursor past every
             # verse); the full set is read once, after the job ends (#229).
@@ -7903,7 +7907,7 @@ class BridgeEngine:
             # #277: the same document as a project_state row, so it syncs.
             for project in self._collection_book_projects():
                 self._mirror_language_qa_overrides(project)
-            self._language_qa.bind(self.project)
+            self._bind_language_qa(self.project)
             pack, _notes = project_rule_pack(self.project.path, name)
         counts = self._language_qa.rule_counts()
         return checker_settings_rpc.describe(pack, counts=counts, books=books)
@@ -8418,7 +8422,7 @@ class BridgeEngine:
         folder = self.settings.reference_bibles.get(self._reference_key) if self._reference_key else None
         if folder:
             return folder, Path(folder).name or folder, "project"
-        pack = self._language_qa.pack_name()
+        pack = project_pack_name(self.project, self._language_qa)
         if pack:
             bundled = packs_dir() / pack / "dictionary"
             if (bundled / "verses.tsv").is_file():
@@ -8433,12 +8437,79 @@ class BridgeEngine:
             return None
         folder, label, origin = choice
         key = str(Path(folder).resolve())
-        holder = self._reference_holders.get(key)
-        if holder is None or holder.label != label:
-            holder = ReferenceHolder(folder, label, self.settings.path.parent / "reference-cache")
-            self._reference_holders[key] = holder
+        holder = quotation_rules.reference_holder(folder, label, self.settings.path.parent / "reference-cache")
+        self._reference_holders[key] = holder
         holder.origin = origin
         return holder
+
+    def _quotation_reference_provider(self) -> Any:
+        # Snapshot the machine-local choice before a worker starts. Bundled
+        # fallback resolves after that worker detects its own language pack.
+        folder = self.settings.reference_bibles.get(getattr(self, '_reference_key', ''), '')
+        cache = self.settings.path.parent / 'reference-cache'
+
+        def provide(pack: str | None, proceed: Any) -> Any:
+            selected = folder
+            label = Path(folder).name if folder else 'Old Version (bundled)'
+            if not selected and pack:
+                bundled = packs_dir() / pack / 'dictionary'
+                if (bundled / 'verses.tsv').is_file():
+                    selected = str(bundled)
+            return quotation_rules.reference_source(selected, label, cache, proceed) if selected else (None, '')
+        return provide
+
+    def _bind_language_qa(self, project: Any, **kwargs: Any) -> None:
+        self._language_qa.bind(project, reference_provider=self._quotation_reference_provider(), **kwargs)
+
+    def _quotation_book_hash(self, book: dict[str, Any]) -> str:
+        from collection_jobs import book_content_hash
+        from tc_ai_bridge.language_packs.reference_text import detect, fingerprint
+        base = book_content_hash(book.get('path', ''), str(book.get('bookId') or ''))
+        if not base:
+            return ''
+        folder = self.settings.reference_bibles.get(getattr(self, '_reference_key', ''), '')
+        folders = [Path(folder)] if folder else sorted(packs_dir().glob('*/dictionary'))
+        inputs = []
+        for path in folders:
+            try:
+                kind = detect(path)
+                inputs.append((str(path), fingerprint(path, kind) if kind else 'unavailable'))
+            except OSError:
+                inputs.append((str(path), 'unreadable'))
+        return hashlib.sha256(json.dumps([base, inputs], ensure_ascii=False).encode('utf-8')).hexdigest()
+
+    def language_qa_quotation_rules(self, action: str, params: dict[str, Any]) -> dict[str, Any]:
+        self._require_project()
+        roots = [Path(self.project.path)]
+        roots.extend(Path(e['path']) for e in collection_projects(self.project.path)
+                     if e.get('path') and Path(e['path']).is_dir())
+        roots = sorted(set(p.resolve() for p in roots))
+        if action == 'set':
+            if self._collection_jobs.active() or self._check_jobs.active():
+                raise ProjectError('Wait for the running check to finish before changing quotation rules.')
+            try:
+                rules = quotation_rules.validate(params.get('rules'))
+                documents = []
+                for root in roots:
+                    path = root / quotation_rules.RELATIVE_PATH
+                    document = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
+                    if not isinstance(document, dict):
+                        raise ValueError(f'{path}: common overrides must be an object')
+                    documents.append((path, {**document, 'quotations': rules}))
+                for path, document in documents:
+                    checker_settings_rpc._write_atomic(path, document)
+                for project in self._collection_book_projects():
+                    self._mirror_language_qa_overrides(project)
+                self._bind_language_qa(self.project)
+            except (OSError, ValueError) as exc:
+                raise ProjectError(str(exc)) from exc
+        try:
+            rules = quotation_rules.load(self.project.path)
+        except (OSError, ValueError) as exc:
+            raise ProjectError(str(exc)) from exc
+        return {'rules': rules, 'defaults': quotation_rules.DEFAULTS,
+                'scope': 'collection' if len(roots) > 1 else 'project',
+                'books': [p.name for p in roots]}
 
     def language_qa_set_reference(self, params: dict[str, Any]) -> dict[str, Any]:
         """languageQa.setReference (#289): choose, change or clear the open
@@ -8457,6 +8528,7 @@ class BridgeEngine:
                 raise ProjectError(f"{folder}: no such folder on this computer")
             folder = str(Path(folder))
         self.settings.set_reference_bible(self._reference_key, folder or None)
+        self._bind_language_qa(self.project)
         choice = self._reference_choice()
         return {"folder": folder, "origin": choice[2] if choice else "none",
                 "label": choice[1] if choice else "", "path": choice[0] if choice else ""}
@@ -9370,7 +9442,7 @@ class BridgeEngine:
             # #277: a hub pull rewrote this book's overrides file.
             self._language_qa_rebind_paths.discard(rebind_path)
             try:
-                self._language_qa.bind(self.project)
+                self._bind_language_qa(self.project)
             except Exception as exc:  # noqa: BLE001
                 _trace(f"language QA rebind after a pull failed: {exc}")
         try:
@@ -9453,7 +9525,8 @@ class BridgeEngine:
                      Methods.LANGUAGE_QA_BOOK_WORDS, Methods.LANGUAGE_QA_OCCURRENCES, Methods.LANGUAGE_QA_REFERENCE,
                      Methods.LANGUAGE_QA_SET_REFERENCE,
                      Methods.LANGUAGE_QA_RELATED, Methods.LANGUAGE_QA_CHECKER_SETTINGS_GET,
-                     Methods.LANGUAGE_QA_CHECKER_SETTINGS_SET}:
+                     Methods.LANGUAGE_QA_CHECKER_SETTINGS_SET,
+                     Methods.LANGUAGE_QA_QUOTATION_RULES_GET, Methods.LANGUAGE_QA_QUOTATION_RULES_SET}:
                 self._require_project()
                 # Compared canonically, not as strings. `project.open` resolves
                 # the path it is given, so a caller echoing back the path *it*
@@ -9480,6 +9553,8 @@ class BridgeEngine:
                     result = self.language_qa_set_reference(p)
                 elif m == Methods.LANGUAGE_QA_RELATED:
                     result = self.language_qa_related(p)
+                elif m in {Methods.LANGUAGE_QA_QUOTATION_RULES_GET, Methods.LANGUAGE_QA_QUOTATION_RULES_SET}:
+                    result = self.language_qa_quotation_rules(m.rsplit('.', 1)[1], p)
                 elif m in {Methods.LANGUAGE_QA_FLAGS_LIST, Methods.LANGUAGE_QA_FLAGS_ADD,
                            Methods.LANGUAGE_QA_FLAGS_UPDATE, Methods.LANGUAGE_QA_FLAGS_DELETE}:
                     result = self.language_qa_flags(m.rsplit(".", 1)[1], p)
@@ -9507,7 +9582,7 @@ class BridgeEngine:
                     if not isinstance(pack, str) or pack not in allowed:
                         raise ProjectError(f"pack must be one of {sorted(allowed)}")
                     self.project.set_language_qa_pack(pack)
-                    self._language_qa.bind(self.project)
+                    self._bind_language_qa(self.project)
                     result = self._language_qa.status(limit=0)
                 elif m == Methods.LANGUAGE_QA_PAUSE:
                     if not isinstance(p.get("paused"), bool):

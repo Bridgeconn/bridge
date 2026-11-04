@@ -22,7 +22,7 @@ from .language_packs.registry import language_code, language_name, packs_dir, se
 from .language_packs.tokens import GRAPHEME, WORD
 from .usfm_verse import lift_verse
 
-RULE_VERSION = "language-qa-7"
+RULE_VERSION = "language-qa-8"
 MAX_VERSE_CHARS = 20_000
 MAX_VERSE_FINDINGS = 100
 # Whole-book wordlist audit (item 49). Rarity/frequency constants below are an
@@ -101,10 +101,10 @@ LAYERS = ("pattern", "lexicon", "housestyle", "integrity")
 # (DECISIONS 2026-10-07).
 # "learned": a word the reviewer replaced before, recurring (language_qa_learned).
 CATEGORIES = ("typo", "sandhi", "word-joining", "punctuation", "unicode", "spacing", "termbase", "name", "usfm",
-              "consistency", "grammar", "learned")
+              "consistency", "grammar", "learned", "quotation")
 # What a Tamil (ta-irv) or common-checks project lists as in scope: unchanged
 # since Phase 7. A profile pack lists the categories its enabled rules use.
-DEFAULT_COVERAGE = CATEGORIES[:9]
+DEFAULT_COVERAGE = (*CATEGORIES[:9], 'quotation')
 CONFIDENCES = ("high", "medium", "low")
 
 # What Language QA checks and what it never checks (layered-rules Phase 7).
@@ -121,6 +121,7 @@ _IN_SCOPE_LABELS = {
     "sandhi": ("Sandhi (வல்லினம் doubling)", "சந்திப் பிழைகள் (வல்லினம் மிகுதல்)"),
     "word-joining": ("Words joined or split", "சொற்கள் சேர்ந்தோ பிரிந்தோ எழுதப்படுதல்"),
     "punctuation": ("Punctuation", "நிறுத்தற்குறிகள்"),
+    "quotation": ("Quotation pairing and reference-assisted quotation review", ""),
     "unicode": ("Unicode and encoding", "யூனிகோடு, குறியாக்கம்"),
     "spacing": ("Spacing", "இடைவெளி"),
     "termbase": ("Approved key terms", "அங்கீகரிக்கப்பட்ட முக்கியச் சொற்கள்"),
@@ -189,7 +190,8 @@ RULES: dict[str, RuleMeta] = {
     # Paired punctuation (framework item 9, #264) and poetry indentation (item 33, #265);
     # the chapter-level ones are in language_qa_structure.py.
     "punctuation.unbalanced-pair": RuleMeta("common", "integrity", "punctuation", "high"),
-    "punctuation.unbalanced-quote": RuleMeta("common", "integrity", "punctuation", "medium"),
+    "punctuation.unbalanced-quote": RuleMeta("common", "integrity", "quotation", "medium", revision=2),
+    "quotation.reference-missing": RuleMeta("common", "integrity", "quotation", "low"),
     "poetry.q2-without-q1": RuleMeta("common", "integrity", "usfm", "medium"),
     "acrostic.stanzas": RuleMeta("common", "integrity", "usfm", "high"),  # item 34, #270
     # Book header and introduction (framework item 47, #253; language_qa_header.py).
@@ -669,7 +671,7 @@ def scan_text(text: str, *, book: str, chapter: str, verse: str,
     with timings.step("rule.punctuation.unbalanced-pair"):
         # Framework item 9 (#264): brackets pair inside a verse (notes are
         # not in the visible text). Quotation marks may run over verses and
-        # are paired per chapter (language_qa_structure.py).
+        # are paired across the book (quotation_rules.py).
         stack: list[tuple[str, int]] = []
         for at, char in enumerate(text):
             if char in _BRACKETS:

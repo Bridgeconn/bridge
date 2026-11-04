@@ -26,6 +26,7 @@ export const LANGUAGE_QA_CATEGORY_MARKS: Record<LanguageQaCategory, string> = {
   sandhi: "m-lqa-sandhi",          // green dashed
   "word-joining": "m-lqa-sandhi",
   punctuation: "m-lqa-spacing",    // grey thin solid
+  quotation: "m-lqa-spacing",
   spacing: "m-lqa-spacing",
   unicode: "m-lqa-unicode",        // grey hatched background
   termbase: "m-term",              // purple double
@@ -48,6 +49,7 @@ export const LANGUAGE_QA_CATEGORY_LABELS: Record<LanguageQaCategory, string> = {
   sandhi: "Sandhi",
   "word-joining": "Word joining",
   punctuation: "Punctuation",
+  quotation: "Quotations",
   spacing: "Spacing",
   unicode: "Unicode",
   termbase: "Term",

@@ -26,6 +26,7 @@ from .language_qa_learned import learned_findings
 from .language_qa_headings import heading_findings
 from .language_qa_notes import caller_findings
 from .language_qa_structure import structure_findings
+from . import quotation_rules
 from .language_qa_header import book_source_text, header_findings
 from .language_qa_xrefs import collection_names, xref_findings
 from .language_packs.indic import ConfusionSet
@@ -482,7 +483,8 @@ class LanguageQaManager:
         pack = loaded_pack(self._pack_name) if self._pack_name else None
         return inline_rule_names(pack) if pack is not None else sorted(INLINE_RULES)
 
-    def bind(self, project: Any, *, blocked_reason: str = "", autostart: bool = True) -> None:
+    def bind(self, project: Any, *, blocked_reason: str = "", autostart: bool = True,
+             reference_provider: Callable | None = None) -> None:
         """`autostart=False` binds without starting the background worker: a
         caller that runs its own pass (`run_pass`, the collection runner)."""
         target = project.manifest.get("target_language", {})
@@ -490,6 +492,7 @@ class LanguageQaManager:
         with self._lock:
             self._context = (str(project.path), project.book_id, declared, project.book_dir,
                              pack_setting(project.manifest))
+            self._quotation_reference_provider = reference_provider
             self._pack_name = None
             self._gated = {}
             self._book_words = {}
@@ -863,6 +866,11 @@ class LanguageQaManager:
         candidates = (p for p in directory.glob("*.json") if p.stem.isdecimal())
         paths = sorted(itertools.islice(candidates, MAX_CHAPTERS + 1), key=lambda p: int(p.stem))
         limitations: list[str] = []
+        try:
+            quote_rules = quotation_rules.load(context[0])
+        except (OSError, ValueError) as exc:
+            quote_rules = {**quotation_rules.DEFAULTS, 'enabled': False}
+            limitations.append(f'Quotation rules could not be loaded: {exc}')
         truncated = len(paths) > MAX_CHAPTERS
         if truncated:
             limitations.append("Chapter limit reached; additional chapters omitted.")
@@ -1262,8 +1270,8 @@ class LanguageQaManager:
                         timings.add("lqa.book.layer_dropped_as_duplicate", 0.0)
             audit += book_stage("lqa.book.headings", [headings_fp, chapter_verses], lambda: (
                 heading_findings(book, book_headings, chapter_verses, proceed=paced), []), text=False)[0]
-            # Structure is checked chapter by chapter (a quote, a stanza and an
-            # acrostic never cross one), so an edit re-runs one chapter of it.
+            # Poetry/acrostics remain chapter-local; quotation state is a
+            # separate book stage because speech may cross chapter boundaries.
             structure = stages.setdefault("lqa.book.structure", {})
             for chapter in sorted(chapter_texts, key=lambda c: int(c) if c.isdigit() else 0):
                 if not paced():
@@ -1276,9 +1284,24 @@ class LanguageQaManager:
                     continue
                 with timings.step("lqa.book.structure"):
                     found = structure_findings(book, {chapter: chapter_texts[chapter]},
-                                               {chapter: book_headings[chapter]} if chapter in book_headings else {})
+                                               {chapter: book_headings[chapter]} if chapter in book_headings else {}, quotes=False)
                 structure[chapter] = (digest, found)
                 audit += found
+            reference, reference_note = None, ''
+            provider = getattr(self, '_quotation_reference_provider', None)
+            if quote_rules['enabled'] and quote_rules['referenceEnabled'] and provider is not None:
+                try:
+                    reference, reference_note = provider(self._pack_name, paced)
+                except Exception as exc:
+                    reference_note = f'Reference quotation comparison unavailable: {type(exc).__name__}: {exc}'
+            reference_text = reference.verses.get(book.upper(), {}) if reference is not None else {}
+            quoted, quote_notes = book_stage('lqa.book.quotations', [quote_rules, reference_text,
+                reference.label if reference is not None else '', reference.path if reference is not None else '',
+                reference_note], lambda: quotation_rules.quotation_findings(
+                    book, chapter_texts, quote_rules, reference=reference, reference_note=reference_note,
+                    proceed=paced))
+            audit += quoted
+            limitations.extend(quote_notes)
             audit += book_stage("lqa.book.note_callers", [], lambda: (
                 caller_findings(book, chapter_texts, proceed=paced), []))[0]
             names: dict[str, str] = {}

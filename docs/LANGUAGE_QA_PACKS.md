@@ -674,3 +674,45 @@ a correctness label, and no new-language grammar rule was enabled by this
 research. Marathi/Gujarati full-reference access and the Assamese finite
 paradigm remain explicit research gaps; native review remains pending for all
 seven. Full clause-level grammar stays outside the offline QA boundary.
+
+## Quotation rules (#456, 2026-11-04)
+
+Settings → Language QA → Quotation rules configures the common checker for every
+language, including projects without a language pack. English defaults are outer
+“…” and nested ‘…’. Target and reference each accept one to four punctuation
+pairs in nesting order (including symmetric straight quotes), plus a continuation
+choice. The repeat option permits an opener at a paragraph/verse start while a
+quotation remains open; verse text/reference TSV can lack its original paragraph
+marker. Disable repeats for strict nesting. Quotes can span chapters and are
+checked across the book. Apostrophes within words and inline USFM notes do not
+become quotation errors.
+
+The per-project/collection setting is the versioned `quotations` member of
+`.apps/translationCoreAI/language-packs/common/overrides.json`. Saving validates
+both styles, preserves other override keys, writes every existing collection root
+(including lazy siblings), mirrors materialized books through the existing
+project-state audit/sync path and starts a new pass. Reset restores the English
+preset in the form; Save applies it. No database migration is needed. Rules and
+reference text key the separate book quotation stage; collection hash coverage
+v3 includes common overrides and the machine-local reference fingerprint.
+
+`languageQa.quotationRules.get/set` uses the normal project-path guard and role
+authorization. A dedicated **Quotations** button and category includes unmatched
+marks and reference-assisted findings. The former chapter-only indic-qa quote
+checks and fixed curly-quote conversions are delegated to the common checker;
+their switches are removed from Checker settings so they cannot contradict the
+configured conventions.
+
+Reference comparison uses the local Reference Bible already chosen for the
+project, with the existing bundled fallback where available. It compares complete
+outer quotation passages, rather than per-verse punctuation counts. A passage
+whose exact corresponding target verse keys contain no quotation evidence gets
+a **possible missing quotation** finding, including when both marks are absent.
+The finding exposes the source label/path, reference range and boundary verses.
+Direct speech versus indirect speech and differing boundaries require human
+review; no target insertion point or automatic replacement is supplied. A target
+quotation already covering the passage prevents this finding. Bridges/lettered
+segments match only when their exact keys correspond; ambiguous segmentation is
+a visible coverage limitation. An unavailable, unbalanced or unrecognized
+reference also reports a limitation, rather than a clean check. Pair-only checks
+remain available without a reference.

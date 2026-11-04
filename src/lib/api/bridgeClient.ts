@@ -291,6 +291,8 @@ export type EngineMethod =
   | "languageQa.setPack"
   | "languageQa.checkerSettings.get"
   | "languageQa.checkerSettings.set"
+  | "languageQa.quotationRules.get"
+  | "languageQa.quotationRules.set"
   | "languageQa.learned.list"
   | "languageQa.learned.forget"
   | "languageQa.learned.restore"
@@ -637,6 +639,14 @@ export const bridge = {
   },
 
   /** The indic-qa checker's settings for this collection (the web app's Settings dialog). */
+  languageQaQuotationRulesGet(projectPath: string): Promise<import("../types/languageQa").QuotationRulesSettings> {
+    return call("languageQa.quotationRules.get", { projectPath });
+  },
+
+  languageQaQuotationRulesSet(projectPath: string, rules: import("../types/languageQa").QuotationRules): Promise<import("../types/languageQa").QuotationRulesSettings> {
+    return call("languageQa.quotationRules.set", { projectPath, rules });
+  },
+
   languageQaCheckerSettingsGet(projectPath: string): Promise<CheckerSettings | CheckerSettingsUnavailable> {
     return call("languageQa.checkerSettings.get", { projectPath });
   },

@@ -903,7 +903,11 @@ def test_status_states_what_language_qa_does_and_does_not_check(vallinam_engine)
     assert {row["category"] for row in cover["outOfScope"]} >= {
         "agreement", "meaning-shift", "omission-addition", "textual-basis"}
     for row in cover["inScope"] + cover["outOfScope"]:
-        assert row["label"] and row["labelTa"]
+        assert row["label"]
+        if row['category'] == 'quotation':
+            assert row['labelTa'] == ''  # #456: Tamil wording awaits human review.
+        else:
+            assert row["labelTa"]
     for row in cover["outOfScope"]:
         assert row["reason"] and row["reasonTa"]
     assert not {row["category"] for row in cover["outOfScope"]} & set(CATEGORIES)

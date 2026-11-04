@@ -1557,3 +1557,27 @@ checks stay. No `latest.json` feed is published, so an installed app reports
 from #321 — key provisioning remains outstanding and the original throw is
 restored once the keys exist.
 
+## 2026-11-04 — Configurable quotation QA with reference evidence (Benz, #456)
+
+Benz confirmed a dedicated Quotations filter, editable target-language quotation
+rules based on an English preset, and quotations spanning chapters (Matthew 5–7).
+He also authorized use of the local reference Bible to identify passages where
+both target quotation marks may be absent. This supersedes #456's proposed
+chapter limitation and wait for Malayalam-specific examples.
+
+Reference punctuation is review evidence: a complete reference quotation with
+exact corresponding target verse keys and no target quotation evidence produces
+a **possible missing quotation** finding. It does not prove that direct speech
+is required or supply cross-language insertion offsets. Missing/ambiguous verse
+correspondence, unavailable reference text, and unbalanced reference quotation
+conventions are reported as limitations. Target and reference conventions are
+configured separately; no automatic Scripture correction or network access is
+introduced.
+
+Rules live in the existing per-book common overrides document and apply to all
+collection roots, including lazy imports. Reference folder paths remain in the
+existing machine-local setting. The permissive continuation option accepts a
+repeated opener at a paragraph/verse start because imported verse text and
+reference TSV can omit paragraph markers; a strict no-repeat option is available.
+New coverage wording is English pending human Tamil review.
+
