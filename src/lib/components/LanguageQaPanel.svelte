@@ -1,11 +1,18 @@
 <script lang="ts">
+  import { getContext as getSvelteContext } from "svelte";
+  const bridge = getSvelteContext("panel-window") ? bindReviewProject(bridgeApi, getStore(project)?.path || "__no_project__") : bridgeApi;
+  import { tooltip } from "../tooltip";
+  import UiIcon from "./UiIcon.svelte";
+  import IconButton from "./IconButton.svelte";
   import PanelHeader from "./PanelHeader.svelte";
   import { onDestroy } from "svelte";
   import { revealFinding } from "../findingFocus";
-  import { bridge } from "../api/bridgeClient";
+  import { bridge as bridgeApi } from "../api/bridgeClient";
+  import { bindReviewProject } from "../reviewProjectGuard";
+  import { get as getStore } from "svelte/store";
   import { languageQaChannel, nudgeLanguageQa } from "../languageQaInline";
   import { languageQaPanelToggle } from "../languageQaPanelUi";
-  import { SIDE_PANEL_LIMITS, setSidePanel, toggleSidePanel } from "../editorPrefs";
+  import { SIDE_PANEL_LIMITS, sidePanels, clampPanelFloat, setSidePanel, toggleSidePanel, type PanelFloat } from "../editorPrefs";
   import PanelResizeHandle from "./PanelResizeHandle.svelte";
   import type { BookWordRow, LanguageQaFlag, LanguageQaStatus, LanguageQaView, LearnedFix } from "../types/languageQa";
   import type { HouseStyleEntry } from "../types/houseStyle";
@@ -41,11 +48,34 @@
   // is this session's; the column's saved width is the column's.
   const FLOAT_LIMITS = SIDE_PANEL_LIMITS.languageQa;
   let floatWidth = 560;
+  let floatingHeight = typeof window === "undefined" ? 768 : window.innerHeight;
+  let movingBox: PanelFloat | null = null;
+  $: standaloneBox = clampPanelFloat(movingBox ?? $sidePanels.languageQa.float ?? { x: floatWindowWidth - 576, y: 90, width: floatWidth, height: Math.min(580, floatingHeight - 150) }, floatWindowWidth, floatingHeight);
+  function keepStandalone(box: PanelFloat) { setSidePanel("languageQa", { float: clampPanelFloat(box, floatWindowWidth, floatingHeight) }); floatWidth = box.width; }
+  function moveStandalone(event: PointerEvent, resize = false) {
+    if (event.button !== 0) return;
+    event.preventDefault(); const handle = event.currentTarget as HTMLElement;
+    const start = { x: event.clientX, y: event.clientY, box: standaloneBox };
+    handle.setPointerCapture?.(event.pointerId);
+    const move = (e: PointerEvent) => { movingBox = resize ? { ...start.box, width: Math.max(320, start.box.width + e.clientX - start.x), height: Math.max(200, start.box.height + e.clientY - start.y) }
+      : { ...start.box, x: start.box.x + e.clientX - start.x, y: start.box.y + e.clientY - start.y }; };
+    const end = (e: PointerEvent) => { handle.removeEventListener("pointermove", move); handle.removeEventListener("pointerup", end); handle.removeEventListener("pointercancel", end);
+      if (movingBox && e.type !== "pointercancel") keepStandalone(movingBox); movingBox = null; };
+    handle.addEventListener("pointermove", move); handle.addEventListener("pointerup", end); handle.addEventListener("pointercancel", end);
+  }
+  function standaloneKey(event: KeyboardEvent, resize = false) {
+    const step = event.shiftKey ? 48 : 16;
+    const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
+    const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
+    if (!dx && !dy) return;
+    event.preventDefault(); keepStandalone(resize ? { ...standaloneBox, width: Math.max(320, standaloneBox.width + dx), height: Math.max(200, standaloneBox.height + dy) }
+      : { ...standaloneBox, x: standaloneBox.x + dx, y: standaloneBox.y + dy });
+  }
   let floatPreview: number | null = null;
   let floatClosing = false;
   let floatWindowWidth = typeof window === "undefined" ? 1366 : window.innerWidth;
   $: floatMax = Math.max(FLOAT_LIMITS.min, Math.min(FLOAT_LIMITS.max, floatWindowWidth - 32));
-  $: shownFloatWidth = Math.min(floatPreview ?? floatWidth, floatMax);
+  $: shownFloatWidth = Math.min(floatPreview ?? standaloneBox.width, floatMax);
 
   let expanded = false;
   const LAUNCHER_HIDE_MS = 6000;
@@ -156,7 +186,12 @@
   let page: LanguageQaStatus | null = null;
   // The coverage headings are bilingual only when the statement itself is
   // (Tamil); a profile pack's statement is English.
-  $: tamilCoverage = Boolean(status?.coverage?.inScope?.some((row) => row.labelTa));
+  $: effectiveLanguage = status?.language;
+  $: tamilCoverage = !!effectiveLanguage && ["ta", "tam"].includes(effectiveLanguage.language.toLowerCase().split("-")[0]) && effectiveLanguage.pack !== "common" && effectiveLanguage.basis !== "setting-off";
+  $: aboutLanguage = effectiveLanguage?.name || effectiveLanguage?.language || $project?.targetLanguage || "Language QA";
+  $: checksOff = effectiveLanguage?.basis === "setting-off" || status?.setting === "off";
+  $: commonOnly = effectiveLanguage?.pack === "common";
+  $: aboutStamp = `${projectPath}|${live?.generation}|${live?.state}|${live?.language?.pack}|${live?.language?.setting}|${live?.setting}`;
   const detectionLabels: Record<string, string> = {
     metadata: "Language supplied by the project.",
     "script-suggestion": "Language suggested from the script; the project has no declared language.",
@@ -175,10 +210,12 @@
   $: live = channel?.status ?? null;
   $: error = localError || channel?.error || "";
   $: trackLauncher(launcherHides, live?.state ?? "", expanded, Boolean(error), live?.generation ?? null);
-  $: status = expanded ? (page ?? live) : live;
+  $: pageCurrent = page?.projectPath === projectPath && page?.generation === live?.generation && page?.state === live?.state
+    && page?.language?.pack === live?.language?.pack && page?.language?.setting === live?.language?.setting && page?.setting === live?.setting;
+  $: status = expanded && pageCurrent ? page : live;
   $: scopeChapter = listScope === "book" ? "" : $currentChapter;
   $: pageKey = expanded && live && listScope !== "verse"
-    ? `${view}|${offset}|${live.generation}|${live.state}|${scopeChapter}|${shownCategories.join(",")}` : "";
+    ? `${view}|${offset}|${aboutStamp}|${scopeChapter}|${shownCategories.join(",")}` : "";
   // The state is part of the key: a pass publishes its findings under the
   // generation it started with, so the list read while it was queued (the
   // previous pass's findings) must be read again once it completes (#237).
@@ -607,19 +644,23 @@
   });
 </script>
 
-<svelte:window on:keydown={onWindowKeydown} on:pointerdown={onWindowPointerdown} bind:innerWidth={floatWindowWidth} />
+<svelte:window on:keydown={onWindowKeydown} on:pointerdown={onWindowPointerdown} bind:innerWidth={floatWindowWidth} bind:innerHeight={floatingHeight} />
 
-<aside class="language-qa" class:docked aria-label="Language QA">
+<aside class="language-qa" class:docked aria-label="Language QA"
+  style:left={!docked && expanded ? `${standaloneBox.x}px` : null} style:top={!docked && expanded ? `${standaloneBox.y}px` : null}
+  style:right={!docked && expanded ? "auto" : null} style:bottom={!docked && expanded ? "auto" : null}>
   <p class="walk-status" role="status" aria-live="polite">{walkStatus}</p>
   {#if expanded}
     <div class="float-frame" class:closing={floatClosing}>
+    {#if !docked}<button type="button" class="standalone-grip" aria-label="Move Language QA panel" use:tooltip={"Drag to move Language QA; arrow keys move the panel"} on:pointerdown={(event) => moveStandalone(event)} on:keydown={(event) => standaloneKey(event)}><UiIcon name="grip" /> Language QA</button>{/if}
     {#if !docked}
       <PanelResizeHandle label="Language QA" width={shownFloatWidth} min={FLOAT_LIMITS.min} max={floatMax} initial={560}
         onPreview={(next, closing) => { floatPreview = next; floatClosing = closing; }}
-        onCommit={(next) => (floatWidth = next)} onClose={toggle} />
+        onCommit={(next) => keepStandalone({ ...standaloneBox, width: next })} onClose={toggle} />
     {/if}
     <section id="language-qa-results" aria-label="Language QA results" style:--head-h="{headHeight}px" style:--tabs-h="{tabsHeight}px"
-      style:width={docked ? null : `${shownFloatWidth}px`}>
+      style:width={docked ? null : `${shownFloatWidth}px`} style:height={docked ? null : `${standaloneBox.height}px`}>
+
       <!-- The header stays put while the panel scrolls: title, the (i), Pause and
            Close, then one status line and, when a pass left text out, the warning. -->
       <div class="panel-head" bind:clientHeight={headHeight}>
@@ -632,22 +673,16 @@
         <PanelHeader id="languageQa" title={`Language QA · ${stateWord}`} label="Language QA" onClose={toggle} layout={docked}>
           <button type="button" class="info-btn" bind:this={infoButton} aria-label="About these checks"
             aria-expanded={aboutOpen} aria-controls="language-qa-about"
-            title="What Language QA checks, and what it does not" on:click={() => (aboutOpen = !aboutOpen)}>i</button>
-          {#if status}
-            <button type="button" on:click={togglePause} disabled={busy || status.state === "failed"}
-              aria-label={status.state === "paused" ? "Resume checks" : "Pause checks"}
-              title={status.state === "paused" ? "Resume the checks" : "Pause the checks"}>
-              {status.state === "paused" ? "Resume" : "Pause"}
-            </button>
+            use:tooltip={`About ${aboutLanguage} checks and limitations`} on:click={() => (aboutOpen = !aboutOpen)}>i</button>
+          {#if status && ["running", "paused"].includes(status.state)}
+            <IconButton icon={status.state === "paused" ? "play" : "pause"} label={status.state === "paused" ? "Resume checks" : "Pause checks"}
+              disabled={busy || status.state === "failed"} on:click={togglePause} />
           {/if}
         </PanelHeader>
         <div class="head-meta">
         {#if error}<p class="alert" role="alert">{error}</p>{/if}
         {#if status?.error}<p class="alert" role="alert">{status.error}</p>{/if}
-        {#if status?.incomplete}
-          <p class="coverage-warn"><span class="notice">Coverage incomplete. Omitted text has not passed QA.</span>
-            {#if status.limitations.length}<button type="button" class="link" on:click={() => (aboutOpen = true)}>details ({status.limitations.length})</button>{/if}</p>
-        {/if}
+
         </div>
       {#if aboutOpen}
         <!-- Behind the (i) at Benz's request (DECISIONS 2026-10-09, superseding
@@ -658,10 +693,18 @@
         <div id="language-qa-about" class="about" role="dialog" aria-label="What Language QA checks"
           tabindex="-1" bind:this={aboutBox}>
           <div class="about-head">
-            <h3>About Language QA</h3>
+            <h3>About Language QA · {aboutLanguage}</h3>
             <button type="button" class="about-close" aria-label="Close this note" on:click={closeAbout}>✕</button>
           </div>
-          <p>Checks run offline, on this computer, automatically for the open book and after edits.</p>
+          <p>Checks run offline, on this computer.</p>
+        {#if status?.incomplete}
+          <p class="coverage-warn"><span class="notice">Coverage incomplete. Omitted text has not passed QA.</span></p>
+        {/if}
+          {#if !status}<p>{error ? "Language QA is unavailable. Coverage cannot be confirmed." : "Preparing language checks. Coverage is not yet available."}</p>
+          {:else if checksOff}<p>Language QA is switched off. No language checks are running.</p>
+          {:else if commonOnly}<p>Only common technical checks are available; there is no active language-specific pack.</p>{/if}
+          {#if effectiveLanguage}<p>Project language: {effectiveLanguage.declared || $project?.targetLanguageId || "not declared"}. Effective pack: {effectiveLanguage.pack}.
+            {#if effectiveLanguage.basis === "setting"}Selected in Settings; this overrides automatic pack selection.{/if}</p>{/if}
           {#if status}
             <p class="status-line">
               {status.language?.name || status.language?.language || "Detecting language"}
@@ -675,13 +718,13 @@
           {#if status}
             <p>{status.language?.message ?? (status.state === "paused" ? "Checks paused. Resume when ready." : "Preparing language checks…")}</p>
           {/if}
-          {#if status?.coverage?.inScope}
+          {#if !checksOff && !commonOnly && status?.coverage?.inScope}
           <div class="scope">
             <div>
               <h3>Checks{#if tamilCoverage} · <span lang="ta">சரிபார்ப்பவை</span>{/if}</h3>
               <ul>
                 {#each status.coverage.inScope as row (row.category)}
-                  <li>{row.label}{#if row.labelTa} · <span lang="ta">{row.labelTa}</span>{/if}</li>
+                  <li>{row.label}{#if tamilCoverage && row.labelTa} · <span lang="ta">{row.labelTa}</span>{/if}</li>
                 {/each}
               </ul>
             </div>
@@ -690,8 +733,8 @@
               <ul>
                 {#each status.coverage.outOfScope as row (row.category)}
                   <li title={row.reason}>
-                    {row.label}{#if row.labelTa} · <span lang="ta">{row.labelTa}</span>{/if}
-                    <span class="reason">{row.reason}{#if row.reasonTa} <span lang="ta">{row.reasonTa}</span>{/if}</span>
+                    {row.label}{#if tamilCoverage && row.labelTa} · <span lang="ta">{row.labelTa}</span>{/if}
+                    <span class="reason">{row.reason}{#if tamilCoverage && row.reasonTa} <span lang="ta">{row.reasonTa}</span>{/if}</span>
                   </li>
                 {/each}
               </ul>
@@ -704,6 +747,9 @@
           {#if status?.limitations.length}
             <h3>Coverage details ({status.limitations.length})</h3>
             <ul class="limitations">{#each status.limitations as limitation}<li>{limitation}</li>{/each}</ul>
+          {/if}
+          {#if !checksOff && status?.findings.length}
+            <h3>Examples from this book</h3><ul>{#each status.findings.slice(0, 3) as finding}<li>{finding.chapter}:{finding.verse} · <span lang={$targetLang}>{finding.originalText}</span> — {finding.message}</li>{/each}</ul>
           {/if}
           <h3>Lists</h3>
           <ul>
@@ -1030,6 +1076,7 @@
         </div>
       {/if}
     </section>
+      {#if !docked}<button type="button" class="standalone-corner" aria-label="Resize Language QA width and height" use:tooltip={"Drag to resize; arrow keys resize width and height"} on:pointerdown={(event) => moveStandalone(event, true)} on:keydown={(event) => standaloneKey(event, true)}><UiIcon name="resize" /></button>{/if}
     </div>
   {/if}
   {#if !docked && (expanded || !launcherHidden)}
@@ -1051,11 +1098,15 @@
   /* #379 item 6: the body reads at --fs-xs like every panel; the tab bar and
      the filter row, chrome, at --fs-2xs like the bar's own actions. */
   .language-qa { position: fixed; bottom: 40px; right: 16px; z-index: var(--z-panel); font-size: var(--fs-xs); }
-  /* Docked: the column is the box; the section fills it and scrolls. */
-  .language-qa.docked { position: static; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  /* Docked: release the floating stacking layer, which otherwise covers
+     SidePanel's resize handle even though this flex item is position:static (#461). */
+  .language-qa.docked { position: static; z-index: auto; flex: 1; min-height: 0; display: flex; flex-direction: column; }
   /* #389: the frame carries the floating box's left-edge handle (the section
      scrolls, so the handle cannot sit inside it) and dims while a drag would
      close it. Docked, the frame is the column's flex child and fills it. */
+  .standalone-grip { display: block; width: 100%; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-3); cursor: move; touch-action: none; text-align: left; font: inherit; }
+  .standalone-corner { position: absolute; bottom: 0; right: 0; z-index: 5; width: 24px; height: 24px; border: 0; background: var(--surface-2); color: var(--text-3); cursor: nwse-resize; touch-action: none; }
+  .standalone-grip:focus-visible, .standalone-corner:focus-visible { outline: 2px solid var(--text-3); }
   .float-frame { position: relative; }
   .float-frame.closing { opacity: .55; }
   .language-qa.docked .float-frame { flex: 1; min-height: 0; display: flex; flex-direction: column; }

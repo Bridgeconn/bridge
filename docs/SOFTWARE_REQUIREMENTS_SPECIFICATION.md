@@ -595,6 +595,32 @@ Bridge is a Windows desktop application built from:
 - `IR-UI-005 P1` User-facing text shall avoid raw stack traces or unexplained
   protocol identifiers in normal operation.
 
+#### Shared UI principle (2026-11-04, #463)
+
+Compact toolbar, panel, layout and window actions use consistent locally bundled
+SVG icons, accessible names and tooltips on pointer hover and keyboard focus.
+Secondary actions use three-dot menus with readable text, arrow-key navigation,
+Escape/outside dismissal, focus return and viewport-safe placement. Panel dividers
+use a thin neutral gray rule over an invisible resize target; hovering changes
+the cursor without painting a wide marker. Keyboard focus remains visible.
+Move grips sit at the leading edge of the panel header. Headings, reference/status text and consequential apply/reset
+explanations remain explicit. Reset layout never means reset alignment or text.
+
+The shared inventory is `UiIcon.svelte`: `grip` moves within a workspace, `float`
+floats an area inside it, `detach` opens a separate OS window, `dock` returns it,
+`pin`/`follow` describe reference following, and `more` opens secondary tools.
+`IconButton`, the existing `tooltip` action and `OverflowMenu` establish sizing,
+focus/pressed/disabled treatment and menu interaction. Adopt this incrementally;
+these issues cover editor, alignment, Language QA and panel chrome, not every
+existing action in the application.
+
+#462's first slice follows Benz's specified interaction model: left/right/top/
+bottom destination previews, stacks and columns, in-app floating, keyboard menu
+placement and reset. Benz additionally approved separate OS windows for all five
+editor panels on 2026-11-04. These reuse the same sidecar with project guards;
+#447/#450 alignment and review-queue window behavior stays independently owned.
+This records the agreed behavior, not an observed Paratext parity claim.
+
 ### 9.2 Engine protocol
 
 - `IR-RPC-001 P0` The sidecar protocol shall use UTF-8 JSON-lines with request

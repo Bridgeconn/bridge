@@ -133,3 +133,9 @@ straight to main.
   in flight, and what the next person would need to know. Records any decisions made
   that week in `docs/DECISIONS.md`.
 - **Friday triage.** New issues get labelled, or closed with a reason.
+
+
+UI changes follow the [shared UI principle](docs/SOFTWARE_REQUIREMENTS_SPECIFICATION.md#shared-ui-principle-2026-11-04-463):
+bundled icons with hover/focus tooltips, accessible three-dot menus and neutral
+gray moving/resizing chrome. Reuse the shared controls and preserve clear
+confirmation wording for consequential actions.

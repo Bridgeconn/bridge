@@ -119,6 +119,11 @@ export function setVerseEditSavedHook(hook: typeof onSaved): void {
 // its value into a local const before its own internal cancelVerseEdit()
 // call clears it, so a successful save still has it for the onSaved payload.
 let pendingAcceptFindingId = "";
+let editCaret: FindingSpan | null = null;
+/** Transfer only an edit intent between views; committed text still uses the existing writer. */
+export function currentEditIntent() {
+  return { chapter: get(editingChapter), verse: get(editingVerse), caret: editCaret, acceptFindingId: pendingAcceptFindingId };
+}
 
 // The verse text the open edit was started from (#127). Sent with the save so
 // the engine refuses it when the verse changed in the meantime, instead of
@@ -144,6 +149,7 @@ function isRevisionConflict(message: string): boolean {
  */
 export function startVerseEdit(chapter: string, verse: string, caret: FindingSpan | null = null): boolean {
   if (!verse || get(checkingProgress).running || get(editSaving) || get(recheckingKey)) return false;
+  editCaret = caret;
   editingChapter.set(chapter);
   editingVerse.set(verse);
   editBaseText = get(verseTexts)[verseKey(chapter, verse)];

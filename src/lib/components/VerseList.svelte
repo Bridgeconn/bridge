@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { savedBookWorkspace, rememberScroll, flushWorkspace } from "../projectWorkspace";
   import { onDestroy, tick } from "svelte";
   import { verseNums, verseTexts, verseDisplay, headingsByVerse, findingsByVerse, checkStatusByVerse, alignmentStatusByVerse, selectedVerse, selectedVerseSet, currentChapter, verseKey, nativeChecksByVerse, aiCheckReviewsByVerse, checkingProgress, languageQaFindingsByVerse, project, flagsByVerse, historyCountByVerse, paratextNoteCountsByVerse, focusedFindingId, checkGroupsByVerse, targetLang, targetDir, reviewTabRequest } from "../stores";
   import { checksRunNote } from "../checkSelection";
@@ -1004,6 +1005,15 @@
 
   let scrollContainer: HTMLDivElement;
   let lastScrolledKey = "";
+  let restoredPosition = "";
+  let scrollSave: ReturnType<typeof setTimeout> | undefined;
+  function saveReadingPosition() {
+    if (!$project || !scrollContainer) return;
+    rememberScroll($project.path, $currentChapter, scrollContainer.scrollTop);
+    clearTimeout(scrollSave);
+    scrollSave = setTimeout(flushWorkspace, 200);
+  }
+  onDestroy(() => { clearTimeout(scrollSave); flushWorkspace(); });
 
   async function scrollSelectedToTop(key: string): Promise<void> {
     await tick();
@@ -1015,6 +1025,16 @@
     if (revealing && target.querySelector(`[data-finding-ids~="${CSS.escape(revealing)}"]`)) {
       lastScrolledKey = key;
       return;
+    }
+    const positionKey = `${$project?.path}:${$currentChapter}`;
+    if (restoredPosition !== positionKey && $project) {
+      restoredPosition = positionKey;
+      const saved = savedBookWorkspace($project);
+      if (saved?.book.toLowerCase() === $project.bookId.toLowerCase() && saved.chapter === $currentChapter && saved.verse === $selectedVerse) {
+        scrollContainer.scrollTop = saved.scroll;
+        lastScrolledKey = key;
+        return;
+      }
     }
     const containerRect = scrollContainer.getBoundingClientRect();
     const targetRect = target.getBoundingClientRect();
@@ -1154,8 +1174,8 @@
 <!-- `lang` is the project's language (#286): index.css puts that script's face
      first in --font-target under it, so a full stop or danda is drawn from the
      same font as the letters beside it. -->
-<div class="editor-scroll" bind:this={scrollContainer} lang={$targetLang}>
-  <div class="chapter-label">Chapter {$currentChapter}</div>
+<div class="editor-scroll" bind:this={scrollContainer} lang={$targetLang} on:scroll={saveReadingPosition}>
+
 
   {#each $verseNums as v}
     {@const key = verseKey($currentChapter, v)}
@@ -1444,7 +1464,7 @@
 
 <style>
   .editor-scroll { flex: 1; overflow-y: auto; padding: 22px 32px; background: var(--surface); }
-  .chapter-label { font-size: var(--fs-xs); font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 14px; }
+
   /* A heading is the team's text, so it uses --font-target like the verses, but
      it is editorial rather than Scripture: no hover, no selection, no findings.
      The extra top margin is what separates one section from the last verse of
@@ -1463,16 +1483,10 @@
   .verse { display: flex; gap: 10px; padding: 9px 10px; border-radius: 7px; margin-bottom: 2px; cursor: pointer; border: 1px solid transparent; }
   .verse:hover { background: var(--surface-2); }
   .verse.active { background: var(--accent-bg); border-color: #C7D9FB; }
-  /* #383: the number keeps its 26px column; the pill sits beside it in a
-     wider, fixed-width box so a two-digit count never wraps and every row's
-     text starts at the same x. */
-  .vnum { font-size: var(--fs-xs); font-weight: 700; color: var(--text-3); width: 52px; flex-shrink: 0; padding-top: 2px; display: flex; align-items: baseline; gap: 4px; }
-  .vnum-text { min-width: 26px; white-space: nowrap; }
-  .issue-pill { flex-shrink: 0; min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box; border-radius: 999px; border: 1px solid transparent;
-    font: inherit; font-family: var(--font-ui); font-size: var(--fs-3xs); font-weight: 700; line-height: 16px; text-align: center; cursor: pointer; }
-  .issue-pill.sev-high { background: var(--danger-bg); color: var(--danger); border-color: var(--danger); }
-  .issue-pill.sev-medium { background: var(--warning-bg); color: var(--warning); border-color: var(--warning); }
-  .issue-pill.sev-low, .issue-pill.sev-info { background: var(--surface-2); color: var(--text-2); border-color: var(--border-strong); }
+  .vnum { position: relative; font-size: var(--fs-xs); font-weight: 700; color: var(--text-3); width: 30px; flex-shrink: 0; padding-top: 10px; text-align: right; }
+  .vnum-text { white-space: nowrap; }
+  .issue-pill { position: absolute; top: -4px; left: -5px; min-width: 18px; height: 16px; padding: 0 3px; box-sizing: border-box; border-radius: 999px; border: 1px solid var(--danger);
+    background: var(--danger-bg); color: var(--danger); font: inherit; font-family: var(--font-ui); font-size: var(--fs-3xs); font-weight: 700; line-height: 14px; text-align: center; cursor: pointer; }
   .issue-pill:hover, .issue-pill:focus-visible { border-color: var(--accent); color: var(--accent); outline: none; }
   .verse.approved .vnum { color: var(--success); }
   .verse.check-failed .vnum { color: var(--danger, #ef4444); }

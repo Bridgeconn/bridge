@@ -63,7 +63,7 @@ describe("duplicate import choices (#407)", () => {
     expect(openProject).toHaveBeenCalledOnce();
     expect(openProject).toHaveBeenCalledWith("C:/projects/copy-2", "p-2", expect.any(Function));
     expect(importStart).not.toHaveBeenCalled();
-    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
   it("lists every related project and requires a choice rather than outside-click or Escape dismissal", async () => {

@@ -502,6 +502,9 @@ export type EngineMethod =
  * Keys with `undefined` values are dropped by JSON serialization, and the
  * engine's dispatcher fills the same defaults the old per-method Rust
  * forwarders did, so callers pass their argument objects straight through. */
+let panelMutationObserver: (() => void) | null = null;
+export function observePanelMutations(observer: (() => void) | null): void { panelMutationObserver = observer; }
+const PANEL_MUTATION = /(?:^|\.)(?:decide|edit|apply|accept|reject|resolve|reopen|ignore|set|add|remove|delete|forget|restore|pause|create|reply|send|undo|cancel|start|run|retract|update|clear|save|import|setStatus|setReference|setPack|setEnabled|setScope|setRole)/;
 async function call<T>(method: EngineMethod, params?: Record<string, unknown>): Promise<T> {
   const expectedPath = reviewProjectPath();
   const guardedParams = expectedPath === undefined ? params ?? {} : { ...params, _expectedProjectPath: expectedPath };
@@ -509,6 +512,7 @@ async function call<T>(method: EngineMethod, params?: Record<string, unknown>): 
   if (!envelope.success) {
     throw new Error(envelope.error?.message ?? `${method} failed`);
   }
+  if (panelMutationObserver && PANEL_MUTATION.test(method)) panelMutationObserver();
   return (envelope.result ?? (envelope as unknown)) as T;
 }
 

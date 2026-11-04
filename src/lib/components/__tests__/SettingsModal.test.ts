@@ -58,7 +58,7 @@ vi.mock("../../api/bridgeClient", () => ({
 }));
 
 import SettingsModal from "../SettingsModal.svelte";
-import { project } from "../../stores";
+import { diagnosticsOpen, project } from "../../stores";
 import type { ProjectInfo } from "../../types/finding";
 
 const target = {
@@ -101,6 +101,16 @@ describe("SettingsModal connections", () => {
       paratextNavigation: true,
       logosNavigation: true,
     });
+  });
+
+  it("opens diagnostics from Settings without closing unsaved Settings on Escape", async () => {
+    const onClose = vi.fn();
+    render(SettingsModal, { props: { onClose } });
+    await fireEvent.click(await screen.findByRole("button", { name: "Diagnostics" }));
+    expect(get(diagnosticsOpen)).toBe(true);
+    await fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+    diagnosticsOpen.set(false);
   });
 
   it("keeps the saved update opt out when switching settings panes", async () => {

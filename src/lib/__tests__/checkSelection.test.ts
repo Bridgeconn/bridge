@@ -16,18 +16,20 @@ import { checkGroupsByVerse, checkStatusByVerse, findingsByVerse } from "../stor
 import type { QaFinding } from "../types/finding";
 
 const finding = (id: string, check: string) => ({ id, check }) as unknown as QaFinding;
-const FULL = groupsOf(DEFAULT_EDITOR_CHECKS);
+const ALL_CHECKS = ["tN", "tW", "alignment", "text", "languageQa"] as const;
+const FULL = groupsOf(ALL_CHECKS);
 
 describe("check selection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    editorChecks.set([...DEFAULT_EDITOR_CHECKS]);
+    editorChecks.set([...ALL_CHECKS]);
     findingsByVerse.set({});
     checkGroupsByVerse.set({});
     checkStatusByVerse.set({});
   });
 
-  it("defaults to every check but Greek Room, keeps run order, and is never empty", () => {
+  it("defaults to Language QA, preserves chosen checks, keeps run order, and is never empty", () => {
+    expect(DEFAULT_EDITOR_CHECKS).toEqual(["languageQa"]);
     expect(get(selectedEditorChecks)).toEqual(["tN", "tW", "alignment", "text", "languageQa"]);
     expect(normalizeChecks(["greekroom", "tN", "bogus"], DEFAULT_EDITOR_CHECKS)).toEqual(["tN", "greekroom"]);
     expect(normalizeChecks([], DEFAULT_EDITOR_CHECKS)).toEqual([...DEFAULT_EDITOR_CHECKS]);
@@ -43,8 +45,8 @@ describe("check selection", () => {
   });
 
   it("ticks only once every selected check has run, and says Greek Room has not", () => {
-    expect(coversSelection(groupsOf(["alignment"]), DEFAULT_EDITOR_CHECKS)).toBe(false);
-    expect(coversSelection(FULL, DEFAULT_EDITOR_CHECKS)).toBe(true);
+    expect(coversSelection(groupsOf(["alignment"]), ALL_CHECKS)).toBe(false);
+    expect(coversSelection(FULL, ALL_CHECKS)).toBe(true);
     expect(checksRunNote(undefined)).toBe("");
     expect(checksRunNote(FULL)).toBe(" · Ran: tN, tW, Alignment, USFM and text, Language QA · Greek Room not run");
     expect(checksRunNote([...FULL, ...groupsOf(["greekroom"])])).not.toContain("not run");
@@ -67,7 +69,7 @@ describe("check selection", () => {
     findingsByVerse.set({ "1:2": [finding("w", "wildebeest"), finding("n", "tN")] });
     checkGroupsByVerse.set({ "1:2": [...FULL, "wildebeest", "usfm", "names"] });
     runVerseChecks.mockResolvedValue([finding("n2", "tN")]);
-    await recheckVerse("1", "2", DEFAULT_EDITOR_CHECKS, { replace: true });
+    await recheckVerse("1", "2", ALL_CHECKS, { replace: true });
     expect(runVerseChecks).toHaveBeenCalledWith("1", "2", ["tN", "tW", "alignment", "text"]);
     expect(get(findingsByVerse)["1:2"].map((f) => f.id)).toEqual(["n2"]);
     expect(get(checkGroupsByVerse)["1:2"]).not.toContain("wildebeest");
@@ -82,5 +84,15 @@ describe("check selection", () => {
     expect(runVerseChecks).toHaveBeenCalledWith("1", "2", ["greekroom"]);
     expect(get(findingsByVerse)["1:2"].map((f) => f.id)).toEqual(["n", "w"]);
     expect(get(checkGroupsByVerse)["1:2"]).toEqual(expect.arrayContaining(["wildebeest", "usfm", "names"]));
+  });
+
+  it("does not call native verse checks when the saved selection is Language QA only", async () => {
+    editorChecks.set(["languageQa"]);
+    findingsByVerse.set({ "1:2": [finding("old-text", "text")] });
+    await recheckVerse("1", "2", ["languageQa"], { replace: true });
+    expect(runVerseChecks).not.toHaveBeenCalled();
+    expect(get(findingsByVerse)["1:2"]).toEqual([]);
+    expect(get(checkGroupsByVerse)["1:2"]).toEqual(["languageQa"]);
+    expect(get(checkStatusByVerse)["1:2"]).toBe("succeeded");
   });
 });

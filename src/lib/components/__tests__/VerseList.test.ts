@@ -48,7 +48,7 @@ import {
   focusedFindingId,
   resetBookState, reviewTabRequest
 } from "../../stores";
-import { rawView, setSidePanel, sidePanels } from "../../editorPrefs";
+import { editorChecks, rawView, setSidePanel, sidePanels } from "../../editorPrefs";
 import { alignmentOpen, alignmentKey } from "../../alignmentUi";
 import { cancelVerseEdit, editingChapter, editingVerse, editSaving, recheckingKey } from "../../verseEditor";
 import { revealFinding } from "../../findingFocus";
@@ -92,6 +92,7 @@ const PHP_1_6 =
   "कि जिसने तुम में अच्छा काम आरम्भ किया है।";
 
 function seed(text: string, findings: QaFinding[] = []): void {
+  editorChecks.set(["tN", "tW", "alignment", "text", "languageQa"]);
   currentChapter.set("1");
   chapterVerseNums.set({ "1": ["6"] });
   verseTexts.set({ [verseKey("1", "6")]: text });

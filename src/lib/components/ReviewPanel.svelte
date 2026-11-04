@@ -1,7 +1,11 @@
 <script lang="ts">
+  import { getContext as getSvelteContext } from "svelte";
+  const bridge = getSvelteContext("panel-window") ? bindReviewProject(bridgeApi, getStore(project)?.path || "__no_project__") : bridgeApi;
   import PanelHeader from "./PanelHeader.svelte";
   import { onDestroy, onMount } from "svelte";
-  import { bridge } from "../api/bridgeClient";
+  import { bridge as bridgeApi } from "../api/bridgeClient";
+  import { bindReviewProject } from "../reviewProjectGuard";
+  import { get as getStore } from "svelte/store";
   import { decideLanguageQaFindingOptimistically, decideLocalFinding } from "../findingActions";
   import { languageQaChannel } from "../languageQaInline";
   import { forgetLearnedFix, isLearnedFinding, learnedPairOf } from "../learnedFixes";

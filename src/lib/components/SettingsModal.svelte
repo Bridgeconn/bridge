@@ -6,7 +6,7 @@
   import { bridge, type EngineInfo } from "../api/bridgeClient";
   import { nudgeLanguageQa } from "../languageQaInline";
   import { askConfirmation } from "../confirmAction";
-  import { manualOverrideMode, navigationStatus, project, reviewerMode } from "../stores";
+  import { diagnosticsOpen, manualOverrideMode, navigationStatus, project, reviewerMode } from "../stores";
   import type { InlineConfidence, NavigationSyncState, ParatextConnectorStatus, SettingsData, TerminologyRule, UserRole } from "../types/finding";
   import type { HouseStyleEntry, HouseStyleListResponse, HouseStyleProposal } from "../types/houseStyle";
   import type { CheckerSettings } from "../types/languageQa";
@@ -115,7 +115,7 @@
   });
 
   function onWindowKeydown(event: KeyboardEvent): void {
-    if (event.key !== "Escape" || event.defaultPrevented || checkerDialogOpen) return;
+    if (event.key !== "Escape" || event.defaultPrevented || checkerDialogOpen || $diagnosticsOpen) return;
     if (event.target instanceof Element && event.target.closest("input.rename")) return;
     onClose();
   }
@@ -569,6 +569,7 @@
       <button class="nav-item" class:active={activePane === "users"} on:click={() => (activePane = "users")}>Users</button>
       <button class="nav-item" class:active={activePane === "team"} on:click={() => (activePane = "team")}>Team</button>
       <button class="nav-item" class:active={activePane === "updates"} on:click={() => (activePane = "updates")}>App updates</button>
+      <button class="nav-item" on:click={() => diagnosticsOpen.set(true)}>Diagnostics</button>
       {#if engineInfo}
         <div class="about-version" title="What this window is actually running, not what Windows says was installed">
           Bridge {engineInfo.bridgeVersion} · Schema v{engineInfo.companionSchemaVersion}

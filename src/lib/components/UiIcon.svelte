@@ -1,6 +1,15 @@
 <script lang="ts">
   export let name: string;
   const paths: Record<string, string> = {
+    more: "M12 4v1m0 6v1m0 6v1",
+    pin: "m8 3 8 0-1 6 4 4H5l4-4-1-6ZM12 13v8",
+    follow: "M4 12h16m-6-6 6 6-6 6",
+    detach: "M14 3h7v7m0-7-10 10M10 3H4v17h17v-6",
+    dock: "M3 4h18v16H3zM14 4v16M17 9l-3 3 3 3",
+    float: "M3 3h13v4M3 3v13h4M8 8h13v13H8z",
+    grip: "M8 5v1m8-1v1M8 11v1m8-1v1M8 17v1m8-1v1",
+    info: "M12 10v7m0-11v1M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0Z",
+    resize: "M8 20 20 8M14 20l6-6M20 20v-1",
     open: "M10 17l5-5-5-5M4 12h11M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5",
     rename: "m15 5 4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15v5Z",
     archive: "M3 3h18v5H3zM5 8v13h14V8M9 12h6",
@@ -21,7 +30,7 @@
     rebuild: "M21 12a9 9 0 0 1-15.5 6.2M3 12a9 9 0 0 1 15.5-6.2M18.5 2v4h-4M5.5 22v-4h4",
     addBooks: "M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8l-5-5ZM14 3v5h5M12 11v6M9 14h6",
     back: "m12 5-7 7 7 7M5 12h15",
-    sync: "M20 7h-5m5 0V2M4 17h5m-5 0v5M5 7a8 8 0 0 1 13-2l2 2M4 17l2 2a8 8 0 0 0 13-2",
+    sync: "M3 10a9 9 0 0 1 15-6l3 3M21 2v5h-5M21 14A9 9 0 0 1 6 20l-3-3M3 22v-5h5",
     settings: "m10 3-.6 2.2-2 .9-2-.6-2 3.5 1.5 1.6v2.3L3.4 15l2 3.5 2-.6 2 .9.6 2.2h4l.6-2.2 2-.9 2 .6 2-3.5-1.5-1.6v-2.3L20.6 9l-2-3.5-2 .6-2-.9L14 3h-4ZM12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z",
   };
 </script>

@@ -84,7 +84,7 @@ function projectInfo(extra: Partial<ProjectInfo> = {}): ProjectInfo {
 async function open(ctx: AlignmentContext = context()) {
   getAlignment.mockResolvedValue(ctx);
   const result = render(AlignmentModal, { props: { chapter: "1", verse: "1", onClose: vi.fn() } });
-  await screen.findByText(/align source and target words/);
+  await screen.findByRole("heading", { name: /^Word alignment/ });
   return result;
 }
 
@@ -120,7 +120,7 @@ describe("AlignmentModal", () => {
 
   it("names the book and its code in the title", async () => {
     await open();
-    expect(screen.getByRole("heading", { name: /^Genesis \(GEN\) 1:1 — align source and target words$/ }))
+    expect(screen.getByRole("heading", { name: /^Word alignment · Genesis \(GEN\) 1:1$/ }))
       .toBeInTheDocument();
   });
 
@@ -129,7 +129,7 @@ describe("AlignmentModal", () => {
     // project.name, and "gen (GEN)" would be nonsense.
     project.set(projectInfo({ bookName: "gen" }));
     await open();
-    expect(screen.getByRole("heading", { name: /^GEN 1:1 — align source and target words$/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^Word alignment · GEN 1:1$/ })).toBeInTheDocument();
   });
 
   it("says the tally counts this chapter's verses", async () => {

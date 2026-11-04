@@ -178,11 +178,12 @@ describe("Language QA", () => {
     statusCall.mockResolvedValue(snapshot(incomplete));
     render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
     await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
-    expect(screen.getByText(/Coverage incomplete/)).toBeTruthy();
+    expect(screen.queryByText(/Coverage incomplete/)).toBeNull();
     // #376: the disclaimer and the details list are behind the (i); the
     // warning's "details" link opens it.
     expect(screen.queryByText(/not publication approval/)).toBeNull();
-    await fireEvent.click(screen.getByRole("button", { name: "details (1)" }));
+    await fireEvent.click(screen.getByRole("button", { name: "About these checks" }));
+    expect(screen.getByText(/Coverage incomplete/)).toBeTruthy();
     const about = screen.getByRole("dialog", { name: "What Language QA checks" });
     expect(about.textContent).toContain("not publication approval");
     expect(about.textContent).toContain("Unbalanced \\f");
@@ -251,9 +252,10 @@ describe("Language QA", () => {
     const head = region.firstElementChild as HTMLElement;
     expect(head.classList.contains("panel-head")).toBe(true);
     expect(screen.getByRole("heading", { level: 2, name: "Language QA · completed" })).toBeTruthy();
-    for (const name of ["About these checks", "Pause checks", "Close Language QA"]) {
+    for (const name of ["About these checks", "Close Language QA"]) {
       expect(head.contains(screen.getByRole("button", { name }))).toBe(true);
     }
+    expect(screen.queryByRole("button", { name: "Pause checks" })).toBeNull();
     // The full status line lives behind the (i) now, and the (i) is a popover
     // inside the header that does not push the tab bar down.
     expect(head.querySelector(".status-line")).toBeNull();
@@ -354,8 +356,10 @@ describe("Language QA", () => {
   });
 
   it("pauses through the project-guarded endpoint", async () => {
+    statusCall.mockResolvedValue(snapshot({ state: "running" }));
+    publish({ state: "running" });
     render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
-    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
+    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · running/ }));
     await screen.findByText("Check source encoding.");
     statusCall.mockResolvedValue(snapshot({ state: "paused", findings: [] }));
     await fireEvent.click(screen.getByRole("button", { name: "Pause checks" }));
@@ -759,7 +763,7 @@ describe("Language QA floating box closes by drag (#389)", () => {
     render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn(), docked: true });
     await screen.findByRole("heading", { level: 2, name: /Language QA/ });
     expect(screen.queryByRole("separator", { name: /Resize the Language QA panel/ })).toBeNull();
-    expect(screen.getByRole("button", { name: "Undock Language QA" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Language QA panel tools" })).toBeInTheDocument();
   });
 });
 
@@ -823,5 +827,54 @@ describe("Language QA docked in its side column (Benz, 2026-10-09)", () => {
     render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn(), docked: true });
     toggleLanguageQaPanel();
     expect(get(sidePanels).languageQa.open).toBe(true);
+  });
+});
+
+
+describe("language-aware About (#415)", () => {
+  it("suppresses Tamil glosses from shared categories for a Hindi effective pack", async () => {
+    const language = { declared: "hin", language: "hi", name: "Hindi", script: "DEVANAGARI", basis: "metadata", pack: "hi-irv", message: "Hindi checks." };
+    publish({ language }); statusCall.mockResolvedValue(snapshot({ language }));
+    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn(), docked: true });
+    await fireEvent.click(screen.getByRole("button", { name: "About these checks" }));
+    const about = screen.getByRole("dialog", { name: "What Language QA checks" });
+    expect(about.querySelector('[lang="ta"]')).toBeNull(); expect(about).toHaveTextContent("About Language QA · Hindi");
+    expect(about).toHaveTextContent("Effective pack: hi-irv");
+  });
+  it("follows a Settings override immediately and ignores a late page for the old pack", async () => {
+    let finish!: (value: LanguageQaStatus) => void;
+    statusCall.mockImplementationOnce(() => new Promise<LanguageQaStatus>(resolve => finish = resolve));
+    publish({}); render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn(), docked: true });
+    await fireEvent.click(screen.getByRole("button", { name: "About these checks" }));
+    const language = { declared: "tam", language: "hi", name: "Hindi", script: "DEVANAGARI", basis: "setting", setting: "hi-irv", pack: "hi-irv", message: "Hindi checks." };
+    statusCall.mockResolvedValue(snapshot({ language, setting: "hi-irv" }));
+    publish({ language, setting: "hi-irv" }); await tick(); finish(snapshot()); await tick();
+    await waitFor(() => expect(screen.getByRole("dialog", { name: "What Language QA checks" })).toHaveTextContent("Effective pack: hi-irv"));
+    const about = screen.getByRole("dialog", { name: "What Language QA checks" });
+    expect(about).toHaveTextContent("Project language: tam"); expect(about).toHaveTextContent("Selected in Settings");
+    expect(about.querySelector('[lang="ta"]')).toBeNull();
+  });
+  it.each(["off", "common"])("describes the %s state without implying language-specific checks", async mode => {
+    const language = { declared: "zz", language: "zz", script: "LATIN", basis: mode === "off" ? "setting-off" : "undetermined", pack: "common", message: "Common checks only." };
+    const value = { language, setting: mode === "off" ? "off" : "auto" };
+    publish(value); statusCall.mockResolvedValue(snapshot(value));
+    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn(), docked: true });
+    await fireEvent.click(screen.getByRole("button", { name: "About these checks" }));
+    const about = screen.getByRole("dialog", { name: "What Language QA checks" });
+    expect(about).toHaveTextContent(mode === "off" ? "switched off" : "Only common technical checks");
+    expect(about.querySelector('[lang="ta"]')).toBeNull();
+    // Older engine summaries can carry the Tamil/default category inventory
+    // in common-only mode. Do not advertise those as this language's checks.
+    expect(about).not.toHaveTextContent("Sandhi");
+  });
+  it("resizes the standalone panel in width and height through keyboard controls", async () => {
+    publish({}); statusCall.mockResolvedValue(snapshot());
+    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
+    await fireEvent.click(await screen.findByRole("button", { name: /Language QA \u00b7 completed/ }));
+    const corner = screen.getByRole("button", { name: "Resize Language QA width and height" });
+    const region = screen.getByRole("region", { name: "Language QA results" });
+    const width = parseFloat(region.style.width), height = parseFloat(region.style.height);
+    await fireEvent.keyDown(corner, { key: "ArrowRight" }); await fireEvent.keyDown(corner, { key: "ArrowDown" });
+    expect(parseFloat(region.style.width)).toBe(width + 16); expect(parseFloat(region.style.height)).toBe(height + 16);
   });
 });

@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { planChapterEntry, shouldReadStored } from "../chapterEntry";
-import { DEFAULT_EDITOR_CHECKS, groupsOf, type CheckBoxId } from "../checkSelection";
+import { groupsOf, type CheckBoxId } from "../checkSelection";
 import type { StoredChapterFindings } from "../types/finding";
 
 // #272: entering a chapter reads the stored findings back instead of
 // re-running the chapter job when they still describe it.
 const idle = { loaded: false, jobActive: false, collectionRunning: false };
-const selection = [...DEFAULT_EDITOR_CHECKS] as CheckBoxId[];
+const selection: CheckBoxId[] = ["tN", "tW", "alignment", "text", "languageQa"];
 const stored = (current: boolean, checks: readonly string[]): StoredChapterFindings => ({
   chapter: "1", current, checkGroups: groupsOf(checks), verses: { "1": [] },
 });

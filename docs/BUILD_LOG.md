@@ -24241,3 +24241,170 @@ replacement logic or weakening a deadline. A complete clean full-suite run and
 installed desktop acceptance remain release gates. #456 stays open with this
 evidence and those limits. The working-tree implementation is not committed or
 published in this session.
+
+
+## 2026-11-04 - Coordinated workspace UI (#457-#463, #415)
+
+Benz authorized building on the existing uncommitted quotation/Language QA work.
+That work is retained. The UI changes share editor layout state and existing tree
+operations rather than separate resizing/docking implementations. Benz approved
+editor panels in separate OS windows as well as floating inside Bridge; existing
+alignment and review-queue window lifecycles remain independent. The agreed
+Paratext-style model is user-specified; no observed Paratext parity is claimed.
+
+Recent projects records successful local opens per named user in this device's
+webview storage, deduplicates collections and filters the existing registry. It
+does not borrow a teammate's last-opened timestamp or create a second registry.
+Versioned workspace snapshots preserve collection/project layout and last book,
+chapter, exact verse, reading offset and editor/review view. Global text-size/Raw
+preferences retain their previous scope. Navigation validates references against
+loaded content, stale chapter responses check project identity, layout reset only
+changes geometry/visibility, and malformed snapshots fall back without blocking.
+Scroll writes are bounded (200 ms) and pagehide/navigation flush the snapshot;
+an abrupt process kill may lose the final unflushed scroll movement. No editable
+draft is persisted as Scripture.
+
+Shared IconButton/OverflowMenu reuse the existing tooltip action, SVG inventory
+and keyboard menu implementation. The editor chapter header is inside the editor
+column and outside its verse scroller. Alignment pin/follow/window controls use
+compact icons; secondary layout commands use menus. Resize/dock feedback is gray.
+SidePanel keeps one content slot through dock/float/split changes. The old clipped
+left-edge resize hit area is moved inside its frame. Standalone Language QA gains
+keyboard/pointer movement and two-dimensional resizing. About content uses the
+effective language/pack, gates Tamil glosses, states off/common/unavailable modes,
+and rejects stale pages following configuration changes.
+
+Native editor panels reuse the one engine and the existing panel components.
+Main-window messages are guarded by project path and detached-panel state; each
+panel has its own targeted context topic. Existing edit, alignment and review
+queue actions route back to the main workbench. Closing a panel hides it; Dock in
+Bridge returns it to the saved editor layout. Native geometry uses the existing
+window-state plugin. Five hidden windows are created at startup, consistent with
+the existing auxiliary-window setup, and destroyed on main exit.
+
+Desktop investigation found and fixed three concrete problems: a reactive promise
+assignment in the new host scheduled itself repeatedly; a shared event topic let
+other panels overwrite a detached panel's context; and docked Language QA's flex
+item z-index covered its resize handle. Regression tests cover the first two;
+the last requires actual hit testing and was verified by dragging its width from
+440 to 384 pixels. Floating-panel Escape cancels a pending move before the normal
+close shortcut; dock/float transitions retain the mounted content/filter state.
+
+Observed in the native Windows debug app on a real Tamil Philemon project:
+Recent opening, centered chapter header while scrolling, Language QA resizing,
+in-app floating, detach to its own window with findings visible, Dock in Bridge,
+and docking above Scripture with a gray divider. Returning through Projects and
+reopening restored the split layout and verse-3 reading offset. A normal main
+exit stopped the sidecar; after a process restart, Recent still listed Philemon
+first and reopening again restored that split and reading offset. The Language
+QA About popup named Tamil, declared `ta`, and effective `ta-irv`. A temporarily
+blank cold-start window was inspected; the app subsequently loaded and DevTools
+showed only a missing development favicon, with no application exception.
+The existing word-alignment window also detached and docked back with its compact
+toolbar and gray splitters visible. A separate Source text window displayed Greek
+and alignment indicators; selecting verse 4 there updated the main editor's Review
+heading to PHM 1:4. These checks did not modify Scripture or alignment data.
+
+Initial Rust compilation was blocked by the running sidecar's Windows file lock.
+After Benz closed Bridge, `cargo check --offline` and all 19 Rust tests passed.
+Shutdown tests require ordinary process permissions outside the restricted
+sandbox; no tests or deadlines were weakened. Final frontend results follow.
+
+The final stable-source frontend run passed **1,172 tests in 122 files** with two
+workers (451.95 s). Earlier broad runs are not claimed as clean: a concurrent
+build pushed the existing 100 ms interaction budget over its deadline; an import
+dialog assertion needed to await asynchronous restoration; and a docking test
+ran while its component source was still changing. The asynchronous assertion
+was corrected, the deadline was preserved, and both the 62-case focused run and
+the final complete run passed after freezing the source.
+Final `npm run check` reported **0 errors and 0 warnings**; `npm run build`
+completed the application (including `panel.html`) and dashboard production
+bundles. `git diff --check` passed. Verification logs are retained locally under
+the ignored `.test-temp-workspace-ui-20261104/` directory.
+
+These observations are debug-app acceptance for the sampled interactions, not
+installed-package acceptance. Physical drag outside Bridge, every native panel's
+full action inventory, review-queue window regression painting, mixed DPI,
+monitor removal and long RTL layouts still need desktop acceptance. No new engine
+code, database schema, Scripture writer or golden was introduced by this UI work.
+The pre-existing quotation changes and their engine verification limits above
+remain separate. Nothing was committed, pushed or released in this task.
+
+### Follow-up: Benz's fourteen UI refinements
+
+The editor and side panels now share compact 36px header geometry and centered
+titles; move grips lead their headers. Editor/alignment dividers paint only a
+one-pixel rule over an invisible pointer target. Hover changes the resize cursor
+without painting a thick bar; keyboard focus remains visible. Alignment pane
+padding/borders no longer create a wide seam. Word/cross-verse alignment titles
+are compact and left aligned; layout tools, pin, native-window and close controls
+share one row. The workspace retains its layout state/content when the external
+header menu resets geometry.
+
+Language QA puts incomplete coverage and limitations behind About; it retains
+errors in the main panel. Pause is available while running, Resume while paused,
+and neither appears for completed/idle/failed scans. Quotations uses the same
+category-count-driven Kinds menu as other findings and is absent at zero count.
+Verse finding counts are red at the upper left of the verse number. Diagnostics
+is reached through Settings and Escape from its dialog does not discard the
+underlying Settings screen. Navigation sync uses a clearer circular-arrow SVG
+and retains the existing enabled/error/connection indicators.
+
+Benz clarified that reinstalling must preserve saved check selections. The
+existing `bridge.editor.checks.v1` storage key and application identity are
+unchanged: a saved selection wins over the new Language-QA-only fallback. The
+collection runner keeps its independently saved selection and original default.
+Source tests initialize a fresh profile and reinitialize the module with saved
+choices to verify this boundary; deleting the app's user data is outside that
+retention guarantee. Final verification and native observations follow below.
+
+Native debug observations on the existing Tamil Genesis workspace: compact panel
+headers with leading grips, upper-left red verse badges, thin split lines, no
+completed-scan Pause control or separate Quotations button, and no inline coverage
+warning. Hebrew source and Tamil target content rendered in compact word and
+cross-verse alignment views; the layout menu and pin/detach/close controls shared
+the header row. Settings opened the existing diagnostic log, and Escape returned
+to Settings with focus on Diagnostics. No Scripture or alignment data was edited.
+
+An initial focused run passed QA/preferences interactions but found two tests
+pinning the old 41px/8px-padding header. Their expectations now match the requested
+compact geometry. An interrupted broad run exposed fixtures assuming the old
+all-checks default and old alignment instruction heading; those fixtures now
+explicitly select their intended checks and await the compact heading. The final
+targeted rerun passed 213 tests in five files. A separate regression verifies that
+Language-QA-only rechecks avoid native verse-check RPCs and clear stale text
+findings after an edit. The existing engine/frozen gates were not rerun for these
+frontend-only refinements; no Rust source or app identity changed.
+The native About popup showed the incomplete-coverage message and details, and
+the existing profile's Checks menu still showed its five previously selected
+checks after reload. This is evidence for retaining an existing selection;
+actually uninstalling/reinstalling a signed package was not performed.
+The first complete refinement run finished with 1,175 passing and one outdated
+chapter-entry fixture expectation: its selection inherited the new default while
+expecting the old full-check missing-group list. Like the edit-path fixtures, it
+now specifies the full selection it intends to exercise. The application code
+was unchanged by these fixture updates; final clean-run results follow.
+The final clean refinement run passed **1,176 tests in 123 files** (290.27 s,
+four workers), including the unchanged 100 ms interaction budget. Svelte check
+reported **0 errors and 0 warnings**. Production bundle evidence follows.
+`npm run build` completed both the app/panel and dashboard bundles. Vite retained
+its advisory about large chunks; there were no build errors. `git diff --check`
+passed. Logs remain in `.test-temp-workspace-ui-20261104/refinement-*.log`.
+
+### Commit/push preparation and issue reconciliation
+
+Benz requested commits, a push to main and issue updates/closure. Quotation
+rules (#456) are committed separately from the coordinated workspace UI. The
+shared files are staged by feature without rewriting the tested working tree.
+Remaining installed-package, monitor/DPI, physical out-of-window drag and full
+detached-panel action acceptance is tracked in #466; debug observations are not
+relabelled as installed evidence. The agreed native-window scope and latest
+cursor-only resize/compact-header refinements supersede the planning-only wording
+in #462/#463. No installer or release is produced by this push.
+
+#415 stays open: the effective-pack/Tamil-gloss/stale-response fixes are present,
+but the later-expanded requirement for explicit maintained About descriptions,
+examples and content review for every supported language is not complete. #456
+also retains its documented complete-engine/installed/human-language acceptance
+gaps and #464/#465 remain separate investigations. Completed workspace feature
+issues can close with the remaining manual release acceptance linked to #466.

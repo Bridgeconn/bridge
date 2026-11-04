@@ -42,7 +42,7 @@ export interface PanelFloat { x: number; y: number; width: number; height: numbe
 /** `float` (#389): set while the panel is undocked into a box; absent or null
  * in its column. Added to the saved shape, not a new shape: a layout saved
  * before #389 is valid as it is, so nothing is migrated. */
-export interface SidePanelState { open: boolean; width: number; float?: PanelFloat | null }
+export interface SidePanelState { open: boolean; width: number; float?: PanelFloat | null; detached?: boolean }
 export type SidePanels = Record<SidePanelId, SidePanelState>;
 
 /** Left to right, as they stand between the text and the rail. The source text
@@ -105,6 +105,7 @@ const isPanelFloat = (value: unknown): value is PanelFloat => {
 const isPanelState = (entry: unknown): entry is SidePanelState => {
   const state = entry as Partial<SidePanelState> | undefined;
   return !!state && typeof state.open === "boolean" && isFinite(state.width)
+    && (state.detached === undefined || typeof state.detached === "boolean")
     && (state.float === undefined || state.float === null || isPanelFloat(state.float));
 };
 
@@ -155,6 +156,17 @@ export function setSidePanel(id: SidePanelId, patch: Partial<SidePanelState>): v
 const isPanelOrder = (value: unknown): value is SidePanelId[] =>
   Array.isArray(value) && value.every((id) => (SIDE_PANEL_ORDER as readonly string[]).includes(id))
   && new Set(value).size === value.length;
+
+export function validPanelSnapshot(panels: unknown, order: unknown): boolean {
+  return isSidePanels(panels) && SIDE_PANEL_ORDER.every(id => isPanelState(panels[id]) && panels[id].width >= SIDE_PANEL_LIMITS[id].min && panels[id].width <= SIDE_PANEL_LIMITS[id].max && (!panels[id].float || (panels[id].float!.width > 0 && panels[id].float!.height > 0))) && isPanelOrder(order)
+    && order.length === SIDE_PANEL_ORDER.length;
+}
+
+export function resetPanelLayout(): void {
+  sidePanels.set(Object.fromEntries(SIDE_PANEL_ORDER.map(id => [id, { open: id === "review", width: SIDE_PANEL_LIMITS[id].initial }])) as SidePanels);
+  sidePanelOrder.set([...SIDE_PANEL_ORDER]);
+  sidePanelRecency.set([]);
+}
 
 export const sidePanelOrder = persisted<SidePanelId[]>("bridge.editor.sidePanelOrder.v1", [...SIDE_PANEL_ORDER], isPanelOrder);
 sidePanelOrder.update((order) => {
@@ -246,6 +258,6 @@ export const checkerSettingsOpen = persisted<string[]>("bridge.checkerSettings.o
  * keeps its own, with Greek Room in it, as it is the unattended whole-Bible
  * pass (#252). A saved selection with no known box falls back to the default. */
 export const editorChecks = persisted<string[]>("bridge.editor.checks.v1",
-  ["tN", "tW", "alignment", "text", "languageQa"], isStringArray);
+  ["languageQa"], isStringArray);
 export const collectionChecks = persisted<string[]>("bridge.dashboard.collectionChecks.v1",
   ["tN", "tW", "alignment", "text", "languageQa", "greekroom"], isStringArray);

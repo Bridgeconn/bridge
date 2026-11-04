@@ -1,4 +1,9 @@
 <script lang="ts">
+  import PanelWindowsHost from "./lib/components/PanelWindowsHost.svelte";
+  import { setSidePanel } from "./lib/editorPrefs";
+  import EditorWorkspace from "./lib/components/EditorWorkspace.svelte";
+  import OverflowMenu from "./lib/components/OverflowMenu.svelte";
+  import { bindWorkspace, savedWorkspace, savedBookWorkspace, rememberLocation, recordProjectOpen, releaseWorkspace, flushWorkspace, resetWorkspaceLayout } from "./lib/projectWorkspace";
   import { onDestroy, onMount } from "svelte";
   import { bridge } from "./lib/api/bridgeClient";
   import { workspaceRecoverySummary, type RecoverySummary } from "./lib/workspaceRecovery";
@@ -608,6 +613,8 @@
   }
 
   async function showProjectHome() {
+    releaseWorkspace();
+    chapterLoadSequence += 1;
     await stopActiveJob();
     resetBookState();
     resetReviewState();
@@ -665,9 +672,29 @@
     }
   }
 
+  $: if (opened && $project && !showingDashboard && !showingReport && !openingBook && ($chapterVerseNums[$currentChapter] ?? []).includes($selectedVerse ?? "")) {
+    rememberLocation($project, $currentChapter, $selectedVerse, showingAlignmentReview ? "review" : "editor");
+  }
+
   async function handleOpened() {
+    if (!$project) return;
+    const initial = $project;
+    const saved = bindWorkspace(initial);
+    recordProjectOpen(initial);
     opened = true;
-    showingDashboard = true;
+    showingDashboard = !saved;
+    if (saved) {
+      try {
+        const sibling = initial.importedProjects?.find(p => p.bookId.toLowerCase() === saved.book.toLowerCase());
+        if (sibling && sibling.path !== initial.path) await switchBook(sibling.path, false);
+        if (!$project || !opened) return;
+        await enterCurrentProject();
+        showingAlignmentReview = saved.view === "review";
+      } catch (cause) {
+        showingDashboard = true;
+        showNavigationNotice(`Could not restore the saved location. Open a book to continue: ${String(cause)}`);
+      }
+    }
     report = null;
     reportError = "";
     reportBuiltAt = "";
@@ -1054,8 +1081,10 @@
   // Shared by initial open and book switching: land on the first chapter
   // and its first verse once `project` points at the book to display.
   async function enterCurrentProject(): Promise<void> {
-    const firstChapter = $project?.chapters[0] ?? "1";
-    await activateChapter(firstChapter);
+    if (!$project) return;
+    const saved = savedBookWorkspace($project);
+    const chapter = saved?.book.toLowerCase() === $project.bookId.toLowerCase() && $project.chapters.includes(saved.chapter) ? saved.chapter : $project.chapters[0] ?? "1";
+    await activateChapter(chapter, saved?.book.toLowerCase() === $project?.bookId.toLowerCase() ? saved?.verse : undefined);
   }
 
   // Switch to a sibling book from a multi-book import. The sidecar's
@@ -1081,9 +1110,13 @@
       const info = await bridge.openProject(path, undefined, (snapshot) => { openingDetail = prepareDetail(snapshot); });
       openingDetail = "";
       if (!info.importedProjects && siblings) info.importedProjects = siblings;
+      flushWorkspace();
+      chapterLoadSequence += 1;
       resetBookState();
-    resetReviewState();
+      resetReviewState();
+      bindWorkspace(info);
       project.set(info);
+      recordProjectOpen(info);
       void loadAssignments();
       if (enterEditor) await enterCurrentProject();
       void perfEnd("book.switch");
@@ -1097,13 +1130,15 @@
     }
   }
 
-  async function ensureChapterData(chapter: string): Promise<void> {
+  async function ensureChapterData(chapter: string, force = false): Promise<void> {
     const knownVerses = $chapterVerseNums[chapter] ?? [];
     if (
-      knownVerses.length > 0 &&
+      !force && knownVerses.length > 0 &&
       knownVerses.every((verse) => Object.prototype.hasOwnProperty.call($verseTexts, verseKey(chapter, verse)))
     ) return;
+    const expectedPath = $project?.path;
     const { verses, headings, editCounts } = await bridge.chapterVerseData(chapter);
+    if (expectedPath !== $project?.path) return;
     const verseIds = Object.keys(verses);
     chapterVerseNums.update((m) => ({ ...m, [chapter]: verseIds }));
 
@@ -1318,8 +1353,9 @@
     currentChapter.set(chapter);
     selectedVerseSet.set([]); // the multi-selection is chapter-scoped (#118)
     if (timed) perfResponded("chapter.open");
+    const chapterPath = $project?.path;
     await ensureChapterData(chapter);
-    if (sequence !== chapterLoadSequence || chapter !== $currentChapter) {
+    if (sequence !== chapterLoadSequence || chapter !== $currentChapter || chapterPath !== $project?.path) {
       if (timed) perfAbort("chapter.open");
       return;
     }
@@ -1569,6 +1605,8 @@
   ].join("\n") : "";
 </script>
 
+<PanelWindowsHost onNavigate={navigateToReportRow} onSettings={() => openSettings("languageQa")}
+  onRefresh={async () => { const path = $project?.path; await ensureChapterData($currentChapter, true); if (path === $project?.path) await activateChapter($currentChapter, $selectedVerse ?? undefined); }} />
 <div class="frame print-expand">
   {#if assigningPath && $project}
     <AssignmentsDialog
@@ -1725,7 +1763,7 @@
           <p class="role-banner" role="status">You are a reporter on this project: you can read, report and export, and changes are refused.</p>
         {/if}
         <div class="editor-toolbar">
-          <span>Chapter {$currentChapter} of {$project?.chapters.length ?? "?"}</span>
+
           <button class="whole-book-btn" on:click={runWholeBook} disabled={Boolean(activeJobId)}
             title={`Run ${checkListLabel($selectedEditorChecks)} on every chapter`}>
             {$checkingProgress.scope === "book" && $checkingProgress.running ? "Running…" : "Run whole book"}
@@ -1757,31 +1795,35 @@
             onOpenReview={(verse, verses) => openCrossVerse(verse, verses)}
             onFinished={() => { void activateChapter($currentChapter); }}
           />
-          <span class="toolbar-divider" aria-hidden="true" />
-          <button class="whole-book-btn" class:on={$sidePanels.reference.open} aria-pressed={$sidePanels.reference.open}
-            title="Show a reference Bible (an Old Version) beside the text"
-            on:click={() => toggleSidePanel("reference")}>Ref.</button>
-          <button class="whole-book-btn" class:on={$rawView} aria-pressed={$rawView}
-            title="Show each verse exactly as stored, USFM markers included"
-            on:click={() => rawView.update((on) => !on)}>Raw</button>
-          <button class="whole-book-btn" aria-haspopup="menu" disabled={!$project}
-            title="Bookmark this verse, or go to a bookmark or a recent chapter"
-            on:click={openPlacesMenu}>★ Bookmarks</button>
-          <span class="text-size" role="group" aria-label="Text size">
-            <button class="whole-book-btn" title="Smaller text" aria-label="Smaller text"
-              disabled={$textScale === TEXT_SCALES[0]} on:click={() => bumpTextScale(-1)}>A−</button>
-            <button class="whole-book-btn" title="Larger text" aria-label="Larger text"
-              disabled={$textScale === TEXT_SCALES[TEXT_SCALES.length - 1]} on:click={() => bumpTextScale(1)}>A+</button>
-          </span>
         </div>
         <!-- The text, then the side-panel columns (Benz, 2026-10-09): each
              opened from the rail at the far right, resized or closed by
              dragging its left edge; several may be open at once. All start
              under the toolbar, level with the text. -->
         <div class="work-row">
+          <EditorWorkspace let:editorFrame onDetach={id => { if ("__TAURI_INTERNALS__" in window) setSidePanel(id, { detached: true, open: true }); }}>
           <!-- #324: the verse list never goes below this width; the side
                panels shrink and then fold to the rail first (panelFit.ts). -->
-          <div class="editor-col" style:min-width="{$verseMin}px">
+          <div data-editor-pane="editor" class="editor-col" style={editorFrame || `min-width:${$verseMin}px`}>
+            <div class="editor-header">
+              <h2>Chapter {$currentChapter} of {$project?.chapters.length ?? "?"}</h2>
+              <OverflowMenu label="Editor tools" actions={[
+                { id: "reference", label: `${$sidePanels.reference.open ? "Hide" : "Show"} reference Bible` },
+                { id: "raw", label: `${$rawView ? "Hide" : "Show"} Raw USFM` },
+                { id: "bookmarks", label: "Bookmarks and recent chapters" },
+                { id: "smaller", label: "Smaller text", disabled: $textScale === TEXT_SCALES[0] },
+                { id: "larger", label: "Larger text", disabled: $textScale === TEXT_SCALES[TEXT_SCALES.length - 1] },
+                { id: "reset", label: "Reset workspace layout" },
+              ]} on:action={(event) => {
+                const { id, anchor } = event.detail;
+                if (id === "reference") toggleSidePanel("reference");
+                else if (id === "raw") rawView.update(v => !v);
+                else if (id === "smaller") bumpTextScale(-1);
+                else if (id === "larger") bumpTextScale(1);
+                else if (id === "reset") resetWorkspaceLayout();
+                else if (id === "bookmarks") { const rect = anchor.getBoundingClientRect(); placesMenu = { x: rect.left, y: rect.bottom + 4 }; }
+              }} />
+            </div>
             <VerseList onSelect={selectVerse} onNavigate={navigateToReportRow} />
           </div>
           <!-- #389: the columns run in the reviewer's order (sidePanelOrder,
@@ -1816,6 +1858,7 @@
               {/if}
             {/if}
           {/each}
+          </EditorWorkspace>
           <SideRail onOpenSettings={() => openSettings("ai")} />
         </div>
       </div>
@@ -1849,10 +1892,7 @@
       {#if engineNotice}<span class="engine-notice" title={engineNotice}>{engineNotice}</span>{/if}
       {#if $updateStatus.phase === "ready"}<span title={$updateStatus.message}>Bridge {$updateStatus.version} will install on close.</span>{/if}
       <span>Engine: {engineStatus}</span>
-      <button class="diagnostics-btn" on:click={() => diagnosticsOpen.set(true)}>
-        Diagnostics
-        {#if $engineLog.some((entry) => entry.level === "error")}<span class="error-dot" />{/if}
-      </button>
+
     </div>
   {/if}
 
@@ -1923,9 +1963,10 @@
   .body { flex: 1; display: flex; overflow: hidden; }
   /* A 66-book table must not push the dashboard off screen: it scrolls. */
   .work-col { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .editor-header { display: grid; grid-template-columns: 28px minmax(0, 1fr) 28px; align-items: center; min-height: 36px; flex: none; padding: 0 8px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+  .editor-header h2 { grid-column: 2; text-align: center; font-size: var(--fs-xs); font-weight: 500; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .work-row { flex: 1; min-height: 0; display: flex; overflow: hidden; }
   .editor-col { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
-  .text-size { display: inline-flex; gap: 2px; }
   /* min-height + wrap, not a fixed height: on a narrow window the items used to
      shrink, break their labels onto two lines and get clipped by the 34px box.
      Now each item keeps its label on one line and the row wraps instead. */
@@ -1933,9 +1974,7 @@
   .editor-toolbar > * { white-space: nowrap; flex-shrink: 0; }
   .whole-book-btn { font-size: var(--fs-xs); font-weight: 600; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); cursor: pointer; }
   .whole-book-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-  .whole-book-btn.on { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
   .role-banner { margin: 0; padding: 6px 14px; background: var(--accent-bg); color: var(--accent); font-size: var(--fs-xs); font-weight: 600; border-bottom: 1px solid var(--border); }
-  .toolbar-divider { width: 1px; height: 20px; background: var(--border-strong); }
   .grow { flex: 1; }
   .statusbar { height: 28px; background: var(--surface); border-top: 1px solid var(--border); display: flex; align-items: center; padding: 0 16px; gap: 16px; font-size: var(--fs-xs); color: var(--text-2); flex-shrink: 0; overflow: hidden; white-space: nowrap; }
   .statusbar > * { flex-shrink: 0; }
@@ -1947,7 +1986,6 @@
   .statusbar > .engine-notice { flex-shrink: 1; min-width: 40px; overflow: hidden; text-overflow: ellipsis; }
   .diagnostics-btn { position: relative; font-size: var(--fs-2xs); font-weight: 650; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--text-2); cursor: pointer; display: flex; align-items: center; gap: 5px; }
   .diagnostics-btn:hover { background: var(--surface); }
-  .error-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--danger); }
   .global-drop { position: absolute; inset: 12px; z-index: 100; display: grid; place-items: center; border: 3px dashed var(--accent); border-radius: 14px; background: color-mix(in srgb, var(--accent-bg) 92%, transparent); color: var(--accent); font-size: var(--fs-2xl); font-weight: 750; pointer-events: none; }
   .drop-error { position: absolute; z-index: 101; left: 50%; bottom: 42px; transform: translateX(-50%); display: flex; align-items: center; gap: 14px; border: 1px solid var(--danger); border-radius: 8px; background: var(--surface); color: var(--danger); padding: 9px 12px; font-size: var(--fs-xs); box-shadow: 0 8px 24px rgba(0,0,0,.14); }
   .drop-error button { border: 0; background: transparent; color: var(--accent); cursor: pointer; font-size: var(--fs-xs); }
