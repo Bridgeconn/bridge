@@ -86,6 +86,54 @@ REVIEWER_DECISION_FIELDS = ('reference', 'tool', 'groupId', 'checkId', 'decision
 PROJECT_RENDERING_FIELDS = ('reference', 'source_quote', 'selections', 'nothingToSelect', 'invalidated')
 
 
+# #471: the whole-verse QA used to carry the full text of thirteen Translation
+# Academy "checking" articles (49,695 chars serialised, about half of every
+# request) as evidence items, resent for every verse. The model is asked to
+# review one verse; it needs the method, not the articles. This digest is the
+# method, written once as static instruction text so the provider's prefix
+# cache can hold it (#472). The articles themselves stay on disk and
+# `TranslationHelpsKnowledgeBase.global_checking_evidence()` still reads them
+# for any caller that wants the text; they are simply no longer sent.
+CHECKING_METHOD_DIGEST = (
+    'CHECKING METHOD (digest of the unfoldingWord Translation Academy "Checking" articles: '
+    'Accuracy Check, Complete, Clear, Natural, Acceptable Style, Spelling, Punctuation, Formatting, '
+    'Alignment Checking, translationNotes Check, translationWords Check, Language Community Check, '
+    'Quality Checker Evaluation). '
+    'Accuracy: compare the translation with the original-language passage, never with an English gloss. '
+    'Does the translation add anything to the original meaning (implicit information is part of the original meaning)? '
+    'Is any part of the meaning left out? Has the meaning changed? Was everything mentioned in the source also '
+    'mentioned in the flow of the translation? Does the message, not necessarily the wording or the order, follow '
+    'the source? Are the same participants doing the same things, and is it easy to see who did what? Do the key '
+    'terms used match the source concepts? Check a difficult sentence part by part; a different order of ideas can '
+    'still be accurate. Ask of the translation alone: who did what, when, where, how and why. '
+    'Complete: nothing is missing: every event, every verse, no place where something seems left out or the '
+    'message differs from the source. Verse-numbering differences (bridged verses, verses moved to a footnote) do '
+    'not by themselves make a translation incomplete. '
+    'Clear: the words and phrases make the message understandable; the community\'s own words rather than borrowings '
+    'from a national language; a style that fits the intended audience; a reader can follow without re-reading, and '
+    'each part fits what precedes and follows it. '
+    'Natural: it sounds as if written by a member of the language community, not by a foreigner; judged as speech, '
+    'without reference to the source: would people say it this way when talking about such a thing? '
+    'Acceptable style: understood by young and old; the formality the community prefers; not too many borrowed '
+    'words; a form of the language the wider community understands, not one dialect only. '
+    'Spelling: one agreed spelling used consistently through the book, especially for names of people and places. '
+    'Punctuation: one agreed system (quotation marks, pauses, sentence ends) applied consistently. '
+    'Formatting: alphabet, spelling and punctuation are decided before translating; versification and section '
+    'headings are checked after a book is finished. '
+    'Alignment checking: every target word is aligned to the original-language word or words it renders; a word with '
+    'no counterpart is a question to raise, and the alignment shows where meaning was added, omitted or shifted. '
+    'translationNotes check: for each Note, find the target rendering of the quoted word or phrase, select it, and '
+    'judge whether it makes sense in context and handles the issue the Note raises; a problem becomes an edit or a '
+    'comment for a reviewer, never a silent pass. '
+    'translationWords check: for each key term, find and select the target rendering; judge it in context against '
+    'the term\'s definition; allow contextually justified variation; note inconsistency across the book. '
+    'Language community check and quality checker evaluation: community members not involved in the translation '
+    'must be able to answer comprehension questions from the translation alone, and church leaders affirm accuracy, '
+    'clarity, acceptable style and community approval. Those are human steps: prepare evidence for them, do not '
+    'replace them. This digest is method, not evidence: cite only evidence_catalog items as evidence.'
+)
+
+
 def project_reviewer_decision(record: dict[str, Any]) -> dict[str, Any]:
     """Project one `human_decisions` check record to the fields the prompt uses.
 
@@ -667,9 +715,9 @@ class OpenAIResponsesClient:
                 'nothingToSelect': c.get('nothingToSelect'), 'invalidated': c.get('invalidated'),
                 'evidence_ids': ev_ids, 'approved_project_renderings': history,
             })
-        global_evidence_ids=[]
-        for ev in pack.get('global_checking_evidence', []):
-            eid=f'E{ev_n:03d}'; ev_n += 1; evidence_catalog[eid]=ev; global_evidence_ids.append(eid)
+        # The Translation Academy checking articles are no longer catalogued
+        # here (#471): the method is `CHECKING_METHOD_DIGEST` in the
+        # instructions, so a `qa_issues` row cites verse evidence only.
         for rb in pack.get('reference_bibles', []):
             eid=f'E{ev_n:03d}'; ev_n += 1; evidence_catalog[eid]=rb
 
@@ -681,16 +729,20 @@ class OpenAIResponsesClient:
                 verse=verse,
             )
 
+        # Each token list and the verse go once, under the language-neutral
+        # names (#471). The `tamil_verse` / `hebrew_topWords` /
+        # `tamil_bottomWords` aliases were a second copy of the same data for
+        # old tests and plugins; nothing reads them from this payload now
+        # (the alignment proposal in `propose_alignment` has its own fields).
         input_obj = {
             'reference': f'{project.book_id} {chapter}:{verse}',
-            'tamil_verse': project.target_verse_text(chapter, verse),
-            'hebrew_topWords': top_tokens,
-            'tamil_bottomWords': bottom_tokens,
+            'target_verse': project.target_verse_text(chapter, verse),
+            'source_topWords': top_tokens,
+            'target_bottomWords': bottom_tokens,
             'current_alignment_groups': aligned,
             'translationCore_checks': check_inputs,
             'evidence_catalog': evidence_catalog,
             'resource_provenance': pack.get('resource_provenance', {}),
-            'global_checking_evidence_ids': global_evidence_ids,
             # Ordered by the timestamp, which is then dropped with the rest of
             # the record's identity (#470, `project_reviewer_decision`).
             'project_reviewer_decisions': [
@@ -698,9 +750,6 @@ class OpenAIResponsesClient:
                 for d in sorted(project.project_decisions(), key=lambda d: str(d.get('modifiedTimestamp', '')))[-100:]
             ],
             'language_context': language.to_dict(),
-            'target_verse': project.target_verse_text(chapter, verse),
-            'source_topWords': top_tokens,
-            'target_bottomWords': bottom_tokens,
             'semantic_passage_mappings': semantic_mapping_pack.get('mappings', []) if semantic_mapping_pack else [],
             'semantic_mapping_check_states': semantic_mapping_pack.get('checkStates', []) if semantic_mapping_pack else [],
             'semantic_mapping_unresolved': semantic_mapping_pack.get('unresolved', []) if semantic_mapping_pack else [],
@@ -763,7 +812,7 @@ class OpenAIResponsesClient:
             'If the rationale names or quotes a target rendering, include every corresponding supplied target ID in selection_ids. '
             'For Translation Notes, apply the linked Translation Academy method/principle and judge whether the target translation handles the specific issue. '
             'For Translation Words, use the Translation Word article, TWL occurrence, source morphology, and approved project renderings; allow contextually justified variation. '
-            'Then perform whole-verse QA using the supplied checking evidence: accuracy/completeness first, including omission, unsupported addition, wrong lexical meaning, negation/scope, participants/pronouns, number/person, commands/questions, semantic relations, figures, terminology, and stale/misaligned meaning. '
+            'Then perform whole-verse QA following the CHECKING METHOD at the end of these instructions: accuracy/completeness first, including omission, unsupported addition, wrong lexical meaning, negation/scope, participants/pronouns, number/person, commands/questions, semantic relations, figures, terminology, and stale/misaligned meaning. '
             f'Separately evaluate only the language-appropriate editorial categories: {", ".join(language.qa_categories)}. {language.prompt_guidance} '
             'False-positive discipline: before reporting a missing-rendering or wrong-lexical-meaning issue, inspect every supplied target token for a valid inflected, suffixed, compounded, transliterated, or contextually equivalent rendering. Do not call a rendering absent merely because it differs from an English gloss or citation form. Test the strongest plausible explanation that the target rendering is valid, consult existing alignment/approved decisions/terminology, and report only one finding for one underlying problem. '
             'Critical findings require very high confidence and explicit evidence. Low-confidence possibilities should be review-level or omitted, not exaggerated. '
@@ -779,6 +828,7 @@ class OpenAIResponsesClient:
             'When needs_passage_review, needs_extended_passage_review, target_not_located, source_anchor_unresolved, or mapping_error, do not infer omission merely from non-location; use verdict=review unless independent supplied evidence securely demonstrates a problem. '
             'Never encode found-in-another-verse as Nothing to Select.'
         )
+        instructions += ' ' + CHECKING_METHOD_DIGEST
         if progress_callback: progress_callback(64, 'AI reviewing Notes, Words and whole verse')
         result = self._post_structured(instructions, json.dumps(input_obj, ensure_ascii=False), 'tc_full_review', schema)
         if progress_callback: progress_callback(88, 'Validating AI selections and evidence')
