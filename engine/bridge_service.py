@@ -4830,6 +4830,7 @@ class BridgeEngine:
             "proposal": proposal,
             "usage": {
                 "totalTokens": client.last_usage.total_tokens,
+                "cachedInputTokens": client.last_usage.cached_input_tokens,
                 "estimatedCostUSD": round(client.last_cost_usd, 6),
             },
         }
@@ -5034,7 +5035,13 @@ class BridgeEngine:
                 "appliedSelections": applied,
                 "skippedSelections": skipped,
                 "resolutionLifecycle": lifecycle,
-                "usage": {"totalTokens": total_tokens, "estimatedCostUSD": round(cost, 6)},
+                # #472: `cachedInputTokens` is what the provider served from
+                # its prefix cache; the AI tab shows it beside the total.
+                "usage": {
+                    "totalTokens": total_tokens,
+                    "cachedInputTokens": int((meta.get("usage") or {}).get("cachedInputTokens", 0) or 0),
+                    "estimatedCostUSD": round(cost, 6),
+                },
             }
         except Exception as exc:
             if not cancel_event.is_set():

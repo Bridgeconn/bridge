@@ -726,7 +726,7 @@ export interface AiExplainResult {
   qaIssues: AiQaIssue[];
   alignmentProposal: AlignmentAiProposal | null;
   alignmentWasAIProposed: boolean;
-  usage: { totalTokens: number; estimatedCostUSD: number };
+  usage: { totalTokens: number; estimatedCostUSD: number; cachedInputTokens?: number };
 }
 
 export interface DesktopConnectorState {
@@ -1467,7 +1467,10 @@ export interface AIReviewJobVerseResult {
   skippedSelections: Array<Record<string, unknown>>;
   alignmentProposal: AlignmentAiProposal | null;
   alignmentWasAIProposed: boolean;
-  usage: { totalTokens: number; estimatedCostUSD: number };
+  /** `cachedInputTokens` (#472): input tokens the provider served from its
+   *  prefix cache, billed at a tenth of the input price. Absent from
+   *  results stored before #472. */
+  usage: { totalTokens: number; estimatedCostUSD: number; cachedInputTokens?: number };
   error: string | null;
 }
 
@@ -1478,7 +1481,7 @@ export interface AIReviewJobVerseStatus {
   summary: string;
   appliedCount: number;
   skippedCount: number;
-  usage: { totalTokens?: number; estimatedCostUSD?: number };
+  usage: { totalTokens?: number; estimatedCostUSD?: number; cachedInputTokens?: number };
   error: string | null;
 }
 

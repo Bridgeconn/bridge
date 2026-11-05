@@ -363,6 +363,16 @@
     }
   }
 
+  // #472: the usage line beside "AI explanation". Cached input tokens are the
+  // part the provider served from its prefix cache at a tenth of the price;
+  // a result stored before #472 has no count and shows the cost alone.
+  function aiUsageLine(usage: { totalTokens?: number; estimatedCostUSD?: number; cachedInputTokens?: number }): string {
+    const cost = `~$${(usage.estimatedCostUSD ?? 0).toFixed(4)}`;
+    if (!usage.totalTokens) return cost;
+    const cached = usage.cachedInputTokens ? ` (${usage.cachedInputTokens.toLocaleString()} cached)` : "";
+    return `${cost} · ${usage.totalTokens.toLocaleString()} tokens${cached}`;
+  }
+
   // A failed poll says nothing about the job, which keeps running in the
   // engine: one lost `ai.review.status` used to freeze the panel on its last
   // snapshot for good. Polling continues through a few failures in a row, and
@@ -1043,7 +1053,7 @@
             <div class="section ai-explain-section">
               <div class="section-title">
                 AI explanation
-                <span class="ai-cost">~${aiExplainResult.usage.estimatedCostUSD.toFixed(4)}</span>
+                <span class="ai-cost">{aiUsageLine(aiExplainResult.usage)}</span>
               </div>
               <p class="ai-summary">{aiExplainResult.summary}</p>
               {#each aiExplainResult.checkReviews as review}
