@@ -24442,3 +24442,21 @@ label gate also passed. Both isolated frozen executables rebuilt successfully;
 the complete frozen smoke passed, including quotation settings/save, Matthew
 5–7 and reference evidence. Full engine pytest is running; no full-suite result
 is claimed yet. Logs: `.test-temp-workspace-ui-20261104/quotation-policy-*.log`.
+
+### Final local verification and push
+
+Pushed `409c6b2` to main: Preserve reviewed quotation checks until project rules
+are saved (#456). The complete engine suite then finished successfully with
+**5,881 passed, 3 xfailed, 4 warnings**, exit code 0, in 1,896.16 s (31m36s,
+`pytest -n 4 -q`). The warnings are the existing Starlette/httpx test-client
+deprecation repeated by workers. No failing cases or worker crashes occurred.
+This supersedes the pending local full-suite status above. The 56 focused tests,
+unchanged Malayalam/Hindi/Tamil human-label gates and rebuilt frozen smoke also
+passed. No frontend or Rust source changed in this repair; their prior gates
+remain the evidence for the workspace implementation.
+
+Issue #456 records the decision, repair and verification; it remains open for
+remote CI and installed/human quotation acceptance. Run 41966282886 is the CI
+run for the code commit; its outcome is not yet claimed. Completed workspace
+issues #457–#463 remain closed, with Windows acceptance in #466 and the expanded
+language-content work still in #415. No installer or release was produced.
