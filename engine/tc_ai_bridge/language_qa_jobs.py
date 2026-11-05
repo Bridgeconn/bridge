@@ -867,9 +867,10 @@ class LanguageQaManager:
         paths = sorted(itertools.islice(candidates, MAX_CHAPTERS + 1), key=lambda p: int(p.stem))
         limitations: list[str] = []
         try:
-            quote_rules = quotation_rules.load(context[0])
+            quote_rules, delegate_quotations = quotation_rules.load_policy(context[0])
         except (OSError, ValueError) as exc:
             quote_rules = {**quotation_rules.DEFAULTS, 'enabled': False}
+            delegate_quotations = True  # invalid saved policy must not run conflicting defaults
             limitations.append(f'Quotation rules could not be loaded: {exc}')
         truncated = len(paths) > MAX_CHAPTERS
         if truncated:
@@ -1228,13 +1229,15 @@ class LanguageQaManager:
                 try:
                     # Not timed here: the adapter records its own lqa.indicqa.* steps.
                     checked_book = book_stage(
-                        "lqa.indicqa.book", [headings_fp if layer else "", indic_qa_adapter.checker_key(rule_pack)],
+                        "lqa.indicqa.book", [headings_fp if layer else "", indic_qa_adapter.checker_key(
+                            rule_pack, delegate_quotations=delegate_quotations)],
                         lambda: indic_qa_adapter.profile_findings(
                             rule_pack, book, book_text, lift=lift_inline_usfm, max_verse_chars=MAX_VERSE_CHARS,
                             finding_id=stable_finding_id, rule_fields=rule_fields, text_hash=text_hash,
                             crossing_note=CROSSING_LIMITATION, proceed=paced,
-                            headings=book_headings if layer else None),
-                        timed=False, valid=lambda: indic_qa_adapter.is_resident(rule_pack, book))
+                            headings=book_headings if layer else None, delegate_quotations=delegate_quotations),
+                        timed=False, valid=lambda: indic_qa_adapter.is_resident(
+                            rule_pack, book, delegate_quotations=delegate_quotations))
                 except Exception as exc:  # the vendored checker must never fail the pass
                     checked_book = [], [f"{rule_pack.name} {'OV dictionary ' if layer else ''}checks failed; "
                                         f"{'the pack' if layer else 'common'} checks only: "

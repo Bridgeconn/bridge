@@ -59,7 +59,7 @@ def test_get_describes_the_hindi_checker_after_a_pass(hindi):
     engine, roots = hindi
     model = get(engine, roots["gen"])
     assert (model["pack"], model["layer"], model["ready"]) == ("hi-irv", False, True)
-    assert not any('quote' in rule['id'] for rule in model['rules'])  # #456: Quotation rules owns these.
+    assert any('quote' in rule['id'] for rule in model['rules'])  # reviewed defaults until a policy is saved
     assert model["contexts"] == {"checkable": ["verse"], "checked": ["verse"], "labels": {"verse": "verse text"}}
     assert model["warnings"]["values"]["double_space"] is True and model["warnings"]["labels"]["double_space"]
     assert model["suggest"] == {"max": 5, "limit": 9} and model["compound"] == {"enabled": True}

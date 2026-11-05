@@ -22,7 +22,7 @@ from .language_packs.registry import language_code, language_name, packs_dir, se
 from .language_packs.tokens import GRAPHEME, WORD
 from .usfm_verse import lift_verse
 
-RULE_VERSION = "language-qa-8"
+RULE_VERSION = "language-qa-9"
 MAX_VERSE_CHARS = 20_000
 MAX_VERSE_FINDINGS = 100
 # Whole-book wordlist audit (item 49). Rarity/frequency constants below are an

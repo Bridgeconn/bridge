@@ -99,3 +99,41 @@ def test_rules_saved_to_a_real_lazy_import_survive_materialization(tmp_path):
         assert load(lazy['path']) == rules
     finally:
         engine._language_qa.unbind()
+
+
+def test_saved_policy_takes_precedence_and_does_not_leak_to_another_project(tmp_path):
+    text = 'അവൻ പറഞ്ഞു, "ദൈവം ലോകത്തെ സ്നേഹിച്ചു".'
+    roots = [write_project(tmp_path / name, 'mat', {'1': {'1': text}},
+                           lang_id='mal', lang_name='Malayalam') for name in ('first', 'second')]
+    engine = BridgeEngine(settings=AppSettings(path=tmp_path / 'settings/settings.json'))
+    engine._language_qa = LanguageQaManager(debounce=0, yield_seconds=0)
+
+    def scan():
+        status = wait(engine._language_qa)
+        assert not any('checks failed' in note for note in status.get('limitations', [])), status
+        return status['findings']
+
+    def legacy(findings):
+        return [f for f in findings if f['rule'].startswith('ml.') and 'quote' in f['rule']]
+
+    try:
+        assert call(engine, 'project.open', {'path': str(roots[0])})['success']
+        original = legacy(scan())
+        assert any(f['rule'] == 'ml.punct.straight-quote' for f in original)
+        rules = copy.deepcopy(DEFAULTS)
+        for policy in (rules, {**rules, 'enabled': False},
+                       {**rules, 'target': {'pairs': [{'open': '"', 'close': '"'}], 'continuation': 'none'}}):
+            assert call(engine, 'languageQa.quotationRules.set',
+                        {'projectPath': str(roots[0]), 'rules': policy})['success']
+            findings = scan()
+            assert not legacy(findings)
+            if not policy['enabled']:
+                assert not any(f['category'] == 'quotation' for f in findings)
+            model = call(engine, 'languageQa.checkerSettings.get', {'projectPath': str(roots[0])})['result']
+            assert not any('quote' in r['id'] for r in model['rules'])
+        assert call(engine, 'project.open', {'path': str(roots[1])})['success']
+        assert [(f['rule'], f['id']) for f in legacy(scan())] == [(f['rule'], f['id']) for f in original]
+        assert call(engine, 'project.open', {'path': str(roots[0])})['success']
+        assert not legacy(scan())
+    finally:
+        engine._language_qa.unbind()

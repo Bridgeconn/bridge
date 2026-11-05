@@ -1,9 +1,10 @@
 """#456: book-wide quotation policy and conservative reference evidence."""
 import copy
+import json
 
 import pytest
 
-from tc_ai_bridge.quotation_rules import DEFAULTS, quotation_findings, validate
+from tc_ai_bridge.quotation_rules import DEFAULTS, RELATIVE_PATH, load_policy, quotation_findings, validate
 from tc_ai_bridge.language_packs.reference_text import ReferenceText
 
 
@@ -13,6 +14,21 @@ def check(chapters, rules=None, reference=None):
 
 def ref(chapters):
     return ReferenceText('Local English', 'usfm', 'local/reference', {'MAT': chapters})
+
+
+def test_only_an_explicit_quotation_key_delegates_reviewed_rules(tmp_path):
+    assert load_policy(tmp_path) == (DEFAULTS, False)
+    path = tmp_path / RELATIVE_PATH
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({'other': {}}), encoding='utf-8')
+    assert load_policy(tmp_path) == (DEFAULTS, False)
+    for enabled in (True, False):
+        saved = {**DEFAULTS, 'enabled': enabled}
+        path.write_text(json.dumps({'quotations': saved}), encoding='utf-8')
+        assert load_policy(tmp_path) == (saved, True)
+    path.write_text('{"quotations": null}', encoding='utf-8')
+    with pytest.raises(ValueError):
+        load_policy(tmp_path)
 
 
 def test_matthew_5_to_7_is_one_quotation():

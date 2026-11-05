@@ -7910,7 +7910,12 @@ class BridgeEngine:
             self._bind_language_qa(self.project)
             pack, _notes = project_rule_pack(self.project.path, name)
         counts = self._language_qa.rule_counts()
-        return checker_settings_rpc.describe(pack, counts=counts, books=books)
+        try:
+            _rules, delegate_quotations = quotation_rules.load_policy(self.project.path)
+        except (OSError, ValueError):
+            delegate_quotations = True  # matches the scan's invalid-policy handling
+        return checker_settings_rpc.describe(pack, counts=counts, books=books,
+                                             delegate_quotations=delegate_quotations)
 
     def _collection_book_projects(self) -> list[TranslationCoreProject]:
         """The open book and every materialized sibling (a lazy one has no

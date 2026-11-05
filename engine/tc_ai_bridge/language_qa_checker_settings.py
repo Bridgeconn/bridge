@@ -35,13 +35,13 @@ class CheckerSettingsError(ValueError):
     """A request the dialog should not have sent: the message names the key."""
 
 
-def catalogue(pack: RulePack) -> dict[str, tuple[str, bool]]:
+def catalogue(pack: RulePack, *, delegate_quotations: bool = False) -> dict[str, tuple[str, bool]]:
     """rule id -> (label, on by default) for the pack's indic-qa checker."""
     if checker_settings.is_layer(pack):
         return {rid: (label, on) for rid, (_group, label, _inline, on) in indic_qa_tamil.RULES.items()}
     profile = indic_qa_vendor.profile(str((indic_config(pack.meta) or {}).get("profile") or ""))
     return {rid: (label, on) for rid, (_group, label, _inline, on) in profile.RULES.items()
-            if not delegated_quotation_rule(rid)}
+            if not (delegate_quotations and delegated_quotation_rule(rid))}
 
 
 def _legend(pack: RulePack) -> str:
@@ -49,7 +49,8 @@ def _legend(pack: RulePack) -> str:
     return f"{getattr(lang, 'name', pack.language)} checks"
 
 
-def describe(pack: RulePack, *, counts: dict[str, int], books: list[str]) -> dict[str, Any]:
+def describe(pack: RulePack, *, counts: dict[str, int], books: list[str],
+             delegate_quotations: bool = False) -> dict[str, Any]:
     """The dialog's model: every section the pack's checker offers, its current
     value, the labels to show, and the books a save is written to."""
     lang = checker_settings.language(pack)
@@ -72,7 +73,7 @@ def describe(pack: RulePack, *, counts: dict[str, int], books: list[str]) -> dic
         "rules": [{"id": rid, "label": label, "default": on,
                    "enabled": bool(rule.enabled) if (rule := pack.by_id(rid)) is not None else on,
                    "count": int(counts.get(rid, 0))}
-                  for rid, (label, on) in catalogue(pack).items()],
+                  for rid, (label, on) in catalogue(pack, delegate_quotations=delegate_quotations).items()],
         "legend": _legend(pack),
     }
     if checker_settings.is_layer(pack):

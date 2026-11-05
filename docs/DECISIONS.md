@@ -1581,3 +1581,15 @@ repeated opener at a paragraph/verse start because imported verse text and
 reference TSV can omit paragraph markers; a strict no-repeat option is available.
 New coverage wording is English pending human Tamil review.
 
+
+## 2026-11-05 — Preserve reviewed quotation checks by default (Benz, #456)
+
+After CI reported 29 lost human-confirmed Malayalam quotation findings, Benz
+chose: "Keep reviewed checks by default; saved project quotation settings take
+precedence". The absence of a saved `quotations` member preserves the language
+profile's reviewed rule switches and existing per-rule project overrides. An
+explicitly saved common quotation policy supersedes the profile's quotation
+checks, including a saved English preset or a saved disabled policy. This avoids
+fixed curly conversions contradicting a project's selected marks and preserves
+book-wide and reference-assisted checks. No reviewed labels are retired and no
+benchmark, confidence threshold or golden is changed.

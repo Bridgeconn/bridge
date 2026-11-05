@@ -697,11 +697,17 @@ reference text key the separate book quotation stage; collection hash coverage
 v3 includes common overrides and the machine-local reference fingerprint.
 
 `languageQa.quotationRules.get/set` uses the normal project-path guard and role
-authorization. A dedicated **Quotations** button and category includes unmatched
-marks and reference-assisted findings. The former chapter-only indic-qa quote
-checks and fixed curly-quote conversions are delegated to the common checker;
-their switches are removed from Checker settings so they cannot contradict the
-configured conventions.
+authorization. The **Quotations** category in **Kinds** includes unmatched
+marks and reference-assisted findings. Until a project explicitly saves quotation
+rules, the reviewed indic-qa quotation checks and their Checker settings switches
+remain active according to the pack and its overrides. Once saved, the common
+policy takes precedence: chapter-only quote checks and fixed curly conversions
+are delegated and their switches hidden so they cannot contradict the configured
+conventions. Saving the English preset also counts as an explicit choice; saving
+quotation checks disabled suppresses both sets of quotation checks. Other common
+override keys alone do not select a quotation policy. The adapter's resident and
+book-result cache keys include this effective mode; language-qa-9 invalidates
+results made under the blanket delegation in language-qa-8.
 
 Reference comparison uses the local Reference Bible already chosen for the
 project, with the existing bundled fallback where available. It compares complete

@@ -24408,3 +24408,37 @@ examples and content review for every supported language is not complete. #456
 also retains its documented complete-engine/installed/human-language acceptance
 gaps and #464/#465 remain separate investigations. Completed workspace feature
 issues can close with the remaining manual release acceptance linked to #466.
+
+## 2026-11-05 — Quotation default/override precedence repair (#456)
+
+CI run 41816920298 passed frontend, Rust, the complete engine suite (5,860
+passed, 2 skipped, 3 xfailed), foreground latency and Tamil human labels. Its
+indic-qa accuracy gate lost 29 reviewed Malayalam findings: 6 quote-direction,
+7 quotes-unbalanced and 16 straight-quote. The #456 adapter had unconditionally
+disabled profile quotation rules, even without saved project quotation settings.
+Benz explicitly chose to retain reviewed defaults with saved settings taking
+precedence (DECISIONS, same date).
+
+The common policy loader now returns the validated rules and explicit-save
+state in one read. Absence of the quotations member, including common files
+holding other keys, retains the pack's rules and overrides. A saved policy,
+even unchanged defaults or disabled checks, delegates only the conflicting
+profile quotation rules. Effective settings participate in resident and book
+cache identities. language-qa-9 invalidates results from the former blanket
+suppression. Checker settings shows legacy switches only while they apply;
+existing switches remain stored if superseded. Invalid saved configuration
+produces a coverage limitation and suppresses conflicting fallback conventions.
+Vendor files, human labels, thresholds and goldens remain untouched.
+
+Regression coverage exercises explicit save detection, every profile's effective
+switches, real Malayalam dispatcher scans, unchanged-default saves, disabling,
+symmetric quotes, resident/project switching and stable legacy finding IDs.
+Verification results are appended below once complete.
+
+Verification so far: 56 focused Python tests passed (59.13 s). The unchanged
+Malayalam human-label gate passed over 50 books / 323 labels, restoring the 29
+findings lost by CI. Hindi passed over 44 books / 120 labels, and the Tamil human
+label gate also passed. Both isolated frozen executables rebuilt successfully;
+the complete frozen smoke passed, including quotation settings/save, Matthew
+5–7 and reference evidence. Full engine pytest is running; no full-suite result
+is claimed yet. Logs: `.test-temp-workspace-ui-20261104/quotation-policy-*.log`.

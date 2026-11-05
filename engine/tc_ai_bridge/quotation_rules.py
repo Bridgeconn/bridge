@@ -65,11 +65,21 @@ def validate(raw: Any) -> dict[str, Any]:
 
 
 def load(root: str | Path) -> dict[str, Any]:
+    return load_policy(root)[0]
+
+
+def load_policy(root: str | Path) -> tuple[dict[str, Any], bool]:
+    """Rules and whether the project explicitly chose them, from one read.
+
+    Saving even the defaults (or disabling checks) takes precedence over the
+    reviewed language-profile quotation rules. Other common overrides do not.
+    """
     path = Path(root) / RELATIVE_PATH
     document = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
     if not isinstance(document, dict):
         raise ValueError('Common rule overrides must be an object.')
-    return validate(document['quotations']) if 'quotations' in document else copy.deepcopy(DEFAULTS)
+    saved = 'quotations' in document
+    return (validate(document['quotations']) if saved else copy.deepcopy(DEFAULTS)), saved
 
 
 def reference_holder(folder: str, label: str, cache: Path) -> Any:
