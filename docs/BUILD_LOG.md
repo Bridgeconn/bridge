@@ -24460,3 +24460,76 @@ remote CI and installed/human quotation acceptance. Run 41966282886 is the CI
 run for the code commit; its outcome is not yet claimed. Completed workspace
 issues #457–#463 remain closed, with Windows acceptance in #466 and the expanded
 language-content work still in #415. No installer or release was produced.
+
+## 2026-11-05 — AI cost batch: #470 privacy trim, #471 payload trim, #472 prefix cache, #473 model per task; #474 design note
+
+**Why.** Benz's estimate of about $10 per chapter for the tN/tW AI review (#469 has the
+numbers and the plan for the one paid run, which Revant does by hand). Measured offline
+first, on a copy of the Hindi IRV Genesis project with the request body captured by a fake
+transport instead of sent: 101,013 / 97,798 / 82,483 chars per request for GEN 1:1–3, of
+which 49,695 was the same thirteen Translation Academy checking articles on every verse,
+and the reviewer-decision list carried `note`, `model`, `evidenceProvenance` paths and
+timestamps. The capture script is session-local (it copies the project into a temp root
+beside a junction to the real `resources/`, deletes the copy's `.apps/translationCoreAI`
+and never touches the real project); the numbers are in the comments on #470–#472.
+
+**#470 (40261df, test fix 516c78b).** `project_reviewer_decision` / `project_term_rendering`
+in `ai_client.py` project the two project-history lists to the fields the prompt uses
+(reference, tool, groupId, checkId, decision, selectionText; reference, source_quote,
+selection texts, nothingToSelect, invalidated). `ai_payload_manifest` gains
+`containsReviewerIdentity`, computed on the payload it is handed (any reviewer-history
+record with a key outside that shape). The audit of a check record's keys is on the issue;
+the reviewer's name and device were never in the payload (row columns), the note was.
+
+**#471 (9a16d47).** `CHECKING_METHOD_DIGEST`: the method of the thirteen articles in about
+3,400 chars of static instruction text; `evidence_pack_for_verse` no longer reads them per
+verse (`global_checking_evidence()` stays for its own test). The `tamil_verse` /
+`hebrew_topWords` / `tamil_bottomWords` copies are gone from the review payload (the
+alignment proposal's own fields are untouched). Body per verse: 101,013 → 49,507;
+97,798 → 44,309; 82,483 → 31,309.
+
+**#472 (863c1df).** `REVIEW_INSTRUCTIONS_STATIC` (role, rules, Stage 3 rules, digest) is
+built once and comes first; `review_instructions(language, check_count)` appends the
+project tail. The input serialises `resource_provenance`, `language_context` and the
+projected decisions before the verse. `prompt_cache_key` = the registered project id on
+every review request, with the reasoning guard's discipline: an explicit rejection gets one
+retry without it and the session stops sending it. Stored reviews and job results carry
+`usage {inputTokens, cachedInputTokens, outputTokens, totalTokens}`; the AI tab line reads
+"~$0.0123 · 12,345 tokens (8,000 cached)". Shared prefix between consecutive verses:
+368 + 21 chars → 7,920 + 2,692 (instructions + input). Not verified against a real provider;
+#469 will show the cached count.
+
+**#473 (1112455).** `AppSettings.ai_tasks` and `ai_task_choice(task)`; `_ai_client(task)`
+for review / alignment / triage; Settings > AI "Use one model for everything", **on by
+default** so no install changes model or quality on upgrade (alignment auto-apply and
+triage have never been measured on the cheap tier, #131); off, review = the configured
+model at medium (the review tier waits on #469), alignment and triage = `cheapest_model()`
+(gpt-5.6-luna) at low. The model and effort are recorded on the alignment proposal,
+cross-verse and auto-align verdict results. `ModelRouter`/`ModelChoice` deleted;
+`model_router.py` keeps the price table and `estimate_cost` (#147's fallback is unchanged).
+Four triage tests that stubbed `_ai_client` with a zero-argument lambda now take the task.
+
+**#474.** Design note only, as a comment on the issue: 4-verse windows (6 max) cut at
+section headings, one content-keyed evidence catalog per window, verse-scoped token ids,
+one `check_reviews` list split back into per-verse stored reviews with per-verse
+fingerprints taken at window start, missing-row rows for a skipped verse, half-size then
+single-verse retry for a failed window, 90 s + 40 s per verse timeout capped at 300 s, a
+"verses per request" setting with 1 = today. Prototype on GEN 1 offline, then one paid
+chapter beside #469.
+
+**Gates, batch.** Frontend (after #473): `npm run check` 0 errors / 0 warnings;
+`npm run test` 101 files, 1047 passed (2 new); `npm run build` ok. Engine: per-issue
+`pytest tests/ai` runs (126 / 130 / 128 passed) and `tests/service/test_ai_task_settings.py`
+(4 new); the first full `pytest -n auto` on the pre-fix tree gave 5660 passed, 20 failed,
+all test-side (the four stubs and a Stage 9B.1 exact-manifest expectation), fixed in
+516c78b / 1112455; the re-run on the committed tree (1112455) is 5680 passed, 3 xfailed, 0 failed in 10:06. Not run: cargo (no Rust change); the frozen pair (the
+engine changed, so `scripts/smoke_sidecars.py` is owed before the next release build);
+the installed app at 1366x768 (the per-task rows in Settings > AI and the AI tab usage
+line are a visual check still owed).
+
+**Not verified anywhere today:** any real provider call. That OpenAI honours
+`prompt_cache_key` on the Responses API, that the cached count lands in
+`input_tokens_details.cached_tokens`, and what the digest does to verdict quality are all
+believed from reading; #469 is where they are measured.
+
+**Rebase.** The push found origin/main about fifty commits ahead of this checkout (0.22.0–0.24.4, the Paratext and workspace work), so the six commits were rebased onto it (one import-line conflict in `SettingsModal.svelte`, this entry re-appended). Gates on the rebased tree: `npm run check` 0/0, `npm run test` 123 files / 1178 passed, `npm run build` ok; full `pytest -n auto` 5867 passed, 23 failed, every failure `ModuleNotFoundError: spylls` (the #414 spelling-pack dependency this venv had never installed) and all 214 tests of those files pass after `pip install -e ".[dev]"`. The commit ids above are the rebased ones.
