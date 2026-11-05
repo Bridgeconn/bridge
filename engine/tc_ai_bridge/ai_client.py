@@ -76,6 +76,54 @@ def _recover_quoted_target_selections(rationale: str, target_text: str) -> list[
     ]
 
 
+# #470: a reviewer's past decision contributes *what was decided* to a verse
+# review -- the check, the verdict and the target words chosen -- never who
+# decided it, when, what they wrote about it, which model proposed it, or where
+# the evidence lived on disk. These are the only keys the two project-history
+# lists may carry; `security.ai_payload_manifest` reports a record outside this
+# shape as `containsReviewerIdentity: true`.
+REVIEWER_DECISION_FIELDS = ('reference', 'tool', 'groupId', 'checkId', 'decision', 'selectionText')
+PROJECT_RENDERING_FIELDS = ('reference', 'source_quote', 'selections', 'nothingToSelect', 'invalidated')
+
+
+def project_reviewer_decision(record: dict[str, Any]) -> dict[str, Any]:
+    """Project one `human_decisions` check record to the fields the prompt uses.
+
+    Dropped on purpose: `note` (free text), `model`, `evidenceProvenance`
+    (resource paths), `modifiedTimestamp`, `selectionIds` (verse-local opaque
+    ids), `bookId`, `app`, `schemaVersion`. A record's author and device are
+    row columns, not payload keys, so they were never here; the note was."""
+    return {
+        'reference': f"{record.get('chapter', '')}:{record.get('verse', '')}",
+        'tool': str(record.get('tool') or ''),
+        'groupId': str(record.get('groupId') or ''),
+        'checkId': str(record.get('checkId') or ''),
+        'decision': str(record.get('decision') or ''),
+        'selectionText': [str(x) for x in (record.get('selectionText') or []) if isinstance(x, (str, int, float))],
+    }
+
+
+def project_term_rendering(record: dict[str, Any]) -> dict[str, Any]:
+    """Project one `project_term_renderings` entry to its rendering: where, for
+    which source words, which target words. The selection's occurrence
+    counters are verse-local and are dropped."""
+    selections = record.get('selections')
+    texts: list[str] = []
+    if isinstance(selections, list):
+        for item in selections:
+            if isinstance(item, dict) and item.get('text') not in (None, ''):
+                texts.append(str(item['text']))
+            elif isinstance(item, str) and item:
+                texts.append(item)
+    return {
+        'reference': str(record.get('reference') or ''),
+        'source_quote': str(record.get('source_quote') or ''),
+        'selections': texts,
+        'nothingToSelect': bool(record.get('nothingToSelect', False)),
+        'invalidated': bool(record.get('invalidated', False)),
+    }
+
+
 @dataclass
 class AIUsage:
     input_tokens: int = 0
@@ -608,7 +656,10 @@ class OpenAIResponsesClient:
                 evidence_catalog[eid] = ev
                 ev_ids.append(eid)
             group = str(c.get('groupId') or '')
-            history = kb.project_term_renderings(group, 120) if c.get('tool') == 'translationWords' else []
+            history = (
+                [project_term_rendering(r) for r in kb.project_term_renderings(group, 120)]
+                if c.get('tool') == 'translationWords' else []
+            )
             check_inputs.append({
                 'tool': c.get('tool'), 'groupId': group, 'checkId': c.get('checkId'),
                 'source_quote': c.get('source_quote'), 'occurrence': c.get('occurrence'),
@@ -640,7 +691,12 @@ class OpenAIResponsesClient:
             'evidence_catalog': evidence_catalog,
             'resource_provenance': pack.get('resource_provenance', {}),
             'global_checking_evidence_ids': global_evidence_ids,
-            'project_reviewer_decisions': sorted(project.project_decisions(), key=lambda d: str(d.get('modifiedTimestamp','')))[-100:],
+            # Ordered by the timestamp, which is then dropped with the rest of
+            # the record's identity (#470, `project_reviewer_decision`).
+            'project_reviewer_decisions': [
+                project_reviewer_decision(d)
+                for d in sorted(project.project_decisions(), key=lambda d: str(d.get('modifiedTimestamp', '')))[-100:]
+            ],
             'language_context': language.to_dict(),
             'target_verse': project.target_verse_text(chapter, verse),
             'source_topWords': top_tokens,
