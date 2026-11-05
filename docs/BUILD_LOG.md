@@ -24533,3 +24533,72 @@ line are a visual check still owed).
 believed from reading; #469 is where they are measured.
 
 **Rebase.** The push found origin/main about fifty commits ahead of this checkout (0.22.0–0.24.4, the Paratext and workspace work), so the six commits were rebased onto it (one import-line conflict in `SettingsModal.svelte`, this entry re-appended). Gates on the rebased tree: `npm run check` 0/0, `npm run test` 123 files / 1178 passed, `npm run build` ok; full `pytest -n auto` 5867 passed, 23 failed, every failure `ModuleNotFoundError: spylls` (the #414 spelling-pack dependency this venv had never installed) and all 214 tests of those files pass after `pip install -e ".[dev]"`. The commit ids above are the rebased ones.
+
+## 2026-11-06 — #469 measured: one chapter on a real key, three runs (baseline / new build / terra)
+
+**Why.** Every AI cost figure in this repo was an estimate from a fake transport. #469 is
+the one paid measurement the rest of the "AI cost" batch (#470–#474) is judged against, and
+the review tier default (`DEFAULT_USE_ONE_MODEL`, #473) waits on it. Revant ran it by hand
+on 2026-11-05 on the OpenAI account; the comment on #469 has the full tables, this is the
+record and what it means for the code.
+
+**Method.** Hindi IRV Genesis 1 (31 verses, 281 tN/tW checks: 160 tN, 121 tW), the
+Chapter button of the AI review tab, medium reasoning, advanced reviewer mode, all six
+checks ticked, each run on a **fresh import** so nothing was skipped as current:
+run 1 installed 0.24.4 on gpt-5.6 (`hin_hindi-irv-1_gen`), run 3 main at 9aae7e7 on
+gpt-5.6-terra (`hin_hindi-irv-2_gen`), run 2 main on gpt-5.6 (`hin_bible_gen`). Per-verse
+tokens and cost were read read-only from `ai_review_results.payload_json` (a scratch script,
+`mode=ro`), the lifetime counter from `workspace.sqlite3 settings_kv ai_usage_totals`, and the
+bill from the OpenAI usage CSV export per model per day plus the spend movement on the
+billing page. Run 2's dashboard line is today's gpt-5.6-sol minus run 1; it matches the
+spend movement ($17.93 → $28.11) to the cent. Total spent $28.11.
+
+| | Run 1 baseline | Run 2 after | Run 3 tier |
+|---|---|---|---|
+| Build / model | 0.24.4 / gpt-5.6 (billed gpt-5.6-sol) | main 9aae7e7 / gpt-5.6 | main 9aae7e7 / gpt-5.6-terra |
+| Verses | 31/31 | 31/31 (1:30 timed out at 240 s once; Retry) | 31/31 |
+| Dashboard requests | 109 | 106 | 111 |
+| Dashboard input (cached) / output tokens | 1,704,755 (19,260) / 204,916 | 1,265,228 (49,805) / 203,882 | 1,340,845 (31,716) / 176,720 |
+| **Dashboard cost** | **$12.53** | **$10.18** (−19%) | **$5.40** (−57%) |
+| Bridge-counted input (cached) / output | not stored in 0.24.4 | 921,005 (36,967) / 140,438 | 925,049 (31,716) / 123,417 |
+| Bridge estimate | $10.58 | $8.65 | $3.27 |
+| Verse 1 → 31 finished; mean s/verse | 40:11; 80 | 45:00 incl. the timeout; 90 | 36:46; 74 |
+| Checks pass / review | 128 / 153 | 119 / 162 | 123 / 158 |
+| Per Bible (×1,189) / NT (×260) | ≈ $14,900 / $3,300 | ≈ $12,100 / $2,600 | ≈ $6,400 / $1,400 |
+
+**Verdicts.** Same 281 checks in every run. Terra vs baseline: same verdict 276/281, same
+selected text 252, same word set 260, every difference pass→review (1:3 o0zd, 1:18 iq2u,
+1:25 hr2n, 1:27 fhpd, 1:27 nqtf). New build vs baseline on the same model: same verdict
+272/281, the nine pass→review (verses 1, 25, 30) all checks that the baseline and terra
+passed with the identical selection, so the #471 digest made gpt-5.6 more cautious on 3%
+of checks. All three agree on verdict for 268 and on word set for 244. The 37 checks where
+any run differs are in `human_pass_run1_run2_run3.csv` (Revant's scratch, with the Hindi
+verse, each run's words and rationale); nobody on the measurement reads Hindi well enough to
+judge them, so the "flagged wrong" / "cheaper tier clearly worse" counts wait on the
+translation team (Rina asked 2026-11-06). The tier default stays as it is until then.
+
+**What the bill taught that the code did not know** (filed as #475–#478):
+- Input is about two thirds of the cost on both tiers, output one third.
+- About 3.5 requests per verse; Bridge counts one. The semantic-mapping and gap-fill
+  alignment calls are outside `usage`, `estimatedCostUSD` and the lifetime counter: 31% of
+  run 3's bill, about a quarter of run 2's. A call that times out after it was sent is
+  billed (the 1:30 retry came back with 7,013 cached tokens) and never counted (#476).
+- #472's `prompt_cache_key` is honoured and the cached count does land in
+  `input_tokens_details.cached_tokens` — but the hit is exactly 1,762 tokens, on 17–18 of
+  31 verses, about 3% of input, not the ~10,600-token prefix the design expected. Only the
+  fixed instruction block matches; the per-verse part diverges earlier than assumed.
+- Price table: gpt-5.6-sol output is $20/M (table $30), gpt-5.6-terra input $2.50/M (table
+  $2.00); cached $0.50 / $0.25 (#475). 0.24.4 stores no `usage` at all, only the estimate.
+- The lifetime counter is written and never displayed (#477). A fresh webview profile
+  defaults the check selection to Language QA only, so the AI tab sat on "Preparing
+  translationNotes and translationWords resources…" until the core checks were ticked and
+  the chapter run once (#478).
+
+**Verified / not.** Verified: the three runs end to end on the installed 0.24.4 and on a
+dev build of main (sidecars rebuilt with `build-sidecars.ps1` after `pip install -e
+".[dev]"` for spylls; `scripts/smoke_sidecars.py` passed on the new `bridge-engine.exe`);
+the stored payloads, the lifetime counter deltas (run 3 matched Bridge's own sum exactly)
+and the dashboard CSV. Not verified: the quality of any verdict (the human pass); any
+Tamil chapter; the Basic reviewer mode. Confound: main also carries #456 and the
+0.22–0.24 Paratext and workspace work beside #470–#473. No code changed in this entry;
+`docs/QA_TEST_MATRIX.md` A29 gains the real-provider line.
