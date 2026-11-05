@@ -272,6 +272,77 @@ class AppSettings:
         self.data['model'] = value.strip() or 'gpt-5.6'
         self.save_sanitized()
 
+    # -- #473: a model and a reasoning effort per AI task -------------------
+
+    @property
+    def ai_tasks(self) -> dict:
+        """``{'useOneModel': bool, 'tasks': {task: {'model', 'reasoningEffort'}}}``
+        for the tasks in `model_router.AI_TASKS`. Stored sparse, read back
+        complete with the defaults filled in. A blank model means "the
+        configured model" (`self.model`)."""
+        from .model_router import AI_TASKS, DEFAULT_USE_ONE_MODEL, REASONING_EFFORTS, default_task_models
+        raw = self.data.get('ai_tasks')
+        raw = raw if isinstance(raw, dict) else {}
+        tasks = default_task_models()
+        stored = raw.get('tasks') if isinstance(raw.get('tasks'), dict) else {}
+        for task in AI_TASKS:
+            row = stored.get(task) if isinstance(stored.get(task), dict) else {}
+            if 'model' in row:
+                tasks[task]['model'] = str(row.get('model') or '').strip()
+            effort = str(row.get('reasoningEffort') or '').strip().lower()
+            if effort in REASONING_EFFORTS:
+                tasks[task]['reasoningEffort'] = effort
+        use_one = raw.get('useOneModel')
+        return {
+            'useOneModel': use_one if isinstance(use_one, bool) else DEFAULT_USE_ONE_MODEL,
+            'tasks': tasks,
+        }
+
+    @ai_tasks.setter
+    def ai_tasks(self, value: Any) -> None:
+        """Validate and merge: a partial object keeps what it does not name."""
+        from .model_router import AI_TASKS, REASONING_EFFORTS
+        if not isinstance(value, dict):
+            raise ValueError('aiTasks must be an object')
+        current = self.data.get('ai_tasks') if isinstance(self.data.get('ai_tasks'), dict) else {}
+        merged: dict = {'tasks': dict(current.get('tasks') or {}) if isinstance(current.get('tasks'), dict) else {}}
+        if isinstance(current.get('useOneModel'), bool):
+            merged['useOneModel'] = current['useOneModel']
+        if 'useOneModel' in value:
+            if not isinstance(value['useOneModel'], bool):
+                raise ValueError('aiTasks.useOneModel must be true or false')
+            merged['useOneModel'] = value['useOneModel']
+        tasks = value.get('tasks')
+        if tasks is not None:
+            if not isinstance(tasks, dict):
+                raise ValueError('aiTasks.tasks must be an object')
+            for task, row in tasks.items():
+                if task not in AI_TASKS:
+                    raise ValueError(f'unknown AI task {task!r}; expected one of {", ".join(AI_TASKS)}')
+                if not isinstance(row, dict):
+                    raise ValueError(f'aiTasks.tasks.{task} must be an object')
+                entry = dict(merged['tasks'].get(task) or {})
+                if 'model' in row:
+                    entry['model'] = str(row.get('model') or '').strip()
+                if 'reasoningEffort' in row:
+                    effort = str(row.get('reasoningEffort') or '').strip().lower()
+                    if effort not in REASONING_EFFORTS:
+                        raise ValueError(f'reasoningEffort must be one of {", ".join(REASONING_EFFORTS)}')
+                    entry['reasoningEffort'] = effort
+                merged['tasks'][task] = entry
+        self.data['ai_tasks'] = merged
+        self.save_sanitized()
+
+    def ai_task_choice(self, task: str) -> tuple[str, str]:
+        """``(model, reasoningEffort)`` for one task. One-model mode is
+        today's behaviour exactly: the configured model at medium reasoning
+        for every task."""
+        config = self.ai_tasks
+        if config['useOneModel'] or task not in config['tasks']:
+            return self.model, 'medium'
+        row = config['tasks'][task]
+        return (str(row.get('model') or '').strip() or self.model), str(row.get('reasoningEffort') or 'medium')
+
     @property
     def provider(self) -> str:
         """Free-text provider label (e.g. 'openai', 'anthropic', 'azure',

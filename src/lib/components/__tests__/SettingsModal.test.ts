@@ -842,3 +842,68 @@ describe("SettingsModal Escape (#321)", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 });
+
+describe("SettingsModal model per task (#473)", () => {
+  const stored = {
+    useOneModel: false,
+    tasks: {
+      review: { model: "", reasoningEffort: "medium" },
+      alignment: { model: "gpt-5.6-luna", reasoningEffort: "low" },
+      triage: { model: "gpt-5.6-luna", reasoningEffort: "low" },
+    },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    engineInfo.mockResolvedValue({
+      bridgeVersion: "0.9.6", companionSchemaVersion: 14, projectOpen: false, greekRoom: {},
+    });
+    getNavigationStatus.mockResolvedValue(navigationState());
+    setSettings.mockImplementation(async (params: Record<string, unknown>) => ({
+      ...params, hasApiKey: false, reviewerMode: "basic",
+    }));
+  });
+
+  it("hides the per-task rows while one model is used for everything, and an engine without aiTasks still loads", async () => {
+    getSettings.mockResolvedValue({
+      provider: "openai", apiBaseUrl: "", model: "gpt-5.6", hasApiKey: false,
+      reviewerMode: "basic", paratextNavigation: false, logosNavigation: false,
+    });
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+
+    const toggle = await screen.findByRole("checkbox", { name: /Use one model for everything/ });
+    expect(toggle).toBeChecked();
+    expect(screen.queryByLabelText("Triage model")).not.toBeInTheDocument();
+
+    await fireEvent.click(toggle);
+    expect(screen.getByLabelText("Triage model")).toBeInTheDocument();
+    expect(screen.getByLabelText("Alignment reasoning effort")).toHaveValue("low");
+  });
+
+  it("shows the stored per-task choice and saves an edit back as aiTasks", async () => {
+    getSettings.mockResolvedValue({
+      provider: "openai", apiBaseUrl: "", model: "gpt-5.6", hasApiKey: false, aiTasks: stored,
+      reviewerMode: "basic", paratextNavigation: false, logosNavigation: false,
+    });
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+
+    expect(await screen.findByRole("checkbox", { name: /Use one model for everything/ })).not.toBeChecked();
+    const triageModel = screen.getByLabelText("Triage model");
+    expect(triageModel).toHaveValue("gpt-5.6-luna");
+
+    await fireEvent.input(triageModel, { target: { value: "gpt-5.6-terra" } });
+    await fireEvent.change(screen.getByLabelText("Triage reasoning effort"), { target: { value: "high" } });
+    await fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
+
+    await waitFor(() => expect(setSettings).toHaveBeenCalledWith(expect.objectContaining({
+      aiTasks: {
+        useOneModel: false,
+        tasks: {
+          review: { model: "", reasoningEffort: "medium" },
+          alignment: { model: "gpt-5.6-luna", reasoningEffort: "low" },
+          triage: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+        },
+      },
+    })));
+  });
+});

@@ -48,7 +48,7 @@ def _plant(root, findings):
 def _engine_with(root, client, monkeypatch):
     engine = BridgeEngine()
     call(engine, "project.open", {"path": str(root)})
-    monkeypatch.setattr(engine, "_ai_client", lambda: client)
+    monkeypatch.setattr(engine, "_ai_client", lambda task="review": client)
     return engine
 
 

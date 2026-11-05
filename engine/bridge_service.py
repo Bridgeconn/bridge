@@ -2546,7 +2546,7 @@ class BridgeEngine:
         should be enabled — they ask the same question the same way.
         """
         try:
-            return self._ai_client(), ""
+            return self._ai_client("triage"), ""
         except AIError as exc:
             return None, str(exc)
 
@@ -3484,7 +3484,7 @@ class BridgeEngine:
         if not isinstance(verses, list) or not verses:
             raise ProjectError("A cross-verse AI proposal needs at least one verse.")
         try:
-            client = self._ai_client()
+            client = self._ai_client("alignment")
         except AIError as exc:
             return {
                 "chapter": chapter, "verses": [str(v) for v in verses], "proposals": [],
@@ -3522,6 +3522,9 @@ class BridgeEngine:
             error=AIError,
         )
         if result.get("modelConsulted"):
+            # #473: which model answered, recorded with the result.
+            result["model"] = client.model
+            result["reasoningEffort"] = client._effective_reasoning_effort()
             usage = getattr(client, "last_usage", None)
             self.settings.record_ai_usage(
                 getattr(usage, "total_tokens", 0) or 0, getattr(client, "last_cost_usd", 0.0) or 0.0,
@@ -4195,9 +4198,13 @@ class BridgeEngine:
 
         if passes is None:
             try:
-                client = self._ai_client()
+                client = self._ai_client("alignment")
             except AIError as exc:
                 return {**base, "results": [], "unavailable": {"reason": "no-api-key", "message": str(exc)}}
+            # #473: the model behind every verdict of this run, on the run
+            # result and (below) on each stored verdict row.
+            base["model"] = client.model
+            base["reasoningEffort"] = client.reasoning_effort
 
             def call_model(instructions: str, input_text: str, direction: str) -> dict[str, Any]:
                 raw = client.propose_window_alignment(instructions, input_text, alignment_window.SCHEMA, direction)
@@ -4428,6 +4435,7 @@ class BridgeEngine:
                 "alignmentFingerprint": alignment_fingerprint(alignment),
                 "targetFingerprint": target_token_fingerprint(alignment, self.project.target_verse_text(chapter, verse)),
                 "window": ordered, "usage": usage, "createdAt": self.project.workbench._now(),
+                "model": str(base.get("model") or ""), "reasoningEffort": str(base.get("reasoningEffort") or ""),
             }
             self._write_auto_verdict(chapter, verse, payload)
             results.append({
@@ -4540,7 +4548,7 @@ class BridgeEngine:
                 chars = len(json.dumps(built.payload, ensure_ascii=False)) + len(alignment_window.INSTRUCTIONS[alignment_window.SOURCE_FIRST]) + len(guidance)
                 input_tokens += 2 * (chars // 3 + 1)
         output_tokens = count * 2 * 1500
-        model = self.settings.model
+        model, _effort = self.settings.ai_task_choice("alignment")
         try:
             cost = estimate_cost(model, input_tokens, output_tokens)
         except Exception:
@@ -4556,7 +4564,7 @@ class BridgeEngine:
                              verses: Any = None) -> dict[str, Any]:
         windows = self._auto_job_windows(scope, chapters, verses)
         try:
-            self._ai_client()
+            self._ai_client("alignment")
         except AIError as exc:
             return {"state": "failed", "unavailable": {"reason": "no-api-key", "message": str(exc)}}
         spec = auto_align_jobs.AutoAlignJobSpec(
@@ -4790,7 +4798,13 @@ class BridgeEngine:
         restored = self.project.load_verse_alignment_history(chapter, verse, history_id=history_id)
         return self._save_alignment(chapter, verse, restored, expected_original, "restore")
 
-    def _ai_client(self) -> OpenAIResponsesClient:
+    def _ai_client(self, task: str = "review") -> OpenAIResponsesClient:
+        """The client for one AI task (#473): `review` (the tN/tW review, its
+        gap-fill alignment inside `prepare_verse_review`, correction wording),
+        `alignment` (the proposal, cross-verse links, the window auto-align)
+        or `triage`. The model and reasoning effort come from
+        `AppSettings.ai_task_choice`; in one-model mode every task gets the
+        configured model at medium, as before."""
         api_key = self.settings.get_api_key()
         if not api_key:
             raise AIError(
@@ -4800,8 +4814,10 @@ class BridgeEngine:
         kwargs: dict[str, Any] = {}
         if self._ai_transport is not None:
             kwargs["transport"] = self._ai_transport
+        model, reasoning_effort = self.settings.ai_task_choice(task)
         return OpenAIResponsesClient(
-            api_key, model=self.settings.model, base_url=self.settings.api_base_url, **kwargs
+            api_key, model=model, base_url=self.settings.api_base_url,
+            reasoning_effort=reasoning_effort, **kwargs
         )
 
     def propose_ai_alignment(self, chapter: str, verse: str, mode: str = "gap_fill") -> dict[str, Any]:
@@ -4815,7 +4831,7 @@ class BridgeEngine:
         validate_preparation_proposal safety check if it would detach an established
         group)."""
         self._require_project()
-        client = self._ai_client()
+        client = self._ai_client("alignment")
         alignment = self.project.load_verse_alignment(chapter, verse)
         proposal = client.propose_alignment(self.project, chapter, verse, alignment, mode=mode)
         self.settings.record_ai_usage(client.last_usage.total_tokens, client.last_cost_usd)
@@ -4828,6 +4844,9 @@ class BridgeEngine:
             # benefit, since the frontend only needs to read top_ids/bottom_ids generically to
             # resolve token labels, the same way it already does for existing alignment groups.
             "proposal": proposal,
+            # #473: which model proposed it.
+            "model": client.model,
+            "reasoningEffort": client._effective_reasoning_effort(),
             "usage": {
                 "totalTokens": client.last_usage.total_tokens,
                 "cachedInputTokens": client.last_usage.cached_input_tokens,
@@ -9214,6 +9233,10 @@ class BridgeEngine:
             "provider": self.settings.provider,
             "apiBaseUrl": self.settings.api_base_url,
             "model": self.settings.model,
+            # #473: per-task model and reasoning effort, complete (defaults
+            # filled in), with `useOneModel` true meaning every task runs on
+            # `model` at medium reasoning.
+            "aiTasks": self.settings.ai_tasks,
             "reviewerName": self.settings.reviewer_name,
             "reviewerNameUpdatedAt": self.settings.reviewer_name_updated_at,
             # The stable id to stamp on a write (#78). The UI used to send the
@@ -9250,6 +9273,11 @@ class BridgeEngine:
             self.settings.api_base_url = kwargs["apiBaseUrl"]
         if "model" in kwargs:
             self.settings.model = kwargs["model"]
+        if "aiTasks" in kwargs:
+            # Validated and merged by the setter; a bad task name or effort
+            # raises ValueError, which the dispatcher reports as a failure
+            # like an invalid reviewerMode.
+            self.settings.ai_tasks = kwargs["aiTasks"]
         if "reviewerName" in kwargs:
             self.settings.reviewer_name = kwargs["reviewerName"]
             # Keep the workspace users row in step immediately rather than at

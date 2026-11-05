@@ -7,7 +7,7 @@
   import { nudgeLanguageQa } from "../languageQaInline";
   import { askConfirmation } from "../confirmAction";
   import { diagnosticsOpen, manualOverrideMode, navigationStatus, project, reviewerMode } from "../stores";
-  import type { InlineConfidence, NavigationSyncState, ParatextConnectorStatus, SettingsData, TerminologyRule, UserRole } from "../types/finding";
+  import type { AiReasoningEffort, AiTask, AiTaskSettings, InlineConfidence, NavigationSyncState, ParatextConnectorStatus, SettingsData, TerminologyRule, UserRole } from "../types/finding";
   import type { HouseStyleEntry, HouseStyleListResponse, HouseStyleProposal } from "../types/houseStyle";
   import type { CheckerSettings } from "../types/languageQa";
   import CheckerSettingsDialog from "./CheckerSettingsDialog.svelte";
@@ -26,6 +26,20 @@
   let provider = "openai";
   let apiBaseUrl = "";
   let model = "gpt-5.6";
+  // #473: a model and reasoning effort per AI task. `useOneModel` (the
+  // default) is today's behaviour: every task on `model` at medium.
+  const aiTaskRows: Array<{ task: AiTask; label: string; hint: string }> = [
+    { task: "review", label: "tN / tW review", hint: "The per-verse check review and its whole-verse QA. Blank = the model above." },
+    { task: "alignment", label: "Alignment", hint: "AI alignment proposals, cross-verse links and Align automatically." },
+    { task: "triage", label: "Triage", hint: "Finding triage (true / false positive)." },
+  ];
+  const reasoningEfforts: AiReasoningEffort[] = ["low", "medium", "high", "xhigh"];
+  let useOneModel = true;
+  let aiTasks: AiTaskSettings["tasks"] = {
+    review: { model: "", reasoningEffort: "medium" },
+    alignment: { model: "", reasoningEffort: "low" },
+    triage: { model: "", reasoningEffort: "low" },
+  };
   let apiKey = "";
   let hasApiKey = false;
   let allowOverride = false;
@@ -128,6 +142,14 @@
       provider = s.provider || "openai";
       apiBaseUrl = s.apiBaseUrl || "";
       model = s.model || "gpt-5.6";
+      if (s.aiTasks) {
+        useOneModel = s.aiTasks.useOneModel !== false;
+        aiTasks = {
+          review: { ...aiTasks.review, ...s.aiTasks.tasks.review },
+          alignment: { ...aiTasks.alignment, ...s.aiTasks.tasks.alignment },
+          triage: { ...aiTasks.triage, ...s.aiTasks.tasks.triage },
+        };
+      }
       hasApiKey = s.hasApiKey;
       allowOverride = s.reviewerMode === "advanced";
       paratextNavigation = s.paratextNavigation;
@@ -169,6 +191,7 @@
       const params: Record<string, unknown> = {
         provider, apiBaseUrl, model, reviewerMode: manualOverrideMode(allowOverride),
         paratextNavigation, logosNavigation, reviewerName,
+        aiTasks: { useOneModel, tasks: aiTasks },
       };
       if (apiKey.trim()) params.apiKey = apiKey.trim();
       const result = await bridge.setSettings(params);
@@ -609,6 +632,28 @@
         </div>
 
         <div class="field">
+          <div class="field-label">Model per task</div>
+          <label class="mode-option" class:selected={useOneModel}>
+            <input type="checkbox" bind:checked={useOneModel} />
+            <span><b>Use one model for everything</b><small>Every AI task runs on the model above at medium reasoning. Turn off to choose a cheaper tier for alignment and triage.</small></span>
+          </label>
+          {#if !useOneModel}
+            <div class="task-rows">
+              {#each aiTaskRows as row (row.task)}
+                <div class="task-row">
+                  <label for={`task-model-${row.task}`}>{row.label}</label>
+                  <input id={`task-model-${row.task}`} type="text" bind:value={aiTasks[row.task].model} placeholder={row.task === "review" ? model : "e.g. gpt-5.6-luna"} aria-label={`${row.label} model`} />
+                  <select bind:value={aiTasks[row.task].reasoningEffort} aria-label={`${row.label} reasoning effort`}>
+                    {#each reasoningEfforts as effort (effort)}<option value={effort}>{effort}</option>{/each}
+                  </select>
+                  <div class="hint">{row.hint}</div>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+
+        <div class="field">
           <label for="apiKey">API key</label>
           <div class="key-row">
             <input id="apiKey" type="password" bind:value={apiKey} placeholder={hasApiKey ? "•••••••••••••••• (already set — enter to replace)" : "Enter your API key"} />
@@ -983,6 +1028,12 @@
   .mode-option.selected { border-color: var(--accent); background: var(--accent-bg); }
   .mode-option input { width: auto; height: auto; margin: 2px 0 0; }
   .mode-option span { display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-xs); color: var(--text); }
+  /* #473: one row per AI task — label, model, reasoning effort, hint. */
+  .task-rows { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+  .task-row { display: grid; grid-template-columns: 7.5em minmax(0, 1fr) 6.5em; gap: 6px 8px; align-items: center; }
+  .task-row label { font-size: var(--fs-xs); font-weight: 700; color: var(--text-2); margin: 0; }
+  .task-row select { width: auto; }
+  .task-row .hint { grid-column: 2 / -1; margin-top: 0; }
   .mode-option small { color: var(--text-2); line-height: 1.35; }
   .save-row { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
   .key-row { display: flex; align-items: center; gap: 8px; }

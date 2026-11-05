@@ -1518,10 +1518,27 @@ export interface AIReviewChapterResponse {
   missing: number;
 }
 
+/** #473: one AI task's model and reasoning effort. A blank model means the
+ *  configured `model`. */
+export interface AiTaskChoice {
+  model: string;
+  reasoningEffort: AiReasoningEffort;
+}
+export type AiReasoningEffort = "low" | "medium" | "high" | "xhigh";
+export type AiTask = "review" | "alignment" | "triage";
+export interface AiTaskSettings {
+  /** True (the default, today's behaviour): every task runs on `model` at
+   *  medium reasoning and the rows below are ignored. */
+  useOneModel: boolean;
+  tasks: Record<AiTask, AiTaskChoice>;
+}
+
 export interface SettingsData {
   provider: string;
   apiBaseUrl: string;
   model: string;
+  /** Absent only from engines older than #473. */
+  aiTasks?: AiTaskSettings;
   reviewerName: string;
   /** ISO-8601 UTC, or "" if never explicitly changed via Settings (the
    * OS-seeded default on a fresh profile does not count as a change). */

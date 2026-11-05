@@ -77,7 +77,7 @@ def _open(root, client=None, monkeypatch=None):
     engine = BridgeEngine()
     call(engine, "project.open", {"path": str(root)})
     if client is not None:
-        monkeypatch.setattr(engine, "_ai_client", lambda: client)
+        monkeypatch.setattr(engine, "_ai_client", lambda task="review": client)
     return engine
 
 
@@ -297,7 +297,7 @@ def test_a_run_whose_every_batch_failed_reports_failure_not_success(fixture_proj
         def triage_batch(self, instructions, input_text):
             raise RuntimeError("OpenAI API error HTTP 401: invalid key")
 
-    monkeypatch.setattr(engine, "_ai_client", lambda: Dead())
+    monkeypatch.setattr(engine, "_ai_client", lambda task="review": Dead())
     snapshot = _run(engine)
 
     assert snapshot["state"] == "failed"
@@ -320,7 +320,7 @@ def test_a_partly_failed_run_succeeds_but_still_reports_the_failure(fixture_proj
                 raise RuntimeError("boom")
             return StubClient.triage_batch(self, instructions, input_text)
 
-    monkeypatch.setattr(engine, "_ai_client", lambda: Flaky())
+    monkeypatch.setattr(engine, "_ai_client", lambda task="review": Flaky())
     snapshot = _run(engine)
 
     assert snapshot["state"] == "succeeded"
