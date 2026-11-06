@@ -24620,3 +24620,84 @@ terra and on 0.24.4 never; the verse is then stored as a finished review with ev
 forced to `review`, and the chapter job treats it as current (#480). Recommendation posted on
 #469 and filed as #479: gpt-5.6-terra as the review default. #469 closed; card Done. No code
 changed.
+
+
+## 2026-11-06 — #469 follow-ups: #480 mapping timeout fails the verse, #475 prices, #476 every call counted, #477 counter shown, #478 fresh-profile hint; #479 waits on Benz
+
+Five of the six follow-ups filed from the #469 measurement, one commit each on `main`
+in the order #480, #475, #476, #477, #478. Step 0 first: `git log origin/main` since
+2026-11-04, every branch, open PRs, the issues' timelines and board 40 — nobody else had
+touched any of them (Joel's last commits are the 2026-11-03 Paratext fixes; Benz's are
+#456 and a docs commit); the code for each was read before deciding. #476, #477 and #478
+were not on the board despite the previous entry saying so; added as Backlog, then moved.
+
+**#479 (terra as the review default) is not flipped.** No approval on the issue, nothing in
+`docs/DECISIONS.md`; `DEFAULT_USE_ONE_MODEL` stays `True` and the model default stays
+`gpt-5.6`. It is Benz's decision; nothing was posted.
+
+**#480 (b266ae2).** `prepare_semantic_mappings_for_review` folded every exception into the
+`mapping_error` state. For a transport failure — the mapping call past the client's 240 s on
+#469 run 2, GEN 1:1 and 1:25 — the review call still ran and was billed, every check came
+back `review` with no selection, and the verse was stored as a finished, current review the
+chapter job's Retry never re-ran. A `TransportFailure` is now re-raised (same
+`AITransportError`, the mapping named in the message) before the review request is built,
+so the verse fails in the job and Retry re-runs it; a schema/validation/resource failure
+keeps the fail-closed `mapping_error`. `default_transport` also wraps a raw
+`TimeoutError`/`OSError`/`HTTPException` from the body read as `AITransportError` — urllib
+wraps only the connect and the wait for headers in `URLError`. No automatic retry of the
+mapping call: each attempt is up to 240 s and billed; Retry is the retry. Test:
+`tests/service/test_ai_review_mapping_timeout.py` (marked `stage3db` + `slow` in
+`tests/conftest.py`): the real Stage 3 DB covers TIT, so the live `ai.review.start` job on
+the Titus fixture sends the real mapping request, the fake transport raises, nothing is sent
+after it, the verse fails with the timeout in its error, `check.listForVerse` shows no
+current review, `ai.review.retry` re-runs it, and a non-transport mapping failure still
+completes the verse.
+
+**#475 (52367b0).** `DEFAULT_PRICES`: sol output $30 → $20, terra input $2.00 → $2.50 and
+cached $0.20 → $0.25, with the source in the comment (the #469 dashboard CSV arithmetic).
+The old "configurable, users can override in settings" claim was wrong — nothing reads the
+table but `estimate_cost` — and is gone. `tests/ai/test_model_prices.py`.
+
+**#476 (2ba3008).** The client keeps a call ledger (`call_log`): one entry per request
+sent — the provider's counts for an answered one; for a transport failure after the
+request went out, the input estimated from the body (`estimate_input_tokens`: ~4 ASCII
+chars per token, ~2 tokens per non-ASCII char; flagged as `unanswered_calls`).
+`usage_mark()` / `usage_since(mark)` sum a span. `prepare_verse_review` marks before the
+mapping and sums after the review (mapping + gap-fill + review); `run_full_review` on its
+own does the same around its mapping + review; the job records the sum on success and, on
+failure, whatever the verse already spent (before, a verse that failed after its first
+call counted as free). `AIUsage` gains `calls` / `unanswered_calls`; `usage_dict`, the job
+result's `usage` and the AI tab's line carry them ("N requests", "N unanswered, input
+estimated"). Tests: `tests/ai/test_ai_usage_ledger.py`;
+`tests/service/test_ai_usage_accounting.py` (`stage3db` + `slow`): the live job on Titus
+1:1 with each schema answered with its own counts — the job's usage line, the stored
+review's `usage` and the lifetime counter all equal the sum, `calls == 3`; and a review
+call that times out after the mapping and gap-fill were answered fails the verse while the
+counter carries the two answered calls plus the estimated review input.
+
+**#477 (ae5689c).** Settings > AI provider shows "Used so far on this device: N tokens ·
+~$X (since <date>)" under the API key with a Reset counter button behind `askConfirmation`.
+`settings.get`'s `aiUsage` gains `since` (first counted call or last reset; `null` for a
+pre-#477 counter until reset); `settings.set {resetAiUsage: true}` zeroes and dates it.
+Same `settings_kv` row, no schema change. `tests/service/test_ai_usage_settings.py`; four
+Vitest cases in `SettingsModal.test.ts` (digit grouping follows the machine locale — en-IN
+groups 71,59,086 — so the assertions strip commas).
+
+**#478 (976440a).** `check.listForVerse` keeps `state: "preparing"` and adds `pending:
+"resourceIndexes"` and `running` (`_check_jobs.active()`); with no run under way the
+message says to tick Translation Notes and Translation Words under Checks and run the
+chapter once, and the poll slows to 2 s. The tN/tW tab shows that without the spinner and a
+"Prepare now" button, which sets a new `checkRunRequest` store (the `reviewTabRequest`
+pattern); App ticks both boxes with the Checks menu's `toggleCheck` and calls the same
+`beginChecks` as Run chapter. The indexes are still never built on the dispatcher thread.
+One test in `test_check_selection.py`, two in `TranslationHelpsReview.test.ts`.
+
+**Verified / not.** Verified: each commit's own tests as listed in its message; the batch
+gates once — the full engine suite (`pytest -n auto`), `npm run check` / `test` / `build`,
+`build-sidecars.ps1` then `scripts/smoke_sidecars.py` on the frozen `bridge-engine.exe` —
+the full engine suite 5901 passed / 3 xfailed / 1 failed (`tests/connectors/test_logos_connector.py::test_get_state_round_trips_through_the_real_helper_process`, the real PowerShell helper's 15 s startup under the parallel suite + PyInstaller + Vitest load; passes alone in 1.2 s; untouched by this batch), svelte-check 0/0, Vitest 1184 passed, the build, and `smoke_sidecars.py` passed on the rebuilt pair. Not verified: the real desktop app (no walk; the
+#478 button and the Settings counter are jsdom-tested only); a real provider timeout
+(the fake transport raises `AITransportError`; the `default_transport` body-read branch is
+unit-tested with a stub `urlopen`); the token estimate against a real tokenizer (it is an
+estimate and labelled one). No change to verdicts, thresholds, auto-apply or project-file
+writes; #479 is untouched.
