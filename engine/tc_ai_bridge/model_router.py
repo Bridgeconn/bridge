@@ -1,11 +1,17 @@
 from __future__ import annotations
 
-# Prices are deliberately configurable and kept in one place. Defaults reflect the
-# GPT-5.6 family pricing current when v0.6 was built; users can override in settings.
+# USD per million tokens, kept in one place; there is no settings override.
+# Source (#475): the #469 measurement of 2026-11-05/06, Hindi IRV GEN 1 on a
+# real key, read off the OpenAI usage dashboard's per-model CSV: cache-write
+# tokens x input price + cached tokens x cached price + output tokens x output
+# price reproduced each run's spend movement to the cent. gpt-5.6 is billed as
+# gpt-5.6-sol. The earlier table (sol output $30, terra input $2.00) over-priced
+# gpt-5.6 and under-priced terra. Re-check against the dashboard after a price
+# change by the provider; the luna row is unmeasured and kept as it was.
 DEFAULT_PRICES = {
-    'gpt-5.6-sol': {'input': 5.00, 'cached_input': 0.50, 'output': 30.00},
-    'gpt-5.6': {'input': 5.00, 'cached_input': 0.50, 'output': 30.00},
-    'gpt-5.6-terra': {'input': 2.00, 'cached_input': 0.20, 'output': 12.00},
+    'gpt-5.6-sol': {'input': 5.00, 'cached_input': 0.50, 'output': 20.00},
+    'gpt-5.6': {'input': 5.00, 'cached_input': 0.50, 'output': 20.00},
+    'gpt-5.6-terra': {'input': 2.50, 'cached_input': 0.25, 'output': 12.00},
     'gpt-5.6-luna': {'input': 0.20, 'cached_input': 0.02, 'output': 1.20},
 }
 
