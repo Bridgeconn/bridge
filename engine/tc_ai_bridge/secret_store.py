@@ -265,11 +265,14 @@ class AppSettings:
 
     @property
     def model(self) -> str:
-        return str(self.data.get('model') or 'gpt-5.6')
+        """The configured model; `DEFAULT_REVIEW_MODEL` (#479) until one is saved."""
+        from .model_router import DEFAULT_REVIEW_MODEL
+        return str(self.data.get('model') or DEFAULT_REVIEW_MODEL)
 
     @model.setter
     def model(self, value: str) -> None:
-        self.data['model'] = value.strip() or 'gpt-5.6'
+        from .model_router import DEFAULT_REVIEW_MODEL
+        self.data['model'] = value.strip() or DEFAULT_REVIEW_MODEL
         self.save_sanitized()
 
     # -- #473: a model and a reasoning effort per AI task -------------------

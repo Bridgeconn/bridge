@@ -24701,3 +24701,13 @@ the full engine suite 5901 passed / 3 xfailed / 1 failed (`tests/connectors/test
 unit-tested with a stub `urlopen`); the token estimate against a real tokenizer (it is an
 estimate and labelled one). No change to verdicts, thresholds, auto-apply or project-file
 writes; #479 is untouched.
+
+**Addendum, 2026-11-06 — #479 flipped.** Rina approved the terra default the same day
+(relayed by Revant; DECISIONS.md 2026-11-06), so it did not wait on Benz. `DEFAULT_REVIEW_MODEL
+= "gpt-5.6-terra"` in `model_router.py`; `AppSettings.model` and `OpenAIResponsesClient`'s
+default follow it, a saved model is kept, a blank save falls back to it, and Settings > AI
+provider's hint carries the #469 numbers. One-model mode is unchanged, so every task now runs
+on terra at medium on a fresh install; alignment and triage tiers are unchanged. Tests:
+`test_the_review_default_is_terra_and_a_saved_model_is_kept` in `test_ai_task_settings.py`;
+two Vitest cases in `SettingsModal.test.ts`. No existing test pinned the old default (all set
+the model explicitly).

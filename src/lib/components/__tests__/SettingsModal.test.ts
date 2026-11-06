@@ -973,3 +973,32 @@ describe("SettingsModal lifetime AI usage counter (#477)", () => {
     expect(screen.getByTestId("ai-usage").textContent?.replace(/,/g, "")).toContain("7159086 tokens");
   });
 });
+
+describe("SettingsModal review model default (#479)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    engineInfo.mockResolvedValue({
+      bridgeVersion: "0.9.6", companionSchemaVersion: 14, projectOpen: false, greekRoom: {},
+    });
+    getNavigationStatus.mockResolvedValue(navigationState());
+  });
+
+  it("shows gpt-5.6-terra when no model has been saved, and the saved one otherwise", async () => {
+    getSettings.mockResolvedValue({
+      provider: "openai", apiBaseUrl: "", model: "", hasApiKey: false,
+      reviewerMode: "basic", paratextNavigation: false, logosNavigation: false,
+    });
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+    expect(await screen.findByLabelText("Model")).toHaveValue("gpt-5.6-terra");
+    expect(screen.getByText(/276 of 281 checks/)).toBeInTheDocument();
+  });
+
+  it("keeps a saved gpt-5.6", async () => {
+    getSettings.mockResolvedValue({
+      provider: "openai", apiBaseUrl: "", model: "gpt-5.6", hasApiKey: false,
+      reviewerMode: "basic", paratextNavigation: false, logosNavigation: false,
+    });
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+    expect(await screen.findByLabelText("Model")).toHaveValue("gpt-5.6");
+  });
+});

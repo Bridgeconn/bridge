@@ -1593,3 +1593,17 @@ checks, including a saved English preset or a saved disabled policy. This avoids
 fixed curly conversions contradicting a project's selected marks and preserves
 book-wide and reference-assisted checks. No reviewed labels are retired and no
 benchmark, confidence threshold or golden is changed.
+
+## 2026-11-06 — Review tier default: gpt-5.6-terra (Rina, relayed by Revant, #479)
+
+**Decision:** a fresh install reviews with `gpt-5.6-terra` at medium reasoning
+(`DEFAULT_REVIEW_MODEL` in `model_router.py`; the one-model default follows it).
+Rina approved it on 2026-11-06 for the paid-token R&D, without waiting on Benz,
+on the #469 measurement: Hindi IRV GEN 1, 281 checks, three fresh imports, a
+translator judging every disagreement — terra gave the same verdict as gpt-5.6
+on 276/281, was wrong once and the only correct run once, at $5.40 a chapter
+against $10.18 (about $6,400 against $12,100 a Bible). An install that saved a
+model keeps it; Settings > AI provider changes it back at any time, which is why
+this is a default and not a behaviour change. **Rules out:** nothing — the
+alignment and triage tiers are unchanged (#131 unmeasured), and the two-method
+agreement gates of #146 and #219 are untouched.

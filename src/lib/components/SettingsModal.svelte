@@ -25,7 +25,9 @@
 
   let provider = "openai";
   let apiBaseUrl = "";
-  let model = "gpt-5.6";
+  // #479: the review default is gpt-5.6-terra; the engine's own default,
+  // mirrored here for the field before settings load.
+  let model = "gpt-5.6-terra";
   // #473: a model and reasoning effort per AI task. `useOneModel` (the
   // default) is today's behaviour: every task on `model` at medium.
   const aiTaskRows: Array<{ task: AiTask; label: string; hint: string }> = [
@@ -143,7 +145,7 @@
       automaticUpdates = s.automaticUpdates ?? true;
       provider = s.provider || "openai";
       apiBaseUrl = s.apiBaseUrl || "";
-      model = s.model || "gpt-5.6";
+      model = s.model || "gpt-5.6-terra";
       if (s.aiTasks) {
         useOneModel = s.aiTasks.useOneModel !== false;
         aiTasks = {
@@ -661,8 +663,8 @@
 
         <div class="field">
           <label for="model">Model</label>
-          <input id="model" type="text" bind:value={model} placeholder="e.g. gpt-5.6, claude-sonnet-5, llama3" />
-          <div class="hint">For tN/tW review, use a model with strong multilingual reasoning and structured-output support. Small/mini models may miss inflected target-language renderings or omit checks; Bridge keeps uncertain results pending for human review.</div>
+          <input id="model" type="text" bind:value={model} placeholder="e.g. gpt-5.6-terra, gpt-5.6, claude-sonnet-5, llama3" />
+          <div class="hint">For tN/tW review, use a model with strong multilingual reasoning and structured-output support. Small/mini models may miss inflected target-language renderings or omit checks; Bridge keeps uncertain results pending for human review. The default, gpt-5.6-terra, matched gpt-5.6's verdict on 276 of 281 checks of a measured chapter (a translator judged every difference: terra wrong once, the only correct run once) at about $5.40 a chapter against $10.18.</div>
         </div>
 
         <div class="field">

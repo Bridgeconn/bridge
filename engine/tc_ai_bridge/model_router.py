@@ -15,6 +15,15 @@ DEFAULT_PRICES = {
     'gpt-5.6-luna': {'input': 0.20, 'cached_input': 0.02, 'output': 1.20},
 }
 
+# #479: the model a fresh install reviews with, at medium reasoning. Decided
+# 2026-11-06 (Rina, relayed by Revant; DECISIONS.md) on the #469 measurement:
+# on Hindi IRV GEN 1 (281 checks, three fresh imports, a translator judging
+# every disagreement) gpt-5.6-terra gave the same verdict on 276/281, was
+# wrong once and the only correct run once, at $5.40 a chapter against
+# $10.18 for gpt-5.6. A saved model is kept; Settings > AI provider changes
+# it back. The alignment and triage tiers are unchanged (#131 unmeasured).
+DEFAULT_REVIEW_MODEL = 'gpt-5.6-terra'
+
 # #473: the AI tasks a model and a reasoning effort can be chosen for. The
 # `ModelRouter` class that used to live here (severity-based routing with
 # economy/balanced/quality profiles) was never instantiated outside its own

@@ -10,7 +10,7 @@ import json
 
 import pytest
 from bridge_service import BridgeEngine
-from tc_ai_bridge.model_router import AI_TASKS, cheapest_model, default_task_models
+from tc_ai_bridge.model_router import AI_TASKS, DEFAULT_REVIEW_MODEL, cheapest_model, default_task_models
 from tc_ai_bridge.secret_store import AppSettings
 from tests.support.projects import call
 
@@ -22,6 +22,25 @@ def engine(tmp_path, monkeypatch):
     settings.set_api_key("sk-test-123")
     settings.model = "gpt-5.6"
     return BridgeEngine(settings=settings, ai_transport=lambda *a: (200, b"{}"))
+
+
+def test_the_review_default_is_terra_and_a_saved_model_is_kept(tmp_path, monkeypatch):
+    """#479: a fresh install reviews with gpt-5.6-terra at medium; an install
+    that saved a model keeps it; a blank save falls back to the default."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    fresh = AppSettings(path=tmp_path / "settings.json")
+    fresh.set_api_key("sk-test-123")
+    assert fresh.model == DEFAULT_REVIEW_MODEL == "gpt-5.6-terra"
+    engine = BridgeEngine(settings=fresh, ai_transport=lambda *a: (200, b"{}"))
+    client = engine._ai_client("review")
+    assert (client.model, client.reasoning_effort) == ("gpt-5.6-terra", "medium")
+    assert call(engine, "settings.get")["result"]["model"] == "gpt-5.6-terra"
+
+    fresh.model = "gpt-5.6"
+    assert AppSettings(path=tmp_path / "settings.json").model == "gpt-5.6"
+    assert engine._ai_client("review").model == "gpt-5.6"
+    fresh.model = "   "
+    assert AppSettings(path=tmp_path / "settings.json").model == "gpt-5.6-terra"
 
 
 def test_defaults_are_one_model_for_everything_at_medium(engine):

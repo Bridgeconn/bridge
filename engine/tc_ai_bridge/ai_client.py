@@ -15,7 +15,7 @@ from .alignment_engine import apply_proposal, make_inventory, validate_proposal,
 from .alignment_reliability import compile_link_proposal
 from .models import AICheckReview, QAIssue, VerseAlignment
 from .tc_project import TranslationCoreProject
-from .model_router import estimate_cost
+from .model_router import DEFAULT_REVIEW_MODEL, estimate_cost
 from .cache_engine import dependency_snapshot
 from .security import ai_payload_manifest
 from .plugins import PluginRegistry
@@ -304,11 +304,11 @@ class OpenAIResponsesClient:
     ENDPOINT = 'https://api.openai.com/v1/responses'
     MODELS_ENDPOINT = 'https://api.openai.com/v1/models'
 
-    def __init__(self, api_key: str, model: str = 'gpt-5.6', transport: Transport = default_transport, timeout: float = 240.0, reasoning_effort: str = 'medium', base_url: str = ''):
+    def __init__(self, api_key: str, model: str = DEFAULT_REVIEW_MODEL, transport: Transport = default_transport, timeout: float = 240.0, reasoning_effort: str = 'medium', base_url: str = ''):
         if not api_key.strip():
             raise AIError('No OpenAI API key is configured.')
         self.api_key = api_key.strip()
-        self.model = model.strip() or 'gpt-5.6'
+        self.model = model.strip() or DEFAULT_REVIEW_MODEL
         self.transport = transport
         self.timeout = timeout
         self.reasoning_effort = reasoning_effort if reasoning_effort in ('none','low','medium','high','xhigh','max') else 'medium'
