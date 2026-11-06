@@ -24602,3 +24602,21 @@ and the dashboard CSV. Not verified: the quality of any verdict (the human pass)
 Tamil chapter; the Basic reviewer mode. Confound: main also carries #456 and the
 0.22–0.24 Paratext and workspace work beside #470–#473. No code changed in this entry;
 `docs/QA_TEST_MATRIX.md` A29 gains the real-provider line.
+
+**Addendum, 2026-11-06 — the human pass, and #469 closed.** A translator on the Hindi team
+judged the 37 disagreeing checks: 33 acceptable in every run (span length, word order, or a
+word left unselected); run 2 wrong on 2 (1:1 pd9r, 1:29 nv8q), run 1 on 1 (1:29 nv8q), run 3
+on 1 (1:24 f3l5, the rationale's wording, verdict and words agreeing with run 1), all three on
+1:30 hifc ("small trees" for vegetation, a content question). "Cheaper tier clearly worse":
+1 of 281; terra the only correct run: 1 of 281. Reading the rationales behind the pass→review
+changes corrected an inference in the entry above: eight of run 2's nine (1:1 ×4, 1:25 ×4)
+say the semantic-mapping call timed out (`mapping_error`) and the location rule forbids a
+selection in that state; all five of terra's say the Hindi is accurate but Stage 3 reported
+`needs_extended_passage` / not securely grounded. So the #471 digest did not measurably change
+verdict quality on the same model; what looked like caution was the mapping state. The
+mapping call shares the client's 240 s timeout (no shorter one exists; the 30 s in
+`ai_client.py` is `test_connection`'s), and on gpt-5.6 it ran past it on 2 of 31 verses, on
+terra and on 0.24.4 never; the verse is then stored as a finished review with every check
+forced to `review`, and the chapter job treats it as current (#480). Recommendation posted on
+#469 and filed as #479: gpt-5.6-terra as the review default. #469 closed; card Done. No code
+changed.
