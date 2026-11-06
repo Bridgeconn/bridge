@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.client
 import json
 import re
 import urllib.error
@@ -261,6 +262,12 @@ def default_transport(url: str, headers: dict[str, str], body: bytes, timeout: f
         return e.code, e.read()
     except urllib.error.URLError as e:
         raise AITransportError(f'Network error contacting OpenAI: {e.reason}') from e
+    except (OSError, http.client.HTTPException) as e:
+        # #480: a timeout or a dropped connection while the body is being read
+        # arrives raw, not wrapped in URLError (urllib wraps only the connect
+        # and the wait for headers). It is the same thing: the provider never
+        # answered, and the request may still be billed (#476).
+        raise AITransportError(f'Network error contacting OpenAI: {e}') from e
 
 
 class OpenAIResponsesClient:
