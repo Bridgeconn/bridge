@@ -4990,14 +4990,18 @@ class BridgeEngine:
         project.mark_issue_resolutions_recheck(
             chapter, verse, "running", reason="Automatic AI recheck started.",
         )
+        client: OpenAIResponsesClient | None = None
+        usage_mark = 0
         try:
             with self._checker_lock:
                 self._ensure_resource_indexes(project)
             client = self._ai_client()
+            usage_mark = client.usage_mark()
             alignment = project.load_verse_alignment(chapter, verse)
             proposal, review_alignment, reviews, issues, summary, meta = client.prepare_verse_review(
                 project, chapter, verse, alignment, progress_callback=progress_callback,
             )
+            # #476: the sum of the verse's calls (mapping, gap-fill, review).
             total_tokens = int(meta.get("total_tokens_for_prepare", 0) or 0)
             cost = float(meta.get("estimated_cost_usd", 0.0) or 0.0)
             self.settings.record_ai_usage(total_tokens, cost)
@@ -5060,9 +5064,22 @@ class BridgeEngine:
                     "totalTokens": total_tokens,
                     "cachedInputTokens": int((meta.get("usage") or {}).get("cachedInputTokens", 0) or 0),
                     "estimatedCostUSD": round(cost, 6),
+                    # #476: how many requests the verse made, and how many
+                    # went unanswered (their input estimated, output unknown).
+                    "calls": int((meta.get("usage") or {}).get("calls", 0) or 0),
+                    "unansweredCalls": int((meta.get("usage") or {}).get("unansweredCalls", 0) or 0),
                 },
             }
         except Exception as exc:
+            # #476: what the failed verse already spent -- a mapping or gap-fill
+            # call that was answered, or a call that was sent and never
+            # answered -- is billed all the same, so it reaches the lifetime
+            # counter here; before, a verse that failed after its first call
+            # counted as free.
+            if client is not None:
+                spent, spent_cost = client.usage_since(usage_mark)
+                if spent.calls:
+                    self.settings.record_ai_usage(spent.total_tokens, spent_cost)
             if not cancel_event.is_set():
                 project.mark_issue_resolutions_recheck(
                     chapter, verse, "failed",

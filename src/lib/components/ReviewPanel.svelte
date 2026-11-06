@@ -366,11 +366,18 @@
   // #472: the usage line beside "AI explanation". Cached input tokens are the
   // part the provider served from its prefix cache at a tenth of the price;
   // a result stored before #472 has no count and shows the cost alone.
-  function aiUsageLine(usage: { totalTokens?: number; estimatedCostUSD?: number; cachedInputTokens?: number }): string {
+  // #476: the figures are the sum of every request the verse made (the
+  // semantic mapping, the gap-fill alignment and the review); a request the
+  // provider never answered is counted with its input estimated and said so.
+  function aiUsageLine(usage: { totalTokens?: number; estimatedCostUSD?: number; cachedInputTokens?: number; calls?: number; unansweredCalls?: number }): string {
     const cost = `~$${(usage.estimatedCostUSD ?? 0).toFixed(4)}`;
     if (!usage.totalTokens) return cost;
     const cached = usage.cachedInputTokens ? ` (${usage.cachedInputTokens.toLocaleString()} cached)` : "";
-    return `${cost} · ${usage.totalTokens.toLocaleString()} tokens${cached}`;
+    const calls = usage.calls && usage.calls > 1 ? ` · ${usage.calls} requests` : "";
+    const unanswered = usage.unansweredCalls
+      ? ` · ${usage.unansweredCalls} unanswered, input estimated`
+      : "";
+    return `${cost} · ${usage.totalTokens.toLocaleString()} tokens${cached}${calls}${unanswered}`;
   }
 
   // A failed poll says nothing about the job, which keeps running in the

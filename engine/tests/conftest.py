@@ -53,6 +53,7 @@ _FILE_MARKERS = {
     "test_versification_concurrency.py": ("subprocess", "slow"),
     "test_semantic_mapping_stage3.py": ("stage3db",),
     "test_ai_review_mapping_timeout.py": ("stage3db", "slow"),  # #480: the real mapping call
+    "test_ai_usage_accounting.py": ("stage3db", "slow"),  # #476: the real mapping call
     "test_correction_acceptance_queue_visibility.py": ("external",),
     "test_correction_acceptance_scripts.py": ("external",),
     "test_correction_case_c_production.py": ("external",),

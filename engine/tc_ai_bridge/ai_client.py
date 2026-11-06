@@ -197,11 +197,30 @@ def review_prompt_cache_key(project: Any) -> str:
 def usage_dict(usage: AIUsage) -> dict[str, int]:
     """The usage of one or more calls as stored on a review and shown in the
     AI tab (#472). `cachedInputTokens` is the part of `inputTokens` the
-    provider served from its prefix cache at a tenth of the input price."""
+    provider served from its prefix cache at a tenth of the input price.
+    `calls` is every request sent (#476: the semantic mapping, the gap-fill
+    alignment and the review, not the review alone); `unansweredCalls` the
+    ones the provider never answered, whose input is an estimate from the
+    request body and whose output is unknown (counted as 0)."""
     return {
         'inputTokens': int(usage.input_tokens), 'cachedInputTokens': int(usage.cached_input_tokens),
         'outputTokens': int(usage.output_tokens), 'totalTokens': int(usage.total_tokens),
+        'calls': int(usage.calls), 'unansweredCalls': int(usage.unanswered_calls),
     }
+
+
+def estimate_input_tokens(body: bytes) -> int:
+    """A rough token count for a request body the provider never answered
+    (#476), so the call is not counted as free: ~4 ASCII characters per token
+    and ~2 tokens per non-ASCII character (Devanagari, Tamil, Hebrew and Greek
+    script are several bytes each under a byte-pair tokenizer). An estimate,
+    and reported as one through `AIUsage.unanswered_calls`."""
+    try:
+        text = body.decode('utf-8')
+    except UnicodeDecodeError:
+        return max(1, len(body) // 4)
+    ascii_chars = sum(1 for ch in text if ord(ch) < 128)
+    return max(1, ascii_chars // 4 + (len(text) - ascii_chars) * 2)
 
 
 def project_reviewer_decision(record: dict[str, Any]) -> dict[str, Any]:
@@ -248,6 +267,17 @@ class AIUsage:
     output_tokens: int = 0
     total_tokens: int = 0
     cached_input_tokens: int = 0
+    # #476: requests sent, and of those the ones never answered (a transport
+    # failure after the request went out; the provider may still bill it).
+    calls: int = 0
+    unanswered_calls: int = 0
+
+    def __add__(self, other: 'AIUsage') -> 'AIUsage':
+        return AIUsage(
+            self.input_tokens + other.input_tokens, self.output_tokens + other.output_tokens,
+            self.total_tokens + other.total_tokens, self.cached_input_tokens + other.cached_input_tokens,
+            self.calls + other.calls, self.unanswered_calls + other.unanswered_calls,
+        )
 
 
 Transport = Callable[[str, dict[str, str], bytes, float], tuple[int, bytes]]
@@ -299,6 +329,11 @@ class OpenAIResponsesClient:
             self.endpoint = self.ENDPOINT
             self.models_endpoint = self.MODELS_ENDPOINT
         self.last_cost_usd = 0.0
+        # #476: one entry per request sent, answered or not, with its cost.
+        # `usage_mark` / `usage_since` sum a verse's calls (mapping, gap-fill,
+        # review) so none is left out of the stored usage or the lifetime
+        # counter; `last_usage` is still the most recent call alone.
+        self.call_log: list[tuple[AIUsage, float]] = []
         self.last_privacy_manifest: dict[str, Any] = {}
         # #472: set once a provider has rejected `prompt_cache_key`, so a
         # chapter run pays the 400 once, not once per verse.
@@ -339,7 +374,18 @@ class OpenAIResponsesClient:
         # Retry only transient transport/server failures. Schema/auth/input
         # errors fail immediately and are handled by the caller.
         for attempt in range(3):
-            status, raw = self.transport(self.endpoint, headers, body, self.timeout)
+            try:
+                status, raw = self.transport(self.endpoint, headers, body, self.timeout)
+            except ai_http.TransportFailure:
+                # #476: the request went out and was never answered (a read
+                # timeout, a dropped connection). The provider may bill the
+                # input, so it is logged as an unanswered call with the input
+                # estimated from the body, never as a free call.
+                estimated = estimate_input_tokens(body)
+                self.last_usage = AIUsage(estimated, 0, estimated, 0, calls=1, unanswered_calls=1)
+                self.last_cost_usd = estimate_cost(self.model, estimated, 0)
+                self.call_log.append((self.last_usage, self.last_cost_usd))
+                raise
             if status not in (408, 409, 429, 500, 502, 503, 504):
                 break
             if attempt < 2:
@@ -403,6 +449,20 @@ class OpenAIResponsesClient:
 
     def _effective_reasoning_effort(self) -> str:
         return self.last_reasoning_effort or 'provider-default'
+
+    def usage_mark(self) -> int:
+        """A position in the call log, for `usage_since`."""
+        return len(self.call_log)
+
+    def usage_since(self, mark: int) -> tuple[AIUsage, float]:
+        """The summed usage and estimated cost of every request sent since
+        `mark` (#476), answered or not."""
+        total = AIUsage()
+        cost = 0.0
+        for usage, call_cost in self.call_log[mark:]:
+            total = total + usage
+            cost += call_cost
+        return total, cost
 
     def _post_text(
         self, instructions: str, input_text: str, schema_name: str, schema: dict[str, Any],
@@ -472,8 +532,10 @@ class OpenAIResponsesClient:
             int(usage.get('output_tokens', 0) or 0),
             int(usage.get('total_tokens', 0) or 0),
             cached,
+            calls=1,
         )
         self.last_cost_usd=estimate_cost(self.model,self.last_usage.input_tokens,self.last_usage.output_tokens,self.last_usage.cached_input_tokens)
+        self.call_log.append((self.last_usage, self.last_cost_usd))
         text = self._extract_text(response)
         if not text:
             raise AIError('OpenAI response contained no output text.')
@@ -839,6 +901,11 @@ class OpenAIResponsesClient:
         for rb in pack.get('reference_bibles', []):
             eid=f'E{ev_n:03d}'; ev_n += 1; evidence_catalog[eid]=rb
 
+        # #476: everything from here to the review's answer is this review's
+        # usage -- the mapping call below when this runs on its own (from
+        # prepare_verse_review the mapping and the gap-fill came before and
+        # are summed there), then the review call.
+        usage_mark = self.usage_mark()
         if semantic_mapping_pack is None:
             semantic_mapping_pack = prepare_semantic_mappings_for_review(
                 project=project,
@@ -926,7 +993,7 @@ class OpenAIResponsesClient:
             instructions, json.dumps(input_obj, ensure_ascii=False), 'tc_full_review', schema,
             prompt_cache_key=review_prompt_cache_key(project),
         )
-        review_usage = self.last_usage
+        review_usage, review_cost = self.usage_since(usage_mark)
         if progress_callback: progress_callback(88, 'Validating AI selections and evidence')
 
         reviews: list[AICheckReview] = []
@@ -1062,7 +1129,7 @@ class OpenAIResponsesClient:
             'summary': summary,
             'model': self.model,
             'reasoningEffort': self._effective_reasoning_effort(),
-            'estimatedCostUSD': self.last_cost_usd,
+            'estimatedCostUSD': review_cost,
             'dependencySnapshot': dependency_snapshot(project, chapter, verse, knowledge_base, self.model),
             'resourceProvenance': pack.get('resource_provenance', {}),
             'privacyManifest': self.last_privacy_manifest,
@@ -1073,7 +1140,7 @@ class OpenAIResponsesClient:
             'languageContext': language.to_dict(),
             'semanticMapping': semantic_mapping_pack,
         })
-        return reviews, issues, summary, {'resource_provenance': pack.get('resource_provenance', {}), 'saved_to': str(saved), 'evidence_catalog': evidence_catalog, 'model': self.model, 'reasoning_effort': self._effective_reasoning_effort(), 'estimated_cost_usd': self.last_cost_usd, 'usage': usage_dict(review_usage), 'privacy_manifest': self.last_privacy_manifest, 'language_context': language.to_dict(), 'suppressed_qa_count': len(suppressed_issues), 'semantic_mapping': semantic_mapping_pack}
+        return reviews, issues, summary, {'resource_provenance': pack.get('resource_provenance', {}), 'saved_to': str(saved), 'evidence_catalog': evidence_catalog, 'model': self.model, 'reasoning_effort': self._effective_reasoning_effort(), 'estimated_cost_usd': review_cost, 'usage': usage_dict(review_usage), 'privacy_manifest': self.last_privacy_manifest, 'language_context': language.to_dict(), 'suppressed_qa_count': len(suppressed_issues), 'semantic_mapping': semantic_mapping_pack}
 
     def prepare_verse_review(self, project: TranslationCoreProject, chapter: str, verse: str, alignment: VerseAlignment, knowledge_base=None, progress_callback=None) -> tuple[dict[str, Any] | None, VerseAlignment, list[AICheckReview], list[QAIssue], str, dict[str, Any]]:
         """
@@ -1084,6 +1151,11 @@ class OpenAIResponsesClient:
         alignment. Nothing is written to translationCore alignmentData or checkData.
         """
         start_input_fingerprint = project.review_input_fingerprint(chapter, verse)
+        # #476: the semantic mapping, the gap-fill alignment and the review
+        # are all this verse's calls; the stored usage, the job's cost line
+        # and the lifetime counter get their sum, not the review alone (on
+        # #469 the review alone was 70-75% of the bill).
+        usage_mark = self.usage_mark()
         if progress_callback: progress_callback(5, 'Preparing verse review')
         if progress_callback:
             progress_callback(7, 'Mapping source meanings across target passage')
@@ -1096,9 +1168,6 @@ class OpenAIResponsesClient:
         needs_alignment = bool(alignment.word_bank) or any(g.top_words and not g.bottom_words for g in alignment.alignments)
         proposal: dict[str, Any] | None = None
         review_alignment = alignment
-        first_usage = 0
-        first_cost = 0.0
-        first_detail = AIUsage()
         if needs_alignment:
             if progress_callback: progress_callback(12, 'AI preparing incomplete alignment')
             proposal = self.propose_alignment(project, chapter, verse, alignment, mode='gap_fill', semantic_mapping_pack=semantic_mapping_pack)
@@ -1106,28 +1175,16 @@ class OpenAIResponsesClient:
             # rewrite already-established project alignment relationships.
             validate_preparation_proposal(alignment, proposal)
             review_alignment = apply_proposal(alignment, proposal)
-            first_usage = self.last_usage.total_tokens
-            first_cost = self.last_cost_usd
-            first_detail = self.last_usage
             if progress_callback: progress_callback(38, 'Alignment proposal validated locally')
         else:
             if progress_callback: progress_callback(38, 'Existing alignment ready')
         if project.review_input_fingerprint(chapter, verse) != start_input_fingerprint:
             raise AIError('Verse/project data changed while AI was preparing alignment; stale result was discarded.')
         reviews, issues, summary, meta = self.run_full_review(project, chapter, verse, review_alignment, knowledge_base, progress_callback=progress_callback, expected_input_fingerprint=start_input_fingerprint, semantic_mapping_pack=semantic_mapping_pack)
-        second_usage = self.last_usage.total_tokens
-        second_cost = self.last_cost_usd
-        total_cost = first_cost + second_cost
-        second_detail = self.last_usage
-        prepare_usage = AIUsage(
-            first_detail.input_tokens + second_detail.input_tokens,
-            first_detail.output_tokens + second_detail.output_tokens,
-            first_usage + second_usage,
-            first_detail.cached_input_tokens + second_detail.cached_input_tokens,
-        )
+        prepare_usage, total_cost = self.usage_since(usage_mark)
         meta = dict(meta)
         meta['alignment_was_ai_proposed'] = proposal is not None
-        meta['total_tokens_for_prepare'] = first_usage + second_usage
+        meta['total_tokens_for_prepare'] = prepare_usage.total_tokens
         meta['usage'] = usage_dict(prepare_usage)
         meta['estimated_cost_usd'] = total_cost
         meta['model'] = self.model
