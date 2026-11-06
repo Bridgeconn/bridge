@@ -3,7 +3,7 @@
   import { bridge } from "../api/bridgeClient";
   import { recheckVerse } from "../verseChecks";
   import {
-    aiCheckReviewsByVerse, currentChapter, nativeChecksByVerse,
+    aiCheckReviewsByVerse, checkRunRequest, currentChapter, nativeChecksByVerse,
     allowManualOverride, selectedVerse, verseDisplay, verseKey, verseTexts,
   } from "../stores";
   import type {
@@ -24,7 +24,14 @@
   let loading = false;
   let loadError = "";
   let preparationMessage = "";
+  // #478: the message is "nothing will prepare them until a run with tN/tW
+  // ticked", and a button asks App for that run.
+  let preparationNeedsRun = false;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function requestPreparation(): void {
+    checkRunRequest.set({ scope: "chapter", ensure: ["tN", "tW"] });
+  }
   let editingKey = "";
   let rows: CheckTargetSelection[] = [];
   let nothingToSelect = false;
@@ -312,11 +319,15 @@
     loading = true;
     loadError = "";
     preparationMessage = "";
+    preparationNeedsRun = false;
     try {
       const result = await bridge.listChecksForVerse(chapter, verse);
       if (sequence !== loadSequence || refreshKey !== key) return;
       if (result.state === "preparing") {
         preparationMessage = result.message || "Preparing translation helps…";
+        // #478: nothing is preparing anything; the indexes wait for a run
+        // with Translation Notes and Translation Words ticked.
+        preparationNeedsRun = result.pending === "resourceIndexes" && !result.running;
         const delay = Math.max(500, Math.min(result.retryAfterMs || 750, 2000));
         retryTimer = setTimeout(() => {
           retryTimer = undefined;
@@ -578,7 +589,16 @@
   {/if}
   {#if mutationNotice}<div class="mutation-notice">{mutationNotice}</div>{/if}
   {#if mutationError}<div class="load-error">{mutationError}</div>{/if}
-  {#if preparationMessage}<div class="preparing-notice"><span class="spin" /> {preparationMessage}</div>{/if}
+  {#if preparationMessage}
+    <div class="preparing-notice" class:needs-run={preparationNeedsRun}>
+      {#if !preparationNeedsRun}<span class="spin" />{/if}
+      <span>{preparationMessage}</span>
+      {#if preparationNeedsRun}
+        <button type="button" class="prepare-btn" on:click={requestPreparation}
+          title="Tick Translation Notes and Translation Words and run this chapter">Prepare now</button>
+      {/if}
+    </div>
+  {/if}
   {#if loading && !preparationMessage && checks.length === 0}
     <div class="loading-placeholder" role="status" aria-label="Loading translation helps">
       <span /><span /><span />
@@ -809,6 +829,8 @@
   .basic-notice { color: var(--warning); background: var(--warning-bg); }
   .mutation-notice { color: var(--success); background: var(--success-bg); overflow-wrap: anywhere; }
   .preparing-notice { display: flex; align-items: center; gap: 6px; color: var(--accent); background: var(--accent-bg); }
+  .preparing-notice.needs-run { flex-wrap: wrap; }
+  .prepare-btn { font-size: var(--fs-2xs); font-weight: 600; padding: 3px 8px; border-radius: 5px; border: 1px solid var(--accent); background: var(--surface); color: var(--accent); cursor: pointer; }
   .loading-placeholder { min-height: 66px; display: grid; align-content: center; gap: 7px; }
   .loading-placeholder span { display: block; height: 8px; border-radius: 999px; background: var(--surface-2); animation: loading-pulse 1.2s ease-in-out infinite; }
   .loading-placeholder span:nth-child(1) { width: 72%; }

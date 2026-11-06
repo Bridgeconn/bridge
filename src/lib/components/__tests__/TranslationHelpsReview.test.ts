@@ -14,7 +14,8 @@ vi.mock("../../api/bridgeClient", () => ({
 }));
 
 import TranslationHelpsReview from "../TranslationHelpsReview.svelte";
-import { nativeChecksByVerse, aiCheckReviewsByVerse } from "../../stores";
+import { get } from "svelte/store";
+import { checkRunRequest, nativeChecksByVerse, aiCheckReviewsByVerse } from "../../stores";
 import type { CheckAutomationResult, IssueResolutionRecord, NativeCheckReview } from "../../types/finding";
 
 function check(overrides: Partial<NativeCheckReview> = {}): NativeCheckReview {
@@ -196,5 +197,51 @@ describe("TranslationHelpsReview: Mark resolved in Bridge (#358 f)", () => {
 
     expect(await screen.findByText("Paratext refused")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry handoff" })).toBeInTheDocument();
+  });
+});
+
+/**
+ * #478: on a fresh profile the check selection is Language QA only, so the
+ * book's translationNotes/Words indexes are never built and the panel used to
+ * show "Preparing…" with a spinner for good. The engine now says whether a run
+ * is under way; when none is, the panel says what to do and offers to do it.
+ */
+describe("TranslationHelpsReview resource indexes never asked for (#478)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    nativeChecksByVerse.set({});
+    aiCheckReviewsByVerse.set({});
+    checkRunRequest.set(null);
+    listIssueResolutions.mockResolvedValue({ items: [] });
+  });
+
+  function preparing(running: boolean) {
+    listChecksForVerse.mockResolvedValue({
+      chapter: "1", verse: "19", checks: [], state: "preparing", retryAfterMs: 2000,
+      pending: "resourceIndexes", running,
+      message: running
+        ? "Preparing translationNotes and translationWords resources…"
+        : "translationNotes and translationWords are not prepared for this book yet. Tick Translation Notes and Translation Words under Checks and run the chapter once; the AI review needs them too.",
+      aiReviewState: "missing", aiReviews: [], aiQaIssues: [], aiSummary: "",
+    });
+  }
+
+  it("says what to do and offers Prepare now when no run is under way", async () => {
+    preparing(false);
+    const { container } = render(TranslationHelpsReview, { props: { chapter: "1", verse: "19" } });
+    expect(await screen.findByText(/Tick Translation Notes and Translation Words under Checks/)).toBeInTheDocument();
+    expect(container.querySelector(".preparing-notice .spin")).toBeNull();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Prepare now" }));
+    expect(get(checkRunRequest)).toEqual({ scope: "chapter", ensure: ["tN", "tW"] });
+  });
+
+  it("keeps the spinner and no button while a run may be building them", async () => {
+    preparing(true);
+    const { container } = render(TranslationHelpsReview, { props: { chapter: "1", verse: "19" } });
+    expect(await screen.findByText(/Preparing translationNotes and translationWords/)).toBeInTheDocument();
+    expect(container.querySelector(".preparing-notice .spin")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "Prepare now" })).toBeNull();
+    expect(get(checkRunRequest)).toBeNull();
   });
 });

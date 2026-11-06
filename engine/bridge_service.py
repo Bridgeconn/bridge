@@ -2808,10 +2808,21 @@ class BridgeEngine:
         # dispatcher.  A blocking request here prevents even checks.status
         # and checks.cancel from being read until Rust's 30-second timeout.
         if self._resource_indexes_pending(project):
+            # #478: a fresh profile's check selection is Language QA only, so
+            # nothing asks for the tN/tW indexes and this answer used to say
+            # "Preparing…" for good. It now says whether a run is under way
+            # (one may be building them) and, when none is, what to do.
+            running = self._check_jobs.active()
             return {
                 "chapter": str(chapter), "verse": str(verse), "checks": [],
-                "state": "preparing", "retryAfterMs": 750,
-                "message": "Preparing translationNotes and translationWords resources…",
+                "state": "preparing", "retryAfterMs": 750 if running else 2000,
+                "pending": "resourceIndexes", "running": running,
+                "message": (
+                    "Preparing translationNotes and translationWords resources…" if running
+                    else "translationNotes and translationWords are not prepared for this book yet. "
+                    "Tick Translation Notes and Translation Words under Checks and run the chapter "
+                    "once; the AI review needs them too."
+                ),
             }
         if not self._checker_lock.acquire(blocking=False):
             return {

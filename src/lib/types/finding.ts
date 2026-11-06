@@ -1281,6 +1281,12 @@ export interface NativeCheckListResponse {
   state: "ready" | "preparing";
   retryAfterMs: number;
   message: string;
+  /** #478: "preparing" because the book's translationNotes/Words indexes
+   *  are not built. `running` says a check run is under way (and may be
+   *  building them); when it is false nothing will, until a run with
+   *  Translation Notes and Translation Words ticked. Absent before #478. */
+  pending?: "resourceIndexes";
+  running?: boolean;
   aiReviewState: "missing" | "current" | "stale";
   aiReviews: AiCheckReview[];
   aiQaIssues: AiQaIssue[];

@@ -65,12 +65,14 @@
     checkStatusByVerse, alignmentStatusByVerse, loadedChapters, selectedVerse, selectedVerseSet, checkingProgress, approvedCount, verseNums,
     verseKey, settingsOpen, exportOpen, bookApprovedSummary, resetBookState, reviewerMode,
     aiCheckReviewsByVerse, diagnosticsOpen, engineLog, appendEngineLog, navigationStatus,
-    bookAssignments, localUserId, checkGroupsByVerse, type CheckStatus,
+    bookAssignments, localUserId, checkGroupsByVerse, checkRunRequest, type CheckStatus,
   } from "./lib/stores";
   import { get } from "svelte/store";
   import {
     boxesRan, checkListLabel, coversSelection, editorCheckList, groupsOf, mergeFindings, selectedEditorChecks,
+    toggleCheck, type CheckBoxId,
   } from "./lib/checkSelection";
+  import { editorChecks } from "./lib/editorPrefs";
   import { planChapterEntry, shouldReadStored } from "./lib/chapterEntry";
   import { greekRoomChapterSummary, runVerseGreekRoom } from "./lib/verseChecks";
   import { projectRoles, refreshProjectRoles } from "./lib/projectRole";
@@ -1478,6 +1480,16 @@
 
   async function runChapterChecks() {
     await beginChecks("chapter", [$currentChapter]);
+  }
+
+  /** #478: a run asked for from inside a panel (the tN/tW tab's "Prepare
+   *  now"): the named boxes are ticked first, so the run builds the book's
+   *  translationNotes/Words indexes and later runs keep including them. */
+  $: if ($checkRunRequest) {
+    const request = $checkRunRequest;
+    checkRunRequest.set(null);
+    for (const id of request.ensure) toggleCheck(editorChecks, id as CheckBoxId, true);
+    void beginChecks(request.scope, [$currentChapter]);
   }
 
   /** Run Greek Room (#252), on demand and last: the verse in place, the
