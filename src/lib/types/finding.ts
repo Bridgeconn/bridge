@@ -1580,7 +1580,11 @@ export interface SettingsData {
   bookmarks?: Place[];
   recentChapters?: Place[];
   hasApiKey: boolean;
-  aiUsage: { tokens: number; estimatedCostUSD: number };
+  /** The lifetime counter of every counted AI call on this device (#477):
+   *  shown in Settings > AI provider with a Reset. `since` is the UTC time
+   *  it started (first counted call or last reset); null for a counter from
+   *  before #477 that has not been reset. */
+  aiUsage: { tokens: number; estimatedCostUSD: number; since?: string | null };
 }
 
 export type InlineConfidence = "low" | "medium" | "high";

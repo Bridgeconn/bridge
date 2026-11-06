@@ -9295,6 +9295,9 @@ class BridgeEngine:
             # raises ValueError, which the dispatcher reports as a failure
             # like an invalid reviewerMode.
             self.settings.ai_tasks = kwargs["aiTasks"]
+        if kwargs.get("resetAiUsage") is True:
+            # #477: Settings > AI provider's Reset for the lifetime counter.
+            self.settings.reset_ai_usage()
         if "reviewerName" in kwargs:
             self.settings.reviewer_name = kwargs["reviewerName"]
             # Keep the workspace users row in step immediately rather than at

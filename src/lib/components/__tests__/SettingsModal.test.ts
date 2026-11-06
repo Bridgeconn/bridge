@@ -907,3 +907,69 @@ describe("SettingsModal model per task (#473)", () => {
     })));
   });
 });
+
+describe("SettingsModal lifetime AI usage counter (#477)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    engineInfo.mockResolvedValue({
+      bridgeVersion: "0.9.6", companionSchemaVersion: 14, projectOpen: false, greekRoom: {},
+    });
+    getNavigationStatus.mockResolvedValue(navigationState());
+    getSettings.mockResolvedValue({
+      provider: "openai", apiBaseUrl: "", model: "gpt-5.6", hasApiKey: true,
+      reviewerMode: "basic", paratextNavigation: false, logosNavigation: false,
+      aiUsage: { tokens: 7159086, estimatedCostUSD: 45.3812, since: "2026-10-14T06:00:00+00:00" },
+    });
+  });
+
+  afterEach(() => { answerConfirmation(false); });
+
+  it("shows the counter with its cost and start date in the AI provider pane", async () => {
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+    const line = await screen.findByTestId("ai-usage");
+    // Digit grouping follows the machine locale (en-IN groups 71,59,086).
+    expect(line.textContent?.replace(/,/g, "")).toContain("7159086 tokens");
+    expect(line.textContent).toContain("~$45.38");
+    expect(line.textContent).toMatch(/since .*2026/);
+    expect(screen.getByRole("button", { name: "Reset counter" })).toBeInTheDocument();
+  });
+
+  it("shows a counter from before #477 without a start date", async () => {
+    getSettings.mockResolvedValue({
+      provider: "openai", apiBaseUrl: "", model: "gpt-5.6", hasApiKey: false,
+      reviewerMode: "basic", paratextNavigation: false, logosNavigation: false,
+      aiUsage: { tokens: 1200, estimatedCostUSD: 0.02 },
+    });
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+    const line = await screen.findByTestId("ai-usage");
+    expect(line.textContent?.replace(/,/g, "")).toBe("1200 tokens · ~$0.02");
+  });
+
+  it("asks first, then sends only the reset and shows the zeroed counter", async () => {
+    setSettings.mockResolvedValue({
+      hasApiKey: true, reviewerMode: "basic",
+      aiUsage: { tokens: 0, estimatedCostUSD: 0, since: "2026-11-06T10:00:00+00:00" },
+    });
+    const onClose = vi.fn();
+    render(SettingsModal, { props: { initialPane: "ai", onClose } });
+    await fireEvent.click(await screen.findByRole("button", { name: "Reset counter" }));
+
+    expect(get(confirmRequest)?.title).toBe("Reset the AI usage counter?");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(setSettings).not.toHaveBeenCalled();
+    answerConfirmation(true);
+    await waitFor(() => expect(setSettings).toHaveBeenCalledWith({ resetAiUsage: true }));
+    await waitFor(() => expect(screen.getByTestId("ai-usage").textContent).toContain("0 tokens · ~$0.00"));
+    expect(screen.getByText("AI usage counter reset.")).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("sends nothing when the reset is declined", async () => {
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+    await fireEvent.click(await screen.findByRole("button", { name: "Reset counter" }));
+    answerConfirmation(false);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(setSettings).not.toHaveBeenCalled();
+    expect(screen.getByTestId("ai-usage").textContent?.replace(/,/g, "")).toContain("7159086 tokens");
+  });
+});

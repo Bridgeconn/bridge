@@ -42,6 +42,8 @@
   };
   let apiKey = "";
   let hasApiKey = false;
+  // #477: the lifetime counter, kept by the engine on every counted call.
+  let aiUsage: SettingsData["aiUsage"] = { tokens: 0, estimatedCostUSD: 0, since: null };
   let allowOverride = false;
   let paratextNavigation = false;
   let logosNavigation = false;
@@ -151,6 +153,7 @@
         };
       }
       hasApiKey = s.hasApiKey;
+      aiUsage = s.aiUsage ?? aiUsage;
       allowOverride = s.reviewerMode === "advanced";
       paratextNavigation = s.paratextNavigation;
       logosNavigation = s.logosNavigation;
@@ -209,6 +212,37 @@
         return;
       }
       onClose();
+    } catch (e) {
+      saveMessage = e instanceof Error ? e.message : String(e);
+    } finally {
+      saving = false;
+    }
+  }
+
+  /** #477: "Used so far on this device: 7,159,086 tokens · ~$45.38 (since 14 Oct 2026)". */
+  function aiUsageSummary(usage: SettingsData["aiUsage"]): string {
+    const tokens = `${(usage.tokens ?? 0).toLocaleString()} tokens`;
+    const cost = `~$${(usage.estimatedCostUSD ?? 0).toFixed(2)}`;
+    const since = usage.since
+      ? ` (since ${new Date(usage.since).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })})`
+      : "";
+    return `${tokens} · ${cost}${since}`;
+  }
+
+  /** #477: zero the lifetime counter. Only the reset is sent, so unsaved
+   *  edits to the other fields are not saved by it. */
+  async function resetAiUsage() {
+    if (!(await askConfirmation({
+      title: "Reset the AI usage counter?",
+      body: "The tokens and estimated cost counted on this device go back to zero. The per-verse figures stored with each review are kept.",
+      confirmLabel: "Reset counter",
+    }))) return;
+    saving = true;
+    saveMessage = "";
+    try {
+      const result = await bridge.setSettings({ resetAiUsage: true });
+      aiUsage = result.aiUsage ?? { tokens: 0, estimatedCostUSD: 0, since: null };
+      saveMessage = "AI usage counter reset.";
     } catch (e) {
       saveMessage = e instanceof Error ? e.message : String(e);
     } finally {
@@ -664,6 +698,15 @@
           <div class="hint">Stored locally via your OS's secure storage — never sent anywhere except the endpoint above.</div>
         </div>
 
+        <div class="field">
+          <div class="field-label">Used so far on this device</div>
+          <div class="key-row">
+            <span class="usage-line" data-testid="ai-usage">{aiUsageSummary(aiUsage)}</span>
+            <button type="button" class="btn" on:click={resetAiUsage} disabled={saving}>Reset counter</button>
+          </div>
+          <div class="hint">Every request Bridge sent from this computer, as the provider reported it — the review, the semantic mapping and the gap-fill alignment for each verse (#476), at the prices in Bridge's table. An estimate, not the provider's bill.</div>
+        </div>
+
         <div class="save-row">
           <button class="btn primary" on:click={save} disabled={saving}>{saving ? "Saving…" : "Save"}</button>
           {#if saveMessage}<span class="save-msg">{saveMessage}</span>{/if}
@@ -1039,6 +1082,7 @@
   .key-row { display: flex; align-items: center; gap: 8px; }
   .key-row input { flex: 1; min-width: 0; }
   .key-row .btn { flex: none; }
+  .usage-line { flex: 1; min-width: 0; font-size: var(--fs-sm); }
   .btn { font-size: var(--fs-sm); font-weight: 600; padding: 8px 14px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); cursor: pointer; }
   .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .btn:disabled { opacity: 0.6; cursor: not-allowed; }

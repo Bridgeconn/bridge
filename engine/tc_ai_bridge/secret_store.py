@@ -693,23 +693,39 @@ class AppSettings:
         return ''
 
     def record_ai_usage(self, total_tokens: int = 0, estimated_cost_usd: float = 0.0) -> None:
-        """Persist Bridge-observed lifetime API usage for this Windows user/settings file."""
+        """Persist Bridge-observed lifetime API usage for this Windows user/settings file.
+
+        `since` (#477) is the UTC time the counter started: the first counted
+        call, or the last reset. A counter from before #477 has none until it
+        is reset."""
         usage = self.data.get('ai_usage_totals')
         if not isinstance(usage, dict):
             usage = {}
         usage = dict(usage)
+        if not usage.get('since') and not usage.get('tokens'):
+            usage['since'] = datetime.now(timezone.utc).isoformat()
         usage['tokens'] = int(usage.get('tokens', 0) or 0) + max(0, int(total_tokens or 0))
         usage['estimatedCostUSD'] = float(usage.get('estimatedCostUSD', 0.0) or 0.0) + max(0.0, float(estimated_cost_usd or 0.0))
         self.data['ai_usage_totals'] = usage
         self.save_sanitized()
 
+    def reset_ai_usage(self) -> None:
+        """#477: zero the lifetime counter and date the reset. The per-verse
+        figures stored on each review are untouched."""
+        self.data['ai_usage_totals'] = {
+            'tokens': 0, 'estimatedCostUSD': 0.0, 'since': datetime.now(timezone.utc).isoformat(),
+        }
+        self.save_sanitized()
+
     def get_ai_usage_totals(self) -> dict:
         usage = self.data.get('ai_usage_totals')
         if not isinstance(usage, dict):
-            return {'tokens': 0, 'estimatedCostUSD': 0.0}
+            return {'tokens': 0, 'estimatedCostUSD': 0.0, 'since': None}
+        since = usage.get('since')
         return {
             'tokens': max(0, int(usage.get('tokens', 0) or 0)),
             'estimatedCostUSD': max(0.0, float(usage.get('estimatedCostUSD', 0.0) or 0.0)),
+            'since': str(since) if isinstance(since, str) and since else None,
         }
 
 # Production settings are deliberately simple JSON values; secrets remain DPAPI-protected above.
