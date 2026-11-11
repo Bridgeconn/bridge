@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 
 const { listChecksForVerse, listIssueResolutions, resolveIssueResolutionFromParatext, paratextThreadsFor } =
@@ -15,7 +15,7 @@ vi.mock("../../api/bridgeClient", () => ({
 
 import TranslationHelpsReview from "../TranslationHelpsReview.svelte";
 import { get } from "svelte/store";
-import { checkRunRequest, nativeChecksByVerse, aiCheckReviewsByVerse } from "../../stores";
+import { checkRunRequest, nativeChecksByVerse, aiCheckReviewsByVerse, reviewerMode } from "../../stores";
 import type { CheckAutomationResult, IssueResolutionRecord, NativeCheckReview } from "../../types/finding";
 
 function check(overrides: Partial<NativeCheckReview> = {}): NativeCheckReview {
@@ -243,5 +243,36 @@ describe("TranslationHelpsReview resource indexes never asked for (#478)", () =>
     expect(container.querySelector(".preparing-notice .spin")).not.toBeNull();
     expect(screen.queryByRole("button", { name: "Prepare now" })).toBeNull();
     expect(get(checkRunRequest)).toBeNull();
+  });
+});
+
+// #486 follow-up: the Core check tab's label is the title; nothing inside it
+// repeats one.
+describe("TranslationHelpsReview heading (#486)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    nativeChecksByVerse.set({});
+    aiCheckReviewsByVerse.set({});
+    listIssueResolutions.mockResolvedValue({ items: [] });
+    reviewerMode.set("basic");
+  });
+  afterEach(() => reviewerMode.set("basic"));
+
+  it("draws no \"Translation helps\" heading, and keeps the no-checks line", async () => {
+    const { container } = mount([]);
+    expect(await screen.findByText("No translationNotes or translationWords checks are available for this verse.")).toBeInTheDocument();
+    expect(screen.queryByText(/Translation helps/)).toBeNull();
+    expect(screen.queryByText("Manual override")).toBeNull();
+    // Nothing left to carry: no empty title row either.
+    await waitFor(() => expect(container.querySelector(".translation-helps > .section-title")).toBeNull());
+  });
+
+  it("shows the Manual override badge only when manual override is on", async () => {
+    reviewerMode.set("advanced");
+    mount([]);
+    expect(await screen.findByText("Manual override")).toBeInTheDocument();
+    expect(screen.queryByText(/Translation helps/)).toBeNull();
+    reviewerMode.set("basic");
+    await waitFor(() => expect(screen.queryByText("Manual override")).toBeNull());
   });
 });

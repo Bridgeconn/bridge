@@ -556,11 +556,15 @@
 </script>
 
 <div class="section translation-helps">
-  <div class="section-title">
-    Translation helps
-    {#if $allowManualOverride}<span class="mode-badge">Manual override</span>{/if}
-    {#if loading}<span class="loading-label"><span class="spin" /> loading</span>{/if}
-  </div>
+  <!-- #486 follow-up: no "Translation helps" title inside the Core check tab
+       (the tab label is the title). The row is there only for what it still
+       carries: the Manual override badge and the loading mark. -->
+  {#if $allowManualOverride || loading}
+    <div class="section-title">
+      {#if $allowManualOverride}<span class="mode-badge">Manual override</span>{/if}
+      {#if loading}<span class="loading-label"><span class="spin" /> loading</span>{/if}
+    </div>
+  {/if}
 
   {#if aiReviewState === "stale"}
     <div class="stale-review-notice" role="status">
