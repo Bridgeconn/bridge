@@ -76,6 +76,9 @@
   import CheckMenu from "./lib/components/CheckMenu.svelte";
   import ViewMenu from "./lib/components/ViewMenu.svelte";
   import AlignmentMenu from "./lib/components/AlignmentMenu.svelte";
+  import FileMenu from "./lib/components/FileMenu.svelte";
+  import { parseGoTo, resolveVerse, verseMissing } from "./lib/goTo";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import EditorHeader from "./lib/components/EditorHeader.svelte";
   import { editingChapter, editingVerse, editSaving } from "./lib/verseEditor";
   import { languageQaChannel, nudgeLanguageQa, startLanguageQaInline } from "./lib/languageQaInline";
@@ -1525,8 +1528,34 @@
     selectedVerse.set(v);
   }
 
-  function gotoVerse(v: string) {
-    if (($chapterVerseNums[$currentChapter] ?? []).includes(v)) selectedVerse.set(v);
+  /** The editor header's Go to box: "" once the editor is there, else the
+   *  sentence to show. A verse is checked before the chapter is changed when
+   *  that chapter's verses are already known, and after it has loaded when
+   *  they are not. */
+  async function goTo(typed: string): Promise<string> {
+    const target = parseGoTo(typed, $currentChapter, $project?.chapters ?? []);
+    if (!target.ok) return target.error;
+    const { chapter, verse } = target;
+    const known = $chapterVerseNums[chapter];
+    if (verse !== null && known && !resolveVerse(verse, known)) return verseMissing(verse, chapter);
+    if (chapter !== $currentChapter) {
+      await activateChapter(chapter);
+      if ($currentChapter !== chapter) return "";
+    }
+    if (verse === null) return "";
+    const id = resolveVerse(verse, $chapterVerseNums[chapter] ?? []);
+    if (!id) return verseMissing(verse, chapter);
+    selectedVerse.set(id);
+    return "";
+  }
+
+  /** File > Exit: the same close the window's own button asks for. */
+  async function exitApp(): Promise<void> {
+    try {
+      await getCurrentWindow().close();
+    } catch {
+      window.close();
+    }
   }
 
   // The stores are named here, not read inside a function: Svelte 4 re-runs a
@@ -1661,14 +1690,13 @@
     onGoToDashboard={openDashboard}
     onOpenSettings={() => openSettings("ai")}
     onOpenConnections={() => openSettings("connections")}
-    onOpenExport={() => exportOpen.set(true)}
-    onGotoVerse={gotoVerse}
-    onChapterChange={switchChapter}
-    exportEnabled={$project !== null}
     bookSwitching={Boolean(openingBook)}
   >
-    <!-- #488: the editor's four menus, right of the name. -->
+    <!-- #488: the editor's menus, right of the name; File first. -->
     <svelte:fragment slot="menus">
+      <FileMenu onCloseEditor={openDashboard} onCloseProject={showProjectHome}
+        onExport={() => exportOpen.set(true)} exportDisabled={$project === null}
+        onSettings={() => openSettings("ai")} onExit={() => void exitApp()} busy={Boolean(openingBook)} />
       <ViewMenu />
       <CheckMenu
         disabled={Boolean(activeJobId) || $checkingProgress.running}
@@ -1830,10 +1858,9 @@
           <!-- #324: the verse list never goes below this width; the side
                panels shrink and then fold first (panelFit.ts; View brings one back). -->
           <div data-editor-pane="editor" class="editor-col" style={editorFrame || `min-width:${$verseMin}px`}>
-            <!-- #489: breadcrumb, chapter, Raw toggle and tools, above the scrolling verses. -->
-            <EditorHeader chapter={$currentChapter} total={$project?.chapters.length ?? "?"}
-              {projectName} onGoHome={showProjectHome} onGoToDashboard={openDashboard}
-              onBookChange={switchBook} bookSwitching={Boolean(openingBook)}>
+            <!-- #489: book, chapter picker, Go to, Raw toggle and tools, above the scrolling verses. -->
+            <EditorHeader onBookChange={switchBook} onChapterChange={switchChapter} onGoTo={goTo}
+              bookSwitching={Boolean(openingBook)}>
               <OverflowMenu label="Editor tools" actions={[
                 { id: "smaller", label: "Smaller text", disabled: $textScale === TEXT_SCALES[0] },
                 { id: "larger", label: "Larger text", disabled: $textScale === TEXT_SCALES[TEXT_SCALES.length - 1] },

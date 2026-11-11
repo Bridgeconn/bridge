@@ -41,17 +41,10 @@ function mount(overrides: Record<string, unknown> = {}) {
       onGoToDashboard: vi.fn(),
       onOpenSettings: vi.fn(),
       onOpenConnections: vi.fn(),
-      onOpenExport: vi.fn(),
-      onGotoVerse: vi.fn(),
-      onChapterChange: vi.fn(),
-      exportEnabled: true,
       ...overrides,
     },
   });
 }
-
-const prev = () => screen.getByLabelText("Previous chapter") as HTMLButtonElement;
-const next = () => screen.getByLabelText("Next chapter") as HTMLButtonElement;
 
 // #347: a different Paratext project active shows as an error on the Sync icon,
 // with the engine's sentence naming both projects as the tooltip.
@@ -85,95 +78,6 @@ describe("TopBar Paratext project mismatch (#347)", () => {
     expect(screen.getByRole("tooltip")).toHaveTextContent("Sync on · Paratext connected · Logos disconnected");
     expect(button).not.toHaveClass("sync-error");
     await fireEvent.mouseLeave(button);
-  });
-});
-
-describe("TopBar chapter navigation (issue #53)", () => {
-  beforeEach(() => {
-    engineInfo.mockResolvedValue({ bridgeVersion: "0.9.7", companionSchemaVersion: 15 });
-    openBook(["1", "2", "3", "4"]);
-    currentChapter.set("2");
-  });
-
-  it("steps to the previous and next chapter through the same handler as the dropdown", async () => {
-    const onChapterChange = vi.fn();
-    mount({ onChapterChange });
-
-    await fireEvent.click(next());
-    expect(onChapterChange).toHaveBeenCalledWith("3");
-
-    await fireEvent.click(prev());
-    expect(onChapterChange).toHaveBeenCalledWith("1");
-    expect(onChapterChange).toHaveBeenCalledTimes(2);
-  });
-
-  it("disables Previous on the first chapter", async () => {
-    currentChapter.set("1");
-    const onChapterChange = vi.fn();
-    mount({ onChapterChange });
-
-    expect(prev()).toBeDisabled();
-    expect(next()).not.toBeDisabled();
-    await fireEvent.click(prev());
-    expect(onChapterChange).not.toHaveBeenCalled();
-  });
-
-  it("disables Next on the last chapter", async () => {
-    currentChapter.set("4");
-    const onChapterChange = vi.fn();
-    mount({ onChapterChange });
-
-    expect(next()).toBeDisabled();
-    expect(prev()).not.toBeDisabled();
-    await fireEvent.click(next());
-    expect(onChapterChange).not.toHaveBeenCalled();
-  });
-
-  it("disables both ends for a single-chapter book", () => {
-    openBook(["1"]);
-    currentChapter.set("1");
-    mount();
-
-    expect(prev()).toBeDisabled();
-    expect(next()).toBeDisabled();
-  });
-
-  it("steps by position in the book's chapter list, not by number", async () => {
-    // Chapter ids are strings from the engine and are not guaranteed to be a
-    // clean 1..n run; stepping must agree with the dropdown the reader sees.
-    openBook(["1", "2", "2b", "3"]);
-    currentChapter.set("2");
-    const onChapterChange = vi.fn();
-    mount({ onChapterChange });
-
-    await fireEvent.click(next());
-    expect(onChapterChange).toHaveBeenCalledWith("2b");
-  });
-
-  it("disables both controls when the current chapter is not in the book", () => {
-    // Mid-book-switch: the chapter list has already changed under a chapter
-    // number that no longer exists. Stepping from nowhere would be a guess.
-    currentChapter.set("99");
-    mount();
-
-    expect(prev()).toBeDisabled();
-    expect(next()).toBeDisabled();
-  });
-
-  it("is labelled as a group and reachable by keyboard", () => {
-    mount();
-    expect(screen.getByRole("group", { name: "Chapter navigation" })).toBeTruthy();
-    // Real <button>s, so they are tab-stops and Enter/Space activate them.
-    expect(prev().tagName).toBe("BUTTON");
-    expect(next().tagName).toBe("BUTTON");
-    expect(prev()).toHaveAttribute("title");
-    expect(next()).toHaveAttribute("title");
-  });
-
-  it("is absent outside the editor screen", () => {
-    mount({ screen: "dashboard" });
-    expect(screen.queryByLabelText("Previous chapter")).toBeNull();
-    expect(screen.queryByLabelText("Next chapter")).toBeNull();
   });
 });
 
@@ -244,29 +148,37 @@ describe("TopBar menus slot (#488)", () => {
     currentChapter.set("1");
   });
 
-  it("shows the menus between the name and the chapter picker on the editor screen", async () => {
-    const { container } = render(TopBarMenusFixture, { props: { screen: "editor" } });
+  it("shows the menus right after the name on the editor screen, then the project's name", async () => {
+    const onGoToDashboard = vi.fn();
+    const { container } = render(TopBarMenusFixture, { props: { screen: "editor", onGoToDashboard } });
     const menus = screen.getByRole("group", { name: "Menus" });
     expect(menus).toContainElement(screen.getByRole("button", { name: "View" }));
     const brand = container.querySelector(".brand") as HTMLElement;
-    const chapters = screen.getByRole("group", { name: "Chapter navigation" });
+    const name = screen.getByRole("button", { name: "Philippians" });
     expect(brand.compareDocumentPosition(menus) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(menus.compareDocumentPosition(chapters) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(menus.compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The project's name opens the project page.
+    expect(name).toHaveAttribute("title", "Philippians: open the project page");
+    await fireEvent.click(name);
+    expect(onGoToDashboard).toHaveBeenCalledOnce();
   });
 
-  // #489: the editor's breadcrumb moved to the editor panel's header; the
-  // chapter picker and the Go to box stay, and the other screens keep theirs.
-  it("has no breadcrumb on the editor screen, and keeps the chapter picker and Go to", () => {
+  // 2026-11-11, third round: the chapter picker and Go to are in the editor
+  // panel's header; Export and Settings are in the File menu.
+  it("has no breadcrumb, chapter picker, Go to, Export button or Settings gear on the editor screen", () => {
     render(TopBarMenusFixture, { props: { screen: "editor" } });
     expect(screen.queryByRole("navigation", { name: "Navigation" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Projects" })).toBeNull();
-    expect(screen.getByRole("group", { name: "Chapter navigation" })).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("Go to 1:4")).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Chapter navigation" })).toBeNull();
+    expect(screen.queryByPlaceholderText("Go to 1:4")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Export" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Settings" })).toBeNull();
   });
 
   it("keeps the breadcrumb on the dashboard", () => {
     render(TopBarMenusFixture, { props: { screen: "dashboard" } });
     expect(screen.getByRole("navigation", { name: "Navigation" })).toContainElement(screen.getByRole("button", { name: "Projects" }));
+    expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
   });
 
   it("shows no menus off the editor screen", () => {

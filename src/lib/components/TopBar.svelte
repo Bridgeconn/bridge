@@ -35,7 +35,7 @@
     }
   }
   import { bridge, type EngineInfo } from "../api/bridgeClient";
-  import { project, currentChapter, navigationStatus, bookAssignments, localUserId, assignedToMe } from "../stores";
+  import { navigationStatus } from "../stores";
   import { projectRoles, ROLE_NAMES } from "../projectRole";
 
   export let screen: "home" | "dashboard" | "validation" | "review" | "editor" | "report";
@@ -44,14 +44,8 @@
   export let onGoToDashboard: () => void;
   export let onOpenSettings: () => void;
   export let onOpenConnections: () => void;
-  export let onOpenExport: () => void;
-  // Project (dashboard) screen only: opens the whole-collection QA report.
-  export let onGotoVerse: (verse: string) => void;
-  export let onChapterChange: (chapter: string) => void;
-  export let exportEnabled: boolean;
   export let bookSwitching = false;
 
-  let gotoValue = "";
   // Best-effort: same call SettingsModal already makes; a slow or failed
   // lookup should never hold up the top bar, so failure just leaves the
   // version off rather than showing an error here.
@@ -64,36 +58,6 @@
     }
   });
 
-  function jump() {
-    const parts = gotoValue.trim().split(":");
-    const chapterPart = parts.length > 1 ? parts[0] : null;
-    const versePart = parts[parts.length - 1];
-    if (chapterPart && chapterPart !== $currentChapter) {
-      onChapterChange(chapterPart);
-    }
-    if (versePart) onGotoVerse(versePart);
-  }
-
-  function handleChapterSelect(e: Event) {
-    const value = (e.target as HTMLSelectElement).value;
-    onChapterChange(value);
-  }
-
-  /* Previous/next chapter (issue #53). "Previous" and "next" are defined by
-     position in the same list the dropdown renders, not by numeric value, so
-     stepping always agrees with what the reader can see -- and a book whose
-     chapters are not a clean 1..n run still steps sensibly. Both routes call
-     onChapterChange, so unsaved-edit handling, project, book and view mode
-     follow whatever the dropdown already does, by construction. */
-  $: chapters = $project?.chapters ?? [];
-  $: chapterIndex = chapters.indexOf($currentChapter);
-  $: hasPreviousChapter = chapterIndex > 0;
-  $: hasNextChapter = chapterIndex >= 0 && chapterIndex < chapters.length - 1;
-
-  function stepChapter(delta: -1 | 1): void {
-    const target = chapters[chapterIndex + delta];
-    if (target !== undefined) onChapterChange(target);
-  }
 </script>
 
 <div class="topbar no-print" class:home-bar={screen === "home"} class:desktop-bar={desktop} data-tauri-drag-region>
@@ -107,9 +71,13 @@
     <div class="menus" role="group" aria-label="Menus"><slot name="menus" /></div>
   {/if}
   {#if screen === "editor"}
-    <!-- #489: the editor's breadcrumb (Projects › project › book) is in the
-         editor panel's header (EditorHeader.svelte), not here. -->
+    <!-- 2026-11-11: the editor has no breadcrumb. The project's name is here
+         and opens the project page; Close editor and Close project are in the
+         File menu; the book, the chapter picker and Go to are in the editor
+         panel's header (EditorHeader.svelte). -->
     <div class="divider" />
+    <button type="button" class="project-name" title={`${projectName}: open the project page`}
+      on:click={onGoToDashboard} disabled={bookSwitching}>{projectName}</button>
     {#if $projectRoles?.projectRole}
       <!-- #279: a role given on this project, which overrides the installation role here. -->
       <span class="project-role" title="Your role on this project; it decides what you can do here">
@@ -142,41 +110,6 @@
   </nav>
   {/if}
 
-  {#if screen === "editor"}
-    <div class="chapter-nav" role="group" aria-label="Chapter navigation">
-      <button
-        type="button"
-        class="chapter-step"
-        disabled={!hasPreviousChapter}
-        title={hasPreviousChapter ? "Previous chapter" : "Already at the first chapter"}
-        aria-label="Previous chapter"
-        on:click={() => stepChapter(-1)}
-      >‹</button>
-      <!-- Sized by its widest option, not a fixed 72px: "Ch 119 ●" was cut to
-           "Ch 11" at that width, and the in-app text size makes it wider still (#209). -->
-      <select class="select chapter-select" value={$currentChapter} on:change={handleChapterSelect}>
-        {#each chapters as ch}
-          <option value={ch}>Ch {ch}{assignedToMe($bookAssignments, ch, $localUserId) ? " ●" : ""}</option>
-        {/each}
-      </select>
-      <button
-        type="button"
-        class="chapter-step"
-        disabled={!hasNextChapter}
-        title={hasNextChapter ? "Next chapter" : "Already at the last chapter"}
-        aria-label="Next chapter"
-        on:click={() => stepChapter(1)}
-      >›</button>
-    </div>
-    <div class="goto">
-      <input
-        bind:value={gotoValue}
-        placeholder="Go to 1:4"
-        on:keydown={(e) => e.key === "Enter" && jump()}
-      />
-    </div>
-  {/if}
-
   <div class="grow" data-tauri-drag-region />
   <!-- Navigation sync (Paratext / Logos following the current verse) only
        means something where there is a current verse: the editor, Alignment
@@ -196,10 +129,10 @@
     <span class="sync-dot" class:connected={$navigationStatus.enabled} aria-hidden="true"></span>
   </button>
   {/if}
-  {#if screen === "editor"}
-    <button class="btn primary" disabled={!exportEnabled} on:click={onOpenExport}>Export</button>
-  {/if}
+  <!-- The editor's Export and Settings are in its File menu. -->
+  {#if screen !== "editor"}
   <button class="btn ghost settings-icon" aria-label="Settings" use:tooltip={"Settings"} on:click={onOpenSettings}><UiIcon name="settings" /></button>
+  {/if}
   {#if desktop}
     <div class="window-controls" role="group" aria-label="Window controls">
       <button aria-label="Minimize window" title="Minimize" on:click={() => windowAction("minimize")}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10"/></svg></button>
@@ -227,26 +160,10 @@
   .crumb-close :global(svg) { width: 15px; height: 15px; }
   .crumb-close:hover:not(:disabled), .crumb-close:focus-visible { background: var(--danger-bg); color: var(--danger); }
   .crumb-close:disabled { opacity: .5; cursor: not-allowed; }
+  .project-name { min-width: 3em; max-width: 260px; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; background: transparent; color: var(--text); font: inherit; font-size: var(--fs-sm); font-weight: 600; padding: 4px 6px; border-radius: 6px; cursor: pointer; }
+  .project-name:hover:not(:disabled) { background: var(--surface-2); }
+  .project-name:disabled { cursor: not-allowed; opacity: 0.6; }
   .project-role { padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--text-2); font-size: var(--fs-2xs); font-weight: 650; white-space: nowrap; flex-shrink: 0; }
-  /* Chapter stepper (issue #53): the two arrows read as one control with the
-     dropdown between them, so the reader's eye finds prev/next where the
-     chapter already is rather than somewhere else in the bar. */
-  .chapter-nav { display: flex; align-items: center; gap: 3px; flex-shrink: 0; }
-  .chapter-step {
-    height: var(--control-h); width: 24px; flex-shrink: 0; box-sizing: border-box;
-    display: inline-flex; align-items: center; justify-content: center;
-    font: inherit; font-size: var(--fs-md); line-height: 1;
-    border: 1px solid var(--border); border-radius: 6px;
-    background: var(--surface); color: var(--text); cursor: pointer;
-  }
-  .chapter-step:hover:not(:disabled), .chapter-step:focus-visible {
-    border-color: var(--border-strong); background: var(--surface-2);
-  }
-  .chapter-step:disabled { opacity: .4; cursor: not-allowed; }
-  .select { height: var(--control-h); box-sizing: border-box; border: 1px solid var(--border); border-radius: 6px; font: inherit; font-size: var(--fs-sm); line-height: 1; padding: 0 6px; background: var(--surface); color: var(--text); flex-shrink: 0; }
-  .chapter-select { min-width: 72px; width: auto; }
-  .goto { display: inline-flex; align-items: center; gap: 6px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 0 8px; height: var(--control-h); box-sizing: border-box; font: inherit; line-height: 1; width: 150px; flex-shrink: 0; }
-  .goto input { border: none; background: transparent; font: inherit; font-size: var(--fs-sm); line-height: 1; color: var(--text); outline: none; width: 100%; }
   .grow { flex: 1; }
   .sync-status { display: inline-flex; align-items: center; gap: 4px; height: var(--control-h); box-sizing: border-box; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--text-2); font: inherit; font-size: var(--fs-xs); font-weight: 600; line-height: 1; cursor: pointer; flex-shrink: 0; }
   .sync-status:hover { background: var(--surface-2); }
@@ -257,8 +174,6 @@
      them; `font: inherit` stops the browser's default button font setting a
      different line box. */
   .btn { height: var(--control-h); box-sizing: border-box; display: inline-flex; align-items: center; font: inherit; font-size: var(--fs-sm); font-weight: 600; line-height: 1; padding: 0 12px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); cursor: pointer; flex-shrink: 0; }
-  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .btn.primary:disabled { background: #B9C6E0; border-color: #B9C6E0; color: #fff; cursor: not-allowed; }
   .btn.ghost { background: transparent; border-color: var(--border); }
   .sync-status, .btn.settings-icon { position: relative; display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 8px; background: transparent; transition: color .15s, background .15s; }
   .sync-status:hover, .btn.settings-icon:hover, .sync-status:focus-visible, .btn.settings-icon:focus-visible { color: var(--accent); background: var(--accent-bg); }
@@ -271,7 +186,6 @@
   .sync-status.sync-error { color: var(--danger); }
   .sync-status.sync-error .sync-dot { background: var(--danger); }
   @media (max-width: 900px) {
-    .goto { width: 110px; }
     .crumb { max-width: 130px; }
   }
   .topbar { min-width: 0; }

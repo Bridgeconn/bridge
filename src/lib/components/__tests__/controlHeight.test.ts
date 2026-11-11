@@ -27,14 +27,16 @@ describe("control height (#377)", () => {
 
   it("sizes every top-bar control from the token, with an inherited font and a flat line box", () => {
     const topBar = component("TopBar");
-    for (const selector of [".btn", ".sync-status", ".select", ".goto", ".chapter-step"]) {
+    // The chapter picker, its steppers and Go to moved to the editor panel's
+    // header on 2026-11-11 (EditorHeader.svelte, 24px like that header's tools).
+    for (const selector of [".btn", ".sync-status"]) {
       const block = rule(topBar, selector);
       expect(block, selector).toContain("height: var(--control-h)");
       expect(block, selector).toContain("font: inherit");
       expect(block, selector).toContain("line-height: 1");
       expect(block, selector).toContain("box-sizing: border-box");
     }
-    for (const selector of [".btn", ".sync-status", ".goto", ".chapter-step"]) {
+    for (const selector of [".btn", ".sync-status"]) {
       const block = rule(topBar, selector);
       expect(block, selector).toContain("display: inline-flex");
       expect(block, selector).toContain("align-items: center");

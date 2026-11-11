@@ -288,7 +288,7 @@ closes the auxiliary window and follows the existing sidecar shutdown path.
 flowchart TB
   Home["home: ImportScreen<br/>project list, import wizard, file drop"] --> Dash
   Dash["dashboard: ProjectDashboard<br/>book list with progress, per-book project.report panel,<br/>CollectionQaPanel (multi-book only): one Check button opening CollectionCheckDialog (the checks, Start), then<br/>collection.runChecks / qaStatus / pauseChecks / cancelChecks, never automatic (#215, #490)"] --> Report["report: ProjectReportScreen<br/>collection-wide report.generate, filters, charts, export, triage overlay"]
-  Dash --> Editor["editor: EditorHeader (breadcrumb, Chapter N of M, Raw USFM, overflow menu)<br/>over VerseList, with the side panels to its right: Source, Reference, Paratext, Review"]
+  Dash --> Editor["editor: EditorHeader (book, chapter picker of N, Go to, Raw USFM, overflow menu)<br/>over VerseList, with the side panels to its right: Source, Reference, Paratext, Review"]
   Editor --> AR["review: AlignmentReview shell<br/>tabs Word, Semantic, Passage, QA"]
   Editor --> AM["AlignmentModal (Align words)<br/>translationCore-compatible word alignment"]
   AR --> AM
@@ -297,7 +297,7 @@ flowchart TB
   Editor --> RefP["ReferencePanel<br/>a reference Bible folder beside the text"]
   Editor --> CVM["CrossVerseAlignmentModal (Cross-verse alignment)<br/>Align automatically; AutoAlignChapterButton runs the chapter job,<br/>started from the Alignment menu and shown as a strip only while it has something to show"]
   AR --> QA["AlignmentQaMode (Stage 9A)<br/>QaFindingList, QaFindingDetail, EvidenceInspector, CorrectionReviewPanel (9B)"]
-  Top["TopBar. Editor: the View, Check, Bookmarks and Alignment menus, the chapter picker and Go to box, Sync, Export, Settings.<br/>Other screens: the breadcrumb (Projects, project, screen) and Settings"]
+  Top["TopBar. Editor: the File, View, Check, Bookmarks and Alignment menus, the project name (opens the project page), Sync.<br/>Other screens: the breadcrumb (Projects, project, screen) and Settings"]
 ```
 
 Global chrome: `TopBar.svelte`; modals `SettingsModal` (AI, quality, connections, resources,
@@ -307,11 +307,13 @@ maps, `verseKey()`), `reviewStores.ts` (Stage 9A queue), `alignmentUi.ts`, `vers
 
 **Editor chrome (2026-11-11, #486 to #490).** One top bar, no second bar and no side rail.
 
-- **Top bar menus** (editor screen only, right of the name): `ViewMenu` shows and hides the
-  four side panels and is the only place that does; `CheckMenu` runs the whole book, the
+- **Top bar menus** (editor screen only, right of the name): `FileMenu` holds Close editor
+  (the project page), Close project (the project list), Export project, Settings and Exit;
+  `ViewMenu` shows and hides the four side panels and is the only place that does; `CheckMenu` runs the whole book, the
   chapter, or Greek Room on demand; Bookmarks opens bookmarks and recent chapters;
   `AlignmentMenu` holds Alignment Review, Cross-verse alignment and Align chapter with AI.
-  The gear in the top bar is the only Settings entry.
+  After the menus the bar shows the project's name, which opens the project page. In the
+  editor, Export and Settings are File menu entries only; the other screens keep the gear.
 - **Side panels** are `source`, `reference`, `paratext` and `review` (`SidePanelId` in
   `editorPrefs.ts`). A panel folded because the window is too narrow (`panelFit.ts`) is
   marked in the View menu and on its button, and choosing it brings it back.
@@ -319,10 +321,12 @@ maps, `verseKey()`), `reviewStores.ts` (Stage 9A queue), `alignmentUi.ts`, `vers
   open flag and no separate window; the status bar's Language QA button opens the Review
   panel on that tab. Layouts saved while it was a panel are read with the retired id taken
   out (`withoutRetiredPanels` in `editorPrefs.ts`, used by `projectWorkspace.ts`).
-- **Editor header** (`EditorHeader.svelte`), above the scrolling verses: the breadcrumb
-  (Projects, project, book; the book is the book switcher in a collection), "Chapter N of M"
-  in the middle, then Raw USFM and the overflow menu. The chapter picker and the Go to box
-  stay in the top bar.
+- **Editor header** (`EditorHeader.svelte`), above the scrolling verses: the book (the book
+  switcher in a collection), the chapter picker with its steppers and "of N", the Go to box,
+  then Raw USFM (an icon) and the overflow menu. It has no breadcrumb. Go to is checked
+  before the editor moves (`goTo.ts`): an entry that is not a chapter or verse, a chapter
+  the book does not have and a verse the chapter does not have each show a sentence under
+  the box; a verse inside a bridge or lettered segment goes to that row.
 - **Dashboard check.** The Check button and its dialog (`CollectionCheckDialog`) are part of
   the Collection QA bar, which appears only for a multi-book collection. A single-book
   project has no such button: its book is checked with Run QA on the book's row.

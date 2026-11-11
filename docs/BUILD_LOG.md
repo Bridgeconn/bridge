@@ -25190,3 +25190,33 @@ changed); the lost rail counts are accepted.
 Verified: `npm run check` 0 errors, 0 warnings; `npm run test` 128 files, 1244
 tests passed; `npm run build` passed; `cargo check` passed; `cargo test` 19
 passed. Not verified at the time of the commit: the desktop app.
+
+### Fourth round, same day: File menu, project name, editor header (#488, #489)
+
+From the maintainer's look at the running dev build.
+
+- **File menu** (`FileMenu.svelte`), first of the editor's menus: Close editor (the
+  project page), Close project (the project list), Export project, Settings, Exit. The
+  Export button and the Settings gear are gone from the editor's top bar; the other
+  screens keep the gear, since they have no menus. Exit asks the window to close, the
+  same call as the window's own close button.
+- **Project name in the top bar**, after the menus; it opens the project page. The
+  editor has no breadcrumb anywhere now.
+- **Editor header** is: book (the switcher in a collection), ‹ chapter › "of N", Go to,
+  Raw USFM as an icon (its name is the tooltip and the accessible name), overflow menu.
+  The chapter picker, its steppers (#53) and Go to moved here from the top bar; their
+  tests moved from `TopBar.test.ts` to `EditorHeader.test.ts`. They are 24px here, like
+  the header's other tools, so `controlHeight.test.ts` (#377) no longer lists them as
+  top-bar controls.
+- **Go to is validated** (`goTo.ts`, `goTo` in `App.svelte`). Before this, an entry that
+  matched nothing did nothing, and "3:4" from another chapter changed the chapter and
+  then looked the verse up in the old chapter's list, so the verse was dropped. Now: an
+  entry that is not a verse or chapter:verse, a chapter the book does not have, and a
+  verse the chapter does not have each show a sentence under the box and keep what was
+  typed. A verse is checked before the chapter changes when that chapter's verses are
+  already known, and after it loads when they are not (the chapter has then changed and
+  the sentence says the verse is not in it). A typed "2" goes to a "1-3" row.
+
+Verified: `npm run check` 0 errors, 0 warnings; `npm run test` 130 files, 1252 tests
+passed; `npm run build` passed. `cargo` and the engine suite not run: no shell or engine
+file changed. Not verified at the time of the commit: the desktop app.

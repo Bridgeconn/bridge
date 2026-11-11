@@ -16,6 +16,7 @@
     unarchive: "M3 3h18v5H3zM5 8v13h14V8M12 18v-7m-3 3 3-3 3 3",
     delete: "M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7",
     close: "M6 6l12 12M6 18 18 6",
+    code: "m8 7-5 5 5 5M16 7l5 5-5 5M14 4l-4 16",
     assign: "M16 11a4 4 0 1 0-8 0 4 4 0 0 0 8 0ZM4 21a8 8 0 0 1 12-6.9M19 16v6m-3-3h6",
     play: "M7 4v16l13-8z",
     runQa: "M9 4h6v2H9zM9 5H7a1 1 0 0 0-1 1v13a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2M9 13l2 2 4-4",
