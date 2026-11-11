@@ -553,6 +553,13 @@ export const bridge = {
     return call("languageQa.status", params);
   },
 
+  /** How many rows of one list a chapter holds: the same status read with no
+   * rows asked for (limit 0), for the count on the panel's scope switch. */
+  async languageQaChapterCount(projectPath: string, chapter: string, view: LanguageQaView = "findings"): Promise<number> {
+    const status = await call<LanguageQaStatus>("languageQa.status", { projectPath, offset: 0, limit: 0, view, chapter });
+    return status.totalFindings;
+  },
+
   /** Every decision recorded on this verse's Language QA findings (or one of
    * them), oldest first. Read-only. */
   languageQaHistory(

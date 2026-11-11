@@ -26,8 +26,10 @@ const wordsAddCall = vi.fn();
 const verseHistoryCall = vi.fn();
 const verseCall = vi.fn();
 const decideCall = vi.fn();
+const chapterCountCall = vi.fn();
 vi.mock("../../api/bridgeClient", () => ({ bridge: {
   languageQaStatus: (...args: unknown[]) => statusCall(...args),
+  languageQaChapterCount: (...args: unknown[]) => chapterCountCall(...args),
   languageQaHistory: (...args: unknown[]) => historyCall(...args),
   languageQaLearnedList: (...args: unknown[]) => learnedListCall(...args),
   languageQaLearnedForget: (...args: unknown[]) => learnedForgetCall(...args),
@@ -110,12 +112,44 @@ beforeEach(() => {
   verseCall.mockReset().mockResolvedValue({ projectPath: "C:/project", generation: 1, state: "completed",
     chapter: "1", verse: "1", findings: [], hidden: [] });
   decideCall.mockReset().mockResolvedValue({});
+  chapterCountCall.mockReset().mockResolvedValue(4);
   publish();
 });
 
 afterEach(() => {
   languageQaChannel.set({ projectPath: "", status: null, error: "" });
   selectedVerse.set(null);
+});
+
+describe("counts on the scope switch", () => {
+  const badge = (scope: string) => document.querySelector(`[data-scope-count="${scope}"]`)?.textContent ?? null;
+
+  it("shows the verse's, the chapter's and the book's finding counts, and keeps each button's name", async () => {
+    currentChapter.set("2");
+    selectedVerse.set("3");
+    verseCall.mockResolvedValue({ projectPath: "C:/project", generation: 1, state: "completed", chapter: "2", verse: "3",
+      findings: [lqaFinding({ id: "a", chapter: "2", verse: "3" }), lqaFinding({ id: "b", chapter: "2", verse: "3" })], hidden: [] });
+    publish({ totalFindings: 31 });
+    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
+    await waitFor(() => expect(badge("verse")).toBe("2"));
+    await waitFor(() => expect(badge("chapter")).toBe("4"));
+    expect(badge("book")).toBe("31");
+    expect(chapterCountCall).toHaveBeenCalledWith("C:/project", "2", "findings");
+    expect(screen.getByRole("radio", { name: "Chapter" })).toHaveAttribute("title", "4 in this chapter");
+    // The count read is not a page read: the verse scope still reads no page.
+    expect(statusCall).not.toHaveBeenCalled();
+  });
+
+  it("has no verse count without a selected verse, and reads the chapter's count again when a new pass lands", async () => {
+    currentChapter.set("2");
+    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
+    await waitFor(() => expect(badge("chapter")).toBe("4"));
+    expect(badge("verse")).toBeNull();
+    chapterCountCall.mockResolvedValue(1);
+    publish({ generation: 2 });
+    await waitFor(() => expect(badge("chapter")).toBe("1"));
+    expect(chapterCountCall).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("Language QA tab (#487)", () => {

@@ -249,6 +249,34 @@
     }
   }
 
+  // Counts on the scope switch (2026-11-11): how many rows of the list on
+  // show each scope holds, before the Kinds filter. The verse and the book
+  // counts are already known; the chapter's is one unpaged read (limit 0),
+  // made again when a pass lands, a decision changes the list or the chapter
+  // changes.
+  let chapterCount: { key: string; total: number } | null = null;
+  $: chapterCountKey = active && live ? `${view}|${aboutStamp}|${$currentChapter}|${live.totalFindings}|${status?.recheckCount ?? 0}|${status?.falsePositiveCount ?? 0}` : "";
+  $: if (chapterCountKey) void loadChapterCount(chapterCountKey, $currentChapter);
+  async function loadChapterCount(key: string, chapter: string): Promise<void> {
+    try {
+      const total = await bridge.languageQaChapterCount(projectPath, chapter, view);
+      if (!disposed && key === chapterCountKey) chapterCount = { key, total };
+    } catch {
+      // The badge is left out; the list itself reports a failed read.
+    }
+  }
+  $: bookCount = !live ? null : view === "findings" ? live.totalFindings
+    : view === "recheck" ? (status?.recheckCount ?? 0) : (status?.falsePositiveCount ?? 0);
+  $: scopeCounts = {
+    verse: view === "findings" && $selectedVerse ? verseCount : null,
+    chapter: chapterCount && chapterCount.key === chapterCountKey ? chapterCount.total : null,
+    book: bookCount,
+  } as Record<ListScope, number | null>;
+  const SCOPE_WHERE: Record<ListScope, string> = { verse: "this verse", chapter: "this chapter", book: "this book" };
+  const SCOPES: { value: ListScope; label: string }[] = [
+    { value: "verse", label: "Verse" }, { value: "chapter", label: "Chapter" }, { value: "book", label: "Book" },
+  ];
+
   function showScope(next: ListScope): void {
     listScope = next;
     offset = 0;
@@ -835,9 +863,11 @@
             </button>
           </div>
           <div class="scope-switch segmented" role="radiogroup" aria-label="Show findings for">
-            {#each [["verse", "Verse"], ["chapter", "Chapter"], ["book", "Book"]] as [value, label]}
+            {#each SCOPES as { value, label } (value)}
+              {@const count = scopeCounts[value]}
               <button role="radio" aria-checked={listScope === value} disabled={value === "verse" && view !== "findings"}
-                on:click={() => showScope(value === "verse" ? "verse" : value === "chapter" ? "chapter" : "book")}>{label}</button>
+                aria-label={label} title={count === null ? undefined : `${count} in ${SCOPE_WHERE[value]}`}
+                on:click={() => showScope(value)}>{label}{#if count !== null}<span class="scope-count" class:none={count === 0} data-scope-count={value}>{count}</span>{/if}</button>
             {/each}
           </div>
           {#if allCategories.length}
@@ -1259,6 +1289,8 @@
   .segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
   .segmented button { border: 0; border-radius: 0; border-right: 1px solid var(--border); background: var(--surface); padding: 3px 8px; white-space: nowrap; }
   .segmented button:last-child { border-right: 0; }
+  .scope-count { display: inline-block; min-width: 16px; margin-left: 5px; padding: 0 5px; border-radius: 8px; background: var(--warning-bg); color: var(--warning); font-size: var(--fs-3xs); font-weight: 700; line-height: 16px; text-align: center; }
+  .scope-count.none { background: var(--surface-2, var(--border)); color: inherit; opacity: .7; }
   .segmented button[aria-selected="true"], .segmented button[aria-checked="true"] { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
   .kinds { position: relative; }
   .kinds-btn { padding: 3px 8px; border-radius: 6px; white-space: nowrap; }
