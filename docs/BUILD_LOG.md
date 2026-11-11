@@ -24860,3 +24860,25 @@ batch gate run recorded with #486/#487 below). Not verified: the width at
 1366x768 and 1920x1080, that the source columns and word bank use the extra
 width, and that no horizontal scrollbar appears -- jsdom does not lay out,
 so these are desktop-app checks.
+
+## 2026-11-11 — Review panel: no Align / Edit in the header, no title repeated inside a tab (#486)
+
+Frontend only, `ReviewPanel.svelte` and its test. The header bar keeps the
+reference and the open count; the ⇄ Align and ✎ Edit glyph buttons are gone
+(both actions are on the verse in the editor), with their handler, the
+`alignmentUi` import and their CSS. Inside the tabs: the "Greek Room QA"
+heading is gone and its live "running" spinner now sits beside the run button
+(button, chapter summary line and findings unchanged); the "Language QA"
+heading is gone; the AI review row's "🤖 AI review:" label reads "Run for:"
+before the Verse / Chapter / Book buttons, and the empty-state line points at
+those buttons instead of saying "below". The "AI explanation" and "Already
+computed in background pass" headings stay: they name a section, not the tab.
+
+Not done, raised for Joel: the Core check tab's body is
+`TranslationHelpsReview.svelte`, whose "Translation helps" heading is the
+same kind of repeat; that file is outside this issue's list.
+
+Verified: `npm run check`, `npm run test`, `npm run build` (batch gate run,
+see #487 below); the test asserts the bar has no action buttons and that no
+tab body carries a `.section-title` starting with its own name. Not
+verified: the desktop app at 1366x768.

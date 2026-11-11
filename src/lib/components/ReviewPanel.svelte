@@ -31,7 +31,6 @@
     recheckingKey, recheckedKey, startVerseEdit, cancelVerseEdit, setVerseEditSavedHook,
     setPendingAcceptFinding, applyLanguageQaSuggestedFix,
   } from "../verseEditor";
-  import { alignmentOpen, alignmentKey, openAlignment } from "../alignmentUi";
   import { findingSpan, revealFinding } from "../findingFocus";
   import { askConfirmation } from "../confirmAction";
   import { greekRoomChapterSummary, greekRoomVerseRunning, runVerseGreekRoom } from "../verseChecks";
@@ -523,18 +522,14 @@
   });
 
 
-  function startEdit() {
-    startVerseEdit($currentChapter, $selectedVerse ?? "");
-  }
-
   /** Edit from a finding's card (#402): the verse opens with the finding's
    * words selected, or plain when the finding has no span. */
   function editFinding(finding: QaFinding) {
     startVerseEdit($currentChapter, $selectedVerse ?? "", findingSpan(finding));
   }
 
-  // "Accept and edit" on a specific Greek Room finding: same edit session
-  // as startEdit, but remembers which finding this was so a successful
+  // "Accept and edit" on a specific Greek Room finding: the same edit
+  // session as the editor's Edit, but remembers which finding this was so a successful
   // save can record it as "accepted" (see setVerseEditSavedHook below)
   // rather than leaving it open for the next recheck to silently re-decide.
   // The caret lands on the finding's span (#402).
@@ -658,26 +653,14 @@
 <div class="panel">
   {#if $selectedVerse}
     <!-- The shared header bar (#379): the reference, then in its actions
-         slot the open count and the two per-verse actions as glyph buttons
-         with the action as tooltip (item 6: one line, like every panel; the
-         glyph-with-tooltip shape is #375's). The AI run is not here -- it
-         lives in the AI review tab with its progress and errors, so a run can
-         be started and watched in one place. -->
+         slot the open count (item 6: one line, like every panel). The Align
+         and Edit glyph buttons that sat here until #486 are gone: both
+         actions are on the verse in the editor. The AI run is not here
+         either -- it lives in the AI review tab with its progress and
+         errors, so a run can be started and watched in one place. -->
     <PanelHeader id="review" label="the review panel"
       title={`Review ${($project?.bookId ?? "").toUpperCase()} ${$currentChapter}:${$selectedVerse}`}>
       <span class="open-count" title={`${openFindingCount} open finding(s) on this verse`}>{openFindingCount} open</span>
-      <button
-        class="align-btn" aria-label="Align words"
-        on:click={() => openAlignment($currentChapter, $selectedVerse ?? "")}
-        disabled={$checkingProgress.running || Boolean($editingChapter) || $editSaving || Boolean($recheckingKey)}
-        title={$checkingProgress.running ? "Align words: wait for background checking to finish" : "Align words: review the word alignment of this verse"}
-      >⇄</button>
-      <button
-        class="edit-btn" aria-label="Edit verse"
-        on:click={startEdit}
-        disabled={$checkingProgress.running || Boolean($editingChapter) || $editSaving || Boolean($recheckingKey)}
-        title={$checkingProgress.running ? "Edit verse: wait for background checking to finish" : "Edit verse: change the text of this verse"}
-      >✎</button>
     </PanelHeader>
 
     {#if hasPinnedStatus}
@@ -774,17 +757,16 @@
         {@const grAcceptedFindings = grFindings.filter((f) => f.status === "accepted")}
         <div class="tab-panel" role="tabpanel">
           <div class="section">
-            <div class="section-title">
-              Greek Room QA
-              {#if greekRoomChecking}
-                <span class="live"><span class="spin" /> running</span>
-              {/if}
-            </div>
+            <!-- #486: no title inside the tab (the tab label is the title); the
+                 run button, its live state and the chapter line stay. -->
             <div class="greek-room-run">
               <button type="button" class="run-greek-room"
                 disabled={!$selectedVerse || greekRoomChecking || $checkingProgress.running || Boolean($editingChapter) || $editSaving}
                 title={$checkingProgress.running ? "Wait for background checking to finish" : "Run Greek Room's checks on this verse"}
                 on:click={runGreekRoomHere}>{greekRoomRan ? "Run Greek Room again" : "Run Greek Room on this verse"}</button>
+              {#if greekRoomChecking}
+                <span class="live"><span class="spin" /> running</span>
+              {/if}
               {#if !greekRoomRan && !greekRoomChecking}
                 <span class="not-run">Not run on this verse yet. The Checks menu runs it for the chapter or the book.</span>
               {/if}
@@ -903,7 +885,6 @@
       {:else if activeTab === "lqa"}
         <div class="tab-panel" role="tabpanel">
           <div class="section">
-            <div class="section-title">Language QA</div>
             {#if lqaNotice}<p class="lqa-notice" class:failed={lqaNoticeError} role="status">{lqaNotice}</p>{/if}
             {#each lqaFindings as f (f.id)}
               <div class="finding lqa-finding" data-lqa-id={f.id} role="presentation"
@@ -988,7 +969,7 @@
                scope an open editor would conflict with; Chapter and Book
                wait only on the latter two. -->
           <div class="ai-run-row">
-            <span class="ai-run-label">🤖 AI review:</span>
+            <span class="ai-run-label">Run for:</span>
             <div class="ai-run-buttons">
               <button
                 class="ai-scope-btn"
@@ -1087,7 +1068,7 @@
               {/if}
             </div>
           {:else}
-            <p class="none">No AI explanation yet for this verse — run "AI review" below.</p>
+            <p class="none">No AI explanation yet for this verse — run it for the verse, chapter or book above.</p>
           {/if}
         </div>
       {/if}
@@ -1231,18 +1212,13 @@
   /* #202: the chapter's Greek Room result, under the run button. */
   .chapter-summary { margin: 4px 0 8px; font-size: var(--fs-xs); color: var(--text-2); }
   .decision-row button:disabled { opacity: .55; cursor: not-allowed; }
-  /* The bar's actions: the count as text, the two actions as 24px glyph
-     buttons, the same size as the bar's Close. */
+  /* The bar's one action slot item: the count as text (#486). */
   .open-count { font-size: var(--fs-2xs); color: var(--text-2); white-space: nowrap; }
-  .edit-btn, .align-btn { width: 24px; height: 24px; padding: 0; font-size: var(--fs-xs); font-weight: 700; line-height: 1;
-    border-radius: 6px; cursor: pointer; white-space: nowrap; }
-  .edit-btn { border: none; background: var(--accent-bg); color: var(--accent); }
-  .align-btn { border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); }
   .ai-run-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
   .ai-run-label { font-size: var(--fs-sm); font-weight: 700; color: var(--text); white-space: nowrap; }
   .ai-run-buttons { display: flex; gap: 6px; margin-left: auto; }
   .ai-scope-btn { padding: 7px 12px; font-size: var(--fs-xs); font-weight: 700; border-radius: 7px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--accent); cursor: pointer; white-space: nowrap; }
-  .edit-btn:disabled, .align-btn:disabled, .ai-scope-btn:disabled { opacity: .55; cursor: not-allowed; }
+  .ai-scope-btn:disabled { opacity: .55; cursor: not-allowed; }
   .empty-panel { padding: 10px 12px; font-size: var(--fs-sm); color: var(--text-3); display: flex; align-items: flex-start; gap: 10px; }
   .empty-panel span { flex: 1; }
   .ai-explain-section { border-color: var(--accent); }

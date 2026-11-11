@@ -162,16 +162,37 @@ describe("ReviewPanel folding (#236)", () => {
     expect(tabs.map((tab) => tab.textContent?.trim().replace(/\s*\d+$/, ""))).toEqual(
       ["Greek Room", "Core check", "Language QA", "AI review"]);
     expect(screen.getByRole("tab", { name: /Core check/ }).getAttribute("title")).toBe("Translation Notes, Words alignment");
-    // #379 item 6: the reference, the open count and the two per-verse
-    // actions are all in the shared bar, so Review shows one line like the
-    // other panels; nothing sits between the bar and the tabs.
+    // #379 item 6: the reference and the open count are in the shared bar,
+    // so Review shows one line like the other panels; nothing sits between
+    // the bar and the tabs. #486: the Align and Edit glyph buttons are gone
+    // from the bar (both actions are on the verse in the editor).
     const bar = document.querySelector("[data-panel-bar='review']") as HTMLElement;
     expect(bar).not.toBeNull();
     expect(bar.querySelector(".panel-actions .open-count")?.textContent).toMatch(/^\d+ open$/);
-    expect(bar.querySelector(".panel-actions button[aria-label='Align words']")).not.toBeNull();
-    expect(bar.querySelector(".panel-actions button[aria-label='Edit verse']")).not.toBeNull();
+    expect(bar.querySelector(".panel-actions button[aria-label='Align words']")).toBeNull();
+    expect(bar.querySelector(".panel-actions button[aria-label='Edit verse']")).toBeNull();
+    expect(bar.querySelectorAll(".panel-actions button").length).toBe(0);
     expect(document.querySelector(".panel-header")).toBeNull();
     expect(bar.nextElementSibling?.querySelector("[role='tablist']") ?? bar.nextElementSibling).not.toBeNull();
+  });
+
+  it("no tab repeats its own title inside its body; the run controls stay (#486)", async () => {
+    render(ReviewPanel);
+    const titlesIn = () => [...document.querySelectorAll(".tab-content .section-title")].map((el) => el.textContent?.trim() ?? "");
+    // Greek Room: the run button and the chapter line, no "Greek Room QA" heading.
+    expect(titlesIn().some((t) => /^Greek Room/.test(t))).toBe(false);
+    expect(screen.getByRole("button", { name: /Run Greek Room/ })).toBeInTheDocument();
+    expect(screen.getByTestId("greek-room-chapter-summary")).toBeInTheDocument();
+    // Language QA: the findings, no "Language QA" heading.
+    await fireEvent.click(screen.getByRole("tab", { name: /Language QA/ }));
+    await screen.findByText("ta-irv/tamil.wordlist-variant");
+    expect(titlesIn().some((t) => /^Language QA/.test(t))).toBe(false);
+    // AI review: the three run buttons, no "AI review" label beside them.
+    await fireEvent.click(screen.getByRole("tab", { name: /AI review/ }));
+    expect(document.querySelector(".ai-run-label")?.textContent).not.toMatch(/AI review/);
+    expect(screen.getByRole("button", { name: "Verse" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Chapter" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Book" })).toBeInTheDocument();
   });
 
   it("closes its column from its header, and the choice is remembered", async () => {
