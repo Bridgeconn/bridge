@@ -121,13 +121,16 @@
   .chapter-step:hover:not(:disabled), .chapter-step:focus-visible { border-color: var(--border-strong); background: var(--surface-2); }
   .chapter-step:disabled { opacity: .4; cursor: not-allowed; }
   .of { margin-left: 3px; font-size: var(--fs-xs); font-weight: 600; color: var(--text-2); white-space: nowrap; }
-  .goto { position: relative; flex: 1 1 64px; min-width: 56px; max-width: 120px; margin: 0; }
+  .goto { flex: 1 1 64px; min-width: 56px; max-width: 120px; margin: 0; }
   .goto input { width: 100%; height: 24px; box-sizing: border-box; padding: 0 6px; border: 1px solid var(--border); border-radius: 6px;
     background: var(--surface); color: var(--text); font: inherit; font-size: var(--fs-xs); line-height: 1; }
   .goto input:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
   .goto.invalid input { border-color: var(--danger); }
-  /* Under the box, over the verses: the header keeps its height. */
-  .goto-error { position: absolute; top: calc(100% + 4px); left: 0; z-index: 3; width: max-content; max-width: 240px; margin: 0; padding: 5px 8px;
+  /* Under the header, over the verses: the header keeps its height. It is
+     placed against the header (the sticky box), not the Go to box, and wraps
+     inside the editor column: the column clips what leaves it, and anchored
+     to the box the sentence ran out of the column's right edge and was cut. */
+  .goto-error { position: absolute; top: calc(100% + 4px); left: 8px; right: 8px; z-index: 3; margin: 0; white-space: normal; overflow-wrap: anywhere; padding: 5px 8px;
     border: 1px solid var(--danger); border-radius: 6px; background: var(--danger-bg); color: var(--danger); font-size: var(--fs-2xs); font-weight: 600; line-height: 1.35; box-shadow: 0 4px 12px rgba(0,0,0,.12); }
   .tools { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; flex: none; }
   .book-select:focus-visible, .chapter-select:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }

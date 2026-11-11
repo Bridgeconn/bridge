@@ -85,6 +85,11 @@ describe("EditorHeader (#489)", () => {
     expect(rule(".tools")).toContain("flex: none");
     // The error sits over the verses; it does not change the header's height.
     expect(rule(".goto-error")).toContain("position: absolute");
+    // It spans the header and wraps, so the column never cuts it: placed
+    // against the Go to box it ran past the column's right edge.
+    expect(rule(".goto-error")).toContain("left: 8px; right: 8px");
+    expect(rule(".goto-error")).not.toContain("max-content");
+    expect(rule(".goto")).not.toContain("position: relative");
   });
 
   it("App hands the header the book, chapter and Go to handlers, and its overflow menu has no Raw USFM", () => {
