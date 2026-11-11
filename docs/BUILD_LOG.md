@@ -24951,3 +24951,23 @@ passed; `npm run test` 127 files, 1219 tests passed. Not
 verified: the desktop app at 1366x768 (the pinned rows and pager, the card
 layout in the column, the status bar button, the View menu toggle). Engine
 suite and `cargo` not run: no engine or shell file changed, no file deleted.
+
+## 2026-11-11 — Language QA tab shown by default; out of the column budget (#487 follow-up)
+
+Joel's decision (2026-11-11): the Review panel's Language QA tab is shown by
+default. `editorPrefs.ts` `languageQa.open` defaults to `true`. On its own
+that broke the editor's fit: `panelFit.ts` still counted Language QA as a
+440px column, so at 1366 wide a real panel (Source) folded to make room for
+a column that no longer renders (one failing test caught it). So in the same
+commit `foldedSidePanels` leaves `languageQa` out of the open-column list
+and the default fold order; the flag costs no width. A test pins it.
+
+Known limit: the default applies where no layout is saved yet. A saved
+layout with the old column closed keeps `open: false` until View › Language
+QA is ticked once; a key of its own in viewMenu.ts would lift that, left
+for Revant with the rail entry and PanelWindow's languageQa window.
+
+Verified: `npm run check` 0/0; `npm run test` 127 files, 1220 tests passed;
+`npm run build` passed. Not verified: the desktop app at 1366x768 (Source,
+Reference and Review all fit with the tab shown). Engine and `cargo` not
+run: no engine or shell file changed.

@@ -24,7 +24,7 @@ const VERSE_MIN_PER_SCALE = 200;
 
 /** Never-touched panels fold in this order: the reference Bible first, the
  * review panel (open by default, where findings are acted on) last. */
-const DEFAULT_FOLD_ORDER: readonly SidePanelId[] = ["reference", "source", "paratext", "languageQa", "review"];
+const DEFAULT_FOLD_ORDER: readonly SidePanelId[] = ["reference", "source", "paratext", "review"];
 
 export function verseMinWidth(scale: number): number {
   return Math.round(VERSE_MIN_WIDTH + VERSE_MIN_PER_SCALE * Math.max(0, scale - 1));
@@ -44,7 +44,9 @@ export function foldedSidePanels(
 ): SidePanelId[] {
   // An undocked box (#389) takes no column width, so it never folds and
   // never makes another panel fold.
-  const open = SIDE_PANEL_ORDER.filter((id) => panels[id].open && !panels[id].float);
+  // #487: `languageQa` is the Review panel's tab, not a column; its flag
+  // costs no width.
+  const open = SIDE_PANEL_ORDER.filter((id) => id !== "languageQa" && panels[id].open && !panels[id].float);
   const rank = (id: SidePanelId): number => {
     const at = recency.indexOf(id);
     return at >= 0 ? DEFAULT_FOLD_ORDER.length + at : DEFAULT_FOLD_ORDER.indexOf(id);

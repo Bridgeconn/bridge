@@ -90,7 +90,9 @@ function defaultSidePanels(): SidePanels {
     source: { open: false, width: SIDE_PANEL_LIMITS.source.initial },
     reference: { open: legacy("bridge.editor.referencePanel.v1", isBoolean) ?? false,
                  width: width === undefined ? SIDE_PANEL_LIMITS.reference.initial : clampPanelWidth("reference", width) },
-    languageQa: { open: false, width: SIDE_PANEL_LIMITS.languageQa.initial },
+    // #487: this flag is the Review panel's Language QA tab (viewMenu.ts), shown
+    // by default (Joel, 2026-11-11). It is no column: panelFit leaves it out.
+    languageQa: { open: true, width: SIDE_PANEL_LIMITS.languageQa.initial },
     paratext: { open: false, width: SIDE_PANEL_LIMITS.paratext.initial },
     review: { open: !(legacy("bridge.editor.reviewPanelCollapsed.v1", isBoolean) ?? false),
               width: SIDE_PANEL_LIMITS.review.initial },

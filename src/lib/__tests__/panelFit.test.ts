@@ -39,6 +39,13 @@ describe("foldedSidePanels (#324)", () => {
     expect(foldedSidePanels(needed(["source", "reference", "review"]) - 1, three, [], VERSE_MIN_WIDTH)).toEqual(["reference"]);
   });
 
+  // #487: Language QA is the Review panel's tab; its flag (on by default) is no column.
+  it("leaves the Language QA flag out of the budget, on by default", () => {
+    const withTab = layout({ source: true, reference: true, review: true, languageQa: true });
+    expect(foldedSidePanels(needed(["source", "reference", "review"]), withTab, [], VERSE_MIN_WIDTH)).toEqual([]);
+    expect(foldedSidePanels(needed(["source", "reference", "review"]) - 1, withTab, ["languageQa"], VERSE_MIN_WIDTH)).toEqual(["reference"]);
+  });
+
   it("folds nothing while the verse list and every open panel's minimum fit", () => {
     expect(foldedSidePanels(1366, three, [], VERSE_MIN_WIDTH)).toEqual([]);
     expect(foldedSidePanels(needed(["source", "reference", "review"]), three, [], VERSE_MIN_WIDTH)).toEqual([]);
