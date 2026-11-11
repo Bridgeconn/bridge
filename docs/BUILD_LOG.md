@@ -24971,3 +24971,56 @@ Verified: `npm run check` 0/0; `npm run test` 127 files, 1220 tests passed;
 `npm run build` passed. Not verified: the desktop app at 1366x768 (Source,
 Reference and Review all fit with the tab shown). Engine and `cargo` not
 run: no engine or shell file changed.
+
+## 2026-11-11 — Alignment areas grow to their content; one scroll bar on the dialog (#485)
+
+Frontend only (Rina ma'am's go-ahead 2026-11-11; design agreed with Joel on
+the issue before code). The Read / Source / Target areas added for #448
+were absolutely positioned frames in a stage of fixed height
+(`min(620px, 65vh)`, `overflow: hidden`), each scrolling inside its frame,
+the interlinear scrolling inside that (`max-height: 48vh`), the dialog
+scrolling too: several bars for one verse. Now:
+
+- `alignmentLayout.ts` `gridFor(tree)`: the docked tree as a CSS grid whose
+  rows are `auto`. A side-by-side split keeps its ratio as column widths; a
+  stacked split is two rows sized by their text (its ratio stays in the
+  saved layout, unused). Three leaves always fit a 2x2, 1x3 or 3x1 grid; a
+  leaf on one side spans what the other side needs. `arrange` is kept for
+  the width maths and for the editor's docking (`EditorWorkspace` and
+  `editorDocking.ts` import `Frame` from here, so that type is unchanged;
+  the pane's own frame is `PaneFrame`).
+- `AlignmentWorkspace.svelte`: the stage is that grid, no fixed height, no
+  scroll container (`overflow-x: clip`); a width divider is a grid item on
+  its column line spanning its split's rows, a hairline that colours on
+  hover / focus, draggable and keyboard-adjustable; the height divider is
+  gone (rows fit their text). A floating pane keeps its own box over the
+  stage; the stage's `min-height` reaches the lowest floating pane. Floated
+  from a cell, a pane is at most 60% of the stage wide and as tall as its
+  content. Storage key, format, `validLayout` and Reset layout unchanged.
+- `AlignmentPane.svelte`: a docked pane is a grid item (`grid-area`), its
+  content does not scroll; `.floating .content` is the one inner scroller.
+  The handle is a slim 22px strip, muted until the pane is hovered or
+  focused: grip glyph + label at the left, the area tools at the right; the
+  Float / Dock button is an entry in that menu; Width / Height boxes only on
+  a floating pane.
+- `AlignmentModal.svelte`: `.interlinear` loses `max-height` and
+  `overflow-y: auto` (`overflow-x: clip`, still wraps, #72); `.modal` keeps
+  its `max-height` + `overflow: auto`, the one bar. The 48vh cap existed
+  because the drag has no auto-scroll, so: edge auto-scroll during a word
+  drag (`trackEdge`, `edgeScrollStep`): within 40px of the dialog's top or
+  bottom, up to 12px per frame. `CrossVerseAlignmentModal.svelte`: `.page`
+  from a fixed `height` with scrolling columns to `max-height` + `overflow:
+  auto`; `.scroll` no longer scrolls (`overflow-x: clip`); the same edge
+  auto-scroll. The sticky verse heads now stick to the page's scroll.
+- Tests: `AlignmentLayout.test.ts` rewritten (gridFor for each shape, a
+  saved layout with vertical ratios still validating, `edgeScrollStep`,
+  dock by menu and by drag with grid-area / `data-grid-*` assertions, the
+  width divider by keyboard and no height divider, float + min-height +
+  Dock back, the stage / pane rules pinned by source). `AlignmentModal.test.ts`:
+  the interlinear cap test replaced by "grows; the dialog scrolls; trackEdge
+  wired"; the #72 wrap test accepts `clip`.
+
+Verified: `npm run check` 0/0; `npm run test` 127 files, 1226 tests passed;
+`npm run build` passed. Not verified (jsdom lays nothing out): everything
+visual, listed on the issue for the desktop app at 1366x768 and larger.
+Engine and `cargo` not run: no engine or shell file changed.

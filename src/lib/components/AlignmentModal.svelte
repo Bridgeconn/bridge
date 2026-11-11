@@ -4,6 +4,7 @@
   import IconButton from "./IconButton.svelte";
   import "../alignmentCards.css";
   import AlignmentWorkspace from "./AlignmentWorkspace.svelte";
+  import { edgeScrollStep } from "../alignmentLayout";
   import SourceSplitControls from "./SourceSplitControls.svelte";
   import SourceWordActions from "./SourceWordActions.svelte";
   import AlignmentResetControls from "./AlignmentResetControls.svelte";
@@ -100,6 +101,24 @@
     },
   });
   const dragState = drag.state;
+
+  // #485: the areas no longer scroll inside, so on a long verse the word bank
+  // can sit below the fold. While a word is dragged near the dialog's top or
+  // bottom edge, the dialog scrolls a few px per frame (edgeScrollStep).
+  let dialogEl: HTMLElement | undefined;
+  let edgeStep = 0, edgeRaf = 0;
+  function trackEdge(event: PointerEvent): void {
+    if (!$dragState.tokenId || !$dragState.moved || !dialogEl) { edgeStep = 0; return; }
+    const r = dialogEl.getBoundingClientRect();
+    edgeStep = edgeScrollStep(event.clientY, r.top, r.bottom);
+    if (edgeStep && !edgeRaf) edgeRaf = requestAnimationFrame(edgeTick);
+  }
+  function edgeTick(): void {
+    edgeRaf = 0;
+    if (!edgeStep || !$dragState.tokenId || !dialogEl) return;
+    dialogEl.scrollTop += edgeStep;
+    edgeRaf = requestAnimationFrame(edgeTick);
+  }
 
   // #410: rubber-band selection in the word bank. Press on empty space, drag
   // a rectangle, and the unaligned words it touches are picked -- the same
@@ -420,10 +439,10 @@
   }
 </script>
 
-<svelte:window on:keydown={(event) => event.key === "Escape" && onEscape()} />
+<svelte:window on:keydown={(event) => event.key === "Escape" && onEscape()} on:pointermove={trackEdge} on:pointerup={() => (edgeStep = 0)} />
 
 <div class="overlay" class:standalone role="presentation">
-  <section class="modal alignment-cards" role="dialog" aria-modal="true" aria-label={`Word alignment ${reference}`}>
+  <section class="modal alignment-cards" role="dialog" aria-modal="true" aria-label={`Word alignment ${reference}`} bind:this={dialogEl}>
     <header>
 
       <div class="title">
@@ -797,13 +816,14 @@
      side-by-side source+cell pair needing a consistent track, here it is a
      self-sizing stacked column, so natural widths pack a line tighter.
      `flex-shrink: 0` stays on .column -- wrapping is what absorbs the overflow
-     now, columns still must not be squeezed. The max-height caps a long verse
-     so the word bank and the footer controls stay on screen: the pointer drag
-     has no auto-scroll, so a column you cannot see at the same time as the bank
-     is unreachable by drag. */
+     now, columns still must not be squeezed. #485: no max-height and no
+     scrolling inside -- the block grows to the verse and the dialog is the one
+     scroller; the edge auto-scroll during a drag (trackEdge) is what keeps a
+     column reachable from the bank on a long verse. overflow-x: clip, not
+     hidden, so this is not a scroll container. */
   .interlinear {
     display: flex; flex-wrap: wrap; align-content: flex-start; gap: 16px 10px;
-    overflow-x: hidden; overflow-y: auto; max-height: 48vh;
+    overflow-x: clip;
     padding: 12px 6px; border: 1px solid var(--border); border-radius: 10px; min-height: 128px;
   }
   /* The source column is Hebrew for an OT book and Greek for an NT one, so

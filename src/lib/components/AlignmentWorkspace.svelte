@@ -4,27 +4,36 @@
   import { project, localUserId } from "../stores";
   import { onMount, setContext } from "svelte";
   import { derived, writable } from "svelte/store";
-  import { arrange, defaultLayout, dockPane, resizeDivider, validLayout, without, type AlignmentLayoutContext, type Divider, type DockEdge, type PaneId, type Rect } from "../alignmentLayout";
+  import { defaultLayout, dockPane, gridAreasText, gridFor, resizeDivider, validLayout, without, type AlignmentLayoutContext, type DockEdge, type GridDivider, type PaneFrame, type PaneId, type Rect } from "../alignmentLayout";
   export let kind = "word";
   export let toolbar = true;
   export function layoutAction(id: string) {
     if (id === "reset") { layout.set(defaultLayout(kind)); save(); }
     else helpOpen = !helpOpen;
   }
+  // #485: the stage is a CSS grid whose rows fit their content (gridFor), so
+  // a docked pane never scrolls inside; the dialog around the workspace is
+  // the one thing that scrolls. Only floating panes have a box of their own.
   const layout = writable(defaultLayout(kind));
   let node: HTMLElement, width = 1000, height = 500;
   const viewport = writable({ width, height });
   const name = (id: PaneId) => id[0].toUpperCase() + id.slice(1);
+  /** A floating box inside the stage's width; its height is its own, the
+   * stage grows to reach it (min-height below). */
   function fitted(rect: Rect): Rect {
-    const w = Math.min(width, Math.max(180, rect.width)), h = Math.min(height, Math.max(90, rect.height));
-    return { x: Math.max(0, Math.min(width - w, rect.x)), y: Math.max(0, Math.min(height - h, rect.y)), width: w, height: h };
+    const w = Math.min(width, Math.max(180, rect.width)), h = Math.max(90, rect.height);
+    return { x: Math.max(0, Math.min(width - w, rect.x)), y: Math.max(0, rect.y), width: w, height: h };
   }
   const frames = derived([layout, viewport], ([value]) => {
-    const result = arrange(without(value.tree, value.floating)).frames;
-    for (const id of value.floating) result[id] = { ...fitted(value.positions[id] || { x: 16, y: 16, width: 500, height: 300 }), unit: "px" };
+    const result: Partial<Record<PaneId, PaneFrame>> = {};
+    for (const id of ["read", "source", "target"] as const) result[id] = { docked: true };
+    for (const id of value.floating) result[id] = { docked: false, ...fitted(value.positions[id] || { x: 16, y: 16, width: 500, height: 300 }) };
     return result;
   });
-  $: dividers = arrange(without($layout.tree, $layout.floating)).dividers;
+  $: grid = gridFor(without($layout.tree, $layout.floating));
+  $: areasText = gridAreasText(grid.areas);
+  $: columnsText = grid.columns.map((w) => `${w}fr`).join(" ");
+  $: floatBottom = Math.max(0, ...$layout.floating.map((id) => { const f = $frames[id]; return f && !f.docked ? f.y + f.height : 0; }));
   let helpOpen = false;
   const workspaceKey = () => { const p = get(project); return `bridge.alignment.docking.v3.${encodeURIComponent(get(localUserId) || "local")}.${encodeURIComponent(p?.collectionId || p?.projectId || p?.path || "default")}.${kind}`; };
   function save() { try { localStorage.setItem(workspaceKey(), JSON.stringify($layout)); } catch { /* session only */ } }
@@ -32,18 +41,28 @@
     if (id === target) return;
     layout.set({ ...$layout, tree: dockPane($layout.tree, id, target, edge), floating: $layout.floating.filter(v => v !== id && v !== target) }); save();
   }
+  /** Where a pane is drawn right now, in stage px: its own box when floating,
+   * else its grid cell as laid out. */
+  function drawn(id: PaneId): Rect {
+    const frame = $frames[id];
+    if (frame && !frame.docked) return frame;
+    const el = node?.querySelector<HTMLElement>(`[data-alignment-pane="${id}"]`);
+    if (!el || !node) return { x: 16, y: 16, width: width * .6, height: height * .6 };
+    const bounds = node.getBoundingClientRect(), rect = el.getBoundingClientRect();
+    // Floated from a cell: no wider than 60% of the stage, so it floats
+    // visibly over the rest; as tall as its content, so nothing scrolls yet.
+    return { x: rect.left - bounds.left, y: rect.top - bounds.top, width: Math.min(rect.width || width * .6, width * .6), height: rect.height || height * .6 };
+  }
   function float(id: PaneId) {
-    layout.set({ ...$layout, floating: [...new Set([...$layout.floating, id])], positions: { ...$layout.positions, [id]: fitted($layout.positions[id] || { x: 16, y: 16, width: width * .6, height: height * .6 }) } }); save();
+    layout.set({ ...$layout, floating: [...new Set([...$layout.floating, id])], positions: { ...$layout.positions, [id]: fitted($layout.positions[id] || drawn(id)) } }); save();
   }
   function resize(id: PaneId, axis: "width" | "height", value: number) {
     if (!Number.isFinite(value)) return;
-    const current = $frames[id]!;
-    const rect = current.unit === "px" ? current : { x: current.x / 100 * width, y: current.y / 100 * height, width: current.width / 100 * width, height: current.height / 100 * height };
-    layout.set({ ...$layout, floating: [...new Set([...$layout.floating, id])], positions: { ...$layout.positions, [id]: fitted({ ...rect, [axis]: value }) } }); save();
+    layout.set({ ...$layout, floating: [...new Set([...$layout.floating, id])], positions: { ...$layout.positions, [id]: fitted({ ...drawn(id), [axis]: value }) } }); save();
   }
   let moving: { id: PaneId; x: number; y: number; startX: number; startY: number; offsetX: number; offsetY: number; moved: boolean } | null = null;
   let candidate: { target: PaneId; edge: DockEdge; rect: Rect } | null = null;
-  let sizing: Divider | null = null;
+  let sizing: GridDivider | null = null;
   function beginMove(id: PaneId, event: PointerEvent) {
     if (event.button !== 0) return;
     event.preventDefault();
@@ -53,10 +72,9 @@
   }
   function pointerMove(event: PointerEvent) {
     if (sizing) {
-      const bounds = node.getBoundingClientRect(), horizontal = sizing.axis === "horizontal";
-      const position = horizontal ? (event.clientX - bounds.left) / bounds.width * 100 : (event.clientY - bounds.top) / bounds.height * 100;
-      const ratio = (position - (horizontal ? sizing.bounds.x : sizing.bounds.y)) / (horizontal ? sizing.bounds.width : sizing.bounds.height);
-      layout.set({ ...$layout, tree: resizeDivider($layout.tree, sizing.id, ratio) }); return;
+      const bounds = node.getBoundingClientRect();
+      const position = (event.clientX - bounds.left) / bounds.width * 100;
+      layout.set({ ...$layout, tree: resizeDivider($layout.tree, sizing.id, (position - sizing.bounds.x) / sizing.bounds.width) }); return;
     }
     if (!moving) return;
     moving = { ...moving, x: event.clientX, y: event.clientY, moved: moving.moved || Math.hypot(event.clientX - moving.startX, event.clientY - moving.startY) > 4 };
@@ -79,17 +97,16 @@
     if (moving?.moved) {
       if (candidate) dock(moving.id, candidate.target, candidate.edge);
       else {
-        const bounds = node.getBoundingClientRect(), old = $layout.positions[moving.id];
+        const bounds = node.getBoundingClientRect(), old = $layout.positions[moving.id] || drawn(moving.id);
         layout.set({ ...$layout, floating: [...new Set([...$layout.floating, moving.id])], positions: { ...$layout.positions,
-          [moving.id]: fitted({ x: moving.x - bounds.left - moving.offsetX, y: moving.y - bounds.top - moving.offsetY, width: old?.width || width * .6, height: old?.height || height * .6 }) } }); save();
+          [moving.id]: fitted({ x: moving.x - bounds.left - moving.offsetX, y: moving.y - bounds.top - moving.offsetY, width: old.width, height: old.height }) } }); save();
       }
     }
     moving = null; candidate = null;
   }
-  function adjust(divider: Divider, event: KeyboardEvent) {
-    const negative = divider.axis === "horizontal" ? "ArrowLeft" : "ArrowUp", positive = divider.axis === "horizontal" ? "ArrowRight" : "ArrowDown";
-    if (event.key !== negative && event.key !== positive) return;
-    event.preventDefault(); layout.set({ ...$layout, tree: resizeDivider($layout.tree, divider.id, divider.ratio + (event.key === negative ? -.05 : .05)) }); save();
+  function adjust(divider: GridDivider, event: KeyboardEvent) {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault(); layout.set({ ...$layout, tree: resizeDivider($layout.tree, divider.id, divider.ratio + (event.key === "ArrowLeft" ? -.05 : .05)) }); save();
   }
   setContext<AlignmentLayoutContext>("alignment-layout", { layout, frames, dock, float, beginMove, resize });
   onMount(() => {
@@ -101,14 +118,16 @@
 </script>
 
 <svelte:window on:pointermove={pointerMove} on:pointerup={finish} on:pointercancel={() => { moving = null; candidate = null; sizing = null; }} on:keydown={(event) => { if (event.key === "Escape") { moving = null; candidate = null; sizing = null; } }} />
-{#if toolbar || helpOpen}<div class="layout-toolbar">{#if toolbar}<OverflowMenu label="Alignment layout tools" actions={[{ id: "reset", label: "Reset layout" }, { id: "help", label: "Moving and resizing help" }]} on:action={(event) => layoutAction(event.detail.id)} />{/if}{#if helpOpen}<small>Drag a handle near another area's edge to dock left, right, above or below. Drop away from edges to float; hold Alt to float anywhere. Drag dividers to resize.</small>{/if}</div>{/if}
-<div class="alignment-layout" bind:this={node} class:moving={!!moving}>
+{#if toolbar || helpOpen}<div class="layout-toolbar">{#if toolbar}<OverflowMenu label="Alignment layout tools" actions={[{ id: "reset", label: "Reset layout" }, { id: "help", label: "Moving and resizing help" }]} on:action={(event) => layoutAction(event.detail.id)} />{/if}{#if helpOpen}<small>Drag an area's handle near another area's edge to dock it left, right, above or below. Drop away from the edges to float it; hold Alt to float anywhere. Drag the divider between side-by-side areas to change their widths.</small>{/if}</div>{/if}
+<div class="alignment-layout" bind:this={node} class:moving={!!moving}
+  data-grid-areas={areasText} data-grid-columns={columnsText}
+  style:grid-template-areas={areasText || null} style:grid-template-columns={columnsText || null}
+  style:min-height={floatBottom ? `${floatBottom}px` : null}>
   <slot />
-  {#each dividers as divider (divider.id)}
-    <div class="divider" class:vertical={divider.axis === "horizontal"} role="slider" tabindex="0" aria-label={divider.axis === "horizontal" ? "Resize area widths" : "Resize area heights"}
-      aria-orientation={divider.axis === "horizontal" ? "vertical" : "horizontal"} aria-valuenow={Math.round(divider.ratio * 100)} aria-valuemin="15" aria-valuemax="85"
-      style:left={`${divider.axis === "horizontal" ? divider.at : divider.bounds.x}%`} style:top={`${divider.axis === "vertical" ? divider.at : divider.bounds.y}%`}
-      style:width={divider.axis === "horizontal" ? "6px" : `${divider.bounds.width}%`} style:height={divider.axis === "vertical" ? "6px" : `${divider.bounds.height}%`}
+  {#each grid.dividers as divider (divider.id)}
+    <div class="divider" role="slider" tabindex="0" aria-label="Resize area widths" aria-orientation="vertical"
+      aria-valuenow={Math.round(divider.ratio * 100)} aria-valuemin="15" aria-valuemax="85"
+      style:grid-column={`${divider.column}`} style:grid-row={`${divider.rowStart} / ${divider.rowEnd}`}
       on:pointerdown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture?.(event.pointerId); sizing = divider; }} on:keydown={(event) => adjust(divider, event)}></div>
   {/each}
   {#if candidate && moving}
@@ -122,13 +141,19 @@
 <style>
   .layout-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
   small { color: var(--text-3); }
-  .alignment-layout { position: relative; height: min(620px, 65vh); min-height: 340px; flex: 1 1 auto; overflow: hidden; }
+  /* #485: no fixed height and no scroll container: rows are `auto`, so the
+     stage is as tall as its content and the dialog scrolls. overflow-x: clip
+     keeps a wide line from drawing a sideways bar without making the stage
+     scroll (hidden would). */
+  .alignment-layout { position: relative; display: grid; grid-auto-rows: auto; gap: 0 10px; align-items: start; overflow-x: clip; }
   .moving { user-select: none; }
-  .divider { position: absolute; z-index: 5; background: transparent; cursor: row-resize; transform: translateY(-50%); touch-action: none; }
-  .divider.vertical { cursor: col-resize; transform: translateX(-50%); }
-  .divider::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: var(--border); pointer-events: none; }
-  .divider.vertical::after { left: 50%; right: auto; top: 0; bottom: 0; width: 1px; height: auto; }
-  .divider:focus-visible { outline: 1px solid var(--text-3); outline-offset: -2px; }
+  /* A width divider is a grid item on its column line, spanning the rows of
+     its split: a hairline that colours on hover and focus, with a 10px hit
+     area straddling the line. */
+  .divider { position: relative; z-index: 5; justify-self: start; align-self: stretch; width: 10px; margin-left: -10px; cursor: col-resize; touch-action: none; background: transparent; }
+  .divider::after { content: ""; position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; background: var(--border); pointer-events: none; }
+  .divider:hover::after, .divider:focus-visible::after { background: var(--accent); width: 2px; }
+  .divider:focus-visible { outline: none; }
   .dock-preview { position: absolute; z-index: 20; pointer-events: none; border: 2px solid var(--text-3); background: var(--surface-2); opacity: .85; display: grid; place-items: center; box-sizing: border-box; }
   .dock-preview span { background: var(--surface); color: var(--text); padding: 8px; border-radius: 5px; }
   .drag-label { position: fixed; z-index: 1000; pointer-events: none; background: var(--text-3); color: white; border-radius: 5px; padding: 5px 9px; }

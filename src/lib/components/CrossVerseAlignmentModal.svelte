@@ -4,6 +4,7 @@
   import IconButton from "./IconButton.svelte";
   import "../alignmentCards.css";
   import AlignmentWorkspace from "./AlignmentWorkspace.svelte";
+  import { edgeScrollStep } from "../alignmentLayout";
   import SourceSplitControls from "./SourceSplitControls.svelte";
   import SourceWordActions from "./SourceWordActions.svelte";
   import AlignmentChapterReset from "./AlignmentChapterReset.svelte";
@@ -154,6 +155,24 @@
     },
   });
   const dragState = drag.state;
+
+  // #485: the areas no longer scroll inside, so on a long verse the word bank
+  // can sit below the fold. While a word is dragged near the dialog's top or
+  // bottom edge, the dialog scrolls a few px per frame (edgeScrollStep).
+  let dialogEl: HTMLElement | undefined;
+  let edgeStep = 0, edgeRaf = 0;
+  function trackEdge(event: PointerEvent): void {
+    if (!$dragState.tokenId || !$dragState.moved || !dialogEl) { edgeStep = 0; return; }
+    const r = dialogEl.getBoundingClientRect();
+    edgeStep = edgeScrollStep(event.clientY, r.top, r.bottom);
+    if (edgeStep && !edgeRaf) edgeRaf = requestAnimationFrame(edgeTick);
+  }
+  function edgeTick(): void {
+    edgeRaf = 0;
+    if (!edgeStep || !$dragState.tokenId || !dialogEl) return;
+    dialogEl.scrollTop += edgeStep;
+    edgeRaf = requestAnimationFrame(edgeTick);
+  }
   $: ghostLabel = $dragState.tokenId ? tokenWord($dragState.tokenId) : "";
 
   onMount(() => drag.attach(window));
@@ -714,10 +733,10 @@
   }
 </script>
 
-<svelte:window on:keydown={(event) => { if (event.key !== "Escape") return; if (menu) { menu = null; return; } if (!busy && !lexiconToken) onClose(); }} />
+<svelte:window on:keydown={(event) => { if (event.key !== "Escape") return; if (menu) { menu = null; return; } if (!busy && !lexiconToken) onClose(); }} on:pointermove={trackEdge} on:pointerup={() => (edgeStep = 0)} />
 
 <div class="overlay" class:standalone role="presentation">
-  <section class="page alignment-cards" role="dialog" aria-modal="true" aria-label={`Cross-verse alignment, chapter ${chapter}`}>
+  <section class="page alignment-cards" role="dialog" aria-modal="true" aria-label={`Cross-verse alignment, chapter ${chapter}`} bind:this={dialogEl}>
     <header>
 
       <div class="title">
@@ -1119,7 +1138,8 @@
   .overlay { position: fixed; inset: 0; z-index: var(--z-dialog); background: rgba(15, 20, 26, .58); display: grid; place-items: center; padding: 16px; }
   .page {
     /* About 95% of the window (#484), same as AlignmentModal; was a 1340px cap. */
-    width: min(95vw, 100%); height: calc(100vh - 32px); display: flex; flex-direction: column; min-height: 0;
+    /* #485: the page is the one scroller; the columns grow to their verses. */
+    width: min(95vw, 100%); max-height: calc(100vh - 32px); overflow: auto; display: flex; flex-direction: column; min-height: 0;
     background: var(--surface); border-radius: 14px; box-shadow: 0 24px 80px rgba(0,0,0,.24); padding: 14px 18px; color: var(--text);
   }
   header { display: flex; gap: 8px; align-items: center; border-bottom: 1px solid var(--border); padding: 4px 0 6px; flex: none; min-height: 36px; }
@@ -1224,7 +1244,8 @@
   .col { display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--border); border-radius: 10px; }
   .col-title { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; padding: 8px 12px; font-size: var(--fs-sm); font-weight: 700; border-bottom: 1px solid var(--border); flex-shrink: 0; }
   .col-title small { color: var(--text-3); font-weight: 400; }
-  .scroll { overflow-y: auto; overflow-x: hidden; padding: 6px 10px 10px; min-height: 0; flex: 1; }
+  /* #485: no scrolling inside a column (clip, not hidden: not a scroll container). */
+  .scroll { overflow-x: clip; padding: 6px 10px 10px; min-height: 0; flex: 1; }
   .verse-block { padding: 6px 0 10px; border-bottom: 1px dashed var(--border); }
   .verse-block:last-child { border-bottom: 0; }
   .verse-head { display: flex; align-items: center; gap: 8px; padding: 6px 0; position: sticky; top: 0; background: var(--surface); z-index: 1; font-size: var(--fs-xs); }

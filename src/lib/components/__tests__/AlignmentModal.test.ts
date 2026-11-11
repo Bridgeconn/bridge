@@ -220,14 +220,19 @@ describe("AlignmentModal layout", () => {
   it("wraps the interlinear instead of scrolling it sideways", () => {
     const interlinear = rule(alignmentModalSource, ".interlinear");
     expect(interlinear).toMatch(/flex-wrap:\s*wrap/);
-    expect(interlinear).toMatch(/overflow-x:\s*hidden/);
+    expect(interlinear).toMatch(/overflow-x:\s*(hidden|clip)/);  // #485: clip, so it is no scroll container
     expect(interlinear).not.toMatch(/overflow-x:\s*(auto|scroll)/);
   });
 
-  it("caps the wrapped block so the word bank stays on screen", () => {
+  // #485: the block grows to the verse; the dialog is the one scroller, and
+  // the edge auto-scroll during a drag keeps a far column reachable.
+  it("lets the wrapped block grow instead of scrolling it; the dialog scrolls", () => {
     const interlinear = rule(alignmentModalSource, ".interlinear");
-    expect(interlinear).toMatch(/max-height:/);
-    expect(interlinear).toMatch(/overflow-y:\s*auto/);
+    expect(interlinear).not.toMatch(/max-height:/);
+    expect(interlinear).not.toMatch(/overflow-y:/);
+    expect(interlinear).not.toMatch(/overflow:\s*(auto|scroll)/);
+    expect(rule(alignmentModalSource, ".modal")).toMatch(/overflow:\s*auto/);
+    expect(alignmentModalSource).toMatch(/on:pointermove=\{trackEdge\}/);
   });
 
   it("keeps the columns unsqueezable", () => {
