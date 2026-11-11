@@ -25259,3 +25259,43 @@ release build.
 **What this says about the gate.** Nothing in CI or `release.yml` starts the
 desktop app; `smoke_sidecars.py` exercises the frozen sidecars only. A green
 release build did not mean the app starts.
+
+### Correction, same day: the cause was a lock, and ca5225f did not fix it
+
+The entry above is wrong about the cause and the fix. With ca5225f's deferred
+creation, a release build started three times and then hung on the fourth: the
+engine was up, the review-queue and alignment windows existed, and the main thread
+stopped while the first panel window was being created. So the windows' creation
+was where it showed, not why.
+
+**Cause.** `tauri-plugin-window-state` 2.5.0 holds its cache mutex for the whole of
+`save_window_state` and `restore_state`, and inside that reads or sets the window.
+From a command (a worker thread) each of those calls is sent to the main thread and
+waited for. The plugin's move/resize handler runs on the main thread and takes the
+same mutex. `ReviewQueueHost.svelte` asks for the review-queue window to be hidden
+as it mounts, and `review_window`'s "hide" called `app.save_window_state` on the
+worker. In a release build that arrives while the startup windows are still being
+created and sized: the worker holds the mutex and waits for the main thread, the
+main thread is in a resize handler waiting for the mutex. This fits every
+observation: no hang with only main and splash (there is no review-queue window, so
+"hide" saves nothing), no hang in a debug build (the page mounts later), and the
+fourth-start hang with ca5225f. It is read from the plugin's source and the
+experiments; there is still no stack trace.
+
+The same pair can meet at any time, not only at startup: hiding or opening a
+detached window while any window is being moved or resized.
+
+**Fix.** `src-tauri/src/window_state.rs`: `reveal` and `save_and_hide` run the
+plugin's restore and save on the main thread (`run_on_main_thread`, the result sent
+back over a oneshot), where the window calls are direct and the handler cannot run
+in between. The three window commands use them. ca5225f's `"create": false` and
+its creation thread are taken out again: they fixed nothing and added a moment in
+which a window could be asked for before it existed.
+
+**Verified.** Local release build, the original eight windows from the config,
+eight starts: each responding, engine up, all six detached windows present, main
+shown, clean close. Before the fix the same configuration hung on every start
+tried (four of four). `cargo check` passed; `cargo test` 20 passed, one new:
+`window_commands_save_and_restore_only_through_this_module`. Not verified:
+an installer from the release workflow; opening and hiding each detached window by
+hand in a release build.

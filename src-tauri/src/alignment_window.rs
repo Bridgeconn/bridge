@@ -1,6 +1,6 @@
 //! #447: one alignment view over the existing engine, never another session.
 use tauri::{AppHandle, Manager, WebviewWindow};
-use tauri_plugin_window_state::{AppHandleExt, StateFlags, WindowExt};
+use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 pub const LABEL: &str = "alignment";
 
@@ -16,18 +16,13 @@ pub async fn alignment_window(app: AppHandle, window: WebviewWindow, action: Str
             // reveals this existing view; it never constructs a second engine.
             let view = app.get_webview_window(LABEL)
                 .ok_or("Alignment window is unavailable. Restart Bridge or use the main panel.")?;
-            view.unminimize().map_err(|e| e.to_string())?;
-            // Check again on every reopen, including after a monitor was
-            // unplugged while this window was hidden. Never restore hidden.
-            view.restore_state(StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED)
-                .map_err(|e| e.to_string())?;
-            view.show().map_err(|e| e.to_string())?;
-            view.set_focus().map_err(|e| e.to_string())
+            // On the main thread: see window_state.rs for why a command
+            // must not restore or save window state itself.
+            crate::window_state::reveal(&app, view).await
         }
         "hide" => {
             if let Some(view) = app.get_webview_window(LABEL) {
-                app.save_window_state(StateFlags::all()).map_err(|e| e.to_string())?;
-                view.hide().map_err(|e| e.to_string())?;
+                crate::window_state::save_and_hide(&app, view).await?;
             }
             Ok(())
         }

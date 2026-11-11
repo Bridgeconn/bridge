@@ -36,7 +36,6 @@
       },
       {
         "label": "review-queue",
-        "create": false,
         "url": "review.html",
         "title": "Review notes · Bridge",
         "width": 1180,
@@ -48,7 +47,6 @@
       },
       {
         "label": "alignment",
-        "create": false,
         "url": "alignment.html",
         "title": "Alignment · Bridge",
         "width": 1180,
@@ -60,7 +58,6 @@
       },
       {
         "label": "panel-source",
-        "create": false,
         "url": "panel.html?panel=source",
         "title": "Source text · Bridge",
         "width": 560,
@@ -72,7 +69,6 @@
       },
       {
         "label": "panel-reference",
-        "create": false,
         "url": "panel.html?panel=reference",
         "title": "Reference · Bridge",
         "width": 560,
@@ -84,7 +80,6 @@
       },
       {
         "label": "panel-paratext",
-        "create": false,
         "url": "panel.html?panel=paratext",
         "title": "Paratext notes · Bridge",
         "width": 560,
@@ -96,7 +91,6 @@
       },
       {
         "label": "panel-review",
-        "create": false,
         "url": "panel.html?panel=review",
         "title": "Review · Bridge",
         "width": 560,
