@@ -7,7 +7,10 @@
     type PerfRunProgress,
   } from "../perf";
 
-  export let onClose: () => void;
+  export let onClose: () => void = () => {};
+  /** #488: shown inside Settings, under App updates -- no overlay, no close
+   *  button and no Escape of its own (Settings owns Escape there). */
+  export let embedded = false;
 
   // #321: Escape does what the × does, and focus goes back to the button that
   // opened the panel (the CheckerSettingsDialog pattern).
@@ -18,7 +21,7 @@
   });
 
   function onWindowKeydown(event: KeyboardEvent): void {
-    if (event.key === "Escape" && !event.defaultPrevented) onClose();
+    if (!embedded && event.key === "Escape" && !event.defaultPrevented) onClose();
   }
 
   let filter: "all" | "warn" | "error" = "all";
@@ -66,11 +69,11 @@
 
 <svelte:window on:keydown={onWindowKeydown} />
 
-<div class="modal-overlay">
-  <div class="diagnostics-modal">
-    <button class="close-btn" on:click={onClose} aria-label="Close diagnostics">✕</button>
+<div class:modal-overlay={!embedded}>
+  <div class="diagnostics-modal" class:embedded>
+    {#if !embedded}<button class="close-btn" on:click={onClose} aria-label="Close diagnostics">✕</button>{/if}
     <div class="header">
-      <div class="title">Engine diagnostics</div>
+      {#if embedded}<h3 class="title">Diagnostics</h3>{:else}<div class="title">Engine diagnostics</div>{/if}
       <p class="desc">
         Sidecar lifecycle events (start, restart, crash), request timeouts, and the Python engine's
         own error output. If the engine ever restarts mid-session, reopen your project — its
@@ -139,6 +142,11 @@
 <style>
   .modal-overlay { position: absolute; inset: 0; background: rgba(15, 20, 26, 0.45); display: flex; align-items: center; justify-content: center; z-index: var(--z-dialog); }
   .diagnostics-modal { width: 720px; height: 520px; background: var(--surface); border-radius: 14px; display: flex; flex-direction: column; overflow: hidden; position: relative; }
+  /* In Settings the pane scrolls, not the log: no fixed box, no side padding. */
+  .diagnostics-modal.embedded { width: auto; height: auto; border-radius: 0; overflow: visible; margin-top: 24px; border-top: 1px solid var(--border); }
+  .embedded .header, .embedded .perf, .embedded .log-body { padding-left: 0; padding-right: 0; }
+  .embedded .log-body { max-height: 260px; }
+  .embedded h3.title { margin: 0 0 4px; }
   .close-btn { position: absolute; top: 10px; right: 10px; z-index: 2; width: 28px; height: 28px; border-radius: 6px; border: none; background: transparent; color: var(--text-2); font-size: var(--fs-lg); cursor: pointer; }
   .close-btn:hover { background: var(--surface-2); }
   .header { padding: 20px 24px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; }

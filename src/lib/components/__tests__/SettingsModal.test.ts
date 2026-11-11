@@ -58,7 +58,7 @@ vi.mock("../../api/bridgeClient", () => ({
 }));
 
 import SettingsModal from "../SettingsModal.svelte";
-import { diagnosticsOpen, project } from "../../stores";
+import { project } from "../../stores";
 import type { ProjectInfo } from "../../types/finding";
 
 const target = {
@@ -103,14 +103,23 @@ describe("SettingsModal connections", () => {
     });
   });
 
-  it("opens diagnostics from Settings without closing unsaved Settings on Escape", async () => {
+  // #488: Diagnostics is part of the App updates pane, below the update
+  // controls; it has no button and no dialog of its own.
+  it("shows Diagnostics below App updates, with no separate Diagnostics button", async () => {
     const onClose = vi.fn();
     render(SettingsModal, { props: { onClose } });
-    await fireEvent.click(await screen.findByRole("button", { name: "Diagnostics" }));
-    expect(get(diagnosticsOpen)).toBe(true);
+    await screen.findByRole("button", { name: "App updates" });
+    expect(screen.queryByRole("button", { name: "Diagnostics" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Diagnostics" })).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "App updates" }));
+    const updates = await screen.findByRole("heading", { name: "App updates" });
+    const diagnostics = screen.getByRole("heading", { name: "Diagnostics" });
+    expect(updates.compareDocumentPosition(diagnostics) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByTestId("long-tasks")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Close diagnostics" })).toBeNull();
+    // One Escape closes Settings; the embedded pane does not handle it too.
     await fireEvent.keyDown(window, { key: "Escape" });
-    expect(onClose).not.toHaveBeenCalled();
-    diagnosticsOpen.set(false);
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it("keeps the saved update opt out when switching settings panes", async () => {

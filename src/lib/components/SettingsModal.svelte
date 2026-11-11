@@ -2,11 +2,12 @@
   import UsersPane from "./UsersPane.svelte";
   import TeamPane from "./TeamPane.svelte";
   import UpdatesPane from "./UpdatesPane.svelte";
+  import DiagnosticsPanel from "./DiagnosticsPanel.svelte";
   import { onDestroy, onMount } from "svelte";
   import { bridge, type EngineInfo } from "../api/bridgeClient";
   import { nudgeLanguageQa } from "../languageQaInline";
   import { askConfirmation } from "../confirmAction";
-  import { diagnosticsOpen, manualOverrideMode, navigationStatus, project, reviewerMode } from "../stores";
+  import { manualOverrideMode, navigationStatus, project, reviewerMode } from "../stores";
   import type { AiReasoningEffort, AiTask, AiTaskSettings, InlineConfidence, NavigationSyncState, ParatextConnectorStatus, SettingsData, TerminologyRule, UserRole } from "../types/finding";
   import type { HouseStyleEntry, HouseStyleListResponse, HouseStyleProposal } from "../types/houseStyle";
   import type { CheckerSettings } from "../types/languageQa";
@@ -133,7 +134,7 @@
   });
 
   function onWindowKeydown(event: KeyboardEvent): void {
-    if (event.key !== "Escape" || event.defaultPrevented || checkerDialogOpen || $diagnosticsOpen) return;
+    if (event.key !== "Escape" || event.defaultPrevented || checkerDialogOpen) return;
     if (event.target instanceof Element && event.target.closest("input.rename")) return;
     onClose();
   }
@@ -628,7 +629,6 @@
       <button class="nav-item" class:active={activePane === "users"} on:click={() => (activePane = "users")}>Users</button>
       <button class="nav-item" class:active={activePane === "team"} on:click={() => (activePane = "team")}>Team</button>
       <button class="nav-item" class:active={activePane === "updates"} on:click={() => (activePane = "updates")}>App updates</button>
-      <button class="nav-item" on:click={() => diagnosticsOpen.set(true)}>Diagnostics</button>
       {#if engineInfo}
         <div class="about-version" title="What this window is actually running, not what Windows says was installed">
           Bridge {engineInfo.bridgeVersion} · Schema v{engineInfo.companionSchemaVersion}
@@ -641,6 +641,8 @@
         <p class="muted">Loading…</p>
       {:else if activePane === "updates"}
         <UpdatesPane bind:enabled={automaticUpdates} />
+        <!-- #488: Diagnostics lives here, below App updates, not in a dialog of its own. -->
+        <DiagnosticsPanel embedded />
       {:else if activePane === "ai"}
         <h3>AI provider</h3>
         <p class="desc">Used only for optional "Explain with AI." Core QA (Greek Room, local checks) never requires this and works fully offline.</p>

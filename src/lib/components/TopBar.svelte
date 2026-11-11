@@ -107,6 +107,11 @@
     <span class="mark" data-tauri-drag-region><BridgeMark size={22} /></span> Bridge
     {#if engineInfo}<span class="version" data-tauri-drag-region title="Schema v{engineInfo.companionSchemaVersion}">{engineInfo.bridgeVersion}</span>{/if}
   </div>
+  {#if screen === "editor" && $$slots.menus}
+    <!-- #488: View, Check and Bookmarks, right of the name. App fills the
+         slot, since the menus act on App's state. -->
+    <div class="menus" role="group" aria-label="Menus"><slot name="menus" /></div>
+  {/if}
   {#if screen !== "home"}
   <div class="divider" />
 
@@ -224,6 +229,7 @@
   .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: var(--fs-md); color: var(--text); white-space: nowrap; }
   .mark { display: flex; flex-shrink: 0; filter: drop-shadow(0 1px 2px rgba(47, 111, 237, 0.25)); }
   .version { font-size: var(--fs-3xs); font-weight: 600; color: var(--text-3); }
+  .menus { display: flex; align-items: center; gap: 2px; flex-shrink: 0; margin: 0 -6px; }
   .divider { width: 1px; height: 24px; background: var(--border); flex-shrink: 0; }
   .breadcrumb { display: flex; align-items: center; gap: 4px; min-width: 0; flex-shrink: 1; overflow: hidden; }
   .crumb { border: 0; background: transparent; color: var(--text-2); font-size: var(--fs-sm); font-weight: 600; padding: 4px 6px; border-radius: 6px; cursor: pointer; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -24752,3 +24752,48 @@ a bank word dropped mid-column, the box pick plus the drag that follows it,
 and a word press not starting a box); `npm run build` passed. Not verified:
 the desktop app itself -- jsdom lays nothing out, so the half-card hit test,
 the insert bar and the selection rectangle still need a look at 1366x768.
+
+## 2026-11-11 — Top bar: View, Check and Bookmarks menus; Diagnostics inside Settings (#488)
+
+First of the UI clean-up batch agreed on the 2026-11-11 call (Revant and
+Joel splitting by file; #484, #486, #487 are Joel's). Frontend only.
+
+- `TopBar.svelte` has a `menus` slot right of the name, shown on the editor
+  screen only; `App.svelte` fills it with `ViewMenu` (new), `CheckMenu` and a
+  Bookmarks button that opens the existing places menu (`openPlacesMenu`,
+  which had lost its last caller).
+- `ViewMenu.svelte`: Source, Reference, Paratext, Language QA, Review as
+  `menuitemcheckbox` toggles over the same `sidePanels` store the rail uses,
+  so the two agree and the state survives a restart as before. A panel folded
+  for width (#324) shows no tick and choosing it reveals it, as on the rail.
+  The menu stays open after a toggle; arrows, Home/End, Escape (focus back to
+  the button) and a press outside are handled.
+- `src/lib/viewMenu.ts` (new) is the name agreed with #487:
+  `languageQaShown` / `toggleLanguageQaShown()` / `setLanguageQaShown()`.
+  Today it is backed by `sidePanels.languageQa.open`. **Owed after #487
+  lands:** `languageQa` is still a `SidePanelId`, so the rail entry
+  (`SideRail.svelte`) and the width budget (`panelFit.ts`, `editorPrefs.ts`)
+  still treat it as a column; once the docked panel is gone the flag needs its
+  own persisted key, and the default (the Review tab is always present today,
+  the column is closed by default) is a product question.
+- `CheckMenu.svelte` moved from the editor toolbar into the top bar, renamed
+  "Check ▾", with "Check whole book" first; the toolbar's separate "Run whole
+  book" button is gone. Run chapter and Greek Room on demand stay in the menu:
+  the issue lists only "Check whole book" and the tick boxes, but nothing else
+  offers those two runs.
+- The editor header's overflow menu lost "Show reference Bible" and
+  "Bookmarks and recent chapters". There was no literal "Ref." button on
+  `main` (0c78c55 had already turned it into that overflow entry), so the
+  entry is what was removed.
+- Diagnostics: `DiagnosticsPanel.svelte` takes `embedded`; `SettingsModal`
+  renders it under `UpdatesPane` in the App updates pane and has no
+  Diagnostics nav button; `App.svelte` no longer mounts the dialog. The
+  `diagnosticsOpen` store in `stores.ts` now has no reader (left in place:
+  not a file of this batch).
+
+Verified: `npm run check` 0 errors/warnings; `npm run test` 126 files, 1213
+tests passed (new: 5 ViewMenu, 4 CheckMenu, 2 TopBar slot, 1 embedded
+Diagnostics; the Settings diagnostics test rewritten); `npm run build`
+passed. Not verified: the desktop app -- whether the three menus, breadcrumb,
+chapter stepper and Go-to fit the top bar at 1366x768, and how the embedded
+Diagnostics reads in the Settings pane.

@@ -16,6 +16,7 @@ vi.mock("../../api/bridgeClient", () => ({
 }));
 
 import TopBar from "../TopBar.svelte";
+import TopBarMenusFixture from "./fixtures/TopBarMenusFixture.svelte";
 import { project, currentChapter, navigationStatus } from "../../stores";
 import type { ProjectInfo } from "../../types/finding";
 
@@ -233,5 +234,29 @@ describe("TopBar window controls", () => {
     desktop.mockReturnValue(false);
     mount({ screen: "home" });
     expect(screen.queryByRole("group", { name: "Window controls" })).toBeNull();
+  });
+});
+
+// #488: View, Check and Bookmarks sit right of the name, in the editor only.
+describe("TopBar menus slot (#488)", () => {
+  beforeEach(() => {
+    engineInfo.mockResolvedValue({ bridgeVersion: "0.9.7", companionSchemaVersion: 15 });
+    openBook(["1", "2"]);
+    currentChapter.set("1");
+  });
+
+  it("shows the menus between the name and the breadcrumb on the editor screen", async () => {
+    const { container } = render(TopBarMenusFixture, { props: { screen: "editor" } });
+    const menus = screen.getByRole("group", { name: "Menus" });
+    expect(menus).toContainElement(screen.getByRole("button", { name: "View" }));
+    const brand = container.querySelector(".brand") as HTMLElement;
+    const crumbs = screen.getByRole("navigation", { name: "Navigation" });
+    expect(brand.compareDocumentPosition(menus) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(menus.compareDocumentPosition(crumbs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("shows no menus off the editor screen", () => {
+    render(TopBarMenusFixture, { props: { screen: "dashboard" } });
+    expect(screen.queryByRole("group", { name: "Menus" })).toBeNull();
   });
 });

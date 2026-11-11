@@ -47,7 +47,6 @@
   import SettingsModal from "./lib/components/SettingsModal.svelte";
   import ExportModal from "./lib/components/ExportModal.svelte";
   import ProjectDashboard from "./lib/components/ProjectDashboard.svelte";
-  import DiagnosticsPanel from "./lib/components/DiagnosticsPanel.svelte";
   import StartupScreen from "./lib/components/StartupScreen.svelte";
   import UserPicker from "./lib/components/UserPicker.svelte";
   import AssignmentsDialog from "./lib/components/AssignmentsDialog.svelte";
@@ -64,12 +63,12 @@
     project, currentChapter, chapterVerseNums, verseTexts, verseDisplay, headingsByVerse, findingsByVerse, historyCountByVerse,
     checkStatusByVerse, alignmentStatusByVerse, loadedChapters, selectedVerse, selectedVerseSet, checkingProgress, approvedCount, verseNums,
     verseKey, settingsOpen, exportOpen, bookApprovedSummary, resetBookState, reviewerMode,
-    aiCheckReviewsByVerse, diagnosticsOpen, engineLog, appendEngineLog, navigationStatus,
+    aiCheckReviewsByVerse, engineLog, appendEngineLog, navigationStatus,
     bookAssignments, localUserId, checkGroupsByVerse, checkRunRequest, type CheckStatus,
   } from "./lib/stores";
   import { get } from "svelte/store";
   import {
-    boxesRan, checkListLabel, coversSelection, editorCheckList, groupsOf, mergeFindings, selectedEditorChecks,
+    boxesRan, checkListLabel, coversSelection, editorCheckList, groupsOf, mergeFindings,
     toggleCheck, type CheckBoxId,
   } from "./lib/checkSelection";
   import { editorChecks } from "./lib/editorPrefs";
@@ -77,6 +76,7 @@
   import { greekRoomChapterSummary, runVerseGreekRoom } from "./lib/verseChecks";
   import { projectRoles, refreshProjectRoles } from "./lib/projectRole";
   import CheckMenu from "./lib/components/CheckMenu.svelte";
+  import ViewMenu from "./lib/components/ViewMenu.svelte";
   import { editingChapter, editingVerse, editSaving } from "./lib/verseEditor";
   import { languageQaChannel, nudgeLanguageQa, startLanguageQaInline } from "./lib/languageQaInline";
   import { toggleLanguageQaPanel } from "./lib/languageQaPanelUi";
@@ -1662,7 +1662,22 @@
     onBookChange={switchBook}
     exportEnabled={$project !== null}
     bookSwitching={Boolean(openingBook)}
-  />
+  >
+    <!-- #488: the editor's three menus, right of the name. -->
+    <svelte:fragment slot="menus">
+      <ViewMenu />
+      <CheckMenu
+        disabled={Boolean(activeJobId) || $checkingProgress.running}
+        verse={$selectedVerse ? `${$currentChapter}:${$selectedVerse}` : ""}
+        chapter={$currentChapter}
+        onRunChapter={runChapterChecks}
+        onRunBook={runWholeBook}
+        onRunGreekRoom={runGreekRoom}
+      />
+      <button type="button" class="top-menu-btn" aria-haspopup="menu" aria-expanded={Boolean(placesMenu)}
+        title="Bookmarks and recent chapters" on:click={openPlacesMenu}>Bookmarks ▾</button>
+    </svelte:fragment>
+  </TopBar>
 
   {#if (openingBook && !(screen === "dashboard" && dashboardOpeningPath)) || $prepareProgress}
     <!-- The book switch's strip; a Home-screen open that prepares a lazy
@@ -1775,19 +1790,6 @@
           <p class="role-banner" role="status">You are a reporter on this project: you can read, report and export, and changes are refused.</p>
         {/if}
         <div class="editor-toolbar">
-
-          <button class="whole-book-btn" on:click={runWholeBook} disabled={Boolean(activeJobId)}
-            title={`Run ${checkListLabel($selectedEditorChecks)} on every chapter`}>
-            {$checkingProgress.scope === "book" && $checkingProgress.running ? "Running…" : "Run whole book"}
-          </button>
-          <CheckMenu
-            disabled={Boolean(activeJobId) || $checkingProgress.running}
-            verse={$selectedVerse ? `${$currentChapter}:${$selectedVerse}` : ""}
-            chapter={$currentChapter}
-            onRunChapter={runChapterChecks}
-            onRunBook={runWholeBook}
-            onRunGreekRoom={runGreekRoom}
-          />
           <button class="whole-book-btn" on:click={() => (showingAlignmentReview = true)}>
             Alignment Review
           </button>
@@ -1820,20 +1822,16 @@
             <div class="editor-header">
               <h2>Chapter {$currentChapter} of {$project?.chapters.length ?? "?"}</h2>
               <OverflowMenu label="Editor tools" actions={[
-                { id: "reference", label: `${$sidePanels.reference.open ? "Hide" : "Show"} reference Bible` },
                 { id: "raw", label: `${$rawView ? "Hide" : "Show"} Raw USFM` },
-                { id: "bookmarks", label: "Bookmarks and recent chapters" },
                 { id: "smaller", label: "Smaller text", disabled: $textScale === TEXT_SCALES[0] },
                 { id: "larger", label: "Larger text", disabled: $textScale === TEXT_SCALES[TEXT_SCALES.length - 1] },
                 { id: "reset", label: "Reset workspace layout" },
               ]} on:action={(event) => {
-                const { id, anchor } = event.detail;
-                if (id === "reference") toggleSidePanel("reference");
-                else if (id === "raw") rawView.update(v => !v);
+                const { id } = event.detail;
+                if (id === "raw") rawView.update(v => !v);
                 else if (id === "smaller") bumpTextScale(-1);
                 else if (id === "larger") bumpTextScale(1);
                 else if (id === "reset") resetWorkspaceLayout();
-                else if (id === "bookmarks") { const rect = anchor.getBoundingClientRect(); placesMenu = { x: rect.left, y: rect.bottom + 4 }; }
               }} />
             </div>
             <VerseList onSelect={selectVerse} onNavigate={navigateToReportRow} />
@@ -1940,10 +1938,6 @@
   <!-- #432: one review queue for the project; it stays open across a book switch. -->
   <ReviewQueueHost onNavigate={navigateToReportRow} />
 
-  {#if $diagnosticsOpen}
-    <DiagnosticsPanel onClose={() => diagnosticsOpen.set(false)} />
-  {/if}
-
   {#if $exportOpen}
     <ExportModal reviewComplete={allApproved} onClose={() => exportOpen.set(false)} />
   {/if}
@@ -1986,6 +1980,9 @@
   .editor-toolbar > * { white-space: nowrap; flex-shrink: 0; }
   .whole-book-btn { font-size: var(--fs-xs); font-weight: 600; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); cursor: pointer; }
   .whole-book-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+  /* The Bookmarks menu button, matching ViewMenu's and CheckMenu's own. */
+  .top-menu-btn { height: var(--control-h); box-sizing: border-box; display: inline-flex; align-items: center; font: inherit; font-size: var(--fs-sm); font-weight: 600; line-height: 1; padding: 0 8px; border-radius: 6px; border: 1px solid transparent; background: transparent; color: var(--text-2); cursor: pointer; white-space: nowrap; }
+  .top-menu-btn:hover, .top-menu-btn[aria-expanded="true"] { background: var(--surface-2); color: var(--text); border-color: var(--border); }
   .role-banner { margin: 0; padding: 6px 14px; background: var(--accent-bg); color: var(--accent); font-size: var(--fs-xs); font-weight: 600; border-bottom: 1px solid var(--border); }
   .grow { flex: 1; }
   .statusbar { height: 28px; background: var(--surface); border-top: 1px solid var(--border); display: flex; align-items: center; padding: 0 16px; gap: 16px; font-size: var(--fs-xs); color: var(--text-2); flex-shrink: 0; overflow: hidden; white-space: nowrap; }

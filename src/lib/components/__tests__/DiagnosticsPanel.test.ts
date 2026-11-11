@@ -22,6 +22,18 @@ describe("DiagnosticsPanel Escape (#321)", () => {
   });
 });
 
+describe("DiagnosticsPanel embedded in Settings (#488)", () => {
+  it("has no close button and leaves Escape to Settings", async () => {
+    const onClose = vi.fn();
+    const { unmount } = render(DiagnosticsPanel, { props: { embedded: true, onClose } });
+    expect(screen.getByRole("heading", { name: "Diagnostics" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Close diagnostics" })).toBeNull();
+    await fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+    unmount();
+  });
+});
+
 describe("DiagnosticsPanel long tasks (#260)", () => {
   it("says when the WebView records no long tasks, then shows the tally", async () => {
     longTasks.set({ supported: false, count: 0, longestMs: 0, totalMs: 0 });
