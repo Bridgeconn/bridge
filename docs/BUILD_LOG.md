@@ -24797,3 +24797,25 @@ Diagnostics; the Settings diagnostics test rewritten); `npm run build`
 passed. Not verified: the desktop app -- whether the three menus, breadcrumb,
 chapter stepper and Go-to fit the top bar at 1366x768, and how the embedded
 Diagnostics reads in the Settings pane.
+
+## 2026-11-11 — Editor panel header: chapter stays at the top, Raw USFM toggle in the panel (#489)
+
+Frontend only. `EditorHeader.svelte` (new) is the editor panel's header that
+`App.svelte` used to write inline: the Raw USFM toggle on the left
+(`aria-pressed`, filled when on, same persisted `rawView` store), "Chapter N
+of M" in the middle, and the remaining overflow tools (text size, reset
+layout) in its slot. The overflow menu's "Show / Hide Raw USFM" entry is gone.
+
+On the sticky chapter: on `main` the chapter line was already outside
+`VerseList`'s scroller (`.editor-scroll`), in a `flex: none` bar above it, so
+the verses already scrolled under it; `VerseList.svelte` and
+`EditorWorkspace.svelte` needed no change. The one case found where it could
+move is an arranged layout taller than the window, where
+`EditorWorkspace`'s `.layout-scroll` scrolls the whole column; the header is
+now `position: sticky; top: 0` for that. If the header was seen scrolling
+away in the desktop app in some other situation, that situation is not
+reproduced here and needs describing.
+
+Verified with #490 in one gate run: `npm run check` 0 errors/warnings;
+`npm run test` 127 files, 1221 tests passed (new: 4 EditorHeader tests);
+`npm run build` passed. Not verified: the desktop app at 1366x768.

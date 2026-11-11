@@ -30,7 +30,7 @@
   import ParatextNotesPanel from "./lib/components/ParatextNotesPanel.svelte";
   import ReviewQueueHost from "./lib/components/ReviewQueueHost.svelte";
   import FindingContextMenu from "./lib/components/FindingContextMenu.svelte";
-  import { TEXT_SCALES, bumpTextScale, rawView, sidePanelOrder, sidePanels, textScale, toggleSidePanel } from "./lib/editorPrefs";
+  import { TEXT_SCALES, bumpTextScale, sidePanelOrder, sidePanels, textScale, toggleSidePanel } from "./lib/editorPrefs";
   import { verseMin } from "./lib/panelFit";
   import SidePanel from "./lib/components/SidePanel.svelte";
   import SideRail from "./lib/components/SideRail.svelte";
@@ -77,6 +77,7 @@
   import { projectRoles, refreshProjectRoles } from "./lib/projectRole";
   import CheckMenu from "./lib/components/CheckMenu.svelte";
   import ViewMenu from "./lib/components/ViewMenu.svelte";
+  import EditorHeader from "./lib/components/EditorHeader.svelte";
   import { editingChapter, editingVerse, editSaving } from "./lib/verseEditor";
   import { languageQaChannel, nudgeLanguageQa, startLanguageQaInline } from "./lib/languageQaInline";
   import { toggleLanguageQaPanel } from "./lib/languageQaPanelUi";
@@ -1819,21 +1820,19 @@
           <!-- #324: the verse list never goes below this width; the side
                panels shrink and then fold to the rail first (panelFit.ts). -->
           <div data-editor-pane="editor" class="editor-col" style={editorFrame || `min-width:${$verseMin}px`}>
-            <div class="editor-header">
-              <h2>Chapter {$currentChapter} of {$project?.chapters.length ?? "?"}</h2>
+            <!-- #489: the chapter and the Raw toggle, above the scrolling verses. -->
+            <EditorHeader chapter={$currentChapter} total={$project?.chapters.length ?? "?"}>
               <OverflowMenu label="Editor tools" actions={[
-                { id: "raw", label: `${$rawView ? "Hide" : "Show"} Raw USFM` },
                 { id: "smaller", label: "Smaller text", disabled: $textScale === TEXT_SCALES[0] },
                 { id: "larger", label: "Larger text", disabled: $textScale === TEXT_SCALES[TEXT_SCALES.length - 1] },
                 { id: "reset", label: "Reset workspace layout" },
               ]} on:action={(event) => {
                 const { id } = event.detail;
-                if (id === "raw") rawView.update(v => !v);
-                else if (id === "smaller") bumpTextScale(-1);
+                if (id === "smaller") bumpTextScale(-1);
                 else if (id === "larger") bumpTextScale(1);
                 else if (id === "reset") resetWorkspaceLayout();
               }} />
-            </div>
+            </EditorHeader>
             <VerseList onSelect={selectVerse} onNavigate={navigateToReportRow} />
           </div>
           <!-- #389: the columns run in the reviewer's order (sidePanelOrder,
@@ -1969,8 +1968,6 @@
   .body { flex: 1; display: flex; overflow: hidden; }
   /* A 66-book table must not push the dashboard off screen: it scrolls. */
   .work-col { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
-  .editor-header { display: grid; grid-template-columns: 28px minmax(0, 1fr) 28px; align-items: center; min-height: 36px; flex: none; padding: 0 8px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
-  .editor-header h2 { grid-column: 2; text-align: center; font-size: var(--fs-xs); font-weight: 500; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .work-row { flex: 1; min-height: 0; display: flex; overflow: hidden; }
   .editor-col { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
   /* min-height + wrap, not a fixed height: on a narrow window the items used to
