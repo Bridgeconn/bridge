@@ -2,7 +2,7 @@
 use tauri::{AppHandle, Manager, WebviewWindow};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags, WindowExt};
 
-pub const PANELS: [&str; 5] = ["source", "reference", "languageQa", "paratext", "review"];
+pub const PANELS: [&str; 4] = ["source", "reference", "paratext", "review"];
 fn label(panel: &str) -> Result<String, String> {
     if !PANELS.contains(&panel) { return Err("Unsupported editor panel".into()); }
     Ok(format!("panel-{panel}"))
@@ -32,6 +32,6 @@ mod tests {
     use super::*;
     #[test] fn panel_labels_are_a_closed_inventory() {
         for panel in PANELS { assert_eq!(label(panel).unwrap(), format!("panel-{panel}")); }
-        for invalid in ["main", "alignment", "review-queue", "../source", ""] { assert!(label(invalid).is_err()); }
+        for invalid in ["main", "alignment", "review-queue", "../source", "languageQa", ""] { assert!(label(invalid).is_err()); }
     }
 }

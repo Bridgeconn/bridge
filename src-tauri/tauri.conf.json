@@ -79,17 +79,6 @@
         "dragDropEnabled": false
       },
       {
-        "label": "panel-languageQa",
-        "url": "panel.html?panel=languageQa",
-        "title": "Language QA · Bridge",
-        "width": 560,
-        "height": 640,
-        "minWidth": 360,
-        "minHeight": 320,
-        "visible": false,
-        "dragDropEnabled": false
-      },
-      {
         "label": "panel-paratext",
         "url": "panel.html?panel=paratext",
         "title": "Paratext notes · Bridge",

@@ -25169,3 +25169,24 @@ component stylesheet, so the tab switch while scrolled, the View menu in a
 narrow window, the Alignment menu and its strip, and the editor header with a
 long project name at 1366x768 are all for the maintainer's check. `cargo` and
 the engine suite were not run: no shell or engine file changed.
+
+### Third round, same day (#487)
+
+The maintainer's answers to the second round: the automatic-alignment strip
+stays; the crumb order stays Projects, project, book (already so, nothing
+changed); the lost rail counts are accepted.
+
+- **Counts on the Language QA scope switch.** Verse, Chapter and Book each
+  carry a count of the list on show (Findings, Re-check or False positives),
+  before the Kinds filter. The verse's and the book's were already known. The
+  chapter's is `bridge.languageQaChapterCount`: the existing `languageQa.status`
+  read with `limit: 0` and the chapter filter, made when the tab is shown and
+  again when a pass lands, a list size changes or the chapter changes. No
+  engine or protocol change. The verse scope still reads no page.
+- **`languageQa` is no longer a panel window label.** Removed from `PANELS` in
+  `panel_window.rs`, from `main.rs`'s `skip_initial_state` list and from
+  `tauri.conf.json`'s windows; the label test now expects it refused.
+
+Verified: `npm run check` 0 errors, 0 warnings; `npm run test` 128 files, 1244
+tests passed; `npm run build` passed; `cargo check` passed; `cargo test` 19
+passed. Not verified at the time of the commit: the desktop app.
