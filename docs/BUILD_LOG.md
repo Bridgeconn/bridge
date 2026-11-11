@@ -25024,3 +25024,148 @@ Verified: `npm run check` 0/0; `npm run test` 127 files, 1226 tests passed;
 `npm run build` passed. Not verified (jsdom lays nothing out): everything
 visual, listed on the issue for the desktop app at 1366x768 and larger.
 Engine and `cargo` not run: no engine or shell file changed.
+
+## 2026-11-11 — Second round after the desktop check: #487 bug and toggle, no rail, Alignment menu, editor header, Core check title
+
+Revant checked the dev build of b0ddfe9 in the desktop app and posted the
+feedback on #487 (reopened), #488, #489 and #490. Frontend only; no engine,
+protocol or schema change. Joel had finished, so the morning's file split did
+not apply to this round.
+
+### #487 — Language QA stayed drawn after a tab switch: the cause
+
+Seen: Language QA tab, then AI review; Language QA content stayed at the top
+and AI review scrolled under it. The guess was a pinned row not hidden with
+its tab. The pinned rows were only the visible part. The cause is one rule in
+`ReviewPanel.svelte`:
+
+```css
+.lqa-panel { display: flow-root; }
+```
+
+The Language QA tab panel is kept mounted and hidden with the `hidden`
+attribute (`hidden={activeTab !== "lqa"}`), so its scope, lists and F8 walk
+survive a switch. `hidden` works through the browser's own
+`[hidden] { display: none }`, and any author `display` on the same element
+wins over it. So the panel was never hidden, on any tab: under Greek Room and
+Core check it sat below their content, under AI review (which comes after it
+in the markup) it sat above, and its sticky head (`.panel-head`, `top: 0`)
+stayed at the top of the scroller while AI review moved beneath it. Core
+check's panel uses the same `hidden` pattern and was fine only because nothing
+sets a `display` on it.
+
+Fix: the `hidden` element carries no `display`. `flow-root` (needed to keep
+the tab's negative margins inside) moved to an inner `.lqa-body`, and
+`.tab-panel[hidden] { display: none !important; }` holds the line for any
+later rule. Tests (`ReviewPanelLanguageQa.test.ts`): the tabs are visited in
+seven steps and exactly one tab panel is not `hidden` each time, with the
+Language QA body still mounted; and, because jsdom applies no component
+stylesheet and so cannot see the override itself, a source test collects every
+class on an element that carries `hidden={...}` and fails if any style rule
+gives one of them a `display` other than `none`. That second test fails on the
+old stylesheet; the first documents the behaviour.
+
+### #487 — no separate Language QA toggle
+
+- The tab is always in the Review panel. `viewMenu.ts` (`languageQaShown`,
+  `setLanguageQaShown`, `toggleLanguageQaShown`) is deleted; the View menu has
+  no Language QA entry.
+- `SidePanelId` is `source | reference | paratext | review`: `languageQa` is
+  gone from the type, `SIDE_PANEL_ORDER`, `SIDE_PANEL_LIMITS` and the defaults,
+  so there is no saved "Language QA open" flag to hide the tab.
+- Saved state from before: `editorPrefs.ts` rewrites
+  `bridge.editor.sidePanels.v1` and `bridge.editor.sidePanelOrder.v1` without
+  the retired id before the stores read them (a saved order naming it would
+  otherwise fail validation and the reviewer's own order would be lost), and
+  `projectWorkspace.ts` `savedWorkspace` takes it out of a per-project
+  snapshot's panels, order and docking tree (`without`), so a saved place,
+  widths and arrangement survive. `RETIRED_PANEL_IDS` / `withoutRetiredPanels`
+  are the one place this lives.
+- `PanelWindow.svelte` no longer hosts Language QA. `LanguageQaPanel.svelte`
+  lost its `docked` prop and its own `PanelHeader`. That header was drawn
+  whenever the `panel-window` context was present, which includes the Review
+  panel in its own window: a second panel bar inside the tab there. Gone with
+  the prop.
+- The status bar's Language QA button (`showLanguageQaTab`) opens the Review
+  panel and asks for the tab.
+- Left alone on purpose: `src-tauri/src/panel_window.rs` still lists
+  `"languageQa"` in `PANELS` and `main.rs` still skips `panel-languageQa`'s
+  initial state. Nothing asks for that window any more; removing the label is
+  a shell change and this round is frontend only.
+
+### #488 — the rail is gone; Alignment menu; no second bar
+
+- `SideRail.svelte` deleted (grep for `SideRail` over `src`, `docs`, `scripts`,
+  `engine/tests`, `src-tauri`: two imports in tests and one in `App.svelte`,
+  all removed; the remaining mentions are earlier BUILD_LOG entries).
+  `panelFit.ts` no longer reserves `RAIL_WIDTH` (35px), so the panels fold 35px
+  later than before.
+- What the rail did, and where it is now:
+  - Show/hide a panel: the View menu (already there).
+  - Reopen a panel folded for width: the View menu entry is `aria-checked="mixed"`,
+    shows "–" and "folded: window too narrow", and choosing it calls
+    `revealSidePanel` (it comes back, another folds) instead of closing it. The
+    View button itself carries a small dashed dot and a tooltip while any panel
+    is folded, so the state is visible without opening the menu.
+  - Settings: the top bar's gear.
+  - Badges. Review's open count: the Review panel header ("N open") and the
+    verse row's open-issue pill. Language QA's total and its "!" on a failed
+    channel: the status bar button ("Language QA: completed · N",
+    "Language QA: unavailable"). Paratext's open-thread count on the selected
+    verse: the verse row's Paratext note button. **What is lost:** a count
+    visible beside the toggle of a *closed* panel. With the Review or Paratext
+    panel closed, the selected verse's numbers are on the verse row only.
+- `AlignmentMenu.svelte` (new), after Bookmarks: Alignment Review, Cross-verse
+  alignment (disabled with no verse selected; "(N)" and the "Open the N
+  selected verses" tooltip from two picked verses up), Align chapter with AI
+  (disabled while a job runs or without an API key, with the same tooltips).
+  Choosing an entry closes the menu.
+- The second bar (`.editor-toolbar`) is removed. `AutoAlignChapterButton` is
+  still what runs the chapter job: App mounts it with `strip`, the menu entry
+  calls its `ask()`, and it draws nothing while idle. Its estimate (Start /
+  Cancel), progress (Cancel) and result (Open review, dismiss) need a surface
+  that outlives a closed menu, so they show as one strip above the editor,
+  like the check progress strip, only while there is something to show. This
+  is the one judgment call of the round: "remove the second bar entirely" is
+  true while idle, and a strip appears for the length of an automatic
+  alignment.
+
+### #489 — editor header: breadcrumb left, Raw USFM right
+
+`EditorHeader.svelte`: breadcrumb (Projects, project, book), "Chapter N of M",
+Raw USFM, then the overflow menu. The grid's two side tracks are
+`minmax(0, 1fr)`, so the chapter stays centred; the breadcrumb row clips and
+only the project name (and a single book's name) shrinks, with an ellipsis and
+the full name in its tooltip. `TopBar.svelte` shows no breadcrumb on the
+editor screen (the other screens keep theirs); the chapter picker, Go to and
+the per-project role badge stay there. The crumb order is the top bar's
+(Projects, project, book), not changed.
+
+### #486 follow-up — Core check
+
+`TranslationHelpsReview.svelte` no longer draws "Translation helps". The row
+is rendered only when it has something to carry: the Manual override badge
+(manual override on) or the loading mark.
+
+### Docs
+
+`docs/ARCHITECTURE.md` §4 and §5: Language QA as the Review panel's tab, the
+four top bar menus, no rail and no second bar, the editor header, Diagnostics
+under App updates, and for #490 that the dashboard's Check button and dialog
+exist only for a multi-book collection (a single-book project uses Run QA on
+the book row; whether it should get the button is undecided and nothing was
+changed).
+
+### Verified
+
+Ran and watched pass, once for the batch: `npm run check` 0 errors, 0
+warnings; `npm run test` 128 files, 1242 tests passed; `npm run build` passed.
+The #487 source test was also run against the old rule put back by hand
+(`.lqa-panel { display: flow-root }` on the hidden element, the guard rule
+removed): it failed naming `.lqa-panel`, then the fix was restored.
+
+Not verified: the desktop app. jsdom lays nothing out and applies no
+component stylesheet, so the tab switch while scrolled, the View menu in a
+narrow window, the Alignment menu and its strip, and the editor header with a
+long project name at 1366x768 are all for the maintainer's check. `cargo` and
+the engine suite were not run: no shell or engine file changed.

@@ -226,11 +226,11 @@ flowchart LR
   subgraph LQ["Language QA (offline, background worker; per verse, then one book stage)"]
     LQr["rule pack: ta-irv, or an indic-qa profile pack (pa, ml, hi, or)<br/>common rules, termbase, house style, learned fixes"] --> LQf
     LQi["vendored indic-qa checker<br/>profile packs, and ta-irv's OV dictionary layer"] --> LQf
-    LQf["Language QA findings<br/>LanguageQaPanel; drawn inline behind the reviewer's threshold"]
+    LQf["Language QA findings<br/>the Review panel's Language QA tab (LanguageQaPanel); drawn inline behind the reviewer's threshold"]
   end
   subgraph Overlay["AI overlays (online, optional, human-invoked)"]
     TR["triage: false-positive score per Greek Room finding<br/>report screen only"]
-    AIR["ai.review: tN/tW AI review<br/>ReviewPanel third tab"]
+    AIR["ai.review: tN/tW AI review<br/>ReviewPanel's AI review tab"]
     CP["9B correction wording"]
     AA["alignment.window.autoAlign, alignment.autoAlign.start<br/>writes only what two passes agree on (origin ai-auto)"]
   end
@@ -287,23 +287,45 @@ closes the auxiliary window and follows the existing sidecar shutdown path.
 ```mermaid
 flowchart TB
   Home["home: ImportScreen<br/>project list, import wizard, file drop"] --> Dash
-  Dash["dashboard: ProjectDashboard<br/>book list with progress, per-book project.report panel,<br/>CollectionQaPanel (multi-book only): collection.runChecks / qaStatus / pauseChecks / cancelChecks, never automatic (#215)"] --> Report["report: ProjectReportScreen<br/>collection-wide report.generate, filters, charts, export, triage overlay"]
-  Dash --> Editor["editor: VerseList + ReviewPanel"]
+  Dash["dashboard: ProjectDashboard<br/>book list with progress, per-book project.report panel,<br/>CollectionQaPanel (multi-book only): one Check button opening CollectionCheckDialog (the checks, Start), then<br/>collection.runChecks / qaStatus / pauseChecks / cancelChecks, never automatic (#215, #490)"] --> Report["report: ProjectReportScreen<br/>collection-wide report.generate, filters, charts, export, triage overlay"]
+  Dash --> Editor["editor: EditorHeader (breadcrumb, Chapter N of M, Raw USFM, overflow menu)<br/>over VerseList, with the side panels to its right: Source, Reference, Paratext, Review"]
   Editor --> AR["review: AlignmentReview shell<br/>tabs Word, Semantic, Passage, QA"]
   Editor --> AM["AlignmentModal (Align words)<br/>translationCore-compatible word alignment"]
   AR --> AM
-  Editor --> RPt["ReviewPanel tabs: Greek Room / tN-tW-Alignment (TranslationHelpsReview) / AI review"]
-  Editor --> LQP["LanguageQaPanel<br/>tabs Findings, Book words, Flags, Edits, Dictionary;<br/>ScopeConfirmDialog for a chapter or book Use, with batch undo"]
+  Editor --> RPt["ReviewPanel tabs: Greek Room / Core check (TranslationHelpsReview) / Language QA / AI review"]
+  RPt --> LQP["Language QA tab: LanguageQaPanel, a tab and not a panel (#487)<br/>sections Findings, Book words, Flags, Edits, Dictionary;<br/>ScopeConfirmDialog for a chapter or book Use, with batch undo"]
   Editor --> RefP["ReferencePanel<br/>a reference Bible folder beside the text"]
-  Editor --> CVM["CrossVerseAlignmentModal (Cross-verse alignment)<br/>Align automatically; AutoAlignChapterButton runs the chapter job"]
+  Editor --> CVM["CrossVerseAlignmentModal (Cross-verse alignment)<br/>Align automatically; AutoAlignChapterButton runs the chapter job,<br/>started from the Alignment menu and shown as a strip only while it has something to show"]
   AR --> QA["AlignmentQaMode (Stage 9A)<br/>QaFindingList, QaFindingDetail, EvidenceInspector, CorrectionReviewPanel (9B)"]
-  Top["TopBar: Projects, book and chapter navigation, Sync, Generate report, Export, Settings"]
+  Top["TopBar. Editor: the View, Check, Bookmarks and Alignment menus, the chapter picker and Go to box, Sync, Export, Settings.<br/>Other screens: the breadcrumb (Projects, project, screen) and Settings"]
 ```
 
 Global chrome: `TopBar.svelte`; modals `SettingsModal` (AI, quality, connections, resources,
-security panes), `ExportModal`, `DiagnosticsPanel` (engine log), `LexiconPopup`,
-`VerseNotesPopup`, `FindingContextMenu`. State lives in `stores.ts` (chapter/verse-keyed
+security panes; Diagnostics, the engine log, is `DiagnosticsPanel` embedded under App updates),
+`ExportModal`, `LexiconPopup`, `VerseNotesPopup`, `FindingContextMenu`. State lives in `stores.ts` (chapter/verse-keyed
 maps, `verseKey()`), `reviewStores.ts` (Stage 9A queue), `alignmentUi.ts`, `verseEditor.ts`.
+
+**Editor chrome (2026-11-11, #486 to #490).** One top bar, no second bar and no side rail.
+
+- **Top bar menus** (editor screen only, right of the name): `ViewMenu` shows and hides the
+  four side panels and is the only place that does; `CheckMenu` runs the whole book, the
+  chapter, or Greek Room on demand; Bookmarks opens bookmarks and recent chapters;
+  `AlignmentMenu` holds Alignment Review, Cross-verse alignment and Align chapter with AI.
+  The gear in the top bar is the only Settings entry.
+- **Side panels** are `source`, `reference`, `paratext` and `review` (`SidePanelId` in
+  `editorPrefs.ts`). A panel folded because the window is too narrow (`panelFit.ts`) is
+  marked in the View menu and on its button, and choosing it brings it back.
+- **Language QA is a tab of the Review panel, not a panel.** It has no View entry, no saved
+  open flag and no separate window; the status bar's Language QA button opens the Review
+  panel on that tab. Layouts saved while it was a panel are read with the retired id taken
+  out (`withoutRetiredPanels` in `editorPrefs.ts`, used by `projectWorkspace.ts`).
+- **Editor header** (`EditorHeader.svelte`), above the scrolling verses: the breadcrumb
+  (Projects, project, book; the book is the book switcher in a collection), "Chapter N of M"
+  in the middle, then Raw USFM and the overflow menu. The chapter picker and the Go to box
+  stay in the top bar.
+- **Dashboard check.** The Check button and its dialog (`CollectionCheckDialog`) are part of
+  the Collection QA bar, which appears only for a multi-book collection. A single-book
+  project has no such button: its book is checked with Run QA on the book's row.
 
 **Polling.** App.svelte polls the sidecar for: navigation sync every 800 ms for the app's
 lifetime (guarded only by in-flight and engine-ready, not by whether a connection is
