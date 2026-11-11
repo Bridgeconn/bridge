@@ -32,8 +32,9 @@ describe("stacking layers (#288, #444)", () => {
     for (let at = 1; at < values.length; at += 1) expect(values[at], order[at]).toBeGreaterThan(values[at - 1]);
   });
 
-  it("puts every app dialog on --z-dialog, above the floating Language QA panel", () => {
-    expect(rule(component("LanguageQaPanel"), ".language-qa")).toContain("z-index: var(--z-panel)");
+  // #487: the floating Language QA panel is gone (it is the Review panel's
+  // tab now), so nothing sits on --z-panel in the editor any more.
+  it("puts every app dialog on --z-dialog", () => {
     for (const [name, selector] of [
       ["SettingsModal", ".modal-overlay"], ["ExportModal", ".modal-overlay"], ["DiagnosticsPanel", ".modal-overlay"],
       ["AlignmentModal", ".overlay"], ["CrossVerseAlignmentModal", ".overlay"], ["CorrectionReviewPanel", ".confirm-backdrop"],

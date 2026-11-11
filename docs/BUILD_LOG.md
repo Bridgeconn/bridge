@@ -24945,9 +24945,9 @@ Open points for Joel / Revant:
   width budget still count Language QA as a column; `PanelWindow.svelte`'s
   languageQa window mount; `docs/ARCHITECTURE.md` still describes the panel.
 
-Verified: `npm run check` 0 errors, 0 warnings; `npm run build` passed;
-`npm run test` 126 of 127 files, 1218 of 1219 tests passed -- the one failure
-is the stacking-layers line above. Not pushed until that is decided. Not
+Verified (after Joel's yes on the stacking-layers line, dropped in the
+follow-up commit): `npm run check` 0 errors, 0 warnings; `npm run build`
+passed; `npm run test` 127 files, 1219 tests passed. Not
 verified: the desktop app at 1366x768 (the pinned rows and pager, the card
 layout in the column, the status bar button, the View menu toggle). Engine
 suite and `cargo` not run: no engine or shell file changed, no file deleted.
