@@ -6,8 +6,9 @@
   // unattended. While it runs the app is read-only.
   //
   // Since the dashboard restyle (2026-10-28) this is one control bar in the
-  // dashboard header: the summary, the checks menu and the Run button idle;
-  // the progress bar with Pause and Cancel while a run is active. Each
+  // dashboard header: the summary and one Check button idle (#490: it opens
+  // CollectionCheckDialog, where the checks are ticked and Start begins the
+  // run); the progress bar with Pause and Cancel while a run is active. Each
   // book's own result (state, verses checked, findings, last run) is drawn
   // on its row in the book list by ProjectDashboard from the same store, so
   // the table this panel used to carry is gone. The whole-collection stage
@@ -20,14 +21,17 @@
     startCollectionQa,
   } from "../collectionQa";
   import type { CollectionQaBook } from "../types/collectionQa";
-  import { collectionChecks } from "../editorPrefs";
-  import { CHECK_BOXES, checkListLabel, selectedCollectionChecks, toggleCheck } from "../checkSelection";
+  import { checkListLabel, selectedCollectionChecks } from "../checkSelection";
+  import CollectionCheckDialog from "./CollectionCheckDialog.svelte";
 
   export let bookCount = 0;
+  /** Another check is running on the dashboard (a single book's job, a book
+   *  being opened): the dialog still opens, but Start is disabled. */
+  export let checkRunning = false;
 
   let error = "";
   let busy = false;
-  let checksOpen = false;
+  let dialogOpen = false;
   // Off by default: a run skips a book unchanged since its last run of these
   // checks. On, every book is checked again (what "Run all again" used to be).
   let recheckUnchanged = false;
@@ -58,7 +62,7 @@
     if (busy) return;
     busy = true;
     error = "";
-    checksOpen = false;
+    dialogOpen = false;
     try {
       await fn();
     } catch (e) {
@@ -68,9 +72,9 @@
     }
   }
 
-  function closeChecks(event: FocusEvent) {
-    const container = event.currentTarget as HTMLElement;
-    if (!(event.relatedTarget instanceof Node) || !container.contains(event.relatedTarget)) checksOpen = false;
+  function start(recheck: boolean): void {
+    recheckUnchanged = recheck;
+    void act(() => startCollectionQa(recheck));
   }
 </script>
 
@@ -93,39 +97,18 @@
           <UiIcon name={snapshot?.paused ? "play" : "pause"} />{snapshot?.paused ? "Resume" : "Pause after this book"}</button>
         <button class="ui-btn danger" on:click={() => act(cancelCollectionQa)} disabled={busy || snapshot?.state === "cancelling"}><UiIcon name="close" />Cancel</button>
       {:else}
-        <div class="checks-control" on:focusout={closeChecks}>
-          <button class="ui-btn" aria-haspopup="true" aria-expanded={checksOpen} aria-controls="collection-qa-checks"
-            use:tooltip={`Which checks a run performs: ${checkListLabel($selectedCollectionChecks)}`}
-            on:click={() => (checksOpen = !checksOpen)}>
-            Checks <span class="count">{$selectedCollectionChecks.length}</span><UiIcon name="chevronDown" />
-          </button>
-          {#if checksOpen}
-            <div class="checks-menu" id="collection-qa-checks" role="group" aria-label="Checks to run">
-              {#each CHECK_BOXES as box}
-                <label use:tooltip={box.title}>
-                  <input type="checkbox" checked={$selectedCollectionChecks.includes(box.id)}
-                    disabled={$selectedCollectionChecks.length === 1 && $selectedCollectionChecks.includes(box.id)}
-                    on:change={(event) => toggleCheck(collectionChecks, box.id, event.currentTarget.checked)} />
-                  {box.label}
-                </label>
-              {/each}
-              <label class="recheck">
-                <input type="checkbox" bind:checked={recheckUnchanged} />
-                Also re-check books unchanged since their last run
-              </label>
-              <p>A run checks every book in turn and is meant to be left alone: editing, switching books and Greek Room pause until it ends.</p>
-            </div>
-          {/if}
-        </div>
-        <button class="ui-icon-btn run-all" aria-label={`Run QA on all ${bookCount} ${bookCount === 1 ? "book" : "books"}`}
-          on:click={() => act(() => startCollectionQa(recheckUnchanged))} disabled={busy}
-          use:tooltip={`Run QA on all ${bookCount} ${bookCount === 1 ? "book" : "books"} (${checkListLabel($selectedCollectionChecks)}); ${recheckUnchanged ? "every book is checked again" : "books unchanged since their last run are skipped"}`}>
-          <UiIcon name="runQa" /></button>
+        <button class="ui-btn primary check-all" aria-haspopup="dialog" disabled={busy}
+          use:tooltip={`Choose the checks and start a run on all ${bookCount} ${bookCount === 1 ? "book" : "books"} (now: ${checkListLabel($selectedCollectionChecks)})`}
+          on:click={() => (dialogOpen = true)}>
+          <UiIcon name="runQa" />Check</button>
       {/if}
     </div>
   </div>
   {#if snapshot && active}
     <div class="track" aria-hidden="true"><div class="fill" style="width:{snapshot.percent}%"></div></div>
+  {/if}
+  {#if dialogOpen && !active}
+    <CollectionCheckDialog {bookCount} {checkRunning} {recheckUnchanged} onStart={start} onClose={() => (dialogOpen = false)} />
   {/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if snapshot?.error}<p class="error">{snapshot.error}</p>{/if}
@@ -149,17 +132,6 @@
   .status { min-width: 0; color: var(--text-2); font-size: var(--fs-3xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .active .status { color: var(--accent); font-weight: 600; }
   .actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }
-  .checks-control { position: relative; }
-  /* The one primary action of the bar: a round green play, the rows' Run QA colour, larger and filled. */
-  .run-all { width: 38px; height: 38px; border-radius: 50%; background: var(--success); color: #fff; box-shadow: 0 2px 6px rgba(22, 163, 74, .35); }
-  .run-all :global(svg) { width: 20px; height: 20px; }
-  .run-all:hover:not(:disabled), .run-all:focus-visible { background: var(--success); color: #fff; filter: brightness(.92); box-shadow: 0 3px 8px rgba(22, 163, 74, .45); }
-  .count { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--accent-bg); color: var(--accent); font-size: var(--fs-3xs); }
-  .checks-menu { position: absolute; z-index: var(--z-dropdown); right: 0; top: calc(100% + 6px); width: 300px; display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface); box-shadow: 0 10px 25px rgba(25, 35, 55, .16); }
-  .checks-menu label { display: flex; align-items: center; gap: 8px; font-size: var(--fs-2xs); color: var(--text); cursor: pointer; }
-  .checks-menu input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
-  .checks-menu .recheck { margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--border); }
-  .checks-menu p { margin: 0; padding-top: 8px; border-top: 1px solid var(--border); color: var(--text-2); font-size: var(--fs-3xs); line-height: 1.5; }
   .track { height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
   .fill { height: 100%; background: var(--accent); transition: width .3s linear; }
   .error { margin: 0; color: var(--danger); font-size: var(--fs-3xs); }

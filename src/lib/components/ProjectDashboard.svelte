@@ -347,7 +347,7 @@
       </button>
     </div>
     {#if isCollection}
-      <div class="qa-bar"><CollectionQaPanel bookCount={books.length} /></div>
+      <div class="qa-bar"><CollectionQaPanel bookCount={books.length} checkRunning={qaBusy} /></div>
     {/if}
   </header>
 

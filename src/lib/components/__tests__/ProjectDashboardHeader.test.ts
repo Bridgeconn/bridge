@@ -81,7 +81,8 @@ describe("ProjectDashboard header", () => {
   it("hosts the Collection QA bar for a collection", async () => {
     mount([book("rut", "ரூத்"), book("gen", "ஆதியாகமம்")]);
     const bar = await screen.findByRole("region", { name: "Collection QA" });
-    expect(within(bar).getByRole("button", { name: "Run QA on all 2 books" })).toBeInTheDocument();
+    expect(within(bar).getByRole("button", { name: "Check" })).toBeInTheDocument();
+    expect(within(bar).queryByRole("button", { name: /^Checks/ })).toBeNull();
     expect(screen.getByRole("main", { name: "QA report" })).toBeInTheDocument();
     stopCollectionQa();
   });

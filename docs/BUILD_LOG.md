@@ -24819,3 +24819,27 @@ reproduced here and needs describing.
 Verified with #490 in one gate run: `npm run check` 0 errors/warnings;
 `npm run test` 127 files, 1221 tests passed (new: 4 EditorHeader tests);
 `npm run build` passed. Not verified: the desktop app at 1366x768.
+
+## 2026-11-11 — Project detailed view: one Check button opening a dialog (#490)
+
+Frontend only; `collection.runChecks` is unchanged. `CollectionQaPanel.svelte`
+idle shows the summary and one **Check** button; the Checks dropdown and the
+round Run button are gone. The button opens `CollectionCheckDialog.svelte`
+(new): the `CHECK_BOXES` tick boxes, "Also re-check books unchanged since
+their last run", the read-only note, Cancel and Start.
+
+- The ticks are a draft until Start. Start saves them to `collectionChecks`
+  (so the selection persists) and begins the run; Cancel and Escape leave the
+  saved selection as it was. This is a change from the dropdown, where a tick
+  was saved at once and the last box could not be unticked: here every box can
+  be unticked and Start is disabled with none ticked.
+- Start is also disabled while another check is running: `ProjectDashboard`
+  passes its `qaBusy` (a single book's job, a Collection QA run, a book being
+  opened) as `checkRunning`. The reason is shown beside the buttons.
+- Status, progress, Pause, Cancel and the whole-collection summary are where
+  they were.
+
+Verified with #489 in one gate run: `npm run check` 0 errors/warnings;
+`npm run test` 127 files, 1221 tests passed (CollectionQaPanel tests
+rewritten: 10; dashboard header test updated); `npm run build` passed. Not
+verified: the desktop app at 1366x768.
