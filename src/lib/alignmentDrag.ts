@@ -28,12 +28,23 @@ export interface DragState {
   overColumn: string | null;
   /** `data-drop-bank` value under the pointer, or null. */
   overBank: string | null;
+  /** The `data-drop-slot` element under the pointer (#410: an aligned card
+   *  inside a column) and which half of it: `after` when the pointer is
+   *  below its vertical middle. Null when the pointer is over no card. */
+  overSlot: DropSlot | null;
+}
+
+export interface DropSlot {
+  value: string;
+  after: boolean;
 }
 
 export interface DropTarget {
   tokenId: string;
   column: string | null;
   bank: string | null;
+  /** The aligned card the drop landed on, if any (#410). */
+  slot: DropSlot | null;
 }
 
 export interface PointerDragOptions {
@@ -41,6 +52,7 @@ export interface PointerDragOptions {
   threshold?: number;
   columnAttr?: string;
   bankAttr?: string;
+  slotAttr?: string;
   /** Element under a viewport point. Defaults to document.elementFromPoint;
    *  injectable because jsdom always returns null there. */
   hitTest?: (x: number, y: number) => Element | null;
@@ -68,17 +80,25 @@ export interface PointerDrag {
   consumeSuppressedClick(tokenId: string): boolean;
 }
 
-const IDLE: DragState = { tokenId: null, moved: false, ghost: { x: 0, y: 0 }, overColumn: null, overBank: null };
+const IDLE: DragState = { tokenId: null, moved: false, ghost: { x: 0, y: 0 }, overColumn: null, overBank: null, overSlot: null };
 
 function dataValue(el: Element | null | undefined, attr: string): string | null {
   const host = el?.closest?.(`[${attr}]`);
   return host ? host.getAttribute(attr) : null;
 }
 
+function slotUnder(el: Element | null | undefined, attr: string, y: number): DropSlot | null {
+  const host = el?.closest?.(`[${attr}]`);
+  if (!host) return null;
+  const rect = host.getBoundingClientRect();
+  return { value: host.getAttribute(attr) ?? "", after: y > rect.top + rect.height / 2 };
+}
+
 export function createPointerDrag(options: PointerDragOptions): PointerDrag {
   const threshold = options.threshold ?? 6;
   const columnAttr = options.columnAttr ?? "data-drop-column";
   const bankAttr = options.bankAttr ?? "data-drop-bank";
+  const slotAttr = options.slotAttr ?? "data-drop-slot";
   const hitTest = options.hitTest ?? ((x: number, y: number) => document.elementFromPoint(x, y));
 
   const state = writable<DragState>({ ...IDLE });
@@ -112,6 +132,7 @@ export function createPointerDrag(options: PointerDragOptions): PointerDrag {
       ghost: { x: event.clientX, y: event.clientY },
       overColumn: dataValue(el, columnAttr),
       overBank: dataValue(el, bankAttr),
+      overSlot: slotUnder(el, slotAttr, event.clientY),
     });
   }
 
@@ -119,12 +140,12 @@ export function createPointerDrag(options: PointerDragOptions): PointerDrag {
     if (!current.tokenId) return;
     // Snapshot, then reset, then deliver: the drop handler may start an
     // async mutation and re-render, and must see an idle drag state.
-    const { tokenId, moved, overColumn, overBank } = current;
+    const { tokenId, moved, overColumn, overBank, overSlot } = current;
     origin = null;
     set({ ...IDLE });
     if (!moved) return; // the browser's own click event fires next and handles pick-up
     suppressClickId = tokenId;
-    options.onDrop({ tokenId, column: overColumn, bank: overBank });
+    options.onDrop({ tokenId, column: overColumn, bank: overBank, slot: overSlot });
   }
 
   function attach(target: Pick<Window, "addEventListener" | "removeEventListener">) {

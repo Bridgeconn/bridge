@@ -84,23 +84,66 @@ export function gapCounts(context: GroupsView): GapCounts {
   };
 }
 
+/** Where dropped words land inside a column (#410): before or after the
+ *  aligned word `id`, which the pointer was over. Absent, they go last. */
+export interface DropSlot {
+  id: string;
+  after: boolean;
+}
+
 /**
  * The full bottomIds to send with alignment.realign when `dropped` -- one
  * target id, or several picked together (#285) -- lands on `topId`'s column.
  * realign() replaces whatever group the top id belongs to, so the words
  * already there must be resent or they'd be bumped back to the word bank; it
  * also detaches each dropped word from any other group, so one call moves
- * them all. The dropped words follow the column's own, in verse order.
- * Returns null when every dropped token is already in that column.
+ * them all. The dropped words follow the column's own, in verse order, unless
+ * `at` names the aligned word they were dropped on (#410): then they are
+ * inserted before or after it, and a word already in the column is moved
+ * there -- that is how a column is reordered, since the engine writes the
+ * bottom words in the order it is sent. Returns null when the column would
+ * come out as it is: every dropped token is already in that column, in place.
  */
-export function bottomIdsAfterDrop(context: GroupsView, topId: string, dropped: string | string[]): string[] | null {
+export function bottomIdsAfterDrop(context: GroupsView, topId: string, dropped: string | string[], at?: DropSlot | null): string[] | null {
   const destination = groupForSource(context, topId);
-  const already = new Set(destination?.bottomIds ?? []);
-  const moving = (Array.isArray(dropped) ? dropped : [dropped]).filter((id) => !already.has(id));
-  if (moving.length === 0) return null;
+  const current = destination?.bottomIds ?? [];
+  const already = new Set(current);
   const order = new Map(context.bottomTokens.map((token, at) => [token.id, at]));
-  moving.sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
-  return [...(destination?.bottomIds ?? []), ...moving];
+  const droppedIds = Array.isArray(dropped) ? dropped : [dropped];
+  if (!at) {
+    const moving = droppedIds.filter((id) => !already.has(id));
+    if (moving.length === 0) return null;
+    moving.sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
+    return [...current, ...moving];
+  }
+  const moving = [...new Set(droppedIds)].sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
+  if (moving.length === 0) return null;
+  const movingSet = new Set(moving);
+  const rest = current.filter((id) => !movingSet.has(id));
+  let index: number;
+  if (movingSet.has(at.id)) {
+    // Dropped on one of its own: keep the place that word had.
+    index = current.slice(0, current.indexOf(at.id)).filter((id) => !movingSet.has(id)).length;
+  } else {
+    const slot = rest.indexOf(at.id);
+    index = slot < 0 ? rest.length : slot + (at.after ? 1 : 0);
+  }
+  const next = [...rest.slice(0, index), ...moving, ...rest.slice(index)];
+  if (next.length === current.length && next.every((id, i) => id === current[i])) return null;
+  return next;
+}
+
+/** The column's bottomIds with `targetId` moved one step earlier (`delta`
+ *  -1) or later (+1); null at the edge or when the word is not there. */
+export function bottomIdsAfterStep(context: GroupsView, topId: string, targetId: string, delta: -1 | 1): string[] | null {
+  const current = groupForSource(context, topId)?.bottomIds ?? [];
+  const from = current.indexOf(targetId);
+  const to = from + delta;
+  if (from < 0 || to < 0 || to >= current.length) return null;
+  const next = [...current];
+  next.splice(from, 1);
+  next.splice(to, 0, targetId);
+  return next;
 }
 
 /** "(1/2)" for a repeated word; callers check occurrences > 1 before rendering. */

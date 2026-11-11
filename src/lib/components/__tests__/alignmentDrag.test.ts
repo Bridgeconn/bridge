@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { get } from "svelte/store";
 import { createPointerDrag } from "../../alignmentDrag";
 import {
-  alignedTargetsFor, bottomIdsAfterDrop, gapCounts, groupForSource, groupForTarget, unalignedTargets,
+  alignedTargetsFor, bottomIdsAfterDrop, bottomIdsAfterStep, gapCounts, groupForSource, groupForTarget, unalignedTargets,
   unmatchedSources,
 } from "../../alignmentGroups";
 import type { AlignmentToken } from "../../types/finding";
@@ -50,11 +50,27 @@ describe("createPointerDrag", () => {
     const state = get(drag.state);
     expect(state).toMatchObject({ tokenId: "T001", moved: true, ghost: { x: 140, y: 0 }, overColumn: "3|H002", overBank: null });
     drag.up();
-    expect(onDrop).toHaveBeenCalledWith({ tokenId: "T001", column: "3|H002", bank: null });
+    expect(onDrop).toHaveBeenCalledWith({ tokenId: "T001", column: "3|H002", bank: null, slot: null });
     // The state is idle before the drop handler runs, and the trailing click is swallowed once.
     expect(get(drag.state)).toMatchObject({ tokenId: null, moved: false, overColumn: null, overBank: null });
     expect(drag.consumeSuppressedClick("T001")).toBe(true);
     expect(drag.consumeSuppressedClick("T001")).toBe(false);
+  });
+
+  it("reports the aligned card under the pointer and which half of it (#410)", () => {
+    const onDrop = vi.fn();
+    const card = element({ "data-drop-slot": "T002" });
+    card.getBoundingClientRect = () => ({ top: 100, height: 40, left: 0, width: 80, right: 80, bottom: 140, x: 0, y: 100, toJSON() {} }) as DOMRect;
+    const column = element({ "data-drop-column": "H001" });
+    column.appendChild(card);
+    const drag = createPointerDrag({ onDrop, hitTest: () => card });
+    drag.start(pointer(0, 0), "T001");
+    drag.move(pointer(40, 110)); // upper half
+    expect(get(drag.state)).toMatchObject({ overColumn: "H001", overSlot: { value: "T002", after: false } });
+    drag.move(pointer(40, 130)); // lower half
+    expect(get(drag.state).overSlot).toEqual({ value: "T002", after: true });
+    drag.up();
+    expect(onDrop).toHaveBeenCalledWith({ tokenId: "T001", column: "H001", bank: null, slot: { value: "T002", after: true } });
   });
 
   it("finds the drop target through closest(): the pointer may be over a child of the marked element", () => {
@@ -67,7 +83,7 @@ describe("createPointerDrag", () => {
     drag.move(pointer(50, 50));
     expect(get(drag.state).overBank).toBe("true");
     drag.up();
-    expect(onDrop).toHaveBeenCalledWith({ tokenId: "T002", column: null, bank: "true" });
+    expect(onDrop).toHaveBeenCalledWith({ tokenId: "T002", column: null, bank: "true", slot: null });
   });
 
   it("reports a drop over nothing with both targets null", () => {
@@ -76,7 +92,7 @@ describe("createPointerDrag", () => {
     drag.start(pointer(0, 0), "T003");
     drag.move(pointer(50, 50));
     drag.up();
-    expect(onDrop).toHaveBeenCalledWith({ tokenId: "T003", column: null, bank: null });
+    expect(onDrop).toHaveBeenCalledWith({ tokenId: "T003", column: null, bank: null, slot: null });
   });
 
   it("attach() wires window pointermove/pointerup and detaches cleanly", () => {
@@ -91,7 +107,7 @@ describe("createPointerDrag", () => {
     drag.start(pointer(0, 0), "T001");
     listeners.get("pointermove")!(pointer(30, 30) as unknown as Event);
     listeners.get("pointerup")!(new Event("pointerup"));
-    expect(onDrop).toHaveBeenCalledWith({ tokenId: "T001", column: "H001", bank: null });
+    expect(onDrop).toHaveBeenCalledWith({ tokenId: "T001", column: "H001", bank: null, slot: null });
     detach();
     expect(listeners.size).toBe(0);
   });
@@ -145,5 +161,29 @@ describe("alignmentGroups", () => {
     expect(bottomIdsAfterDrop(context, "H002", ["T001", "T003"])).toEqual(["T001", "T003"]);
     expect(bottomIdsAfterDrop(context, "H001", ["T001", "T002"])).toBeNull();
     expect(bottomIdsAfterDrop(context, "H001", [])).toBeNull();
+  });
+
+  it("drops before or after the card the pointer was over, and reorders a word already in the column (#410)", () => {
+    // A bank word into the middle of the column.
+    expect(bottomIdsAfterDrop(context, "H001", "T003", { id: "T001", after: true })).toEqual(["T001", "T003", "T002"]);
+    expect(bottomIdsAfterDrop(context, "H001", "T003", { id: "T001", after: false })).toEqual(["T003", "T001", "T002"]);
+    // The column's own last word dragged above its first: a reorder, not a no-op.
+    expect(bottomIdsAfterDrop(context, "H001", "T002", { id: "T001", after: false })).toEqual(["T002", "T001"]);
+    // Dropped where it already is, or on itself: nothing to save.
+    expect(bottomIdsAfterDrop(context, "H001", "T002", { id: "T001", after: true })).toBeNull();
+    expect(bottomIdsAfterDrop(context, "H001", "T002", { id: "T002", after: true })).toBeNull();
+    expect(bottomIdsAfterDrop(context, "H001", "T002", { id: "T002", after: false })).toBeNull();
+    // Several at once keep verse order among themselves at the slot.
+    expect(bottomIdsAfterDrop(context, "H001", ["T004", "T003"], { id: "T001", after: false })).toEqual(["T003", "T004", "T001", "T002"]);
+    // A slot that is not in the column (stale pointer target) appends.
+    expect(bottomIdsAfterDrop(context, "H001", "T003", { id: "T999", after: false })).toEqual(["T001", "T002", "T003"]);
+  });
+
+  it("steps a word one place up or down and refuses the edges", () => {
+    expect(bottomIdsAfterStep(context, "H001", "T002", -1)).toEqual(["T002", "T001"]);
+    expect(bottomIdsAfterStep(context, "H001", "T001", 1)).toEqual(["T002", "T001"]);
+    expect(bottomIdsAfterStep(context, "H001", "T001", -1)).toBeNull();
+    expect(bottomIdsAfterStep(context, "H001", "T002", 1)).toBeNull();
+    expect(bottomIdsAfterStep(context, "H001", "T003", 1)).toBeNull();
   });
 });
