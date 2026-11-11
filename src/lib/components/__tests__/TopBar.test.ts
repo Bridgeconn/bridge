@@ -44,7 +44,6 @@ function mount(overrides: Record<string, unknown> = {}) {
       onOpenExport: vi.fn(),
       onGotoVerse: vi.fn(),
       onChapterChange: vi.fn(),
-      onBookChange: vi.fn(),
       exportEnabled: true,
       ...overrides,
     },
@@ -245,14 +244,29 @@ describe("TopBar menus slot (#488)", () => {
     currentChapter.set("1");
   });
 
-  it("shows the menus between the name and the breadcrumb on the editor screen", async () => {
+  it("shows the menus between the name and the chapter picker on the editor screen", async () => {
     const { container } = render(TopBarMenusFixture, { props: { screen: "editor" } });
     const menus = screen.getByRole("group", { name: "Menus" });
     expect(menus).toContainElement(screen.getByRole("button", { name: "View" }));
     const brand = container.querySelector(".brand") as HTMLElement;
-    const crumbs = screen.getByRole("navigation", { name: "Navigation" });
+    const chapters = screen.getByRole("group", { name: "Chapter navigation" });
     expect(brand.compareDocumentPosition(menus) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(menus.compareDocumentPosition(crumbs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(menus.compareDocumentPosition(chapters) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  // #489: the editor's breadcrumb moved to the editor panel's header; the
+  // chapter picker and the Go to box stay, and the other screens keep theirs.
+  it("has no breadcrumb on the editor screen, and keeps the chapter picker and Go to", () => {
+    render(TopBarMenusFixture, { props: { screen: "editor" } });
+    expect(screen.queryByRole("navigation", { name: "Navigation" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Projects" })).toBeNull();
+    expect(screen.getByRole("group", { name: "Chapter navigation" })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Go to 1:4")).toBeInTheDocument();
+  });
+
+  it("keeps the breadcrumb on the dashboard", () => {
+    render(TopBarMenusFixture, { props: { screen: "dashboard" } });
+    expect(screen.getByRole("navigation", { name: "Navigation" })).toContainElement(screen.getByRole("button", { name: "Projects" }));
   });
 
   it("shows no menus off the editor screen", () => {

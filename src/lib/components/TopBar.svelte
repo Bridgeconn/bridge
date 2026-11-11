@@ -48,7 +48,6 @@
   // Project (dashboard) screen only: opens the whole-collection QA report.
   export let onGotoVerse: (verse: string) => void;
   export let onChapterChange: (chapter: string) => void;
-  export let onBookChange: (path: string) => void;
   export let exportEnabled: boolean;
   export let bookSwitching = false;
 
@@ -64,11 +63,6 @@
       console.error("failed to load engine info", e);
     }
   });
-
-  function handleBookSelect(e: Event) {
-    const value = (e.target as HTMLSelectElement).value;
-    onBookChange(value);
-  }
 
   function jump() {
     const parts = gotoValue.trim().split(":");
@@ -108,11 +102,20 @@
     {#if engineInfo}<span class="version" data-tauri-drag-region title="Schema v{engineInfo.companionSchemaVersion}">{engineInfo.bridgeVersion}</span>{/if}
   </div>
   {#if screen === "editor" && $$slots.menus}
-    <!-- #488: View, Check and Bookmarks, right of the name. App fills the
-         slot, since the menus act on App's state. -->
+    <!-- #488: View, Check, Bookmarks and Alignment, right of the name. App
+         fills the slot, since the menus act on App's state. -->
     <div class="menus" role="group" aria-label="Menus"><slot name="menus" /></div>
   {/if}
-  {#if screen !== "home"}
+  {#if screen === "editor"}
+    <!-- #489: the editor's breadcrumb (Projects › project › book) is in the
+         editor panel's header (EditorHeader.svelte), not here. -->
+    <div class="divider" />
+    {#if $projectRoles?.projectRole}
+      <!-- #279: a role given on this project, which overrides the installation role here. -->
+      <span class="project-role" title="Your role on this project; it decides what you can do here">
+        {ROLE_NAMES[$projectRoles.projectRole] ?? $projectRoles.projectRole} on this project</span>
+    {/if}
+  {:else if screen !== "home"}
   <div class="divider" />
 
   <nav class="breadcrumb" aria-label="Navigation">
@@ -134,24 +137,6 @@
       {:else}
         <span class="crumb current">{projectName}</span>
         <button class="crumb-close" aria-label="Close project" use:tooltip={"Close project and return to Projects"} on:click={onGoHome} disabled={bookSwitching}><UiIcon name="close" /></button>
-      {/if}
-    {:else if screen === "editor"}
-      <span class="crumb-sep">›</span>
-      <button class="crumb" on:click={onGoToDashboard} disabled={bookSwitching}>{projectName}</button>
-      <span class="crumb-sep">›</span>
-      {#if $project && $project.importedProjects && $project.importedProjects.length > 1}
-        <select class="crumb-select" value={$project.path} on:change={handleBookSelect} disabled={bookSwitching}>
-          {#each $project.importedProjects as book}
-            <option value={book.path}>{book.bookName}</option>
-          {/each}
-        </select>
-      {:else}
-        <span class="crumb current">{$project?.bookName ?? ""}</span>
-      {/if}
-      {#if $projectRoles?.projectRole}
-        <!-- #279: a role given on this project, which overrides the installation role here. -->
-        <span class="project-role" title="Your role on this project; it decides what you can do here">
-          {ROLE_NAMES[$projectRoles.projectRole] ?? $projectRoles.projectRole} on this project</span>
       {/if}
     {/if}
   </nav>
@@ -242,9 +227,7 @@
   .crumb-close :global(svg) { width: 15px; height: 15px; }
   .crumb-close:hover:not(:disabled), .crumb-close:focus-visible { background: var(--danger-bg); color: var(--danger); }
   .crumb-close:disabled { opacity: .5; cursor: not-allowed; }
-  .project-role { margin-left: 6px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--text-2); font-size: var(--fs-2xs); font-weight: 650; white-space: nowrap; flex-shrink: 0; }
-  .crumb-select { height: 28px; border: 1px solid transparent; border-radius: 6px; font-size: var(--fs-sm); font-weight: 600; padding: 0 4px; background: transparent; color: var(--text); max-width: 200px; }
-  .crumb-select:hover { background: var(--surface-2); }
+  .project-role { padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--text-2); font-size: var(--fs-2xs); font-weight: 650; white-space: nowrap; flex-shrink: 0; }
   /* Chapter stepper (issue #53): the two arrows read as one control with the
      dropdown between them, so the reader's eye finds prev/next where the
      chapter already is rather than somewhere else in the bar. */

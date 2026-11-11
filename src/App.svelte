@@ -1664,7 +1664,6 @@
     onOpenExport={() => exportOpen.set(true)}
     onGotoVerse={gotoVerse}
     onChapterChange={switchChapter}
-    onBookChange={switchBook}
     exportEnabled={$project !== null}
     bookSwitching={Boolean(openingBook)}
   >
@@ -1680,6 +1679,7 @@
         onRunGreekRoom={runGreekRoom}
       />
       <button type="button" class="top-menu-btn" aria-haspopup="menu" aria-expanded={Boolean(placesMenu)}
+        title="Bookmarks and recent chapters" on:click={openPlacesMenu}>Bookmarks ▾</button>
       <!-- The three actions of the old second bar. "Align chapter with AI"
            is AutoAlignChapterButton's (mounted in the editor below): the
            entry reads its phase and key, and starts it. -->
@@ -1697,7 +1697,6 @@
             : "An automatic alignment of this chapter is open in the strip above the text"}
         alignChapterLabel={autoAlignPhase === "estimating" ? "Working out the cost…" : "Align chapter with AI"}
       />
-        title="Bookmarks and recent chapters" on:click={openPlacesMenu}>Bookmarks ▾</button>
     </svelte:fragment>
   </TopBar>
 
@@ -1831,8 +1830,10 @@
           <!-- #324: the verse list never goes below this width; the side
                panels shrink and then fold first (panelFit.ts; View brings one back). -->
           <div data-editor-pane="editor" class="editor-col" style={editorFrame || `min-width:${$verseMin}px`}>
-            <!-- #489: the chapter and the Raw toggle, above the scrolling verses. -->
-            <EditorHeader chapter={$currentChapter} total={$project?.chapters.length ?? "?"}>
+            <!-- #489: breadcrumb, chapter, Raw toggle and tools, above the scrolling verses. -->
+            <EditorHeader chapter={$currentChapter} total={$project?.chapters.length ?? "?"}
+              {projectName} onGoHome={showProjectHome} onGoToDashboard={openDashboard}
+              onBookChange={switchBook} bookSwitching={Boolean(openingBook)}>
               <OverflowMenu label="Editor tools" actions={[
                 { id: "smaller", label: "Smaller text", disabled: $textScale === TEXT_SCALES[0] },
                 { id: "larger", label: "Larger text", disabled: $textScale === TEXT_SCALES[TEXT_SCALES.length - 1] },
