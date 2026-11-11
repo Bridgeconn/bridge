@@ -736,7 +736,10 @@
   .standalone .modal, .standalone .page { width: 100%; height: 100vh; max-height: 100vh; border-radius: 0; }
   .window-controls { display: flex; align-items: center; gap: 4px; flex: none; margin-left: auto; }
   .overlay { position: fixed; inset: 0; z-index: var(--z-dialog); background: rgba(15, 20, 26, .58); display: grid; place-items: center; padding: 24px; }
-  .modal { width: min(1040px, 100%); max-height: calc(100vh - 48px); overflow: auto; background: var(--surface); border-radius: 16px; box-shadow: 0 24px 80px rgba(0,0,0,.24); padding: 20px; color: var(--text); }
+  /* About 95% of the window (#484), not a fixed 1040px cap, so long verses
+     need less scrolling. `100%` is the overlay's content box (24px padding
+     each side), so the min keeps it off the edges on a narrow window. */
+  .modal { width: min(95vw, 100%); max-height: calc(100vh - 48px); overflow: auto; background: var(--surface); border-radius: 16px; box-shadow: 0 24px 80px rgba(0,0,0,.24); padding: 20px; color: var(--text); }
   header { display: flex; gap: 8px; align-items: center; border-bottom: 1px solid var(--border); padding: 4px 0 6px; flex: none; min-height: 36px; }
   .title { flex: 1; min-width: 0; text-align: left; }
 

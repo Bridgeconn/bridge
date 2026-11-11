@@ -24843,3 +24843,20 @@ Verified with #489 in one gate run: `npm run check` 0 errors/warnings;
 `npm run test` 127 files, 1221 tests passed (CollectionQaPanel tests
 rewritten: 10; dashboard header test updated); `npm run build` passed. Not
 verified: the desktop app at 1366x768.
+
+## 2026-11-11 — Alignment dialogs take about 95% of the window width (#484)
+
+Frontend only, CSS only. `AlignmentModal.svelte`'s `.modal` was
+`width: min(1040px, 100%)` and `CrossVerseAlignmentModal.svelte`'s `.page` was
+`width: min(1340px, 100%)`; both are now `min(95vw, 100%)`. At 1366 wide that
+is 1298px for both (the cross-verse page was 1334px there, so it loses 36px;
+at 1920 it gains 484px). The `100%` term is the overlay's content box, so the
+dialog still never touches the window edge. The standalone-window rule
+(`.standalone .modal`, 100% / 100vh) is unchanged, and so is everything inside
+the dialogs: columns, word bank, drag and drop, the #410 reorder.
+
+Verified: `npm run check`, `npm run test`, `npm run build` (results in the
+batch gate run recorded with #486/#487 below). Not verified: the width at
+1366x768 and 1920x1080, that the source columns and word bank use the extra
+width, and that no horizontal scrollbar appears -- jsdom does not lay out,
+so these are desktop-app checks.

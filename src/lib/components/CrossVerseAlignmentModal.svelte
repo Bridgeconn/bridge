@@ -1118,7 +1118,8 @@
   .window-controls { display: flex; align-items: center; gap: 4px; flex: none; margin-left: auto; }
   .overlay { position: fixed; inset: 0; z-index: var(--z-dialog); background: rgba(15, 20, 26, .58); display: grid; place-items: center; padding: 16px; }
   .page {
-    width: min(1340px, 100%); height: calc(100vh - 32px); display: flex; flex-direction: column; min-height: 0;
+    /* About 95% of the window (#484), same as AlignmentModal; was a 1340px cap. */
+    width: min(95vw, 100%); height: calc(100vh - 32px); display: flex; flex-direction: column; min-height: 0;
     background: var(--surface); border-radius: 14px; box-shadow: 0 24px 80px rgba(0,0,0,.24); padding: 14px 18px; color: var(--text);
   }
   header { display: flex; gap: 8px; align-items: center; border-bottom: 1px solid var(--border); padding: 4px 0 6px; flex: none; min-height: 36px; }
