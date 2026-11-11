@@ -18,7 +18,6 @@
   import TopBar from "./lib/components/TopBar.svelte";
   import VerseList from "./lib/components/VerseList.svelte";
   import ReviewPanel from "./lib/components/ReviewPanel.svelte";
-  import LanguageQaPanel from "./lib/components/LanguageQaPanel.svelte";
   import ScopeConfirmDialog from "./lib/components/ScopeConfirmDialog.svelte";
   import ConfirmDialog from "./lib/components/ConfirmDialog.svelte";
   import { confirmRequest } from "./lib/confirmAction";
@@ -80,7 +79,7 @@
   import EditorHeader from "./lib/components/EditorHeader.svelte";
   import { editingChapter, editingVerse, editSaving } from "./lib/verseEditor";
   import { languageQaChannel, nudgeLanguageQa, startLanguageQaInline } from "./lib/languageQaInline";
-  import { toggleLanguageQaPanel } from "./lib/languageQaPanelUi";
+  import { showLanguageQaTab } from "./lib/languageQaPanelUi";
   import { collectionQa, collectionQaRunning, stopCollectionQa } from "./lib/collectionQa";
   import { selectedCollectionChecks } from "./lib/checkSelection";
   import { estimateReportSeconds, recordReportBuild } from "./lib/reportEstimate";
@@ -1855,11 +1854,7 @@
                   {/key}
                 </SidePanel>
               {:else if panelId === "languageQa"}
-                <SidePanel id="languageQa" label="Language QA" keepMounted>
-                  {#key $project.path}
-                    <LanguageQaPanel projectPath={$project.path} onNavigate={navigateToReportRow} docked />
-                  {/key}
-                </SidePanel>
+                <!-- #487: Language QA is the Review panel's tab, not a column. -->
               {:else if panelId === "paratext"}
                 <SidePanel id="paratext" label="Paratext notes">
                   {#key $project.path}<ParatextNotesPanel />{/key}
@@ -1893,8 +1888,8 @@
       {/if}
       <span class="grow" />
       {#if $project && opened}
-        <button class="diagnostics-btn" on:click={toggleLanguageQaPanel}
-          title="Open or close the Language QA panel">
+        <button class="diagnostics-btn" on:click={showLanguageQaTab}
+          title="Show Language QA in the Review panel">
           Language QA{#if $languageQaChannel.error}: unavailable{:else if $languageQaChannel.status}: {$languageQaChannel.status.state}{#if $languageQaChannel.status.totalFindings} · {$languageQaChannel.status.totalFindings}{/if}{/if}
         </button>
       {/if}
@@ -1906,15 +1901,6 @@
   {/if}
 
   {#if $project && opened}
-    {#if screen !== "editor" && screen !== "dashboard"}
-      <!-- The editor docks Language QA in a side column; the review and
-           report screens keep the floating panel and its launcher. The
-           dashboard has no verse to navigate to, and its rows already carry
-           the Language QA meter, so it shows neither. -->
-      {#key $project.path}
-        <LanguageQaPanel projectPath={$project.path} onNavigate={navigateToReportRow} />
-      {/key}
-    {/if}
     <ScopeNotice />
     {#if $scopeDialog}<ScopeConfirmDialog />{/if}
   {/if}

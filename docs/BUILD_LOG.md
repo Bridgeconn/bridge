@@ -24882,3 +24882,72 @@ Verified: `npm run check`, `npm run test`, `npm run build` (batch gate run,
 see #487 below); the test asserts the bar has no action buttons and that no
 tab body carries a `.section-title` starting with its own name. Not
 verified: the desktop app at 1366x768.
+
+## 2026-11-11 — Language QA folded into the Review panel's Language QA tab (#487)
+
+Frontend only. The separate Language QA panel -- the docked column, the
+floating box on the review and report screens, its launcher, Pause, ◂ ▸,
+Undock and Close -- is gone. `LanguageQaPanel.svelte` is now the body of
+the Review panel's Language QA tab, mounted once by `ReviewPanel.svelte` and
+hidden with the tab, so its scope, kinds and F8 walk survive a tab switch;
+`active` tells it when the paged list is on screen, and `bind:verseCount`
+feeds the tab's badge. The tab is shown by the View menu's Language QA entry
+through `languageQaShown` (viewMenu.ts, #488); a request for the tab (a
+verse's open-issue pill, the status bar's Language QA button via
+`showLanguageQaTab()` in languageQaPanelUi.ts) shows it first.
+
+- Inside the tab: a pinned block (state line with the (i), the Issues /
+  Words / Flags / Edits / Dictionary tabs, the filter row), the list, and on
+  a chapter or book list a pager pinned to the bottom with Previous / Next, a
+  go-to-page box and "Page p of n". The rows on show stay until the next
+  page arrives; a page the reviewer asked for scrolls its first row in under
+  the pinned block.
+- Every listed finding, in any scope, is the Review panel's card: reference
+  pill, severity / category / rule / re-check / in-heading badges, the text
+  and message, OV reference, then Use "…", Ignore, False positive, Forget
+  this fix, Flag…, Add to dictionary, Copy, Search, History, and the
+  "Apply to: This verse / Whole chapter / Whole book" row. A false positive
+  offers Copy, Search and History only. The actions are the ones the verse's
+  right-click menu uses (`applyLanguageQaSuggestedFix`,
+  `decideLanguageQaFindingOptimistically`, `openScopeDialog`, flags, project
+  words), on the finding's own chapter and verse.
+- Kinds: every kind is shown until one is unticked (the unticked set is what
+  is kept, so a kind that first appears later is shown too); "All" ticks them
+  back. With every kind unticked the list is empty and nothing is asked of
+  the engine. The engine's `categoryCounts` are narrowed by chapter only, so
+  the legend keeps the unticked kinds.
+- The scope starts on Verse (the Review panel is about one verse). The
+  verse list is read when the verse, the generation or the pass's state
+  changes (the old panel's rule, #237), not only on completion as the old
+  Review tab did: a verse selected during a long book pass shows the last
+  pass's findings instead of nothing.
+- `App.svelte` (the three sanctioned spots): the docked column mount and the
+  floating mount are gone; the status bar's Language QA button now shows the
+  Review panel's tab. `PanelWindow.svelte` still mounts the component in a
+  separate window with `docked`, where it draws the shared bar; that file
+  was not touched.
+- Tests: `LanguageQaPanel.test.ts` rewritten for the tab (54 tests; the
+  launcher, floating-box, docked-column, Pause and keyboard-resize tests are
+  gone; new: no bar of its own, `active`, kinds default, every-kind-unticked,
+  card actions, paging, pager pin). `ReviewPanelLanguageQa.test.ts`: the tab
+  count, the "Whole chapter" radio, the refetch rule, the View-menu flag.
+  `ReviewPanelGreekRoom.test.ts`: the flag set in its setup.
+
+Open points for Joel / Revant:
+- `stackingLayers.test.ts` pins `.language-qa { z-index: var(--z-panel) }`
+  for the floating panel that no longer exists; it is the one failing test
+  and is outside this issue's file list, so it was not edited. One line.
+- `sidePanels.languageQa.open` defaults to `false` (editorPrefs.ts), so on a
+  fresh install, or for anyone whose saved layout had the column closed, the
+  tab is hidden until View › Language QA is ticked. Flipping that default is
+  Revant's file.
+- Revant's owed follow-ups (#488 comment): the rail entry and the column
+  width budget still count Language QA as a column; `PanelWindow.svelte`'s
+  languageQa window mount; `docs/ARCHITECTURE.md` still describes the panel.
+
+Verified: `npm run check` 0 errors, 0 warnings; `npm run build` passed;
+`npm run test` 126 of 127 files, 1218 of 1219 tests passed -- the one failure
+is the stacking-layers line above. Not pushed until that is decided. Not
+verified: the desktop app at 1366x768 (the pinned rows and pager, the card
+layout in the column, the status bar button, the View menu toggle). Engine
+suite and `cargo` not run: no engine or shell file changed, no file deleted.

@@ -27,6 +27,7 @@ import ReviewPanel from "../ReviewPanel.svelte";
 import { currentChapter, project, selectedVerse, verseTexts, verseKey } from "../../stores";
 import { languageQaChannel } from "../../languageQaInline";
 import { setSidePanel, sidePanels } from "../../editorPrefs";
+import { reviewTabRequest } from "../../stores";
 import { get } from "svelte/store";
 import { lqaFinding } from "./languageQaFixture";
 import { scopeDialog } from "../../scopedApply";
@@ -53,6 +54,8 @@ describe("ReviewPanel Language QA tab", () => {
     });
     channel(3);
     selectedVerse.set("6");
+    // #487: the tab is shown by the View menu's flag (languageQaShown).
+    setSidePanel("languageQa", { open: true });
   });
 
   afterEach(() => {
@@ -60,12 +63,17 @@ describe("ReviewPanel Language QA tab", () => {
     languageQaChannel.set({ projectPath: "", status: null, error: "" });
   });
 
-  it("lists the verse's findings, panel-only ones included, and ignores one before the engine answers", async () => {
+  it("lists the verse's findings, panel-only ones included, counts them on the tab, and ignores one before the engine answers", async () => {
     render(ReviewPanel);
     await waitFor(() => expect(languageQaVerse).toHaveBeenCalledWith("/p", "1", "6"));
+    await waitFor(() => expect(screen.getByRole("tab", { name: /Language QA/ }).querySelector(".tab-count")?.textContent).toBe("1"));
     await fireEvent.click(screen.getByRole("tab", { name: /Language QA/ }));
     expect(await screen.findByText("ta-irv/tamil.wordlist-variant")).toBeInTheDocument();
     expect(screen.getByText(/Decided \(1\)/)).toBeInTheDocument();
+    // The tab is the old panel's body too: its scope switch, lists and Kinds.
+    expect(screen.getByRole("radiogroup", { name: "Show findings for" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Verse" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("tablist", { name: "Language QA panel" })).toBeInTheDocument();
     let release: (value: unknown) => void = () => {};
     decideVerse.mockReturnValue(new Promise((resolve) => { release = resolve; }));
     await fireEvent.click(screen.getByRole("button", { name: "⊘ Ignore" }));
@@ -96,15 +104,15 @@ describe("ReviewPanel Language QA tab", () => {
     expect(decideVerse).not.toHaveBeenCalled();
   });
 
-  it("Apply to: Chapter asks for every place first instead of writing this verse", async () => {
+  it("Apply to: Whole chapter asks for every place first instead of writing this verse", async () => {
     languageQaVerse.mockResolvedValue({
       projectPath: "/p", generation: 3, state: "completed", chapter: "1", verse: "6",
       findings: [lqaFinding({ id: "lqa-s" })], hidden: [],
     });
     render(ReviewPanel);
     await fireEvent.click(screen.getByRole("tab", { name: /Language QA/ }));
-    await fireEvent.click(await screen.findByRole("radio", { name: "Chapter" }));
-    expect(screen.getByRole("radio", { name: "Chapter" })).toHaveAttribute("aria-checked", "true");
+    await fireEvent.click(await screen.findByRole("radio", { name: "Whole chapter" }));
+    expect(screen.getByRole("radio", { name: "Whole chapter" })).toHaveAttribute("aria-checked", "true");
     await fireEvent.click(screen.getByRole("button", { name: /^Use / }));
     await waitFor(() => expect(known.languageQaScopeFind).toHaveBeenCalledWith(
       "/p", "1", "6", "lqa-s", "chapter", "அந்தக் காகம்"));
@@ -114,15 +122,35 @@ describe("ReviewPanel Language QA tab", () => {
     scopeDialog.set(null);
   });
 
-  it("refetches when a new completed pass lands, not on every status tick", async () => {
+  it("refetches when a new pass lands, not on every status tick", async () => {
     render(ReviewPanel);
     await waitFor(() => expect(languageQaVerse).toHaveBeenCalledTimes(1));
     channel(3);
-    channel(4, "running");
+    channel(3);
     await Promise.resolve();
     expect(languageQaVerse).toHaveBeenCalledTimes(1);
-    channel(4);
+    // A new pass, queued or running: the engine still holds the last pass's
+    // findings for the verse, so they are read (#237); again once it completes.
+    channel(4, "running");
     await waitFor(() => expect(languageQaVerse).toHaveBeenCalledTimes(2));
+    channel(4);
+    await waitFor(() => expect(languageQaVerse).toHaveBeenCalledTimes(3));
+  });
+
+  it("the View menu's flag hides the tab; a request for it (a verse's open-issue pill) shows it again (#487)", async () => {
+    setSidePanel("languageQa", { open: false });
+    render(ReviewPanel);
+    expect(screen.queryByRole("tab", { name: /Language QA/ })).toBeNull();
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent?.trim().replace(/\s*\d+$/, "")))
+      .toEqual(["Greek Room", "Core check", "AI review"]);
+    reviewTabRequest.set("lqa");
+    const tab = await screen.findByRole("tab", { name: /Language QA/ });
+    expect(tab.getAttribute("aria-selected")).toBe("true");
+    expect(get(sidePanels).languageQa.open).toBe(true);
+    // Hidden again while it is up: the panel falls back to Greek Room.
+    setSidePanel("languageQa", { open: false });
+    await waitFor(() => expect(screen.queryByRole("tab", { name: /Language QA/ })).toBeNull());
+    expect(screen.getByRole("tab", { name: /Greek Room/ }).getAttribute("aria-selected")).toBe("true");
   });
 
   it("puts a finding back when recording its decision fails", async () => {

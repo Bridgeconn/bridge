@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 // @ts-expect-error As above.
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { get } from "svelte/store";
 import type { LanguageQaFinding, LanguageQaStatus } from "../../types/languageQa";
 import {
@@ -12,7 +12,6 @@ import {
 import { lqaFinding } from "./languageQaFixture";
 
 const statusCall = vi.fn();
-const pauseCall = vi.fn();
 const historyCall = vi.fn();
 const learnedListCall = vi.fn();
 const learnedForgetCall = vi.fn();
@@ -26,9 +25,9 @@ const bookWordsCall = vi.fn();
 const wordsAddCall = vi.fn();
 const verseHistoryCall = vi.fn();
 const verseCall = vi.fn();
+const decideCall = vi.fn();
 vi.mock("../../api/bridgeClient", () => ({ bridge: {
   languageQaStatus: (...args: unknown[]) => statusCall(...args),
-  languageQaPause: (...args: unknown[]) => pauseCall(...args),
   languageQaHistory: (...args: unknown[]) => historyCall(...args),
   languageQaLearnedList: (...args: unknown[]) => learnedListCall(...args),
   languageQaLearnedForget: (...args: unknown[]) => learnedForgetCall(...args),
@@ -40,13 +39,13 @@ vi.mock("../../api/bridgeClient", () => ({ bridge: {
   languageQaReviewImport: (...args: unknown[]) => reviewImportCall(...args),
   languageQaBookWords: (...args: unknown[]) => bookWordsCall(...args),
   languageQaWordsAdd: (...args: unknown[]) => wordsAddCall(...args),
+  languageQaWordsList: vi.fn().mockResolvedValue({ added: [] }),
   verseHistory: (...args: unknown[]) => verseHistoryCall(...args),
   languageQaVerse: (...args: unknown[]) => verseCall(...args),
+  decideVerse: (...args: unknown[]) => decideCall(...args),
 } }));
 import LanguageQaPanel from "../LanguageQaPanel.svelte";
 import { languageQaChannel } from "../../languageQaInline";
-import { toggleLanguageQaPanel } from "../../languageQaPanelUi";
-import { setSidePanel, sidePanels } from "../../editorPrefs";
 import { tick } from "svelte";
 
 function snapshot(overrides: Partial<LanguageQaStatus> = {}): LanguageQaStatus {
@@ -76,46 +75,98 @@ function publish(overrides: Partial<LanguageQaStatus> = {}, error = ""): void {
   languageQaChannel.set({ projectPath: "C:/project", status: snapshot({ findings: [], ...overrides }), error });
 }
 
-it("filters quotation findings directly and exposes the reference evidence", async () => {
+/** The tab, on the book's list (the Review panel starts it on the verse). */
+async function openBook(onNavigate = vi.fn()) {
+  render(LanguageQaPanel, { projectPath: "C:/project", onNavigate });
+  await fireEvent.click(await screen.findByRole("radio", { name: "Book" }));
+  return onNavigate;
+}
+
+async function openBookList(onNavigate = vi.fn()) {
+  const navigate = await openBook(onNavigate);
+  await screen.findByText("Check source encoding.");
+  return navigate;
+}
+
+const kindsButton = () => screen.getByRole("button", { name: /^Kinds · / });
+
+it("narrows the list to the kinds still ticked and exposes the reference evidence", async () => {
   const finding = lqaFinding({ category: "quotation", rule: "quotation.reference-missing",
     message: "Possible missing quotation marks", referenceEvidence: { label: "English local", path: "local/ref",
       range: "MAT 5:3–7:27", openingText: "“Blessed", closingText: "It fell.”" } });
-  statusCall.mockResolvedValue(snapshot({ findings: [finding], categoryCounts: { quotation: 1 } }));
-  render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
-  await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
-  await fireEvent.click(await screen.findByRole("button", { name: /Kinds ·/ }));
-  await fireEvent.click(await screen.findByRole("button", { name: /Quotations/ }));
+  statusCall.mockResolvedValue(snapshot({ findings: [finding], categoryCounts: { quotation: 1, typo: 2 } }));
+  await openBook();
+  await fireEvent.click(await screen.findByRole("button", { name: "Kinds · 2 ▾" }));
+  await fireEvent.click(await screen.findByRole("button", { name: /Possible typo/ }));
   await waitFor(() => expect(statusCall).toHaveBeenLastCalledWith("C:/project", 0, 50, "findings", { categories: ["quotation"] }));
   expect(await screen.findByText("Reference evidence · English local")).toBeTruthy();
   expect(screen.getByText("MAT 5:3–7:27")).toBeTruthy();
 });
 
 beforeEach(() => {
-  // statusCall now serves only the panel's own page requests (limit 50).
+  // statusCall serves only the tab's own page requests (limit 50).
   statusCall.mockReset().mockImplementation(async (_path, _offset, limit) =>
     snapshot({ findings: limit ? snapshot().findings : [] }));
-  pauseCall.mockReset().mockResolvedValue(snapshot({ state: "paused", findings: [] }));
+  verseCall.mockReset().mockResolvedValue({ projectPath: "C:/project", generation: 1, state: "completed",
+    chapter: "1", verse: "1", findings: [], hidden: [] });
+  decideCall.mockReset().mockResolvedValue({});
   publish();
 });
 
-afterEach(() => languageQaChannel.set({ projectPath: "", status: null, error: "" }));
+afterEach(() => {
+  languageQaChannel.set({ projectPath: "", status: null, error: "" });
+  selectedVerse.set(null);
+});
 
-describe("Language QA", () => {
-  it("stays collapsed and makes no request of its own while closed", async () => {
-    // The status channel (languageQaInline.ts) supplies state and totals; the
-    // panel no longer polls.
+describe("Language QA tab (#487)", () => {
+  it("starts on the verse and reads no page until a chapter or book scope is chosen", async () => {
     render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
-    expect(await screen.findByRole("button", { name: /Language QA · completed · 1/ })).toBeTruthy();
+    expect(await screen.findByText("Select a verse to list its findings.")).toBeTruthy();
+    expect(screen.getByRole("radio", { name: "Verse" }).getAttribute("aria-checked")).toBe("true");
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(statusCall).not.toHaveBeenCalled();
-    expect(screen.queryByRole("region", { name: "Language QA results" })).toBeNull();
     expect(screen.queryByText("Check source encoding.")).toBeNull();
   });
 
+  it("has no bar of its own: no Pause, Undock, Close or ◂ ▸; the state line, the (i) and the tabs are pinned together", async () => {
+    await openBookList();
+    expect(screen.queryByRole("heading", { level: 2 })).toBeNull();
+    for (const name of ["Pause checks", "Close Language QA", "Language QA panel tools", "Previous", "Next"]) {
+      expect(screen.queryByRole("button", { name })).toBeNull();
+    }
+    const head = document.querySelector(".panel-head") as HTMLElement;
+    expect(head).not.toBeNull();
+    expect(head.firstElementChild?.classList.contains("state-row")).toBe(true);
+    expect(head.firstElementChild?.textContent?.replace(/\s+/g, " ")).toContain("Checks completed · 1 candidates");
+    expect(head.contains(screen.getByRole("button", { name: "About these checks" }))).toBe(true);
+    expect(head.contains(screen.getByRole("tablist", { name: "Language QA panel" }))).toBe(true);
+    // The (i) is a popover inside the pinned rows; the full status line lives there.
+    expect(head.querySelector(".status-line")).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "About these checks" }));
+    const about = screen.getByRole("dialog", { name: "What Language QA checks" });
+    expect(head.contains(about)).toBe(true);
+    expect(about.querySelector(".status-line")?.textContent?.replace(/\s+/g, " ")).toMatch(/completed · 1\/1 chapters · 1 review candidates/);
+    expect(about.textContent).toContain("F8 / Shift+F8");
+    expect(about.textContent).toContain("Re-check:");
+    await fireEvent.click(screen.getByRole("button", { name: "Close this note" }));
+    expect(screen.queryByRole("dialog", { name: "What Language QA checks" })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "About these checks" }));
+    // jsdom lays nothing out: the pin is the rule as written.
+    const css = readFileSync(resolve(process.cwd(), "src/lib/components/LanguageQaPanel.svelte"), "utf-8");
+    expect(css).toMatch(/\.panel-head \{[^}]*position: sticky; top: 0/);
+  });
+
+  it("draws the shared bar only in a separate window (PanelWindow mounts it docked)", async () => {
+    publish({ state: "running", completedChapters: 12, totalChapters: 50 });
+    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn(), docked: true });
+    expect(await screen.findByRole("heading", { level: 2, name: "Language QA · running 12/50" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Close Language QA" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Language QA panel tools" })).toBeNull();
+    expect(screen.getByText(/Checks running 12\/50/)).toBeTruthy();
+  });
+
   it("refetches the open page when a new pass lands on the channel, and not otherwise", async () => {
-    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
-    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
-    await screen.findByText("Check source encoding.");
+    await openBookList();
     expect(statusCall).toHaveBeenCalledTimes(1);
     publish();  // same generation and state: nothing new to show
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -124,12 +175,18 @@ describe("Language QA", () => {
     await waitFor(() => expect(statusCall).toHaveBeenCalledTimes(2));
   });
 
-  it("loads findings on demand and navigates exact verse bridges", async () => {
-    const navigate = vi.fn();
-    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: navigate });
-    await screen.findByRole("button", { name: /Language QA · completed/ });
-    await fireEvent.click(screen.getByRole("button", { name: /Language QA · completed/ }));
+  it("reads the page only while the tab is on screen", async () => {
+    const { component } = render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn(), active: false });
+    await fireEvent.click(await screen.findByRole("radio", { name: "Book" }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(statusCall).not.toHaveBeenCalled();
+    component.$set({ active: true });
     await screen.findByText("Check source encoding.");
+    expect(statusCall).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads findings on demand and navigates exact verse bridges", async () => {
+    const navigate = await openBookList();
     await fireEvent.click(screen.getByRole("button", { name: "PHP 2:3-4" }));
     expect(navigate).toHaveBeenCalledWith("php", "2", "3-4");
     expect(statusCall).toHaveBeenLastCalledWith("C:/project", 0, 50, "findings");
@@ -146,14 +203,15 @@ describe("Language QA", () => {
     ];
     publish({ totalFindings: 2, findings });
     statusCall.mockResolvedValue(snapshot({ totalFindings: 2, findings }));
-    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
-    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
+    await openBook();
     await screen.findByText("Heading lead.");
     expect(screen.getByText("in heading")).toBeTruthy();
     expect(screen.getByText("in footnote")).toBeTruthy();
     expect(screen.getByText(/Heading: உனக்கு விரோதமாக/)).toBeTruthy();
     expect(screen.getByText(/OV 1957 MAT 18:15:/)).toBeTruthy();
     expect(screen.getByText(reference.text)).toBeTruthy();
+    // A heading finding offers no "Apply to" row: its text is not in the verse.
+    expect(screen.queryByRole("radiogroup", { name: "Apply a suggestion to" })).toBeNull();
   });
 
   it("says when a finding is in the book's introduction (#253)", async () => {
@@ -164,8 +222,7 @@ describe("Language QA", () => {
     ];
     publish({ totalFindings: 1, findings });
     statusCall.mockResolvedValue(snapshot({ totalFindings: 1, findings }));
-    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
-    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
+    await openBook();
     await screen.findByText("Space inside \\ior.");
     expect(screen.getByText("in introduction")).toBeTruthy();
     expect(screen.getByText(/Book introduction: மத் 8 ராஜாவின்/)).toBeTruthy();
@@ -176,11 +233,9 @@ describe("Language QA", () => {
       limitations: ["Chapter 1: 4: Unbalanced \\f: 1 open, 0 close; verse not checked."] };
     publish(incomplete);
     statusCall.mockResolvedValue(snapshot(incomplete));
-    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
-    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
+    await openBook();
     expect(screen.queryByText(/Coverage incomplete/)).toBeNull();
-    // #376: the disclaimer and the details list are behind the (i); the
-    // warning's "details" link opens it.
+    // #376: the disclaimer and the details list are behind the (i).
     expect(screen.queryByText(/not publication approval/)).toBeNull();
     await fireEvent.click(screen.getByRole("button", { name: "About these checks" }));
     expect(screen.getByText(/Coverage incomplete/)).toBeTruthy();
@@ -203,8 +258,7 @@ describe("Language QA", () => {
     };
     publish(hindi);
     statusCall.mockResolvedValue(snapshot(hindi));
-    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
-    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
+    await openBook();
     await fireEvent.click(screen.getByRole("button", { name: "About these checks" }));
     const heading = screen.getByText(/hi-irv rules/, { selector: "p" });
     expect(heading.textContent).toMatch(/^\s*Hindi/);
@@ -217,8 +271,7 @@ describe("Language QA", () => {
   it("states what it checks and what it does not, in Tamil and English, behind the (i)", async () => {
     publish({ totalFindings: 0, findings: [] });
     statusCall.mockResolvedValue(snapshot({ totalFindings: 0, findings: [] }));
-    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
-    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
+    await openBook();
     // Behind the (i) since DECISIONS 2026-10-09 (Benz), superseding 2026-09-24.
     expect(screen.queryByLabelText("What Language QA checks")).toBeNull();
     const info = screen.getByRole("button", { name: "About these checks" });
@@ -244,46 +297,8 @@ describe("Language QA", () => {
     expect(screen.queryByLabelText("What Language QA checks")).toBeNull();
   });
 
-  it("keeps the title with the state word, the (i), Pause and Close in one sticky header, nothing else (#376)", async () => {
-    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
-    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
-    await screen.findByText("Check source encoding.");
-    const region = screen.getByRole("region", { name: "Language QA results" });
-    const head = region.firstElementChild as HTMLElement;
-    expect(head.classList.contains("panel-head")).toBe(true);
-    expect(screen.getByRole("heading", { level: 2, name: "Language QA · completed" })).toBeTruthy();
-    for (const name of ["About these checks", "Close Language QA"]) {
-      expect(head.contains(screen.getByRole("button", { name }))).toBe(true);
-    }
-    expect(screen.queryByRole("button", { name: "Pause checks" })).toBeNull();
-    // The full status line lives behind the (i) now, and the (i) is a popover
-    // inside the header that does not push the tab bar down.
-    expect(head.querySelector(".status-line")).toBeNull();
-    expect(head.nextElementSibling?.getAttribute("role")).toBe("tablist");
-    await fireEvent.click(screen.getByRole("button", { name: "About these checks" }));
-    const about = screen.getByRole("dialog", { name: "What Language QA checks" });
-    expect(head.contains(about)).toBe(true);
-    expect(about.querySelector(".status-line")?.textContent?.replace(/\s+/g, " ")).toMatch(/completed · 1\/1 chapters · 1 review candidates/);
-    expect(head.nextElementSibling?.getAttribute("role")).toBe("tablist");
-    expect(about.textContent).toContain("F8 / Shift+F8");
-    expect(about.textContent).toContain("Re-check:");
-    await fireEvent.click(screen.getByRole("button", { name: "Close this note" }));
-    expect(screen.queryByRole("dialog", { name: "What Language QA checks" })).toBeNull();
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: "About these checks" }));
-  });
-
-  it("shows the chapters done in the title while a pass is running (#376)", async () => {
-    publish({ state: "running", completedChapters: 12, totalChapters: 50 });
-    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn(), docked: true });
-    setSidePanel("languageQa", { open: true });
-    expect(await screen.findByRole("heading", { level: 2, name: "Language QA · running 12/50" })).toBeTruthy();
-    setSidePanel("languageQa", { open: false });
-  });
-
   it("pins the Findings / Re-check / False positives switch under the tab bar, outside the scrolling list (#178)", async () => {
-    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
-    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
-    await screen.findByText("Check source encoding.");
+    await openBookList();
     const tabs = screen.getByRole("tablist", { name: "Language QA panel" });
     const row = tabs.nextElementSibling as HTMLElement;
     expect(row.classList.contains("list-row")).toBe(true);
@@ -302,7 +317,6 @@ describe("Language QA", () => {
   it("names the Book words tab for the open book, falls back to the code, and cuts a long name with an ellipsis (#385)", async () => {
     project.set({ path: "C:/project", bookId: "gen", bookName: "ஆதியாகமம்", chapters: ["1"] } as never);
     render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
-    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
     const tab = await screen.findByRole("tab", { name: "Words in ஆதியாகமம்" });
     expect(tab.getAttribute("title")).toBe("Words in ஆதியாகமம்");
     expect(tab.classList.contains("book-tab")).toBe(true);
@@ -324,59 +338,62 @@ describe("Language QA", () => {
     project.set(null);
   });
 
-  it("keeps the list switch, the scope and the Kinds dropdown in one filter row; Clear drops every ticked kind (#376)", async () => {
+  it("keeps the list switch, the scope and Kinds in one filter row; every kind is ticked until one is unticked; All ticks them again (#487)", async () => {
     statusCall.mockImplementation(async (_path, _offset, limit) => snapshot({
       findings: limit ? snapshot().findings : [], categoryCounts: { typo: 2, sandhi: 1 } }));
-    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
-    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
-    await screen.findByText("Check source encoding.");
+    await openBookList();
     const row = screen.getByRole("tablist", { name: "Language QA panel" }).nextElementSibling as HTMLElement;
     expect(row.classList.contains("filter-bar")).toBe(true);
     expect(row.contains(screen.getByRole("tablist", { name: "Language QA lists" }))).toBe(true);
     expect(row.contains(screen.getByRole("radiogroup", { name: "Show findings for" }))).toBe(true);
-    expect(document.querySelector(".filters")).toBeNull();
     // Kinds is a dropdown: closed, the checklist is not in the page.
     const kinds = screen.getByRole("button", { name: "Kinds · 2 ▾" });
     expect(row.contains(kinds)).toBe(true);
     expect(screen.queryByRole("group", { name: "Kinds of finding" })).toBeNull();
     await fireEvent.click(kinds);
     expect(kinds.getAttribute("aria-expanded")).toBe("true");
-    expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "All" })).toBeNull();
+    const legend = screen.getByRole("group", { name: "Kinds of finding" });
+    expect(legend).toHaveTextContent(/Possible typo\s*2/);
     const typo = screen.getByRole("button", { name: /Possible typo/ });
-    await fireEvent.click(typo);
     expect(typo.getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("button", { name: "Kinds · 1 of 2 ▾" })).toBeTruthy();
-    await fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    expect(typo.querySelector("mark")?.className).toContain("m-lqa-typo");
+    // Unticking one leaves it out; the engine is asked for the rest.
+    await fireEvent.click(typo);
     expect(typo.getAttribute("aria-pressed")).toBe("false");
-    expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Kinds · 1 of 2 ▾" })).toBeTruthy();
+    await waitFor(() => expect(statusCall).toHaveBeenLastCalledWith("C:/project", 0, 50, "findings", { categories: ["sandhi"] }));
+    await fireEvent.click(screen.getByRole("button", { name: "All" }));
+    expect(typo.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.queryByRole("button", { name: "All" })).toBeNull();
+    await waitFor(() => expect(statusCall).toHaveBeenLastCalledWith("C:/project", 0, 50, "findings"));
     // Escape closes the dropdown and gives focus back to its button.
     await fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("group", { name: "Kinds of finding" })).toBeNull();
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Kinds · 2 ▾" }));
   });
 
-  it("pauses through the project-guarded endpoint", async () => {
-    statusCall.mockResolvedValue(snapshot({ state: "running" }));
-    publish({ state: "running" });
-    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
-    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · running/ }));
-    await screen.findByText("Check source encoding.");
-    statusCall.mockResolvedValue(snapshot({ state: "paused", findings: [] }));
-    await fireEvent.click(screen.getByRole("button", { name: "Pause checks" }));
-    expect(pauseCall).toHaveBeenCalledWith("C:/project", true);
-    await screen.findByRole("button", { name: "Resume checks" });
+  it("with every kind unticked the list is empty and nothing is asked of the engine", async () => {
+    statusCall.mockImplementation(async (_path, _offset, limit) => snapshot({
+      findings: limit ? snapshot().findings : [], categoryCounts: { unicode: 1 } }));
+    await openBookList();
+    await fireEvent.click(kindsButton());
+    await fireEvent.click(screen.getByRole("button", { name: /Encoding|unicode/i }));
+    const calls = statusCall.mock.calls.length;
+    await waitFor(() => expect(screen.queryByText("Check source encoding.")).toBeNull());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(statusCall.mock.calls.length).toBe(calls);
   });
 
   it("does not display a response belonging to a different project", async () => {
     statusCall.mockResolvedValue(snapshot({ projectPath: "C:/old-project" }));
-    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
-    await fireEvent.click(await screen.findByRole("button", { name: /Language QA/ }));
+    await openBook();
     await waitFor(() => expect(statusCall).toHaveBeenCalled());
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(screen.queryByText("Check source encoding.")).toBeNull();
     // Nor a channel status published for another project.
     languageQaChannel.set({ projectPath: "C:/old-project", status: snapshot(), error: "" });
-    expect(await screen.findByRole("button", { name: /Language QA · starting/ })).toBeTruthy();
+    expect(await screen.findByText(/Checks starting/)).toBeTruthy();
   });
 
   it("never writes the inline-marks store, whatever page it shows", async () => {
@@ -392,13 +409,13 @@ describe("Language QA", () => {
       findings: limit ? [lqaFinding({ id: "f2", chapter: "3", verse: "9", rule: "terminology.deprecated-form",
         start: 0, end: 3, originalText: "bad", message: "Deprecated.", suggestedReplacement: "good" })] : [],
     }));
-    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
-    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
+    await openBook();
     await screen.findByText("Deprecated.");
     expect(get(languageQaFindingsByVerse)).toEqual(seeded);
+    languageQaFindingsByVerse.set({});
   });
 
-  it("lists re-check and false-positive findings separately, each paged by the engine", async () => {
+  it("lists re-check and false-positive findings separately, each paged by the engine; a false positive offers no decision", async () => {
     statusCall.mockImplementation(async (_path, _offset, limit, view) => snapshot({
       view, recheckCount: 1, falsePositiveCount: 2, totalFindings: view === "findings" ? 1 : view === "recheck" ? 1 : 2,
       findings: !limit ? [] : view === "recheck"
@@ -407,24 +424,25 @@ describe("Language QA", () => {
           ? [lqaFinding({ id: "fp1", message: "Not a problem." }), lqaFinding({ id: "fp2", message: "Also fine." })]
           : snapshot().findings,
     }));
-    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
-    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
+    await openBook();
     await fireEvent.click(await screen.findByRole("tab", { name: "Re-check (1)" }));
     await screen.findByText("Ignored before.");
     expect(statusCall).toHaveBeenLastCalledWith("C:/project", 0, 50, "recheck");
     expect(screen.getByText("Re-check", { selector: ".recheck" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "⊘ Ignore" })).toBeTruthy();
     await fireEvent.click(screen.getByRole("tab", { name: "False positives (2)" }));
     await screen.findByText("Also fine.");
     expect(statusCall).toHaveBeenLastCalledWith("C:/project", 0, 50, "falsePositives");
     expect(screen.queryByText("Ignored before.")).toBeNull();
+    expect(screen.queryByRole("button", { name: "⊘ Ignore" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "False positive" })).toBeNull();
+    expect(screen.getAllByRole("button", { name: "Copy" })).toHaveLength(2);
   });
 
   it("loads a finding's decision history only when asked, behind a placeholder", async () => {
     let answer: (value: unknown) => void = () => {};
     historyCall.mockReset().mockReturnValue(new Promise((resolve) => { answer = resolve; }));
-    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
-    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
-    await screen.findByText("Check source encoding.");
+    await openBookList();
     expect(historyCall).not.toHaveBeenCalled();
     await fireEvent.click(screen.getByRole("button", { name: "History" }));
     expect(screen.getByText("Loading history…")).toBeTruthy();
@@ -446,7 +464,6 @@ describe("Language QA", () => {
   it("surfaces the channel's failure", async () => {
     publish({}, "Engine unavailable");
     render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
-    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · unavailable/ }));
     expect(screen.getByRole("alert").textContent).toContain("Engine unavailable");
   });
 
@@ -456,9 +473,7 @@ describe("Language QA", () => {
     learnedListCall.mockReset().mockResolvedValue({ fixes: [fix], enabled: true });
     learnedForgetCall.mockReset().mockResolvedValue({ fix: { ...fix, enabled: false } });
     learnedRestoreCall.mockReset().mockResolvedValue({ fix });
-    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
-    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
-    await screen.findByText("Check source encoding.");
+    await openBookList();
     expect(learnedListCall).not.toHaveBeenCalled();
 
     await fireEvent.click(screen.getByRole("tab", { name: "Dictionary" }));
@@ -482,8 +497,7 @@ describe("Language QA", () => {
     flagUpdateCall.mockReset().mockResolvedValue({ flag: { ...flag, status: "resolved" } });
     const onNavigate = vi.fn();
     render(LanguageQaPanel, { projectPath: "C:/project", onNavigate });
-    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
-    await fireEvent.click(screen.getByRole("tab", { name: "Flags" }));
+    await fireEvent.click(await screen.findByRole("tab", { name: "Flags" }));
     expect(await screen.findByText("Is this the sense?")).toBeTruthy();
     expect(flagsListCall).toHaveBeenCalledWith("C:/project");
     await fireEvent.click(screen.getByRole("button", { name: "PHP 3:4" }));
@@ -502,8 +516,7 @@ describe("Language QA", () => {
     reviewPreviewCall.mockReset().mockResolvedValue(preview);
     reviewImportCall.mockReset().mockResolvedValue({ ...preview, imported: 2 });
     render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
-    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
-    await fireEvent.click(screen.getByRole("tab", { name: "Flags" }));
+    await fireEvent.click(await screen.findByRole("tab", { name: "Flags" }));
     await fireEvent.click(screen.getByRole("button", { name: "Import AI review…" }));
     expect(await screen.findByText("AI-assisted review — native confirmation pending.")).toBeTruthy();
     expect(reviewPreviewCall).toHaveBeenCalledWith("C:/project", "D:/review.json");
@@ -526,8 +539,7 @@ describe("Language QA", () => {
       return { flag: saved };
     });
     render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
-    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
-    await fireEvent.click(screen.getByRole("tab", { name: "Flags" }));
+    await fireEvent.click(await screen.findByRole("tab", { name: "Flags" }));
     await fireEvent.click(await screen.findByRole("button", { name: "Record check…" }));
     expect((screen.getByRole("button", { name: "Save and resolve" }) as HTMLButtonElement).disabled).toBe(true);
     await fireEvent.input(screen.getByRole("textbox", { name: "Human check" }), { target: { value: "Still uncertain; ask the native reviewer." } });
@@ -546,8 +558,7 @@ describe("Language QA", () => {
       edit("5", "2026-10-07T10:00:00.000Z", "b1"), edit("4", "2026-10-01T10:00:00.000Z")] });
     const onNavigate = vi.fn();
     render(LanguageQaPanel, { projectPath: "C:/project", onNavigate });
-    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
-    await fireEvent.click(screen.getByRole("tab", { name: "Edits" }));
+    await fireEvent.click(await screen.findByRole("tab", { name: "Edits" }));
     const section = await screen.findByRole("region", { name: "Edits" });
     await waitFor(() => expect(section.querySelectorAll("h3")).toHaveLength(2));
     expect(verseHistoryCall).toHaveBeenCalledWith();
@@ -563,8 +574,7 @@ describe("Language QA", () => {
     bookWordsCall.mockReset().mockResolvedValue({ ready: true, total: 2, words: [row("राज्यपाल", 25), row("सोची", 2)] });
     wordsAddCall.mockReset().mockResolvedValue({ entries: [], count: 1 });
     render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
-    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
-    await fireEvent.click(screen.getByRole("tab", { name: /^Words in / }));
+    await fireEvent.click(await screen.findByRole("tab", { name: /^Words in / }));
     expect(await screen.findByText("राज्यपाल")).toBeTruthy();
     await fireEvent.click(screen.getByRole("button", { name: "Tick" }));
     expect((screen.getByRole("checkbox", { name: "Tick राज्यपाल" }) as HTMLInputElement).checked).toBe(true);
@@ -579,8 +589,7 @@ describe("Language QA", () => {
     bookWordsCall.mockReset().mockResolvedValue({ ready: true, total: 1, words: [{ word: "माणूसमाणूस",
       status: "unknown", countBook: 2, countIrv: null, countOv: null, firstRef: { chapter: "1", verse: "1" } }] });
     render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
-    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
-    await fireEvent.click(screen.getByRole("tab", { name: /^Words in / }));
+    await fireEvent.click(await screen.findByRole("tab", { name: /^Words in / }));
     expect(await screen.findByText("माणूसमाणूस")).toBeTruthy();
     expect(screen.getAllByRole("cell", { name: "—" })).toHaveLength(2);
     expect(screen.queryByRole("button", { name: "Tick" })).toBeNull();
@@ -590,35 +599,100 @@ describe("Language QA", () => {
   });
 });
 
-describe("Language QA panel: kinds, scope and F8", () => {
+describe("Language QA tab: the card's actions on a listed finding (#487)", () => {
+  afterEach(() => {
+    project.set(null);
+    currentChapter.set("1");
+  });
+
+  it("every listed finding, whatever the scope, carries Use, Ignore, False positive, Flag, Copy, Search and History; Ignore drops it at once and records the decision", async () => {
+    project.set({ path: "C:/project", bookId: "php", chapters: ["1", "2"] } as never);
+    const finding = lqaFinding({ id: "b1", chapter: "2", verse: "7", originalText: "அந்த காகம்", message: "Possible missing வல்லினம்." });
+    statusCall.mockImplementation(async (_path, _offset, limit) => snapshot({ findings: limit ? [finding] : [] }));
+    await openBook();
+    const card = (await screen.findByText("Possible missing வல்லினம்.")).closest("[data-lqa-id]") as HTMLElement;
+    expect(card.getAttribute("data-lqa-id")).toBe("b1");
+    for (const name of [/^Use “அந்தக் காகம்”/, "⊘ Ignore", "False positive", "⚑ Flag…", "Copy", "Search", "History"]) {
+      expect(within(card).getByRole("button", { name })).toBeTruthy();
+    }
+    expect(within(card).getByRole("button", { name: "PHP 2:7" })).toBeTruthy();
+    expect(within(card).getByText("medium")).toBeTruthy();
+    expect(within(card).getByText("ta-irv/tamil.vallinam-missing")).toBeTruthy();
+    expect(within(card).getByRole("radiogroup", { name: "Apply a suggestion to" })).toBeTruthy();
+    let release: (value: unknown) => void = () => {};
+    decideCall.mockReturnValue(new Promise((resolve) => { release = resolve; }));
+    await fireEvent.click(within(card).getByRole("button", { name: "⊘ Ignore" }));
+    expect(document.querySelector('[data-lqa-id="b1"]')).toBeNull();
+    expect(screen.getByText("Occurrence ignored.")).toBeTruthy();
+    expect(decideCall).toHaveBeenCalledWith("2", "7", "b1", "ignored", undefined, expect.objectContaining({ source: "languageQa" }));
+    release({});
+  });
+
+  it("a failed decision puts the finding back and says why", async () => {
+    project.set({ path: "C:/project", bookId: "php", chapters: ["1", "2"] } as never);
+    decideCall.mockRejectedValue(new Error("disk full"));
+    await openBookList();
+    await fireEvent.click(screen.getByRole("button", { name: "False positive" }));
+    expect(await screen.findByText("disk full")).toBeTruthy();
+    expect(document.querySelector('[data-lqa-id="f1"]')).not.toBeNull();
+  });
+});
+
+describe("Language QA tab: paging (#487)", () => {
+  function paged(total: number) {
+    statusCall.mockImplementation(async (_path, offset, limit) => snapshot({
+      totalFindings: total, offset,
+      findings: limit ? [lqaFinding({ id: `p${offset}`, chapter: "1", verse: "1", message: `Row ${offset + 1}.` })] : [],
+    }));
+  }
+
+  it("turns pages with Previous / Next and a go-to-page box; the rows on show stay until the next page arrives", async () => {
+    paged(120);
+    await openBook();
+    await screen.findByText("Row 1.");
+    const pager = document.querySelector(".paging") as HTMLElement;
+    expect(pager).not.toBeNull();
+    expect(pager.textContent).toContain("Page 1 of 3");
+    expect((within(pager).getByRole("button", { name: "Previous" }) as HTMLButtonElement).disabled).toBe(true);
+    await fireEvent.click(within(pager).getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(statusCall).toHaveBeenLastCalledWith("C:/project", 50, 50, "findings"));
+    await screen.findByText("Row 51.");
+    expect(pager.textContent).toContain("Page 2 of 3");
+    // Go to page 3: the box takes a number, Enter or Go sends it.
+    await fireEvent.input(within(pager).getByRole("spinbutton", { name: "Go to page" }), { target: { value: "3" } });
+    await fireEvent.submit(pager.querySelector("form") as HTMLFormElement);
+    await waitFor(() => expect(statusCall).toHaveBeenLastCalledWith("C:/project", 100, 50, "findings"));
+    await screen.findByText("Row 101.");
+    expect((within(pager).getByRole("button", { name: "Next" }) as HTMLButtonElement).disabled).toBe(true);
+    // A late page: the old rows stay until the new ones arrive.
+    let finish!: (value: LanguageQaStatus) => void;
+    statusCall.mockImplementationOnce(() => new Promise<LanguageQaStatus>((resolve) => { finish = resolve; }));
+    await fireEvent.click(within(pager).getByRole("button", { name: "Previous" }));
+    await tick();
+    expect(screen.getByText("Row 101.")).toBeTruthy();
+    finish(snapshot({ totalFindings: 120, offset: 50, findings: [lqaFinding({ id: "p50", chapter: "1", verse: "1", message: "Row 51." })] }));
+    await screen.findByText("Row 51.");
+    expect(screen.queryByText("Row 101.")).toBeNull();
+  });
+
+  it("the pager is pinned to the bottom of the tab, and shows only for a paged list", async () => {
+    const css = readFileSync(resolve(process.cwd(), "src/lib/components/LanguageQaPanel.svelte"), "utf-8");
+    expect(css).toMatch(/\.paging \{[^}]*position: sticky; bottom: 0/);
+    paged(20);
+    await openBook();
+    await screen.findByText("Row 1.");
+    expect(document.querySelector(".paging")).toBeNull();
+  });
+});
+
+describe("Language QA tab: kinds, scope and F8", () => {
   afterEach(() => {
     project.set(null);
     focusedFindingId.set(null);
     languageQaFindingsByVerse.set({});
     chapterVerseNums.set({});
     selectedVerse.set(null);
-  });
-
-  async function openPanel(onNavigate = vi.fn()) {
-    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate });
-    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
-    await screen.findByText("Check source encoding.");
-    return onNavigate;
-  }
-
-  it("shows each kind with its count and narrows the list to the kinds ticked", async () => {
-    statusCall.mockImplementation(async (_path, _offset, limit) =>
-      snapshot({ findings: limit ? snapshot().findings : [], categoryCounts: { typo: 4, unicode: 1 } }));
-    await openPanel();
-    await fireEvent.click(screen.getByRole("button", { name: /^Kinds · / }));
-    const legend = screen.getByRole("group", { name: "Kinds of finding" });
-    expect(legend).toHaveTextContent(/Possible typo\s*4/);
-    const typo = screen.getByRole("button", { name: /Possible typo/ });
-    expect(typo.getAttribute("aria-pressed")).toBe("false");
-    expect(typo.querySelector("mark")?.className).toContain("m-lqa-typo");
-    await fireEvent.click(typo);
-    await waitFor(() => expect(statusCall).toHaveBeenLastCalledWith("C:/project", 0, 50, "findings", { categories: ["typo"] }));
-    expect(typo.getAttribute("aria-pressed")).toBe("true");
+    currentChapter.set("1");
   });
 
   it("lists one chapter, or the selected verse's findings, as the scope says", async () => {
@@ -627,13 +701,13 @@ describe("Language QA panel: kinds, scope and F8", () => {
     verseCall.mockResolvedValue({ projectPath: "C:/project", generation: 1, state: "completed", chapter: "2", verse: "3-4",
       findings: [lqaFinding({ id: "v1", chapter: "2", verse: "3-4", originalText: "அவண்", message: "Verse finding.", category: "typo" })],
       hidden: [] });
-    await openPanel();
+    await openBookList();
     await fireEvent.click(screen.getByRole("radio", { name: "Chapter" }));
     await waitFor(() => expect(statusCall).toHaveBeenLastCalledWith("C:/project", 0, 50, "findings", { chapter: "2" }));
     await fireEvent.click(screen.getByRole("radio", { name: "Verse" }));
     expect(await screen.findByText("Verse finding.")).toBeTruthy();
     expect(verseCall).toHaveBeenCalledWith("C:/project", "2", "3-4");
-    await fireEvent.click(screen.getByRole("button", { name: /^Kinds · / }));
+    await fireEvent.click(kindsButton());
     expect(screen.getByRole("group", { name: "Kinds of finding" })).toHaveTextContent(/Possible typo\s*1/);
   });
 
@@ -643,7 +717,7 @@ describe("Language QA panel: kinds, scope and F8", () => {
     const verseResult = (message: string) => ({ projectPath: "C:/project", generation: 2, state: "completed",
       chapter: "2", verse: "3-4", hidden: [],
       findings: [lqaFinding({ id: message, chapter: "2", verse: "3-4", message, category: "typo" })] });
-    await openPanel();
+    await openBookList();
     // The edit: a new generation, queued. The engine still holds the last
     // pass's findings for the verse until this one finishes.
     verseCall.mockResolvedValue(verseResult("Before the edit."));
@@ -664,7 +738,7 @@ describe("Language QA panel: kinds, scope and F8", () => {
     const early = lqaFinding({ id: "a", chapter: "1", verse: "1", start: 0, end: 4, originalText: "early" });
     const second = lqaFinding({ id: "c", chapter: "1", verse: "2", start: 2, end: 5, originalText: "next" });
     languageQaFindingsByVerse.set({ [verseKey("1", "1")]: [late, early], [verseKey("1", "2")]: [second] });
-    const onNavigate = await openPanel();
+    const onNavigate = await openBookList();
     await fireEvent.keyDown(window, { key: "F8" });
     expect(get(focusedFindingId)).toBe("a");
     expect(get(selectedVerse)).toBe("1");
@@ -694,14 +768,14 @@ describe("Language QA panel: kinds, scope and F8", () => {
     return scrollIntoView;
   }
 
-  it("a row's reference opens the verse, then rings and centres the finding's mark (#402)", async () => {
+  it("a card's reference opens the verse, then rings and centres the finding's mark (#402)", async () => {
     const scrollIntoView = plantMark("f1");
     const onNavigate = vi.fn(async () => {
       // The ring is set before the verse opens, so the verse list knows not
       // to pull the verse to the top under the mark's own scroll.
       expect(get(focusedFindingId)).toBe("f1");
     });
-    await openPanel(onNavigate);
+    await openBookList(onNavigate);
     await fireEvent.click(screen.getByRole("button", { name: "PHP 2:3-4" }));
     expect(onNavigate).toHaveBeenCalledWith("php", "2", "3-4");
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ block: "center" }));
@@ -714,7 +788,7 @@ describe("Language QA panel: kinds, scope and F8", () => {
         message: "Check source encoding.", suggestedReplacement: null, context: "heading", contextText: "A title" }),
     ] : [] }));
     const scrollIntoView = plantMark("h1");
-    const onNavigate = await openPanel();
+    const onNavigate = await openBookList();
     await fireEvent.click(screen.getByRole("button", { name: "PHP 2:1" }));
     expect(onNavigate).toHaveBeenCalledWith("php", "2", "1");
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -723,119 +797,11 @@ describe("Language QA panel: kinds, scope and F8", () => {
   });
 });
 
-// #389 step 1: the floating box on the other screens closes by its left
-// edge exactly as a docked column does, through the one shared handle.
-describe("Language QA floating box closes by drag (#389)", () => {
-  afterEach(() => {
-    project.set(null);
-  });
-
-  /** jsdom has no PointerEvent: a MouseEvent carries the pointer event's name and fields. */
-  async function pointer(target: HTMLElement, type: string, clientX = 0): Promise<void> {
-    target.dispatchEvent(new MouseEvent(type, { bubbles: true, button: 0, clientX }));
-    await tick();
-  }
-
-  it("dims and says 'Release to close' past the threshold, and release closes the box; a short drag only narrows it", async () => {
-    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
-    await fireEvent.click(await screen.findByRole("button", { name: /Language QA · completed/ }));
-    const results = () => document.getElementById("language-qa-results") as HTMLElement | null;
-    expect(results()).not.toBeNull();
-    const handle = screen.getByRole("separator", { name: /Resize the Language QA panel/ });
-    // 560 wide; 100px to the right is 460, above the 320 minimum: still open, narrower.
-    await pointer(handle, "pointerdown", 500);
-    await pointer(handle, "pointermove", 600);
-    expect(results()?.style.width).toBe("460px");
-    expect(screen.queryByText("Release to close")).toBeNull();
-    await pointer(handle, "pointerup");
-    expect(results()?.style.width).toBe("460px");
-    // Past min - 60 (260): the hint shows and the frame dims; release closes.
-    await pointer(handle, "pointerdown", 500);
-    await pointer(handle, "pointermove", 800);
-    expect(screen.getByText("Release to close")).toBeInTheDocument();
-    expect(document.querySelector(".float-frame.closing")).not.toBeNull();
-    await pointer(handle, "pointerup");
-    expect(results()).toBeNull();
-    expect(screen.getByRole("button", { name: /Language QA · completed/ }).getAttribute("aria-expanded")).toBe("false");
-  });
-
-  it("the docked column has no handle of its own (SidePanel's is the one) and no ◂ ▸ in the floating bar", async () => {
-    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn(), docked: true });
-    await screen.findByRole("heading", { level: 2, name: /Language QA/ });
-    expect(screen.queryByRole("separator", { name: /Resize the Language QA panel/ })).toBeNull();
-    expect(screen.getByRole("button", { name: "Language QA panel tools" })).toBeInTheDocument();
-  });
-});
-
-describe("Language QA launcher on the editor screen (#236)", () => {
-  afterEach(() => vi.useRealTimers());
-
-  it("hides itself a few seconds after a pass completes and comes back for the next pass", async () => {
-    vi.useFakeTimers();
-    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn(), launcherHides: true });
-    await tick();
-    expect(screen.getByRole("button", { name: /Language QA · completed/ })).toBeTruthy();
-    vi.advanceTimersByTime(5_000);
-    await tick();
-    expect(screen.getByRole("button", { name: /Language QA · completed/ })).toBeTruthy();
-    vi.advanceTimersByTime(1_000);
-    await tick();
-    expect(screen.queryByRole("button", { name: /Language QA · completed/ })).toBeNull();
-
-    publish({ generation: 2, state: "running" });
-    await tick();
-    expect(screen.getByRole("button", { name: /Language QA · running/ })).toBeTruthy();
-  });
-
-  it("hides at once from its close button, and the status bar's toggle still opens the panel", async () => {
-    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn(), launcherHides: true });
-    await fireEvent.click(await screen.findByRole("button", { name: "Hide until the next check" }));
-    expect(screen.queryByRole("button", { name: /Language QA · completed/ })).toBeNull();
-
-    toggleLanguageQaPanel();
-    await screen.findByText("Check source encoding.");
-    // While open, the launcher is back: it is how the panel closes.
-    expect(screen.getByRole("button", { name: /Language QA · completed/ })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Hide until the next check" })).toBeNull();
-  });
-
-  it("never hides where it is the only way into the panel", async () => {
-    vi.useFakeTimers();
-    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
-    await tick();
-    expect(screen.queryByRole("button", { name: "Hide until the next check" })).toBeNull();
-    vi.advanceTimersByTime(60_000);
-    await tick();
-    expect(screen.getByRole("button", { name: /Language QA · completed/ })).toBeTruthy();
-  });
-});
-
-describe("Language QA docked in its side column (Benz, 2026-10-09)", () => {
-  afterEach(() => setSidePanel("languageQa", { open: false }));
-
-  it("is open with no launcher, and Close closes the column", async () => {
-    setSidePanel("languageQa", { open: true });
-    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn(), docked: true });
-    expect(await screen.findByText("Check source encoding.")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Language QA · completed/ })).toBeNull();
-    await fireEvent.click(screen.getByRole("button", { name: "Close Language QA" }));
-    expect(get(sidePanels).languageQa.open).toBe(false);
-  });
-
-  it("the status bar's button toggles the column, not a floating box", async () => {
-    setSidePanel("languageQa", { open: false });
-    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn(), docked: true });
-    toggleLanguageQaPanel();
-    expect(get(sidePanels).languageQa.open).toBe(true);
-  });
-});
-
-
 describe("language-aware About (#415)", () => {
   it("suppresses Tamil glosses from shared categories for a Hindi effective pack", async () => {
     const language = { declared: "hin", language: "hi", name: "Hindi", script: "DEVANAGARI", basis: "metadata", pack: "hi-irv", message: "Hindi checks." };
     publish({ language }); statusCall.mockResolvedValue(snapshot({ language }));
-    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn(), docked: true });
+    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
     await fireEvent.click(screen.getByRole("button", { name: "About these checks" }));
     const about = screen.getByRole("dialog", { name: "What Language QA checks" });
     expect(about.querySelector('[lang="ta"]')).toBeNull(); expect(about).toHaveTextContent("About Language QA · Hindi");
@@ -844,7 +810,8 @@ describe("language-aware About (#415)", () => {
   it("follows a Settings override immediately and ignores a late page for the old pack", async () => {
     let finish!: (value: LanguageQaStatus) => void;
     statusCall.mockImplementationOnce(() => new Promise<LanguageQaStatus>(resolve => finish = resolve));
-    publish({}); render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn(), docked: true });
+    publish({});
+    await openBook();
     await fireEvent.click(screen.getByRole("button", { name: "About these checks" }));
     const language = { declared: "tam", language: "hi", name: "Hindi", script: "DEVANAGARI", basis: "setting", setting: "hi-irv", pack: "hi-irv", message: "Hindi checks." };
     statusCall.mockResolvedValue(snapshot({ language, setting: "hi-irv" }));
@@ -858,7 +825,7 @@ describe("language-aware About (#415)", () => {
     const language = { declared: "zz", language: "zz", script: "LATIN", basis: mode === "off" ? "setting-off" : "undetermined", pack: "common", message: "Common checks only." };
     const value = { language, setting: mode === "off" ? "off" : "auto" };
     publish(value); statusCall.mockResolvedValue(snapshot(value));
-    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn(), docked: true });
+    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
     await fireEvent.click(screen.getByRole("button", { name: "About these checks" }));
     const about = screen.getByRole("dialog", { name: "What Language QA checks" });
     expect(about).toHaveTextContent(mode === "off" ? "switched off" : "Only common technical checks");
@@ -866,15 +833,5 @@ describe("language-aware About (#415)", () => {
     // Older engine summaries can carry the Tamil/default category inventory
     // in common-only mode. Do not advertise those as this language's checks.
     expect(about).not.toHaveTextContent("Sandhi");
-  });
-  it("resizes the standalone panel in width and height through keyboard controls", async () => {
-    publish({}); statusCall.mockResolvedValue(snapshot());
-    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
-    await fireEvent.click(await screen.findByRole("button", { name: /Language QA \u00b7 completed/ }));
-    const corner = screen.getByRole("button", { name: "Resize Language QA width and height" });
-    const region = screen.getByRole("region", { name: "Language QA results" });
-    const width = parseFloat(region.style.width), height = parseFloat(region.style.height);
-    await fireEvent.keyDown(corner, { key: "ArrowRight" }); await fireEvent.keyDown(corner, { key: "ArrowDown" });
-    expect(parseFloat(region.style.width)).toBe(width + 16); expect(parseFloat(region.style.height)).toBe(height + 16);
   });
 });

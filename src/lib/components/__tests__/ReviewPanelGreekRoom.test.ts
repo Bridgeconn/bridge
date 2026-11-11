@@ -20,6 +20,7 @@ vi.mock("../../api/bridgeClient", () => ({
 
 import ReviewPanel from "../ReviewPanel.svelte";
 import { chapterVerseNums, checkGroupsByVerse, currentChapter, findingsByVerse, project, selectedVerse } from "../../stores";
+import { setSidePanel } from "../../editorPrefs";
 
 describe("ReviewPanel Greek Room tab", () => {
   beforeEach(() => {
@@ -28,6 +29,8 @@ describe("ReviewPanel Greek Room tab", () => {
     currentChapter.set("1");
     findingsByVerse.set({});
     checkGroupsByVerse.set({});
+    // #487: the Language QA tab is shown by the View menu's flag.
+    setSidePanel("languageQa", { open: true });
     runVerseChecks.mockResolvedValue([{ id: "w1", engine: "wildebeest", check: "wildebeest", status: "open",
       severity: "medium", category: "unicode", check_type: "wildebeest.x", explanation: "Mixed script", evidence: [] }]);
   });
