@@ -505,3 +505,138 @@ describe("AlignmentModal target containers carry the project language (#286)", (
     project.set(projectInfo());
   });
 });
+
+describe("AlignmentModal reorder within a column and rubber-band pick (#410)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    project.set(projectInfo());
+    getLexiconEntry.mockResolvedValue({ segments: [] });
+    runVerseChecks.mockResolvedValue([]);
+  });
+
+  type HitTest = { elementFromPoint: (x: number, y: number) => Element | null };
+  type Rect = Pick<DOMRect, "left" | "top" | "right" | "bottom" | "width" | "height">;
+
+  function pointer(type: string, target: Element | Window, init: MouseEventInit = {}) {
+    target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, ...init }));
+  }
+
+  function rect(el: Element, value: Rect) {
+    (el as HTMLElement).getBoundingClientRect = () => ({ x: value.left, y: value.top, ...value, toJSON() {} }) as DOMRect;
+  }
+
+  /** The first source word holds two target words; the third is in the bank. */
+  function twoInColumn(): AlignmentContext {
+    const base = context();
+    return context({
+      alignment: {
+        alignments: [
+          { topWords: [base.topTokens[0]], bottomWords: [base.bottomTokens[0], base.bottomTokens[1]] },
+          { topWords: [base.topTokens[1]], bottomWords: [] },
+        ],
+        wordBank: [base.bottomTokens[2]],
+      },
+      groups: [
+        { id: "G001", topIds: ["H001"], bottomIds: ["T001", "T002"] },
+        { id: "G002", topIds: ["H002"], bottomIds: [] },
+      ],
+    });
+  }
+
+  it("shows up/down buttons only when a column holds several words, with the edges disabled", async () => {
+    await open();
+    expect(screen.queryByRole("button", { name: "Move आदि up" })).toBeNull();
+    const first = screen.getByRole("button", { name: "Pick up आदि from בְּרֵאשִׁית" });
+    expect(first).toBeInTheDocument();
+  });
+
+  it("the down button moves a word one place later in the same column, in one realign call", async () => {
+    const ctx = twoInColumn();
+    realignWords.mockResolvedValue(ctx);
+    await open(ctx);
+    expect(screen.getByRole("button", { name: "Move आदि up" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Move में down" })).toBeDisabled();
+    await fireEvent.click(screen.getByRole("button", { name: "Move आदि down" }));
+    await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "1", ["H001"], ["T002", "T001"], ctx.alignment));
+    await screen.findByText(/Word order changed/);
+  });
+
+  it("a word dragged onto the upper half of the first card in its own column is reordered above it", async () => {
+    const ctx = twoInColumn();
+    realignWords.mockResolvedValue(ctx);
+    await open(ctx);
+    const firstCard = screen.getByRole("button", { name: "Pick up आदि from בְּרֵאשִׁית" }).closest("[data-drop-slot]")!;
+    rect(firstCard, { left: 0, top: 100, right: 80, bottom: 140, width: 80, height: 40 });
+    (document as unknown as HitTest).elementFromPoint = () => firstCard;
+    pointer("pointerdown", screen.getByRole("button", { name: "Pick up में from בְּרֵאשִׁית" }), { clientX: 10, clientY: 200 });
+    pointer("pointermove", window, { clientX: 40, clientY: 110 });
+    await waitFor(() => expect(firstCard.classList.contains("insert-before")).toBe(true));
+    pointer("pointerup", window);
+    await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "1", ["H001"], ["T002", "T001"], ctx.alignment));
+  });
+
+  it("a word dropped back where it already sits saves nothing", async () => {
+    const ctx = twoInColumn();
+    await open(ctx);
+    const secondCard = screen.getByRole("button", { name: "Pick up में from בְּרֵאשִׁית" }).closest("[data-drop-slot]")!;
+    rect(secondCard, { left: 0, top: 150, right: 80, bottom: 190, width: 80, height: 40 });
+    (document as unknown as HitTest).elementFromPoint = () => secondCard;
+    pointer("pointerdown", screen.getByRole("button", { name: "Pick up में from בְּרֵאשִׁית" }), { clientX: 10, clientY: 160 });
+    pointer("pointermove", window, { clientX: 40, clientY: 180 });
+    await waitFor(() => expect(secondCard.classList.contains("insert-after")).toBe(true));
+    pointer("pointerup", window);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(realignWords).not.toHaveBeenCalled();
+  });
+
+  it("a bank word dropped on a card lands before or after it instead of last", async () => {
+    const ctx = twoInColumn();
+    realignWords.mockResolvedValue(ctx);
+    await open(ctx);
+    const firstCard = screen.getByRole("button", { name: "Pick up आदि from בְּרֵאשִׁית" }).closest("[data-drop-slot]")!;
+    rect(firstCard, { left: 0, top: 100, right: 80, bottom: 140, width: 80, height: 40 });
+    (document as unknown as HitTest).elementFromPoint = () => firstCard;
+    pointer("pointerdown", screen.getByRole("button", { name: "सृष्टि" }), { clientX: 10, clientY: 300 });
+    pointer("pointermove", window, { clientX: 40, clientY: 130 }); // lower half: after आदि
+    pointer("pointerup", window);
+    await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "1", ["H001"], ["T001", "T003", "T002"], ctx.alignment));
+  });
+
+  it("dragging a box across the word bank picks the words it touches; the bank click that follows keeps them", async () => {
+    const ctx = context({ alignment: { alignments: [], wordBank: context().bottomTokens }, groups: [], status: "untouched" });
+    await open(ctx);
+    const bank = document.querySelector(".bank-tokens")!;
+    const words = ["आदि", "में", "सृष्टि"].map((w) => screen.getByRole("button", { name: w }));
+    words.forEach((el, i) => rect(el, { left: i * 60, top: 0, right: i * 60 + 50, bottom: 30, width: 50, height: 30 }));
+    pointer("pointerdown", bank, { clientX: 200, clientY: 60 });
+    pointer("pointermove", window, { clientX: 70, clientY: 10 });
+    await waitFor(() => expect(document.querySelector(".marquee")).toBeInTheDocument());
+    expect(words[0]).toHaveAttribute("aria-pressed", "false");
+    expect(words[1]).toHaveAttribute("aria-pressed", "true");
+    expect(words[2]).toHaveAttribute("aria-pressed", "true");
+    pointer("pointerup", window);
+    await fireEvent.click(bank); // the browser's click after the pointerup
+    expect(words[1]).toHaveAttribute("aria-pressed", "true");
+    expect(words[2]).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText(/2 picked/)).toBeInTheDocument();
+    // Dragging one of them carries both to the column.
+    realignWords.mockResolvedValue(ctx);
+    const cell = screen.getByLabelText("Align 2 picked-up words to בָּרָא");
+    (document as unknown as HitTest).elementFromPoint = () => cell;
+    pointer("pointerdown", words[1], { clientX: 70, clientY: 10 });
+    pointer("pointermove", window, { clientX: 140, clientY: 80 });
+    pointer("pointerup", window);
+    await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "1", ["H002"], ["T002", "T003"], ctx.alignment));
+  });
+
+  it("a press on a bank word is not a box: it is the word's own drag", async () => {
+    const ctx = context({ alignment: { alignments: [], wordBank: context().bottomTokens }, groups: [], status: "untouched" });
+    await open(ctx);
+    (document as unknown as HitTest).elementFromPoint = () => null;
+    pointer("pointerdown", screen.getByRole("button", { name: "आदि" }), { clientX: 10, clientY: 10 });
+    pointer("pointermove", window, { clientX: 80, clientY: 80 });
+    await waitFor(() => expect(document.querySelector(".drag-ghost")).toBeInTheDocument());
+    expect(document.querySelector(".marquee")).toBeNull();
+    pointer("pointerup", window);
+  });
+});

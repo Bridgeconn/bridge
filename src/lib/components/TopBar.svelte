@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import UiIcon from "./UiIcon.svelte";
+  import BridgeMark from "./BridgeMark.svelte";
   import { tooltip } from "../tooltip";
   import { isTauri } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -103,7 +104,7 @@
 
 <div class="topbar no-print" class:home-bar={screen === "home"} class:desktop-bar={desktop} data-tauri-drag-region>
   <div class="brand" data-tauri-drag-region>
-    <div class="mark" data-tauri-drag-region /> Bridge
+    <span class="mark" data-tauri-drag-region><BridgeMark size={22} /></span> Bridge
     {#if engineInfo}<span class="version" data-tauri-drag-region title="Schema v{engineInfo.companionSchemaVersion}">{engineInfo.bridgeVersion}</span>{/if}
   </div>
   {#if screen !== "home"}
@@ -221,7 +222,7 @@
 <style>
   .topbar { height: 52px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 16px; gap: 14px; flex-shrink: 0; }
   .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: var(--fs-md); color: var(--text); white-space: nowrap; }
-  .mark { width: 22px; height: 22px; border-radius: 6px; background: linear-gradient(135deg, var(--accent), var(--pass)); flex-shrink: 0; }
+  .mark { display: flex; flex-shrink: 0; filter: drop-shadow(0 1px 2px rgba(47, 111, 237, 0.25)); }
   .version { font-size: var(--fs-3xs); font-weight: 600; color: var(--text-3); }
   .divider { width: 1px; height: 24px; background: var(--border); flex-shrink: 0; }
   .breadcrumb { display: flex; align-items: center; gap: 4px; min-width: 0; flex-shrink: 1; overflow: hidden; }

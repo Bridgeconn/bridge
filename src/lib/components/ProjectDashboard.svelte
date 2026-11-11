@@ -439,7 +439,7 @@
                       disabled={qaBusy} on:click={() => onPreviewBook(book.path)}><UiIcon name="viewReport" /></button>
                   {:else if !book.missing}
                     <button class="ui-icon-btn success" aria-label="Run QA" use:tooltip={qaBusy ? "A check is already running" : `Run QA on ${bookLabel(book)}: every chapter, with the Collection QA checks, then show its report`}
-                      disabled={qaBusy} on:click={() => onRunBookQa(book.path)}><UiIcon name="play" /></button>
+                      disabled={qaBusy} on:click={() => onRunBookQa(book.path)}><UiIcon name="runQa" /></button>
                   {/if}
                   {#if canAssign && !book.missing}
                     <button class="ui-icon-btn assign" aria-label="Assign…" use:tooltip={`Assign ${bookLabel(book)}`} on:click={() => onAssign(book.path)}><UiIcon name="assign" /></button>
@@ -475,7 +475,7 @@
             <div class="report-actions">
               <button type="button" class="ui-icon-btn success" aria-label="Run QA again" disabled={qaBusy || reportLoading}
                 use:tooltip={qaBusy ? "A check is already running" : `Run QA again on ${openBook?.bookName || report.bookId?.toUpperCase()}, then show the fresh report`}
-                on:click={() => onRunBookQa(openBook?.path ?? openBookPath)}><UiIcon name="play" /></button>
+                on:click={() => onRunBookQa(openBook?.path ?? openBookPath)}><UiIcon name="runQa" /></button>
               <button type="button" class="ui-icon-btn rebuild" aria-label="Rebuild" disabled={reportLoading}
                 use:tooltip={"Rebuild this report from the findings on disk, without running checks"}
                 on:click={onLoadReport}><UiIcon name="rebuild" /></button>
@@ -513,7 +513,7 @@
         <div class="report-state">
           <p class="state-title danger">{job.error || (job.state === "cancelled" ? "Checking was cancelled." : "Checking failed.")}</p>
           <div class="state-actions">
-            <button type="button" class="ui-btn" disabled={qaBusy} on:click={() => onRunBookQa(qaRunningPath)}><UiIcon name="play" />Run QA again</button>
+            <button type="button" class="ui-btn" disabled={qaBusy} on:click={() => onRunBookQa(qaRunningPath)}><UiIcon name="runQa" />Run QA again</button>
           </div>
         </div>
       {:else if reportLoading}
@@ -701,11 +701,11 @@
         </div>
       {:else if openBookName && openBookRow && !checked(openBookRow)}
         <div class="report-state">
-          <span class="state-icon" aria-hidden="true"><UiIcon name="play" /></span>
+          <span class="state-icon" aria-hidden="true"><UiIcon name="runQa" /></span>
           <p class="state-title">{openBookName} has not been checked yet.</p>
           <p class="state-hint">Nothing has been checked in it, so there is no report. Run QA on it to check every chapter and build its report.</p>
           <button type="button" class="ui-btn primary" disabled={qaBusy} on:click={() => onRunBookQa(openBookRow?.path ?? openBookPath)}>
-            <UiIcon name="play" />Run QA on {openBookName}
+            <UiIcon name="runQa" />Run QA on {openBookName}
           </button>
         </div>
       {:else}
@@ -713,8 +713,9 @@
           <span class="state-icon" aria-hidden="true"><UiIcon name="report" /></span>
           <p class="state-title">Pick a book on the left to see its QA report.</p>
           <ul class="legend" aria-label="What the book icons do">
-            <li><span class="legend-icon success"><UiIcon name="play" /></span><span><strong>Run QA</strong> checks the book, then builds its report.</span></li>
+            <li><span class="legend-icon success"><UiIcon name="runQa" /></span><span><strong>Run QA</strong> checks the book, then builds its report.</span></li>
             <li><span class="legend-icon accent"><UiIcon name="viewReport" /></span><span><strong>View QA report</strong> shows a checked book's report.</span></li>
+            {#if canAssign}<li><span class="legend-icon assign"><UiIcon name="assign" /></span><span><strong>Assign</strong> gives the book to a team member.</span></li>{/if}
             <li><span class="legend-icon accent"><UiIcon name="open" /></span><span><strong>Open</strong> reads and edits the book.</span></li>
           </ul>
           <p class="state-hint">Building a report reads every verse, so it takes a couple of minutes on a full-length book.</p>
@@ -826,6 +827,7 @@
   .legend-icon { display: grid; place-items: center; flex-shrink: 0; width: 30px; height: 30px; border-radius: 8px; }
   .legend-icon.success { background: var(--success-bg); color: var(--success); }
   .legend-icon.accent { background: var(--accent-bg); color: var(--accent); }
+  .legend-icon.assign { background: var(--term-bg); color: var(--term); }
   .spin { width: 22px; height: 22px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .9s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .report-area { max-width: 960px; }

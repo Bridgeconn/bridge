@@ -24711,3 +24711,44 @@ on terra at medium on a fresh install; alignment and triage tiers are unchanged.
 `test_the_review_default_is_terra_and_a_saved_model_is_kept` in `test_ai_task_settings.py`;
 two Vitest cases in `SettingsModal.test.ts`. No existing test pinned the old default (all set
 the model explicitly).
+
+## 2026-11-11 — Reorder a column and rubber-band pick in the word bank (#410, partial)
+
+Two gaps in the one-verse alignment modal, both raised in #410 (only these
+two are taken here; the rest of that issue is untouched). A target word
+placed under a source word could not be moved within the column: the only
+way to change the order was to unalign it and drag it in again. And several
+bank words could be picked only by Ctrl-click or Shift-click, not by
+dragging a box across them.
+
+The engine already writes `alignment.realign`'s bottom ids in the order it is
+sent (`_tokens_for_ids` keeps order, `normalize_verse` sorts nothing, and
+`group_views` reads them back in group order), so both are frontend-only;
+no engine, protocol or schema change.
+
+- `alignmentDrag.ts` reports a third drop target beside column and bank:
+  `data-drop-slot` -- the aligned card under the pointer -- and whether the
+  pointer is in its lower half (`overSlot: {value, after}`). The cross-verse
+  page sets no such attribute and sees `slot: null`.
+- `alignmentGroups.ts`: `bottomIdsAfterDrop` takes an optional slot and
+  inserts the dropped words before or after that card; a word already in the
+  column is moved there, which is how a column is reordered. A drop that
+  leaves the order as it is returns null, so nothing is saved.
+  `bottomIdsAfterStep` backs the ▲/▼ buttons, which appear on a card only
+  when its column holds more than one word. Same realign call as a drop, so
+  one history row and one undo step.
+- `marqueeSelect.ts` (new): press on empty space in the word bank, drag a
+  rectangle, and every unaligned word it touches is picked -- it fills the
+  same `picked` list as Ctrl-click, so the words then move together by one
+  drag or one column click (#285's path). Ctrl at the press adds to the
+  selection. A press on a word is not a box: the word's own pointerdown
+  starts its drag. The bank click the browser fires after the box is
+  swallowed once, or it would put the selection down again.
+
+Verified: `npm run check` 0 errors/warnings; `npm run test` 118 files, 1163
+tests passed (new: 5 marquee unit tests, 2 slot/step helper tests, 1 drag
+slot test, 7 modal tests covering the buttons, a reorder drop, a no-op drop,
+a bank word dropped mid-column, the box pick plus the drag that follows it,
+and a word press not starting a box); `npm run build` passed. Not verified:
+the desktop app itself -- jsdom lays nothing out, so the half-card hit test,
+the insert bar and the selection rectangle still need a look at 1366x768.

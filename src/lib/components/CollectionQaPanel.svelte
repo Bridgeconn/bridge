@@ -120,7 +120,7 @@
         <button class="ui-icon-btn run-all" aria-label={`Run QA on all ${bookCount} ${bookCount === 1 ? "book" : "books"}`}
           on:click={() => act(() => startCollectionQa(recheckUnchanged))} disabled={busy}
           use:tooltip={`Run QA on all ${bookCount} ${bookCount === 1 ? "book" : "books"} (${checkListLabel($selectedCollectionChecks)}); ${recheckUnchanged ? "every book is checked again" : "books unchanged since their last run are skipped"}`}>
-          <UiIcon name="play" /></button>
+          <UiIcon name="runQa" /></button>
       {/if}
     </div>
   </div>
@@ -152,7 +152,7 @@
   .checks-control { position: relative; }
   /* The one primary action of the bar: a round green play, the rows' Run QA colour, larger and filled. */
   .run-all { width: 38px; height: 38px; border-radius: 50%; background: var(--success); color: #fff; box-shadow: 0 2px 6px rgba(22, 163, 74, .35); }
-  .run-all :global(svg) { width: 20px; height: 20px; margin-left: 2px; }
+  .run-all :global(svg) { width: 20px; height: 20px; }
   .run-all:hover:not(:disabled), .run-all:focus-visible { background: var(--success); color: #fff; filter: brightness(.92); box-shadow: 0 3px 8px rgba(22, 163, 74, .45); }
   .count { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--accent-bg); color: var(--accent); font-size: var(--fs-3xs); }
   .checks-menu { position: absolute; z-index: var(--z-dropdown); right: 0; top: calc(100% + 6px); width: 300px; display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface); box-shadow: 0 10px 25px rgba(25, 35, 55, .16); }

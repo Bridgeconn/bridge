@@ -27,10 +27,11 @@
   import { bookDisplayName } from "../utils/reportStats";
   import type { AlignmentContext, AlignmentToken } from "../types/finding";
   import { createPointerDrag } from "../alignmentDrag";
+  import { createMarquee } from "../marqueeSelect";
   import { openCrossVerse } from "../alignmentUi";
   import {
-    alignedTargetsFor, bottomIdsAfterDrop, groupForSource, groupForTarget, occurrenceLabel as occurrence,
-    sourceColumns, topIdsFor, unaccountedTargets, undoTargetId, canSeparateSource,
+    alignedTargetsFor, bottomIdsAfterDrop, bottomIdsAfterStep, groupForSource, groupForTarget, occurrenceLabel as occurrence,
+    sourceColumns, topIdsFor, unaccountedTargets, undoTargetId, canSeparateSource, type DropSlot,
   } from "../alignmentGroups";
   import { SourceGlossCache } from "../lexiconGloss";
   import LexiconPopup from "./LexiconPopup.svelte";
@@ -86,16 +87,34 @@
   // `data-drop-column` carries the source token id, `data-drop-bank` is "true".
   // A drag that starts on a picked word carries the whole selection; one that
   // starts elsewhere supersedes it, as a real drag always superseded pick-up.
+  // `data-drop-slot` on an aligned card (#410) says which card the drop
+  // landed on, so the words go before or after it instead of last -- and a
+  // card dragged within its own column is reordered.
   const drag = createPointerDrag({
     onDragStart: (tokenId) => { if (!picked.includes(tokenId)) picked = []; },
-    onDrop: ({ tokenId, column, bank }) => {
+    onDrop: ({ tokenId, column, bank, slot }) => {
       const ids = picked.includes(tokenId) ? picked : [tokenId];
       picked = [];
-      if (column) dropOntoColumn(ids, column);
+      if (column) dropOntoColumn(ids, column, slot ? { id: slot.value, after: slot.after } : null);
       else if (bank) returnToBank(ids);
     },
   });
   const dragState = drag.state;
+
+  // #410: rubber-band selection in the word bank. Press on empty space, drag
+  // a rectangle, and the unaligned words it touches are picked -- the same
+  // `picked` list Ctrl-click and Shift-click fill, so the words then move
+  // together by one drag or one column click. With Ctrl held at the press the
+  // rectangle adds to what was picked; otherwise it replaces it.
+  let pickedBeforeMarquee: string[] = [];
+  const marquee = createMarquee({
+    onStart: (additive) => { pickedBeforeMarquee = additive ? picked : []; },
+    onChange: (hits) => {
+      picked = [...pickedBeforeMarquee, ...hits.filter((id) => !pickedBeforeMarquee.includes(id))];
+    },
+    onEnd: (hits) => { if (hits.length) anchor = hits[hits.length - 1]; },
+  });
+  const marqueeState = marquee.state;
 
   $: carried = $dragState.tokenId ? (picked.includes($dragState.tokenId) ? picked : [$dragState.tokenId]) : [];
   $: ghostLabel = carried.length
@@ -120,6 +139,7 @@
   onMount(load);
 
   onMount(() => drag.attach(window));
+  onMount(() => marquee.attach(window));
 
   async function load() {
     loading = true;
@@ -251,17 +271,31 @@
   // (existing members + the newly placed words); bottomIdsAfterDrop explains
   // why. Several words picked together (#285) are one realign call, so one
   // history row, one undo step and one re-check.
-  function dropOntoColumn(targetIds: string[], sourceId: string) {
+  function dropOntoColumn(targetIds: string[], sourceId: string, at: DropSlot | null = null) {
     if (!context || targetIds.length === 0) return;
-    const bottomIds = bottomIdsAfterDrop(context, sourceId, targetIds);
-    if (!bottomIds) return; // already in this column
+    const bottomIds = bottomIdsAfterDrop(context, sourceId, targetIds, at);
+    if (!bottomIds) return; // already in this column, in place
     // Every source word of the column (#207): a drop on a joined column must
     // not split it back into one word's group.
     const topIds = topIdsFor(context, sourceId);
     const moved = bottomIds.length - (groupForSource(context, sourceId)?.bottomIds.length ?? 0);
     void mutate(
       () => bridge.realignWords(chapter, verse, topIds, bottomIds, context!.alignment),
-      moved > 1 ? `${moved} words placed together.` : "Alignment saved.",
+      moved > 1 ? `${moved} words placed together.` : moved === 0 ? "Word order changed." : "Alignment saved.",
+      "alignment.drop",
+    );
+  }
+
+  // #410: the click-operable way to reorder a column: the up and down
+  // buttons on an aligned card move it one place. Same realign call as a
+  // drop, so one undo step.
+  function stepWithinColumn(sourceId: string, targetId: string, delta: -1 | 1) {
+    if (!context) return;
+    const bottomIds = bottomIdsAfterStep(context, sourceId, targetId, delta);
+    if (!bottomIds) return;
+    void mutate(
+      () => bridge.realignWords(chapter, verse, topIdsFor(context!, sourceId), bottomIds, context!.alignment),
+      "Word order changed.",
       "alignment.drop",
     );
   }
@@ -344,6 +378,8 @@
   }
 
   function handleBankAreaClick() {
+    // The click that ends a rubber-band selection must not put it down (#410).
+    if (marquee.consumeSuppressedClick()) return;
     if (!picked.length || busy) return;
     const ids = picked;
     picked = [];
@@ -353,6 +389,11 @@
   function startPointerTrack(event: PointerEvent, id: string) {
     if (busy) return;
     drag.start(event, id);
+  }
+
+  function startMarquee(event: PointerEvent) {
+    if (busy) return;
+    marquee.start(event, event.currentTarget as Element);
   }
 
   // #122: each undo is a `restore` row whose backup is the pre-undo state, and
@@ -472,7 +513,7 @@
         <section class="source-bank">
           <div class="panel-title">
             <span>Source words</span>
-            <small>Click a word for its lexicon entry — its target words sit in the column beneath it</small>
+            <small>Click a word for its lexicon entry — its target words sit in the column beneath it. Drag a target word up or down within its column, or use ▲ ▼, to change their order</small>
           </div>
           <SourceSplitControls bind:this={splitControls} {context} {busy} onBusy={(value) => busy = value} onChanged={(values) => { context = values.find((v) => v.chapter === chapter && v.verse === verse) || context; }} />
           <div class="interlinear" dir={context.sourceDirection}>
@@ -532,10 +573,20 @@
                 on:click={() => handleColumnClick(src.id)}
                 on:keydown={(event) => (event.key === "Enter" || event.key === " ") && (event.preventDefault(), handleColumnClick(src.id))}
               >
-                {#each alignedTargetsFor(context, src.id) as item (item.id)}
+                {#each alignedTargetsFor(context, src.id) as item, at (item.id)}
+                  {@const stacked = (groupForSource(context, src.id)?.bottomIds.length ?? 0) > 1}
                   <!-- The word itself can be picked up and moved to another
-                       column, alone or with others (#285); × still returns it. -->
-                  <div class="token target aligned-card" class:picked={picked.includes(item.id)} title={`Aligned to ${label}`}>
+                       column, alone or with others (#285); × still returns it.
+                       data-drop-slot (#410): a drop on the card lands before or
+                       after it; the up/down buttons do the same by click. -->
+                  <div
+                    class="token target aligned-card"
+                    class:picked={picked.includes(item.id)}
+                    class:insert-before={$dragState.moved && $dragState.overSlot?.value === item.id && !$dragState.overSlot.after}
+                    class:insert-after={$dragState.moved && $dragState.overSlot?.value === item.id && $dragState.overSlot.after}
+                    data-drop-slot={item.id}
+                    title={`Aligned to ${label}`}
+                  >
                     <button
                       type="button"
                       class="pick"
@@ -545,6 +596,26 @@
                       aria-label={`Pick up ${item.word} from ${label}`}
                       aria-pressed={picked.includes(item.id)}
                     ><span class="word">{item.word}{#if item.occurrences > 1}<span class="occ">{occurrence(item)}</span>{/if}</span></button>
+                    {#if stacked}
+                      <span class="reorder">
+                        <button
+                          type="button"
+                          class="step"
+                          on:click|stopPropagation={() => stepWithinColumn(src.id, item.id, -1)}
+                          disabled={busy || at === 0}
+                          aria-label={`Move ${item.word} up`}
+                          title="Move up"
+                        >▲</button>
+                        <button
+                          type="button"
+                          class="step"
+                          on:click|stopPropagation={() => stepWithinColumn(src.id, item.id, 1)}
+                          disabled={busy || at === (groupForSource(context, src.id)?.bottomIds.length ?? 0) - 1}
+                          aria-label={`Move ${item.word} down`}
+                          title="Move down"
+                        >▼</button>
+                      </span>
+                    {/if}
                     <button
                       type="button"
                       class="unalign-x"
@@ -581,12 +652,14 @@
                 <span class="chip picked-count" role="status" title={pickedWords.join(" ")}>{picked.length} picked · click a column to place them, Esc to put them down</span>
               {/if}
             </span>
-            <small>In verse order — drag an unaligned (blue) word into a column above, or click it then click a column. Ctrl-click adds a word, Shift-click a run, to place several at once</small>
+            <small>In verse order — drag an unaligned (blue) word into a column above, or click it then click a column. Ctrl-click adds a word, Shift-click a run, or drag a box across empty space to select several, then drag them to a column together</small>
           </div>
           <div
             class="tokens bank-tokens"
             class:drop-hover={$dragState.overBank !== null}
+            class:marquee-active={$marqueeState.moved}
             data-drop-bank="true"
+            on:pointerdown={startMarquee}
             dir={context.targetDirection}
             lang={$targetLang}
             role="button"
@@ -606,6 +679,7 @@
                   type="button"
                   class="token target unaligned"
                   class:picked={picked.includes(item.id)}
+                  data-marquee-item={item.id}
                   aria-pressed={picked.includes(item.id)}
                   on:pointerdown={(event) => startPointerTrack(event, item.id)}
                   on:click|stopPropagation={(event) => handleWordClick(item.id, event)}
@@ -652,6 +726,9 @@
 
 {#if $dragState.tokenId && $dragState.moved}
   <div class="drag-ghost" lang={$targetLang} style="left:{$dragState.ghost.x}px; top:{$dragState.ghost.y}px;">{ghostLabel}</div>
+{/if}
+{#if $marqueeState.moved && $marqueeState.rect}
+  <div class="marquee" aria-hidden="true" style="left:{$marqueeState.rect.left}px; top:{$marqueeState.rect.top}px; width:{$marqueeState.rect.width}px; height:{$marqueeState.rect.height}px;"></div>
 {/if}
 
 <style>
@@ -783,6 +860,18 @@
      word; the card shows the pick, like a bank word does. */
   .aligned-card .pick { border: 0; background: none; padding: 0; margin: 0; font: inherit; color: inherit; cursor: pointer; touch-action: none; user-select: none; }
   .aligned-card.picked { outline: 2px solid var(--accent); outline-offset: 1px; }
+  /* #410: where a dragged word will land inside the column -- a bar above or
+     below the card under the pointer. */
+  .aligned-card.insert-before { box-shadow: 0 -4px 0 0 var(--accent); }
+  .aligned-card.insert-after { box-shadow: 0 4px 0 0 var(--accent); }
+  .reorder { display: inline-flex; flex-direction: column; gap: 0; flex-shrink: 0; }
+  .step {
+    border: 0; background: none; padding: 0; width: 14px; height: 10px; line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center;
+    color: var(--text-3); font-size: 8px; cursor: pointer;
+  }
+  .step:hover:not(:disabled) { color: var(--accent); }
+  .step:disabled { opacity: .3; cursor: default; }
   .chip.picked-count { color: var(--accent); background: var(--accent-bg); font-weight: 600; }
   .unalign-x {
     border: 0; background: none; padding: 0; width: 16px; height: 16px; line-height: 1;
@@ -804,6 +893,13 @@
   .source-bank .interlinear { border: 0; border-radius: 0; padding: 0; }
   .bank-tokens { display: flex; flex-wrap: wrap; gap: 7px; min-height: 46px; align-content: flex-start; border-radius: 8px; padding: 4px; }
   .bank-tokens.drop-hover { background: var(--accent-bg); outline: 2px dashed var(--accent); }
+  /* #410: while a selection box is drawn the bank is not text to select. */
+  .bank-tokens { touch-action: none; }
+  .bank-tokens.marquee-active { user-select: none; cursor: crosshair; }
+  .marquee {
+    position: fixed; z-index: var(--z-popover); pointer-events: none;
+    border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); border-radius: 3px;
+  }
   .drag-ghost {
     position: fixed; z-index: var(--z-popover); transform: translate(-50%, -130%); pointer-events: none;
     background: var(--accent); color: white; font-family: var(--font-target); font-size: var(--fs-sm); font-weight: 700;
