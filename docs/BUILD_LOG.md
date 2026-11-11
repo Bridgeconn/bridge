@@ -25220,3 +25220,42 @@ From the maintainer's look at the running dev build.
 Verified: `npm run check` 0 errors, 0 warnings; `npm run test` 130 files, 1252 tests
 passed; `npm run build` passed. `cargo` and the engine suite not run: no shell or engine
 file changed. Not verified at the time of the commit: the desktop app.
+
+## 2026-11-12 — 0.25.0 hangs on the splash in a release build (#483)
+
+**What was seen.** The maintainer installed the published 0.25.0 and it stayed on
+"Starting Bridge". The process was "Not Responding" with no CPU time and no
+`bridge-engine.exe` had been started; the installed engine answered a ping when run
+by hand. A second start hung the same way, with and without a saved
+`.window-state.json`.
+
+**Cause, by experiment (no debugger on the machine, so no stack).**
+
+- The debug build of the same Rust code starts on the same profile.
+- A local release build (`npm run tauri build -- --no-bundle`) hangs the same way.
+- The same release build with only the main and splash windows in the config
+  starts, and the engine comes up.
+
+So the six detached windows (review queue #450, alignment #447, the four editor
+panels #457) created from `tauri.conf.json` during startup stop a release build's
+main thread before the setup hook runs, which is where the engine is started.
+0.25.0 is the first release build to contain them; 0.24.4 was tagged before they
+were added. Why release and not debug was not established; the likely reading is
+that a release build's pages load from embedded assets at once and reach the shell
+while later windows are still being created, but that is a guess.
+
+**Fix.** Those six windows have `"create": false` and `main.rs` builds them from
+the same config entries on a thread started in the setup hook, once the event loop
+is running. They are still created hidden at startup, so opening one only reveals
+it, as before.
+
+**Verified.** Local release build with the fix, three starts: responding, engine
+up, all six windows present (hidden), main window shown, clean close with no engine
+left behind. `cargo check` passed; `cargo test` 20 passed (one new:
+`only_main_and_splash_are_created_from_the_config`). Not verified: an installer
+built by the release workflow, and opening each detached window by hand in a
+release build.
+
+**What this says about the gate.** Nothing in CI or `release.yml` starts the
+desktop app; `smoke_sidecars.py` exercises the frozen sidecars only. A green
+release build did not mean the app starts.

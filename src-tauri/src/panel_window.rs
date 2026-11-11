@@ -34,4 +34,22 @@ mod tests {
         for panel in PANELS { assert_eq!(label(panel).unwrap(), format!("panel-{panel}")); }
         for invalid in ["main", "alignment", "review-queue", "../source", "languageQa", ""] { assert!(label(invalid).is_err()); }
     }
+    // 0.25.0 hung at startup in a release build: the detached windows were
+    // created with the main and splash windows. Only those two may be created
+    // from the config; main.rs builds the rest once the event loop runs.
+    #[test] fn only_main_and_splash_are_created_from_the_config() {
+        let config: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let windows = config["app"]["windows"].as_array().unwrap();
+        let mut deferred = Vec::new();
+        for window in windows {
+            let label = window["label"].as_str().unwrap_or("main");
+            let created = window["create"].as_bool().unwrap_or(true);
+            assert_eq!(created, label == "main" || label == "splash", "{label}");
+            if !created { deferred.push(label.to_string()); }
+        }
+        for panel in PANELS { assert!(deferred.contains(&format!("panel-{panel}")), "{panel}"); }
+        assert!(deferred.iter().any(|l| l == "alignment") && deferred.iter().any(|l| l == "review-queue"));
+        let main = include_str!("main.rs");
+        assert!(main.contains("filter(|w| !w.create)") && main.contains("WebviewWindowBuilder::from_config"));
+    }
 }

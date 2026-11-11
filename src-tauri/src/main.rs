@@ -73,6 +73,27 @@ fn main() {
                     eprintln!("Failed to start GreekRoomEngine sidecar: {e}");
                 }
             });
+            // The detached windows (review queue, alignment, the four editor
+            // panels) are declared with "create": false and built here, off
+            // the main thread, once the event loop is running. Built with the
+            // main and splash windows during startup, a release build's main
+            // thread stopped for good before this hook ran: the splash stayed
+            // up, the engine was never started (0.25.0, 2026-11-12). A debug
+            // build did not show it. They are still created hidden at startup,
+            // so opening one only reveals it.
+            let later = app.handle().clone();
+            std::thread::spawn(move || {
+                for config in later.config().app.windows.iter().filter(|w| !w.create) {
+                    if later.get_webview_window(&config.label).is_some() {
+                        continue;
+                    }
+                    let built = tauri::WebviewWindowBuilder::from_config(&later, config)
+                        .and_then(|builder| builder.build());
+                    if let Err(e) = built {
+                        eprintln!("Could not create the {} window: {e}", config.label);
+                    }
+                }
+            });
             let fallback = app.handle().clone();
             std::thread::spawn(move || {
                 std::thread::sleep(SPLASH_FALLBACK);
