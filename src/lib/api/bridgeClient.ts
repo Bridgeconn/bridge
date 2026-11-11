@@ -291,6 +291,8 @@ export type EngineMethod =
   | "languageQa.setPack"
   | "languageQa.checkerSettings.get"
   | "languageQa.checkerSettings.set"
+  | "languageQa.quotationRules.get"
+  | "languageQa.quotationRules.set"
   | "languageQa.learned.list"
   | "languageQa.learned.forget"
   | "languageQa.learned.restore"
@@ -500,6 +502,9 @@ export type EngineMethod =
  * Keys with `undefined` values are dropped by JSON serialization, and the
  * engine's dispatcher fills the same defaults the old per-method Rust
  * forwarders did, so callers pass their argument objects straight through. */
+let panelMutationObserver: (() => void) | null = null;
+export function observePanelMutations(observer: (() => void) | null): void { panelMutationObserver = observer; }
+const PANEL_MUTATION = /(?:^|\.)(?:decide|edit|apply|accept|reject|resolve|reopen|ignore|set|add|remove|delete|forget|restore|pause|create|reply|send|undo|cancel|start|run|retract|update|clear|save|import|setStatus|setReference|setPack|setEnabled|setScope|setRole)/;
 async function call<T>(method: EngineMethod, params?: Record<string, unknown>): Promise<T> {
   const expectedPath = reviewProjectPath();
   const guardedParams = expectedPath === undefined ? params ?? {} : { ...params, _expectedProjectPath: expectedPath };
@@ -507,6 +512,7 @@ async function call<T>(method: EngineMethod, params?: Record<string, unknown>): 
   if (!envelope.success) {
     throw new Error(envelope.error?.message ?? `${method} failed`);
   }
+  if (panelMutationObserver && PANEL_MUTATION.test(method)) panelMutationObserver();
   return (envelope.result ?? (envelope as unknown)) as T;
 }
 
@@ -637,6 +643,14 @@ export const bridge = {
   },
 
   /** The indic-qa checker's settings for this collection (the web app's Settings dialog). */
+  languageQaQuotationRulesGet(projectPath: string): Promise<import("../types/languageQa").QuotationRulesSettings> {
+    return call("languageQa.quotationRules.get", { projectPath });
+  },
+
+  languageQaQuotationRulesSet(projectPath: string, rules: import("../types/languageQa").QuotationRules): Promise<import("../types/languageQa").QuotationRulesSettings> {
+    return call("languageQa.quotationRules.set", { projectPath, rules });
+  },
+
   languageQaCheckerSettingsGet(projectPath: string): Promise<CheckerSettings | CheckerSettingsUnavailable> {
     return call("languageQa.checkerSettings.get", { projectPath });
   },

@@ -1557,3 +1557,53 @@ checks stay. No `latest.json` feed is published, so an installed app reports
 from #321 — key provisioning remains outstanding and the original throw is
 restored once the keys exist.
 
+## 2026-11-04 — Configurable quotation QA with reference evidence (Benz, #456)
+
+Benz confirmed a dedicated Quotations filter, editable target-language quotation
+rules based on an English preset, and quotations spanning chapters (Matthew 5–7).
+He also authorized use of the local reference Bible to identify passages where
+both target quotation marks may be absent. This supersedes #456's proposed
+chapter limitation and wait for Malayalam-specific examples.
+
+Reference punctuation is review evidence: a complete reference quotation with
+exact corresponding target verse keys and no target quotation evidence produces
+a **possible missing quotation** finding. It does not prove that direct speech
+is required or supply cross-language insertion offsets. Missing/ambiguous verse
+correspondence, unavailable reference text, and unbalanced reference quotation
+conventions are reported as limitations. Target and reference conventions are
+configured separately; no automatic Scripture correction or network access is
+introduced.
+
+Rules live in the existing per-book common overrides document and apply to all
+collection roots, including lazy imports. Reference folder paths remain in the
+existing machine-local setting. The permissive continuation option accepts a
+repeated opener at a paragraph/verse start because imported verse text and
+reference TSV can omit paragraph markers; a strict no-repeat option is available.
+New coverage wording is English pending human Tamil review.
+
+
+## 2026-11-05 — Preserve reviewed quotation checks by default (Benz, #456)
+
+After CI reported 29 lost human-confirmed Malayalam quotation findings, Benz
+chose: "Keep reviewed checks by default; saved project quotation settings take
+precedence". The absence of a saved `quotations` member preserves the language
+profile's reviewed rule switches and existing per-rule project overrides. An
+explicitly saved common quotation policy supersedes the profile's quotation
+checks, including a saved English preset or a saved disabled policy. This avoids
+fixed curly conversions contradicting a project's selected marks and preserves
+book-wide and reference-assisted checks. No reviewed labels are retired and no
+benchmark, confidence threshold or golden is changed.
+
+## 2026-11-06 — Review tier default: gpt-5.6-terra (Rina, relayed by Revant, #479)
+
+**Decision:** a fresh install reviews with `gpt-5.6-terra` at medium reasoning
+(`DEFAULT_REVIEW_MODEL` in `model_router.py`; the one-model default follows it).
+Rina approved it on 2026-11-06 for the paid-token R&D, without waiting on Benz,
+on the #469 measurement: Hindi IRV GEN 1, 281 checks, three fresh imports, a
+translator judging every disagreement — terra gave the same verdict as gpt-5.6
+on 276/281, was wrong once and the only correct run once, at $5.40 a chapter
+against $10.18 (about $6,400 against $12,100 a Bible). An install that saved a
+model keeps it; Settings > AI provider changes it back at any time, which is why
+this is a default and not a behaviour change. **Rules out:** nothing — the
+alignment and triage tiers are unchanged (#131 unmeasured), and the two-method
+agreement gates of #146 and #219 are untouched.

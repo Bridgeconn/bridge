@@ -6,11 +6,12 @@
   import { bridge, type EngineInfo } from "../api/bridgeClient";
   import { nudgeLanguageQa } from "../languageQaInline";
   import { askConfirmation } from "../confirmAction";
-  import { manualOverrideMode, navigationStatus, project, reviewerMode } from "../stores";
-  import type { InlineConfidence, NavigationSyncState, ParatextConnectorStatus, SettingsData, TerminologyRule, UserRole } from "../types/finding";
+  import { diagnosticsOpen, manualOverrideMode, navigationStatus, project, reviewerMode } from "../stores";
+  import type { AiReasoningEffort, AiTask, AiTaskSettings, InlineConfidence, NavigationSyncState, ParatextConnectorStatus, SettingsData, TerminologyRule, UserRole } from "../types/finding";
   import type { HouseStyleEntry, HouseStyleListResponse, HouseStyleProposal } from "../types/houseStyle";
   import type { CheckerSettings } from "../types/languageQa";
   import CheckerSettingsDialog from "./CheckerSettingsDialog.svelte";
+  import QuotationSettings from "./QuotationSettings.svelte";
 
   type Pane = "ai" | "quality" | "connections" | "resources" | "terminology" | "languageQa" | "security" | "users" | "team" | "updates";
 
@@ -24,9 +25,27 @@
 
   let provider = "openai";
   let apiBaseUrl = "";
-  let model = "gpt-5.6";
+  // #479: the review default is gpt-5.6-terra; the engine's own default,
+  // mirrored here for the field before settings load.
+  let model = "gpt-5.6-terra";
+  // #473: a model and reasoning effort per AI task. `useOneModel` (the
+  // default) is today's behaviour: every task on `model` at medium.
+  const aiTaskRows: Array<{ task: AiTask; label: string; hint: string }> = [
+    { task: "review", label: "tN / tW review", hint: "The per-verse check review and its whole-verse QA. Blank = the model above." },
+    { task: "alignment", label: "Alignment", hint: "AI alignment proposals, cross-verse links and Align automatically." },
+    { task: "triage", label: "Triage", hint: "Finding triage (true / false positive)." },
+  ];
+  const reasoningEfforts: AiReasoningEffort[] = ["low", "medium", "high", "xhigh"];
+  let useOneModel = true;
+  let aiTasks: AiTaskSettings["tasks"] = {
+    review: { model: "", reasoningEffort: "medium" },
+    alignment: { model: "", reasoningEffort: "low" },
+    triage: { model: "", reasoningEffort: "low" },
+  };
   let apiKey = "";
   let hasApiKey = false;
+  // #477: the lifetime counter, kept by the engine on every counted call.
+  let aiUsage: SettingsData["aiUsage"] = { tokens: 0, estimatedCostUSD: 0, since: null };
   let allowOverride = false;
   let paratextNavigation = false;
   let logosNavigation = false;
@@ -114,7 +133,7 @@
   });
 
   function onWindowKeydown(event: KeyboardEvent): void {
-    if (event.key !== "Escape" || event.defaultPrevented || checkerDialogOpen) return;
+    if (event.key !== "Escape" || event.defaultPrevented || checkerDialogOpen || $diagnosticsOpen) return;
     if (event.target instanceof Element && event.target.closest("input.rename")) return;
     onClose();
   }
@@ -126,8 +145,17 @@
       automaticUpdates = s.automaticUpdates ?? true;
       provider = s.provider || "openai";
       apiBaseUrl = s.apiBaseUrl || "";
-      model = s.model || "gpt-5.6";
+      model = s.model || "gpt-5.6-terra";
+      if (s.aiTasks) {
+        useOneModel = s.aiTasks.useOneModel !== false;
+        aiTasks = {
+          review: { ...aiTasks.review, ...s.aiTasks.tasks.review },
+          alignment: { ...aiTasks.alignment, ...s.aiTasks.tasks.alignment },
+          triage: { ...aiTasks.triage, ...s.aiTasks.tasks.triage },
+        };
+      }
       hasApiKey = s.hasApiKey;
+      aiUsage = s.aiUsage ?? aiUsage;
       allowOverride = s.reviewerMode === "advanced";
       paratextNavigation = s.paratextNavigation;
       logosNavigation = s.logosNavigation;
@@ -168,6 +196,7 @@
       const params: Record<string, unknown> = {
         provider, apiBaseUrl, model, reviewerMode: manualOverrideMode(allowOverride),
         paratextNavigation, logosNavigation, reviewerName,
+        aiTasks: { useOneModel, tasks: aiTasks },
       };
       if (apiKey.trim()) params.apiKey = apiKey.trim();
       const result = await bridge.setSettings(params);
@@ -185,6 +214,37 @@
         return;
       }
       onClose();
+    } catch (e) {
+      saveMessage = e instanceof Error ? e.message : String(e);
+    } finally {
+      saving = false;
+    }
+  }
+
+  /** #477: "Used so far on this device: 7,159,086 tokens · ~$45.38 (since 14 Oct 2026)". */
+  function aiUsageSummary(usage: SettingsData["aiUsage"]): string {
+    const tokens = `${(usage.tokens ?? 0).toLocaleString()} tokens`;
+    const cost = `~$${(usage.estimatedCostUSD ?? 0).toFixed(2)}`;
+    const since = usage.since
+      ? ` (since ${new Date(usage.since).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })})`
+      : "";
+    return `${tokens} · ${cost}${since}`;
+  }
+
+  /** #477: zero the lifetime counter. Only the reset is sent, so unsaved
+   *  edits to the other fields are not saved by it. */
+  async function resetAiUsage() {
+    if (!(await askConfirmation({
+      title: "Reset the AI usage counter?",
+      body: "The tokens and estimated cost counted on this device go back to zero. The per-verse figures stored with each review are kept.",
+      confirmLabel: "Reset counter",
+    }))) return;
+    saving = true;
+    saveMessage = "";
+    try {
+      const result = await bridge.setSettings({ resetAiUsage: true });
+      aiUsage = result.aiUsage ?? { tokens: 0, estimatedCostUSD: 0, since: null };
+      saveMessage = "AI usage counter reset.";
     } catch (e) {
       saveMessage = e instanceof Error ? e.message : String(e);
     } finally {
@@ -568,6 +628,7 @@
       <button class="nav-item" class:active={activePane === "users"} on:click={() => (activePane = "users")}>Users</button>
       <button class="nav-item" class:active={activePane === "team"} on:click={() => (activePane = "team")}>Team</button>
       <button class="nav-item" class:active={activePane === "updates"} on:click={() => (activePane = "updates")}>App updates</button>
+      <button class="nav-item" on:click={() => diagnosticsOpen.set(true)}>Diagnostics</button>
       {#if engineInfo}
         <div class="about-version" title="What this window is actually running, not what Windows says was installed">
           Bridge {engineInfo.bridgeVersion} · Schema v{engineInfo.companionSchemaVersion}
@@ -602,8 +663,30 @@
 
         <div class="field">
           <label for="model">Model</label>
-          <input id="model" type="text" bind:value={model} placeholder="e.g. gpt-5.6, claude-sonnet-5, llama3" />
-          <div class="hint">For tN/tW review, use a model with strong multilingual reasoning and structured-output support. Small/mini models may miss inflected target-language renderings or omit checks; Bridge keeps uncertain results pending for human review.</div>
+          <input id="model" type="text" bind:value={model} placeholder="e.g. gpt-5.6-terra, gpt-5.6, claude-sonnet-5, llama3" />
+          <div class="hint">For tN/tW review, use a model with strong multilingual reasoning and structured-output support. Small/mini models may miss inflected target-language renderings or omit checks; Bridge keeps uncertain results pending for human review. The default, gpt-5.6-terra, matched gpt-5.6's verdict on 276 of 281 checks of a measured chapter (a translator judged every difference: terra wrong once, the only correct run once) at about $5.40 a chapter against $10.18.</div>
+        </div>
+
+        <div class="field">
+          <div class="field-label">Model per task</div>
+          <label class="mode-option" class:selected={useOneModel}>
+            <input type="checkbox" bind:checked={useOneModel} />
+            <span><b>Use one model for everything</b><small>Every AI task runs on the model above at medium reasoning. Turn off to choose a cheaper tier for alignment and triage.</small></span>
+          </label>
+          {#if !useOneModel}
+            <div class="task-rows">
+              {#each aiTaskRows as row (row.task)}
+                <div class="task-row">
+                  <label for={`task-model-${row.task}`}>{row.label}</label>
+                  <input id={`task-model-${row.task}`} type="text" bind:value={aiTasks[row.task].model} placeholder={row.task === "review" ? model : "e.g. gpt-5.6-luna"} aria-label={`${row.label} model`} />
+                  <select bind:value={aiTasks[row.task].reasoningEffort} aria-label={`${row.label} reasoning effort`}>
+                    {#each reasoningEfforts as effort (effort)}<option value={effort}>{effort}</option>{/each}
+                  </select>
+                  <div class="hint">{row.hint}</div>
+                </div>
+              {/each}
+            </div>
+          {/if}
         </div>
 
         <div class="field">
@@ -615,6 +698,15 @@
             {/if}
           </div>
           <div class="hint">Stored locally via your OS's secure storage — never sent anywhere except the endpoint above.</div>
+        </div>
+
+        <div class="field">
+          <div class="field-label">Used so far on this device</div>
+          <div class="key-row">
+            <span class="usage-line" data-testid="ai-usage">{aiUsageSummary(aiUsage)}</span>
+            <button type="button" class="btn" on:click={resetAiUsage} disabled={saving}>Reset counter</button>
+          </div>
+          <div class="hint">Every request Bridge sent from this computer, as the provider reported it — the review, the semantic mapping and the gap-fill alignment for each verse (#476), at the prices in Bridge's table. An estimate, not the provider's bill.</div>
         </div>
 
         <div class="save-row">
@@ -846,6 +938,9 @@
           <button class="btn primary" on:click={saveInlineThreshold} disabled={inlineSaving}>{inlineSaving ? "Saving…" : "Apply"}</button>
           {#if inlineMessage}<span class="save-msg" role="status">{inlineMessage}</span>{/if}
         </div>
+        {#if $project}
+          {#key $project.path}<QuotationSettings projectPath={$project.path} />{/key}
+        {/if}
         {#if !$project}
           <p class="muted">Open a project to choose its Language QA rules and manage its house style.</p>
         {:else}
@@ -978,11 +1073,18 @@
   .mode-option.selected { border-color: var(--accent); background: var(--accent-bg); }
   .mode-option input { width: auto; height: auto; margin: 2px 0 0; }
   .mode-option span { display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-xs); color: var(--text); }
+  /* #473: one row per AI task — label, model, reasoning effort, hint. */
+  .task-rows { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+  .task-row { display: grid; grid-template-columns: 7.5em minmax(0, 1fr) 6.5em; gap: 6px 8px; align-items: center; }
+  .task-row label { font-size: var(--fs-xs); font-weight: 700; color: var(--text-2); margin: 0; }
+  .task-row select { width: auto; }
+  .task-row .hint { grid-column: 2 / -1; margin-top: 0; }
   .mode-option small { color: var(--text-2); line-height: 1.35; }
   .save-row { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
   .key-row { display: flex; align-items: center; gap: 8px; }
   .key-row input { flex: 1; min-width: 0; }
   .key-row .btn { flex: none; }
+  .usage-line { flex: 1; min-width: 0; font-size: var(--fs-sm); }
   .btn { font-size: var(--fs-sm); font-weight: 600; padding: 8px 14px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); cursor: pointer; }
   .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .btn:disabled { opacity: 0.6; cursor: not-allowed; }

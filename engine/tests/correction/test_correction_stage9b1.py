@@ -213,6 +213,8 @@ def test_configured_provider_receives_constrained_context_and_never_persists_sec
         "containsScripture": True,
         "containsOriginalLanguage": True,
         "containsTranslationHelps": True,
+        # #470: a correction context carries no reviewer-history records.
+        "containsReviewerIdentity": False,
         "unrelatedProjectFilesSent": False,
     }
 

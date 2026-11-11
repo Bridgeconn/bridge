@@ -48,11 +48,66 @@
       {
         "label": "alignment",
         "url": "alignment.html",
-        "title": "Alignment ? Bridge",
+        "title": "Alignment · Bridge",
         "width": 1180,
         "height": 740,
         "minWidth": 640,
         "minHeight": 480,
+        "visible": false,
+        "dragDropEnabled": false
+      },
+      {
+        "label": "panel-source",
+        "url": "panel.html?panel=source",
+        "title": "Source text · Bridge",
+        "width": 560,
+        "height": 640,
+        "minWidth": 360,
+        "minHeight": 320,
+        "visible": false,
+        "dragDropEnabled": false
+      },
+      {
+        "label": "panel-reference",
+        "url": "panel.html?panel=reference",
+        "title": "Reference · Bridge",
+        "width": 560,
+        "height": 640,
+        "minWidth": 360,
+        "minHeight": 320,
+        "visible": false,
+        "dragDropEnabled": false
+      },
+      {
+        "label": "panel-languageQa",
+        "url": "panel.html?panel=languageQa",
+        "title": "Language QA · Bridge",
+        "width": 560,
+        "height": 640,
+        "minWidth": 360,
+        "minHeight": 320,
+        "visible": false,
+        "dragDropEnabled": false
+      },
+      {
+        "label": "panel-paratext",
+        "url": "panel.html?panel=paratext",
+        "title": "Paratext notes · Bridge",
+        "width": 560,
+        "height": 640,
+        "minWidth": 360,
+        "minHeight": 320,
+        "visible": false,
+        "dragDropEnabled": false
+      },
+      {
+        "label": "panel-review",
+        "url": "panel.html?panel=review",
+        "title": "Review · Bridge",
+        "width": 560,
+        "height": 640,
+        "minWidth": 360,
+        "minHeight": 320,
         "visible": false,
         "dragDropEnabled": false
       }

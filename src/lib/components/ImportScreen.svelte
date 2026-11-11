@@ -16,6 +16,8 @@
 
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
+  import { recentProjects } from "../projectWorkspace";
+  import { localUserId } from "../stores";
   import UiIcon from "./UiIcon.svelte";
   import DuplicateImportDialog, { type RelatedImportProject } from "./DuplicateImportDialog.svelte";
   import AddBooksDialog from "./AddBooksDialog.svelte";
@@ -32,7 +34,7 @@
   const IMPORT_TERMINAL = new Set<ImportJobSnapshot["state"]>(["succeeded", "failed", "cancelled"]);
   const IMPORT_POLL_MS = 250;
 
-  export let onOpened: () => void;
+  export let onOpened: () => void | Promise<void>;
   export let droppedPath = "";
   export let dropSequence = 0;
 
@@ -121,6 +123,7 @@
   let projectSearch = "";
   let renamingId = "";
   let renameDraft = "";
+  $: recent = recentProjects(projects, 5, $localUserId);
   $: activeProjects = projects.filter((item) => !item.archivedAt);
   $: archivedProjects = projects.filter((item) => Boolean(item.archivedAt));
   $: visibleProjects = showArchived ? [...activeProjects, ...archivedProjects] : activeProjects;
@@ -276,7 +279,7 @@
       // #400: a lazy book's prepare shows in App's "Opening …" strip.
       const info = await bridge.openProject(path, projectId, trackPrepare(listed ? displayName(listed) : name));
       project.set(info);
-      onOpened();
+      await onOpened();
       return true;
     } catch (value) {
       perfAbort("project.open");
@@ -466,7 +469,7 @@
             info.importedProjects = snapshot.result.projects;
             importJob = null;
             project.set(info);
-            onOpened();
+            await onOpened();
           } else if (snapshot.state === "cancelled") {
             importJob = null;
             importNotice = "Import cancelled. Nothing was written.";
@@ -560,6 +563,17 @@
     </div>
 
     <div class="list-area">
+      {#if !projectsLoading}
+        <section class="recent-projects" aria-label="Recent projects">
+          <h2>Recent projects</h2>
+          {#if recent.length === 0}<p class="drop-hint">Projects you successfully open on this device appear here.</p>{/if}
+          {#each recent as item (item.collectionId || item.projectId)}
+            <button type="button" class="recent-project" disabled={loading} on:click={() => openPath(item.path, item.projectId)}>
+              <UiIcon name="open" /><span><b>{displayName(item)}</b><small>{item.targetLanguage || item.targetLanguageId} · {item.bibleName || item.bookName}</small></span>
+            </button>
+          {/each}
+        </section>
+      {/if}
       {#if projects.length > 0}
       <div class="project-toolbar">
         <div class="project-search">
@@ -786,6 +800,13 @@
 {/if}
 
 <style>
+  .recent-projects { margin-bottom: 20px; }
+  .recent-projects h2 { font-size: var(--fs-sm); }
+  .recent-project { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; margin: 0 8px 8px 0; padding: 10px 14px; text-align: left; border: 1px solid var(--border); border-radius: 8px; color: var(--text); background: var(--surface); cursor: pointer; }
+  .recent-project span { min-width: 0; }
+  .recent-project b, .recent-project small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .recent-project small { color: var(--text-3); }
+
   .screen { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; overflow: auto; background: var(--surface); }
   .import-banner { flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 10px 40px; border-bottom: 1px solid var(--border); background: var(--surface-2, var(--surface)); max-width: 900px; width: 100%; margin: 0 auto; box-sizing: border-box; }
   .import-label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-sm); color: var(--text); }

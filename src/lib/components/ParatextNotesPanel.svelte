@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { getContext as getSvelteContext } from "svelte";
+  const bridge = getSvelteContext("panel-window") ? bindReviewProject(bridgeApi, getStore(project)?.path || "__no_project__") : bridgeApi;
   import PanelHeader from "./PanelHeader.svelte";
   // #357: the Paratext team's Project Notes on the selected verse. Threads
   // come from every Notes_<User>.xml of the linked Paratext folder, merged by
@@ -16,7 +18,9 @@
   // parsed by the engine) are shown read-only with what the parser could say
   // about them. Nothing here applies a proposal to Scripture.
   import { onDestroy, tick } from "svelte";
-  import { bridge } from "../api/bridgeClient";
+  import { bridge as bridgeApi } from "../api/bridgeClient";
+  import { bindReviewProject } from "../reviewProjectGuard";
+  import { get as getStore } from "svelte/store";
   import { currentChapter, project, selectedVerse, verseKey } from "../stores";
   import {
     draftKey, dropDraft, loadParatextNoteCounts, paratextNoteRequest, readDraft, saveDraft,

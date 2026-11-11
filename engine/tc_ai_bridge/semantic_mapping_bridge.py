@@ -15,6 +15,7 @@ from .semantic_mapping import (
     SemanticMappingEngine, SemanticMappingError, SemanticMappingStore,
     SemanticSourceRepository, SourceSemanticUnit, mapping_state_for_review,
 )
+from .ai_http import TransportFailure
 from .usfm_passages import UsfmPassageIndex
 from .passage_semantic_runtime import project_current_passage_index
 
@@ -209,9 +210,22 @@ def prepare_semantic_mappings_for_review(
         run = SemanticMappingEngine(source_repo, client, max_neighbor_windows=max_neighbor_windows).map_units(
             target_index=target_index, source_units=units, store=store, force=force,
         )
+    except TransportFailure as exc:
+        # #480: the provider was never reached or never answered (a read
+        # timeout at the client's limit, a connection failure). That is not a
+        # mapping verdict and a retry may well succeed, so it is not folded
+        # into `mapping_error` below: it is raised, the verse fails before any
+        # review tokens are spent, and the chapter job's Retry re-runs it. On
+        # #469 run 2 two verses were stored as finished reviews with every
+        # check forced to `review` this way, invisible except in rationales.
+        raise type(exc)(
+            f"Semantic mapping was not answered by the provider, so the verse was not reviewed: {exc}"
+        ) from exc
     except Exception as exc:
         # Fail closed to review, not to a semantic conclusion. Do not hide the
         # diagnostic because model/schema/resource mismatches need developer eyes.
+        # A transport failure is excluded above (#480): this branch is for a
+        # schema, validation or resource mismatch, which a retry will not fix.
         #
         # A failure here means the whole batch's model call didn't produce a
         # usable result (schema/validation/transport error) -- it is not

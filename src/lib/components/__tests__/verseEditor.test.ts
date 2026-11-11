@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { get } from "svelte/store";
+import { editorChecks } from "../../editorPrefs";
+
+// These edit-path fixtures exercise the existing full native check selection.
+beforeEach(() => editorChecks.set(["tN", "tW", "alignment", "text", "languageQa"]));
 
 const { editVerse, runVerseChecks, decideVerse, getVerse } = vi.hoisted(() => ({
   editVerse: vi.fn(),

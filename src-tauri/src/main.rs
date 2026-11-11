@@ -6,6 +6,7 @@ mod sidecar;
 mod updates;
 mod review_window;
 mod alignment_window;
+mod panel_window;
 
 use sidecar::EngineSidecar;
 use tauri::{AppHandle, Manager, WindowEvent};
@@ -53,6 +54,11 @@ fn main() {
                 .skip_initial_state("splash")
                 .skip_initial_state(review_window::LABEL)
                 .skip_initial_state(alignment_window::LABEL)
+                .skip_initial_state("panel-source")
+                .skip_initial_state("panel-reference")
+                .skip_initial_state("panel-languageQa")
+                .skip_initial_state("panel-paratext")
+                .skip_initial_state("panel-review")
                 .build(),
         )
         .manage(updates::AppUpdates::default())
@@ -81,6 +87,7 @@ fn main() {
             if window.label() == "main" && matches!(event, WindowEvent::CloseRequested { .. }) {
                 review_window::close_with_main(window.app_handle());
                 alignment_window::close_with_main(window.app_handle());
+                panel_window::close_with_main(window.app_handle());
             }
             if window.label() == "splash" && matches!(event, WindowEvent::Destroyed) {
                 reveal_main(window.app_handle());
@@ -89,6 +96,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             review_window::review_window,
             alignment_window::alignment_window,
+            panel_window::panel_window,
             updates::update_status,
             updates::configure_updates,
             updates::check_updates,

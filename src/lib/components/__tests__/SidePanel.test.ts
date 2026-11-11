@@ -167,21 +167,23 @@ describe("PanelHeader (#379)", () => {
     setSidePanel("reference", { open: true });
     render(PanelHeader, { props: { id: "reference", title: "Reference", label: "the Reference panel" } });
     render(SideRail);
-    const left = screen.getByRole("button", { name: "Move the Reference panel left" });
-    const right = screen.getByRole("button", { name: "Move the Reference panel right" });
-    expect(left).toBeEnabled();
-    await fireEvent.click(left);
+    const tools = screen.getByRole("button", { name: "the Reference panel panel tools" });
+    await fireEvent.click(tools);
+    expect(await screen.findByRole("menuitem", { name: "Move panel left" })).toBeEnabled();
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Move panel left" }));
     expect(get(sidePanelOrder)).toEqual(["reference", "source", "languageQa", "paratext", "review"]);
     expect(JSON.parse(localStorage.getItem("bridge.editor.sidePanelOrder.v1") ?? "[]")[0]).toBe("reference");
-    expect(left).toBeDisabled();
-    const rail = screen.getAllByRole("button").filter((b) => b.getAttribute("aria-controls")).map((b) => b.getAttribute("aria-controls"));
+    await fireEvent.click(tools);
+    expect(await screen.findByRole("menuitem", { name: "Move panel left" })).toBeDisabled();
+    const rail = screen.getAllByRole("button").filter(b => b.getAttribute("aria-controls")).map(b => b.getAttribute("aria-controls"));
     expect(rail[0]).toBe("side-panel-reference");
-    await fireEvent.click(right);
-    await fireEvent.click(right);
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Move panel right" }));
+    await fireEvent.click(tools);
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "Move panel right" }));
     expect(get(sidePanelOrder)).toEqual(["source", "languageQa", "reference", "paratext", "review"]);
-    // The last column's ▸ is disabled; a Review bar at the end cannot move right.
     render(PanelHeader, { props: { id: "review", title: "Review", label: "the Review panel" } });
-    expect(screen.getByRole("button", { name: "Move the Review panel right" })).toBeDisabled();
+    await fireEvent.click(screen.getByRole("button", { name: "the Review panel panel tools" }));
+    expect(await screen.findByRole("menuitem", { name: "Move panel right" })).toBeDisabled();
     // A saved order missing a panel (added after the save) is completed.
     sidePanelOrder.set(["review", "source"] as never);
     sidePanelOrder.update((order) => order);
@@ -208,7 +210,7 @@ describe("PanelHeader (#379)", () => {
     }
     // One bar: one padding, one title size, one background, one line under it.
     const bar = source("PanelHeader");
-    expect(bar).toContain("padding: 8px 12px");
+    expect(bar).toContain("padding: 0 8px");
     expect(bar).toContain("border-bottom: 1px solid var(--border)");
     expect(bar).toContain("background: var(--surface-2)");
     expect(bar).toMatch(/\.panel-title \{[^}]*font-size: var\(--fs-xs\)/);
@@ -238,8 +240,8 @@ describe("PanelHeader (#379)", () => {
       expect(text, name).toMatch(new RegExp(`\\.${rule} \\{[^}]*font-size: var\\(--fs-3xs\\)`));
       expect(text, name).toMatch(new RegExp(`\\.${rule} button \\{[^}]*padding: 8px 6px 6px`));
     }
-    // One bar height: 8 + 24 + 8 + the 1px line = 41px, every slotted control 24px like Close.
-    expect(source("PanelHeader")).toMatch(/\.panel-bar \{[^}]*min-height: 41px/);
+    // Compact editor/panel headers share 36px; slotted controls remain 24px.
+    expect(source("PanelHeader")).toMatch(/\.panel-bar \{[^}]*min-height: 36px/);
     expect(source("PanelHeader")).toMatch(/\.panel-actions :global\(button:not\(\.info-btn\)\) \{[^}]*height: 24px/);
     // Review's four tabs never vanish: each label gives way with an ellipsis and keeps its name in its title.
     expect(source("ReviewPanel")).toMatch(/\.tab-label \{[^}]*text-overflow: ellipsis/);
@@ -265,7 +267,8 @@ describe("undocked panels (#389)", () => {
     setSidePanel("reference", { open: true, width: 300 });
     render(SidePanel, { props: { id: "reference", label: "Reference" } });
     render(PanelHeader, { props: { id: "reference", title: "Reference", label: "the Reference panel" } });
-    await fireEvent.click(screen.getByRole("button", { name: "Undock the Reference panel" }));
+    await fireEvent.click(screen.getByRole("button", { name: "the Reference panel panel tools" }));
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "Float inside Bridge" }));
     const saved = get(sidePanels).reference;
     expect(saved.open).toBe(true);
     expect(saved.width).toBe(300);
@@ -280,7 +283,8 @@ describe("undocked panels (#389)", () => {
     expect(JSON.parse(localStorage.getItem("bridge.editor.sidePanels.v1") ?? "{}").reference.float.width).toBe(360);
     // The bar now offers Dock instead of ◂ ▸ / Undock.
     expect(screen.queryByRole("button", { name: "Undock the Reference panel" })).toBeNull();
-    await fireEvent.click(screen.getByRole("button", { name: "Dock the Reference panel" }));
+    await fireEvent.click(screen.getByRole("button", { name: "the Reference panel panel tools" }));
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "Dock in column" }));
     expect(get(sidePanels).reference.float).toBeNull();
     await tick();
     const column = document.getElementById("side-panel-reference") as HTMLElement;

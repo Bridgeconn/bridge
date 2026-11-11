@@ -1,8 +1,16 @@
 <script lang="ts">
+  import OverflowMenu from "./OverflowMenu.svelte";
+  import { get } from "svelte/store";
+  import { project, localUserId } from "../stores";
   import { onMount, setContext } from "svelte";
   import { derived, writable } from "svelte/store";
   import { arrange, defaultLayout, dockPane, resizeDivider, validLayout, without, type AlignmentLayoutContext, type Divider, type DockEdge, type PaneId, type Rect } from "../alignmentLayout";
   export let kind = "word";
+  export let toolbar = true;
+  export function layoutAction(id: string) {
+    if (id === "reset") { layout.set(defaultLayout(kind)); save(); }
+    else helpOpen = !helpOpen;
+  }
   const layout = writable(defaultLayout(kind));
   let node: HTMLElement, width = 1000, height = 500;
   const viewport = writable({ width, height });
@@ -17,7 +25,9 @@
     return result;
   });
   $: dividers = arrange(without($layout.tree, $layout.floating)).dividers;
-  function save() { try { localStorage.setItem(`bridge.alignment.docking.v2.${kind}`, JSON.stringify($layout)); } catch { /* session only */ } }
+  let helpOpen = false;
+  const workspaceKey = () => { const p = get(project); return `bridge.alignment.docking.v3.${encodeURIComponent(get(localUserId) || "local")}.${encodeURIComponent(p?.collectionId || p?.projectId || p?.path || "default")}.${kind}`; };
+  function save() { try { localStorage.setItem(workspaceKey(), JSON.stringify($layout)); } catch { /* session only */ } }
   function dock(id: PaneId, target: PaneId, edge: DockEdge) {
     if (id === target) return;
     layout.set({ ...$layout, tree: dockPane($layout.tree, id, target, edge), floating: $layout.floating.filter(v => v !== id && v !== target) }); save();
@@ -83,7 +93,7 @@
   }
   setContext<AlignmentLayoutContext>("alignment-layout", { layout, frames, dock, float, beginMove, resize });
   onMount(() => {
-    try { const value = JSON.parse(localStorage.getItem(`bridge.alignment.docking.v2.${kind}`) || "null"); if (validLayout(value)) layout.set(value); } catch { /* default */ }
+    try { const value = JSON.parse(localStorage.getItem(workspaceKey()) || localStorage.getItem(`bridge.alignment.docking.v2.${kind}`) || "null"); if (validLayout(value)) layout.set(value); } catch { /* default */ }
     const measure = () => { width = node.clientWidth || width; height = node.clientHeight || height; viewport.set({ width, height }); };
     measure(); if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(measure); observer.observe(node); return () => observer.disconnect();
@@ -91,12 +101,12 @@
 </script>
 
 <svelte:window on:pointermove={pointerMove} on:pointerup={finish} on:pointercancel={() => { moving = null; candidate = null; sizing = null; }} on:keydown={(event) => { if (event.key === "Escape") { moving = null; candidate = null; sizing = null; } }} />
-<div class="layout-toolbar"><button type="button" on:click={() => { layout.set(defaultLayout(kind)); save(); }}>Reset layout</button><small>Drag a handle near another area's edge to dock left, right, above or below. Drop away from edges to float; hold Alt to float anywhere. Drag dividers to resize.</small></div>
+{#if toolbar || helpOpen}<div class="layout-toolbar">{#if toolbar}<OverflowMenu label="Alignment layout tools" actions={[{ id: "reset", label: "Reset layout" }, { id: "help", label: "Moving and resizing help" }]} on:action={(event) => layoutAction(event.detail.id)} />{/if}{#if helpOpen}<small>Drag a handle near another area's edge to dock left, right, above or below. Drop away from edges to float; hold Alt to float anywhere. Drag dividers to resize.</small>{/if}</div>{/if}
 <div class="alignment-layout" bind:this={node} class:moving={!!moving}>
   <slot />
   {#each dividers as divider (divider.id)}
     <div class="divider" class:vertical={divider.axis === "horizontal"} role="slider" tabindex="0" aria-label={divider.axis === "horizontal" ? "Resize area widths" : "Resize area heights"}
-      aria-orientation={divider.axis} aria-valuenow={Math.round(divider.ratio * 100)} aria-valuemin="15" aria-valuemax="85"
+      aria-orientation={divider.axis === "horizontal" ? "vertical" : "horizontal"} aria-valuenow={Math.round(divider.ratio * 100)} aria-valuemin="15" aria-valuemax="85"
       style:left={`${divider.axis === "horizontal" ? divider.at : divider.bounds.x}%`} style:top={`${divider.axis === "vertical" ? divider.at : divider.bounds.y}%`}
       style:width={divider.axis === "horizontal" ? "6px" : `${divider.bounds.width}%`} style:height={divider.axis === "vertical" ? "6px" : `${divider.bounds.height}%`}
       on:pointerdown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture?.(event.pointerId); sizing = divider; }} on:keydown={(event) => adjust(divider, event)}></div>
@@ -111,14 +121,15 @@
 
 <style>
   .layout-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
-  button { font: inherit; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); border-radius: 6px; padding: 5px 9px; cursor: pointer; }
   small { color: var(--text-3); }
   .alignment-layout { position: relative; height: min(620px, 65vh); min-height: 340px; flex: 1 1 auto; overflow: hidden; }
   .moving { user-select: none; }
-  .divider { position: absolute; z-index: 5; background: var(--border); cursor: row-resize; transform: translateY(-3px); touch-action: none; }
-  .divider.vertical { cursor: col-resize; transform: translateX(-3px); }
-  .divider:hover, .divider:focus { background: var(--accent); outline: 1px solid var(--accent); }
-  .dock-preview { position: absolute; z-index: 20; pointer-events: none; border: 2px solid var(--accent); background: var(--accent-bg); opacity: .85; display: grid; place-items: center; box-sizing: border-box; }
+  .divider { position: absolute; z-index: 5; background: transparent; cursor: row-resize; transform: translateY(-50%); touch-action: none; }
+  .divider.vertical { cursor: col-resize; transform: translateX(-50%); }
+  .divider::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: var(--border); pointer-events: none; }
+  .divider.vertical::after { left: 50%; right: auto; top: 0; bottom: 0; width: 1px; height: auto; }
+  .divider:focus-visible { outline: 1px solid var(--text-3); outline-offset: -2px; }
+  .dock-preview { position: absolute; z-index: 20; pointer-events: none; border: 2px solid var(--text-3); background: var(--surface-2); opacity: .85; display: grid; place-items: center; box-sizing: border-box; }
   .dock-preview span { background: var(--surface); color: var(--text); padding: 8px; border-radius: 5px; }
-  .drag-label { position: fixed; z-index: 1000; pointer-events: none; background: var(--accent); color: white; border-radius: 5px; padding: 5px 9px; }
+  .drag-label { position: fixed; z-index: 1000; pointer-events: none; background: var(--text-3); color: white; border-radius: 5px; padding: 5px 9px; }
 </style>

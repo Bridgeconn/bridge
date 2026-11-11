@@ -1,7 +1,11 @@
 <script lang="ts">
+  import { getContext as getSvelteContext } from "svelte";
+  const bridge = getSvelteContext("panel-window") ? bindReviewProject(bridgeApi, getStore(project)?.path || "__no_project__") : bridgeApi;
   import PanelHeader from "./PanelHeader.svelte";
   import { onDestroy, onMount } from "svelte";
-  import { bridge } from "../api/bridgeClient";
+  import { bridge as bridgeApi } from "../api/bridgeClient";
+  import { bindReviewProject } from "../reviewProjectGuard";
+  import { get as getStore } from "svelte/store";
   import { decideLanguageQaFindingOptimistically, decideLocalFinding } from "../findingActions";
   import { languageQaChannel } from "../languageQaInline";
   import { forgetLearnedFix, isLearnedFinding, learnedPairOf } from "../learnedFixes";
@@ -357,6 +361,23 @@
         };
       }
     }
+  }
+
+  // #472: the usage line beside "AI explanation". Cached input tokens are the
+  // part the provider served from its prefix cache at a tenth of the price;
+  // a result stored before #472 has no count and shows the cost alone.
+  // #476: the figures are the sum of every request the verse made (the
+  // semantic mapping, the gap-fill alignment and the review); a request the
+  // provider never answered is counted with its input estimated and said so.
+  function aiUsageLine(usage: { totalTokens?: number; estimatedCostUSD?: number; cachedInputTokens?: number; calls?: number; unansweredCalls?: number }): string {
+    const cost = `~$${(usage.estimatedCostUSD ?? 0).toFixed(4)}`;
+    if (!usage.totalTokens) return cost;
+    const cached = usage.cachedInputTokens ? ` (${usage.cachedInputTokens.toLocaleString()} cached)` : "";
+    const calls = usage.calls && usage.calls > 1 ? ` · ${usage.calls} requests` : "";
+    const unanswered = usage.unansweredCalls
+      ? ` · ${usage.unansweredCalls} unanswered, input estimated`
+      : "";
+    return `${cost} · ${usage.totalTokens.toLocaleString()} tokens${cached}${calls}${unanswered}`;
   }
 
   // A failed poll says nothing about the job, which keeps running in the
@@ -1039,7 +1060,7 @@
             <div class="section ai-explain-section">
               <div class="section-title">
                 AI explanation
-                <span class="ai-cost">~${aiExplainResult.usage.estimatedCostUSD.toFixed(4)}</span>
+                <span class="ai-cost">{aiUsageLine(aiExplainResult.usage)}</span>
               </div>
               <p class="ai-summary">{aiExplainResult.summary}</p>
               {#each aiExplainResult.checkReviews as review}

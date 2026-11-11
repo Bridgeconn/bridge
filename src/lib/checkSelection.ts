@@ -42,8 +42,8 @@ export function normalizeChecks(ids: readonly string[], fallback: readonly Check
   return known.length ? known : [...fallback];
 }
 
-export const DEFAULT_EDITOR_CHECKS: readonly CheckBoxId[] = ["tN", "tW", "alignment", "text", "languageQa"];
-export const DEFAULT_COLLECTION_CHECKS: readonly CheckBoxId[] = [...DEFAULT_EDITOR_CHECKS, "greekroom"];
+export const DEFAULT_EDITOR_CHECKS: readonly CheckBoxId[] = ["languageQa"];
+export const DEFAULT_COLLECTION_CHECKS: readonly CheckBoxId[] = ["tN", "tW", "alignment", "text", "languageQa", "greekroom"];
 
 export const selectedEditorChecks = derived(editorChecks, (ids) => normalizeChecks(ids, DEFAULT_EDITOR_CHECKS));
 export const selectedCollectionChecks = derived(collectionChecks, (ids) => normalizeChecks(ids, DEFAULT_COLLECTION_CHECKS));

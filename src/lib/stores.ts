@@ -100,6 +100,13 @@ export const focusedFindingId = writable<string | null>(null);
 /** #383: a tab the Review panel should show next, asked for from outside it
  * (the verse row's open-issue pill). The panel reads it once and clears it. */
 export const reviewTabRequest = writable<ReviewTab | null>(null);
+
+/** #478: a chapter check run asked for from inside a panel (the tN/tW tab's
+ * "Prepare now", when the book's translationNotes/Words indexes were never
+ * built because those boxes were unticked). App ticks `ensure` (check box
+ * ids) first, starts the run, and clears this. */
+export interface CheckRunRequest { scope: "chapter"; ensure: readonly string[] }
+export const checkRunRequest = writable<CheckRunRequest | null>(null);
 export type ReviewerMode = "basic" | "advanced";
 export const reviewerMode = writable<ReviewerMode>("basic");
 

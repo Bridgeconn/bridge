@@ -11,6 +11,9 @@
   // saved place, moved by its grip, resized from its corner, closed by its ✕
   // or Escape, and docked back from its header. The box sits on --z-panel,
   // under every dialog, like the floating Language QA.
+  import { getContext } from "svelte";
+  import UiIcon from "./UiIcon.svelte";
+  import { editorTree, type EditorDockContext } from "../editorDocking";
   import {
     PANEL_FLOAT_MIN, SIDE_PANEL_LIMITS, clampPanelFloat, clampPanelWidth, setSidePanel, sidePanels,
   } from "../editorPrefs";
@@ -22,6 +25,10 @@
   export let label: string;
   export let keepMounted = false;
 
+  const docking = getContext<EditorDockContext | undefined>("editor-docking");
+  const frames = docking?.frames;
+  $: frame = frames ? $frames?.[id] : undefined;
+  $: frameStyle = frame ? `position:absolute;left:${frame.x}%;top:${frame.y}%;width:${frame.width}%;height:${frame.height}%;min-width:0` : "";
   const MOVE_STEP = 16;
 
   let innerWidth = typeof window === "undefined" ? 1366 : window.innerWidth;
@@ -33,10 +40,10 @@
   let floatPreview: PanelFloat | null = null;
 
   $: limits = SIDE_PANEL_LIMITS[id];
-  $: open = $sidePanels[id].open;
+  $: open = $sidePanels[id].open && !$sidePanels[id].detached;
   // Open but folded to its rail entry because the window is too narrow (#324):
   // hidden like a closed panel, its saved state untouched.
-  $: folded = open && $foldedPanels.has(id);
+  $: folded = open && !$editorTree && $foldedPanels.has(id);
   // A column never takes more than 45% of the window, whatever was saved.
   $: maxWidth = Math.max(limits.min, Math.min(limits.max, Math.floor(innerWidth * 0.45)));
   $: width = Math.min(dragWidth ?? $sidePanels[id].width, maxWidth);
@@ -60,11 +67,11 @@
     const move = (next: PointerEvent): void => {
       floatPreview = { ...start.box, x: start.box.x + (next.clientX - start.x), y: start.box.y + (next.clientY - start.y) };
     };
-    const end = (): void => {
+    const end = (event: PointerEvent): void => {
       grip.removeEventListener("pointermove", move);
       grip.removeEventListener("pointerup", end);
       grip.removeEventListener("pointercancel", end);
-      if (floatPreview) setSidePanel(id, { float: clampPanelFloat(floatPreview, innerWidth, innerHeight) });
+      if (floatPreview && event.type !== "pointercancel") setSidePanel(id, { float: clampPanelFloat(floatPreview, innerWidth, innerHeight) });
       floatPreview = null;
     };
     grip.addEventListener("pointermove", move);
@@ -87,11 +94,11 @@
         height: Math.max(PANEL_FLOAT_MIN.height, start.box.height + (next.clientY - start.y)),
       };
     };
-    const end = (): void => {
+    const end = (event: PointerEvent): void => {
       corner.removeEventListener("pointermove", move);
       corner.removeEventListener("pointerup", end);
       corner.removeEventListener("pointercancel", end);
-      if (floatPreview) setSidePanel(id, { float: clampPanelFloat(floatPreview, innerWidth, innerHeight) });
+      if (floatPreview && event.type !== "pointercancel") setSidePanel(id, { float: clampPanelFloat(floatPreview, innerWidth, innerHeight) });
       floatPreview = null;
     };
     corner.addEventListener("pointermove", move);
@@ -128,6 +135,7 @@
     if (event.key !== "Escape" || !float) return;
     event.preventDefault();
     event.stopPropagation();
+    if (docking?.cancelMove()) return;
     setSidePanel(id, { open: false });
   }
 </script>
@@ -135,29 +143,28 @@
 <svelte:window bind:innerWidth bind:innerHeight />
 
 {#if open || keepMounted}
-  {#if box}
-    <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-    <section class="side-panel floating" id={`side-panel-${id}`} aria-label={label} hidden={!open}
-      class:moving={floatPreview !== null}
-      style:left="{box.x}px" style:top="{box.y}px" style:width="{box.width}px" style:height="{box.height}px"
-      on:keydown={onBoxKeydown}>
+  <!-- One slot instance survives dock/float/split changes. -->
+  <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+  <section data-editor-pane={id} class="side-panel" class:floating={!!box} class:moving={floatPreview !== null}
+    class:closing id={`side-panel-${id}`} aria-label={label} hidden={!open || (!box && folded)}
+    style={box ? `position:fixed;left:${box.x}px;top:${box.y}px;width:${box.width}px;height:${box.height}px` : frameStyle || `width:${width}px;min-width:${limits.min}px`}
+    on:keydown={onBoxKeydown}>
+    {#if box}
       <button type="button" class="float-grip" title="Drag to move; arrow keys move it; Escape closes"
-        aria-label={`Move the ${label} panel`} on:pointerdown={startMove} on:keydown={moveByKey}>⋮⋮ {label}</button>
-      <div class="float-body"><slot /></div>
+        aria-label={`Move the ${label} panel`} on:pointerdown={(event) => docking ? docking.beginMove(id, event) : startMove(event)} on:keydown={moveByKey}><UiIcon name="grip" /> {label}</button>
+    {:else if !$editorTree}
+      <PanelResizeHandle {label} {width} min={limits.min} max={maxWidth} initial={limits.initial}
+        {onPreview} onCommit={(next) => setSidePanel(id, { width: clamp(next) })}
+        onClose={() => setSidePanel(id, { open: false })} />
+    {/if}
+    <div class="float-body"><slot /></div>
+    {#if box}
       <!-- svelte-ignore a11y-no-noninteractive-tabindex a11y-no-noninteractive-element-interactions -->
       <div class="float-corner" role="separator" aria-orientation="horizontal" tabindex="0"
         aria-label={`Resize the ${label} panel; drag the corner or use the arrow keys`}
         title="Drag to resize" on:pointerdown={startCornerResize} on:keydown={resizeByKey} />
-    </section>
-  {:else}
-    <section class="side-panel" id={`side-panel-${id}`} aria-label={label} hidden={!open || folded}
-      class:closing style:width="{width}px" style:min-width="{limits.min}px">
-      <PanelResizeHandle {label} {width} min={limits.min} max={maxWidth} initial={limits.initial}
-        {onPreview} onCommit={(next) => setSidePanel(id, { width: clamp(next) })}
-        onClose={() => setSidePanel(id, { open: false })} />
-      <slot />
-    </section>
-  {/if}
+    {/if}
+  </section>
 {/if}
 
 <style>
@@ -177,9 +184,9 @@
     color: var(--text-3); font: inherit; font-size: var(--fs-3xs); font-weight: 700; text-align: left;
     cursor: move; touch-action: none; }
   .float-grip:hover { color: var(--text); }
-  .float-grip:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .float-grip:focus-visible { outline: 2px solid var(--text-3); outline-offset: -2px; }
   .float-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
   .float-corner { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; touch-action: none;
     background: linear-gradient(135deg, transparent 50%, var(--border-strong) 50%); border-radius: 0 0 10px 0; }
-  .float-corner:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .float-corner:focus-visible { outline: 2px solid var(--text-3); outline-offset: -2px; }
 </style>

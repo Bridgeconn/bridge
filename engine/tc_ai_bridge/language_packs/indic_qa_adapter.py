@@ -551,7 +551,11 @@ def word_statuses(pack_name: str, words: list[str]) -> dict[str, tuple[str, int,
         return out
 
 
-def _settings(pack: RulePack) -> dict[str, Any]:
+def delegated_quotation_rule(rule: str) -> bool:
+    return 'quote' in rule and ('.punct.' in rule or '.norm.' in rule)
+
+
+def _settings(pack: RulePack, *, delegate_quotations: bool = False) -> dict[str, Any]:
     """What the checker runs with, over its language defaults (the checker
     merges one level deep): the project's own settings (pack.checker_settings,
     the Checker settings dialog), then indic-qa's per-rule switches, which
@@ -560,6 +564,13 @@ def _settings(pack: RulePack) -> dict[str, Any]:
     (indic_qa_tamil.SETTINGS), which a project cannot change."""
     settings: dict[str, Any] = json.loads(json.dumps(pack.checker_settings))
     settings["rules"] = {r.id: r.enabled for r in pack.rules}
+    # #456: explicitly saved common rules own quotation conventions. The
+    # vendored chapter counts/direction/curly-normalisation would contradict
+    # configured target pairs and cross-chapter speech. Adapt here, never in
+    # the vendor tree. Quote checks in notes remain outside this scope.
+    for rid in settings['rules']:
+        if delegate_quotations and delegated_quotation_rule(rid):
+            settings['rules'][rid] = False
     config = indic_config(pack.meta)
     if config is not None and config["layer"]:
         for section, values in indic_qa_tamil.SETTINGS.items():
@@ -635,20 +646,21 @@ def _lexicon(mods: Any, folder: Path, lang: Any, shared: bool) -> Any:
     return lex
 
 
-def _load(pack: RulePack) -> LoadedChecker:
+def _load(pack: RulePack, *, delegate_quotations: bool = False) -> LoadedChecker:
     mods = indic_qa_vendor.modules()
     config = indic_config(pack.meta) or {}
     code = str(config.get("profile") or "")
     lang = mods.langs.get(code)
     folder = pack.directory / str(config.get("dictionary") or "dictionary")
     lexicon = _lexicon(mods, folder, lang, shared=bool(config.get("layer")))
-    checker = mods.checker.Checker(lexicon, _settings(pack), lang)
+    settings = _settings(pack, delegate_quotations=delegate_quotations)
+    checker = mods.checker.Checker(lexicon, settings, lang)
     provenance: dict[str, Any] = {}
     state = pack.directory / IRV_STATE
     if state.is_file():
         provenance = _restore_cached(checker, state)
     # No build_index here: the first pass indexes its book and builds then.
-    return LoadedChecker((pack.name, pack.version, json.dumps(_settings(pack), sort_keys=True)), checker,
+    return LoadedChecker((pack.name, pack.version, json.dumps(settings, sort_keys=True)), checker,
                          lang, indic_qa_vendor.profile(code), provenance)
 
 
@@ -685,35 +697,36 @@ def release(keep: str | None = None) -> None:
             _drop(old)
 
 
-def checker_key(pack: RulePack) -> str:
+def checker_key(pack: RulePack, *, delegate_quotations: bool = False) -> str:
     """What a resident checker is built from (_resident's key) as one string:
     the pack, its version and every checker setting, project overrides
     included, which RulePack.fingerprint() does not cover. A cached book
     result of the checker is valid only under the same key (#271)."""
-    return json.dumps([pack.name, pack.version, _settings(pack)], sort_keys=True, ensure_ascii=False)
+    return json.dumps([pack.name, pack.version, _settings(pack, delegate_quotations=delegate_quotations)],
+                      sort_keys=True, ensure_ascii=False)
 
 
-def is_resident(pack: RulePack, book: str) -> bool:
+def is_resident(pack: RulePack, book: str, *, delegate_quotations: bool = False) -> bool:
     """Whether the resident checker is `pack`'s, under its current settings,
     holding `book`'s live text: what the panel's Book words list reads. A pass
     that reuses its cached book result must still leave this true, so it runs
     the checker again when it is not (another book or pack was checked)."""
-    key = (pack.name, pack.version, json.dumps(_settings(pack), sort_keys=True))
+    key = (pack.name, pack.version, json.dumps(_settings(pack, delegate_quotations=delegate_quotations), sort_keys=True))
     with _LOCK:
         return _RESIDENT is not None and _RESIDENT.key == key and _RESIDENT.live_book == book_key(book)
 
 
-def _resident(pack: RulePack, book: str) -> LoadedChecker:
+def _resident(pack: RulePack, book: str, *, delegate_quotations: bool = False) -> LoadedChecker:
     """The pack's checker, holding the IRV snapshot plus at most one live book.
     A pass over another book starts again from the snapshot: otherwise a book
     checked earlier in the session would keep its live counts, and a book's
     findings would depend on which books were opened before it."""
     global _RESIDENT
-    key = (pack.name, pack.version, json.dumps(_settings(pack), sort_keys=True))
+    key = (pack.name, pack.version, json.dumps(_settings(pack, delegate_quotations=delegate_quotations), sort_keys=True))
     if _RESIDENT is None or _RESIDENT.key != key or _RESIDENT.live_book not in (None, book):
         old, _RESIDENT = _RESIDENT, None
         _drop(old)
-        _RESIDENT = _load(pack)
+        _RESIDENT = _load(pack, delegate_quotations=delegate_quotations)
     return _RESIDENT
 
 
@@ -983,6 +996,7 @@ def profile_findings(pack: RulePack, book: str, chapters: dict[str, dict[str, An
                      rule_fields: Callable[..., dict[str, Any]], text_hash: Callable[[str], str],
                      crossing_note: str, proceed: Callable[[], bool] = lambda: True,
                      headings: dict[str, dict[str, list[dict[str, Any]]]] | None = None,
+                     delegate_quotations: bool = False,
                      ) -> tuple[list[dict[str, Any]], list[str]] | None:
     """Every finding of the pack's checker over one book, in reading order,
     before decisions; and coverage notes. None when `proceed()` says stop.
@@ -1009,7 +1023,7 @@ def profile_findings(pack: RulePack, book: str, chapters: dict[str, dict[str, An
         # same key here replaces that book's share instead of adding a 67th.
         key = book_key(book)
         with timings.step("lqa.indicqa.checker_load"):
-            loaded = _resident(pack, key)
+            loaded = _resident(pack, key, delegate_quotations=delegate_quotations)
         loaded.live_book = key
         checker = loaded.checker
         with timings.step("lqa.indicqa.index_book"):

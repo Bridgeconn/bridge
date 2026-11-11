@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "editor-panels",
+  "description": "Editor panel events and close interception over the existing engine",
+  "windows": [
+    "panel-*"
+  ],
+  "permissions": [
+    "core:event:default",
+    "core:window:allow-close"
+  ]
+}

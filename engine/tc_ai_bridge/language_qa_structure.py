@@ -1,4 +1,4 @@
-"""Chapter-level structure checks: quotation marks (framework item 9, #264),
+"""Structure checks: book-wide quotation marks (#264, #456),
 poetry indentation (item 33, #265) and Psalm 119's acrostic stanzas (item 34, #270).
 
 Both read each verse's stored string through `usfm_verse` (gotcha 14): the
@@ -6,9 +6,8 @@ visible text from `lift_inline_usfm`, the paragraph markers in order from
 `marker_names`. A chapter is read verse by verse. Neither parses the book, so a
 pass stays inside the Tier A budget (parsing Psalms takes 3 s).
 
-- `punctuation.unbalanced-quote`: a curly quotation mark (“ ” ‘ ’) whose pair is
-  not in its chapter. A quotation may run over several verses, so the pairing is
-  per chapter, not per verse. (Brackets pair inside a verse: scan_text.)
+- `punctuation.unbalanced-quote`: delegated to quotation_rules, across the book.
+  Chapter-local cached calls disable this delegation; jobs cache it separately.
 - `poetry.q2-without-q1`: an indented poetry line (`\\q2`, `\\q3`) with no `\\q1`
   (or `\\q`) before it since the last prose paragraph or stanza break (MAT 4:6
   in the IRV: the quotation of Psalm 91 opens at `\\q2`). The marker between
@@ -24,13 +23,11 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from .language_qa import RULE_VERSION, lift_inline_usfm, rule_fields, stable_finding_id, text_hash
+from .language_qa import RULE_VERSION, rule_fields, stable_finding_id, text_hash
 from .usfm_verse import marker_names
 
 # Acrostic chapters whose stanzas are marked with their letter (\qa): book -> chapter -> stanzas.
 ACROSTICS = {"psa": {"119": 22}}
-QUOTES = {"“": "”", "‘": "’"}
-CLOSERS = {close: open_ for open_, close in QUOTES.items()}
 FIRST_LEVEL = frozenset({"q", "q1"})
 INDENTED = frozenset({"q2", "q3", "q4"})
 # Paragraph markers that end a stanza: prose, a stanza break, a heading. Every
@@ -62,10 +59,14 @@ def _chapter_order(chapter: str) -> int:
 
 def structure_findings(book: str, chapter_texts: dict[str, dict[str, Any]],
                        headings: dict[str, dict[str, list[dict[str, Any]]]], *,
+                       quotes: bool = True,
                        proceed: Callable[[], bool] = lambda: True) -> list[dict[str, Any]]:
     """`chapter_texts`: chapter -> verse -> stored (raw) verse text;
     `headings`: chapter -> verse -> [{tag, text}] (a heading introduces that verse)."""
     findings: list[dict[str, Any]] = []
+    if quotes:
+        from .quotation_rules import quotation_findings
+        findings.extend(quotation_findings(book, chapter_texts, proceed=proceed)[0])
 
     def add(rule: str, chapter: str, verse: str, raw: str, start: int, end: int, message: str) -> None:
         original = raw[start:end]
@@ -80,7 +81,6 @@ def structure_findings(book: str, chapter_texts: dict[str, dict[str, Any]],
     for chapter in sorted(chapter_texts, key=_chapter_order):
         if not proceed():
             break
-        open_quotes: list[tuple[str, str, str, int]] = []   # mark, verse, raw, raw offset
         # The paragraph marker between \c and the first verse, and between a
         # heading and its verse ("\s …", "\q1", "\v 2" at JOL 1:2), is in no
         # stored verse string, so the level there is unknown: give it the
@@ -92,18 +92,6 @@ def structure_findings(book: str, chapter_texts: dict[str, dict[str, Any]],
                 continue
             if headings.get(chapter, {}).get(verse):
                 first_level = True
-            lifted, _ = lift_inline_usfm(raw)
-            if lifted is not None:
-                for at, char in enumerate(lifted.visible):
-                    if char in QUOTES:
-                        open_quotes.append((char, verse, raw, lifted.raw_index[at]))
-                    elif char in CLOSERS:
-                        if open_quotes and open_quotes[-1][0] == CLOSERS[char]:
-                            open_quotes.pop()
-                        else:
-                            offset = lifted.raw_index[at]
-                            add("punctuation.unbalanced-quote", chapter, verse, raw, offset, offset + 1,
-                                f"Closing {char} with no opening {CLOSERS[char]} before it in chapter {chapter}.")
             searched = 0
             for name in marker_names(raw):
                 if name in FIRST_LEVEL:
@@ -135,7 +123,4 @@ def structure_findings(book: str, chapter_texts: dict[str, dict[str, Any]],
                     "textHash": text_hash(title), "ruleVersion": RULE_VERSION, "status": "review-needed",
                     "context": "heading", "contextText": title, **rule_fields("acrostic.stanzas", []),
                 })
-        for mark, verse, raw, offset in open_quotes:
-            add("punctuation.unbalanced-quote", chapter, verse, raw, offset, offset + 1,
-                f"Opening {mark} with no closing {QUOTES[mark]} after it in chapter {chapter}.")
     return findings

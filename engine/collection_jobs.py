@@ -55,8 +55,9 @@ def _now() -> str:
 # What a recorded run's contentHash covers besides the chapter text (#274). An
 # entry recorded under another value covered less, so it is stale: never
 # skipped, whatever its hash. Bump when the inputs below change.
-HASH_COVERS = 2  # 1 (no key): chapter files only. 2: + headings, alignment, Language QA setting,
+HASH_COVERS = 3  # 1 (no key): chapter files only. 2: + headings, alignment, Language QA setting,
                  # bundled pack versions, overrides and checker settings, termbase, house style
+                 # 3: common quotation rules + machine-local reference fingerprint (service book_hash hook)
 _ALIGNMENT = Path(".apps") / "translationCore" / "alignmentData"
 _PACK_OVERRIDES = Path(".apps") / "translationCoreAI" / "language-packs"
 

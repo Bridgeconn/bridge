@@ -1,4 +1,7 @@
 <script lang="ts">
+  import OverflowMenu from "./OverflowMenu.svelte";
+  let workspace: AlignmentWorkspace | undefined;
+  import IconButton from "./IconButton.svelte";
   import "../alignmentCards.css";
   import AlignmentWorkspace from "./AlignmentWorkspace.svelte";
   import SourceSplitControls from "./SourceSplitControls.svelte";
@@ -422,13 +425,9 @@
 <div class="overlay" class:standalone role="presentation">
   <section class="modal alignment-cards" role="dialog" aria-modal="true" aria-label={`Word alignment ${reference}`}>
     <header>
-      <div class="window-controls">
-        <button type="button" disabled={busy} on:click={() => onPin ? onPin() : alignmentPinned.update((v) => !v)} aria-pressed={$alignmentPinned}>{$alignmentPinned ? "Pinned verse" : "Follow editor"}</button>
-        {#if onDetach}<button type="button" disabled={busy} on:click={onDetach}>{standalone ? "Dock in Bridge" : "Move to separate window"}</button>{/if}
-      </div>
-      <div>
-        <div class="eyebrow">WORD ALIGNMENT</div>
-        <h2>{reference} — align source and target words</h2>
+
+      <div class="title">
+        <h2>Word alignment · {reference}</h2>
         <button
           type="button"
           class="cross-verse-link"
@@ -437,7 +436,12 @@
           title="See this verse beside its neighbours"
         >Cross-verse alignment ›</button>
       </div>
-      <button class="close" on:click={onClose} disabled={busy} aria-label="Close alignment editor">×</button>
+      <div class="window-controls">
+        <OverflowMenu label="Alignment layout tools" actions={[{ id: "reset", label: "Reset layout", disabled: !workspace }, { id: "help", label: "Moving and resizing help", disabled: !workspace }]} on:action={(event) => workspace?.layoutAction(event.detail.id)} />
+        <IconButton icon={$alignmentPinned ? "pin" : "follow"} label={$alignmentPinned ? "Follow editor (verse is pinned)" : "Pin verse (following editor)"} disabled={busy} pressed={$alignmentPinned} on:click={() => onPin ? onPin() : alignmentPinned.update((v) => !v)} />
+        {#if onDetach}<IconButton icon={standalone ? "dock" : "detach"} label={standalone ? "Dock in Bridge" : "Move to separate window"} disabled={busy} on:click={onDetach} />{/if}
+        <button class="close" on:click={onClose} disabled={busy} aria-label="Close alignment editor">×</button>
+      </div>
     </header>
 
     {#if loading}
@@ -493,7 +497,7 @@
       {#if notice}<div class="notice">✓ {notice}</div>{/if}
       {#if error}<div class="error">{error}</div>{/if}
 
-      <AlignmentWorkspace>
+      <AlignmentWorkspace bind:this={workspace} toolbar={false}>
       <AlignmentPane id="read" label="Read">
       <section class="reading" aria-label={`Read ${reference}`}>
         <div class="panel-title"><span class="panel-label">Read <small>{reference} · {$project?.targetLanguage || "target language"}</small></span></div>
@@ -730,17 +734,18 @@
 <style>
   .standalone { padding: 0; background: var(--surface); }
   .standalone .modal, .standalone .page { width: 100%; height: 100vh; max-height: 100vh; border-radius: 0; }
-  .window-controls { display: flex; flex-wrap: wrap; gap: 4px; }
+  .window-controls { display: flex; align-items: center; gap: 4px; flex: none; margin-left: auto; }
   .overlay { position: fixed; inset: 0; z-index: var(--z-dialog); background: rgba(15, 20, 26, .58); display: grid; place-items: center; padding: 24px; }
   .modal { width: min(1040px, 100%); max-height: calc(100vh - 48px); overflow: auto; background: var(--surface); border-radius: 16px; box-shadow: 0 24px 80px rgba(0,0,0,.24); padding: 20px; color: var(--text); }
-  header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; border-bottom: 1px solid var(--border); padding-bottom: 14px; }
-  .eyebrow { color: var(--accent); font-size: var(--fs-2xs); letter-spacing: .12em; font-weight: 800; }
-  h2 { margin: 4px 0 0; font-size: var(--fs-2xl); }
+  header { display: flex; gap: 8px; align-items: center; border-bottom: 1px solid var(--border); padding: 4px 0 6px; flex: none; min-height: 36px; }
+  .title { flex: 1; min-width: 0; text-align: left; }
+
+  h2 { margin: 0; font-size: var(--fs-sm); line-height: 1.4; font-weight: 600; }
   button, select { font: inherit; }
   button { border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); border-radius: 7px; padding: 7px 10px; cursor: pointer; }
   button:hover:not(:disabled) { border-color: var(--accent); }
   button:disabled { opacity: .5; cursor: not-allowed; }
-  .close { border: 0; font-size: var(--fs-5xl); padding: 0 5px; color: var(--text-2); }
+  .close { display: grid; place-items: center; width: 28px; height: 28px; border: 0; font-size: var(--fs-xl); padding: 0; color: var(--text-2); line-height: 1; }
   .cross-verse-link { border: 0; background: none; padding: 4px 0 0; color: var(--accent); font-size: var(--fs-xs); font-weight: 600; }
   .cross-verse-link:hover:not(:disabled) { text-decoration: underline; }
   .loading { padding: 36px; display: flex; gap: 10px; justify-content: center; color: var(--text-2); }

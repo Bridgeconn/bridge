@@ -265,12 +265,86 @@ class AppSettings:
 
     @property
     def model(self) -> str:
-        return str(self.data.get('model') or 'gpt-5.6')
+        """The configured model; `DEFAULT_REVIEW_MODEL` (#479) until one is saved."""
+        from .model_router import DEFAULT_REVIEW_MODEL
+        return str(self.data.get('model') or DEFAULT_REVIEW_MODEL)
 
     @model.setter
     def model(self, value: str) -> None:
-        self.data['model'] = value.strip() or 'gpt-5.6'
+        from .model_router import DEFAULT_REVIEW_MODEL
+        self.data['model'] = value.strip() or DEFAULT_REVIEW_MODEL
         self.save_sanitized()
+
+    # -- #473: a model and a reasoning effort per AI task -------------------
+
+    @property
+    def ai_tasks(self) -> dict:
+        """``{'useOneModel': bool, 'tasks': {task: {'model', 'reasoningEffort'}}}``
+        for the tasks in `model_router.AI_TASKS`. Stored sparse, read back
+        complete with the defaults filled in. A blank model means "the
+        configured model" (`self.model`)."""
+        from .model_router import AI_TASKS, DEFAULT_USE_ONE_MODEL, REASONING_EFFORTS, default_task_models
+        raw = self.data.get('ai_tasks')
+        raw = raw if isinstance(raw, dict) else {}
+        tasks = default_task_models()
+        stored = raw.get('tasks') if isinstance(raw.get('tasks'), dict) else {}
+        for task in AI_TASKS:
+            row = stored.get(task) if isinstance(stored.get(task), dict) else {}
+            if 'model' in row:
+                tasks[task]['model'] = str(row.get('model') or '').strip()
+            effort = str(row.get('reasoningEffort') or '').strip().lower()
+            if effort in REASONING_EFFORTS:
+                tasks[task]['reasoningEffort'] = effort
+        use_one = raw.get('useOneModel')
+        return {
+            'useOneModel': use_one if isinstance(use_one, bool) else DEFAULT_USE_ONE_MODEL,
+            'tasks': tasks,
+        }
+
+    @ai_tasks.setter
+    def ai_tasks(self, value: Any) -> None:
+        """Validate and merge: a partial object keeps what it does not name."""
+        from .model_router import AI_TASKS, REASONING_EFFORTS
+        if not isinstance(value, dict):
+            raise ValueError('aiTasks must be an object')
+        current = self.data.get('ai_tasks') if isinstance(self.data.get('ai_tasks'), dict) else {}
+        merged: dict = {'tasks': dict(current.get('tasks') or {}) if isinstance(current.get('tasks'), dict) else {}}
+        if isinstance(current.get('useOneModel'), bool):
+            merged['useOneModel'] = current['useOneModel']
+        if 'useOneModel' in value:
+            if not isinstance(value['useOneModel'], bool):
+                raise ValueError('aiTasks.useOneModel must be true or false')
+            merged['useOneModel'] = value['useOneModel']
+        tasks = value.get('tasks')
+        if tasks is not None:
+            if not isinstance(tasks, dict):
+                raise ValueError('aiTasks.tasks must be an object')
+            for task, row in tasks.items():
+                if task not in AI_TASKS:
+                    raise ValueError(f'unknown AI task {task!r}; expected one of {", ".join(AI_TASKS)}')
+                if not isinstance(row, dict):
+                    raise ValueError(f'aiTasks.tasks.{task} must be an object')
+                entry = dict(merged['tasks'].get(task) or {})
+                if 'model' in row:
+                    entry['model'] = str(row.get('model') or '').strip()
+                if 'reasoningEffort' in row:
+                    effort = str(row.get('reasoningEffort') or '').strip().lower()
+                    if effort not in REASONING_EFFORTS:
+                        raise ValueError(f'reasoningEffort must be one of {", ".join(REASONING_EFFORTS)}')
+                    entry['reasoningEffort'] = effort
+                merged['tasks'][task] = entry
+        self.data['ai_tasks'] = merged
+        self.save_sanitized()
+
+    def ai_task_choice(self, task: str) -> tuple[str, str]:
+        """``(model, reasoningEffort)`` for one task. One-model mode is
+        today's behaviour exactly: the configured model at medium reasoning
+        for every task."""
+        config = self.ai_tasks
+        if config['useOneModel'] or task not in config['tasks']:
+            return self.model, 'medium'
+        row = config['tasks'][task]
+        return (str(row.get('model') or '').strip() or self.model), str(row.get('reasoningEffort') or 'medium')
 
     @property
     def provider(self) -> str:
@@ -622,23 +696,39 @@ class AppSettings:
         return ''
 
     def record_ai_usage(self, total_tokens: int = 0, estimated_cost_usd: float = 0.0) -> None:
-        """Persist Bridge-observed lifetime API usage for this Windows user/settings file."""
+        """Persist Bridge-observed lifetime API usage for this Windows user/settings file.
+
+        `since` (#477) is the UTC time the counter started: the first counted
+        call, or the last reset. A counter from before #477 has none until it
+        is reset."""
         usage = self.data.get('ai_usage_totals')
         if not isinstance(usage, dict):
             usage = {}
         usage = dict(usage)
+        if not usage.get('since') and not usage.get('tokens'):
+            usage['since'] = datetime.now(timezone.utc).isoformat()
         usage['tokens'] = int(usage.get('tokens', 0) or 0) + max(0, int(total_tokens or 0))
         usage['estimatedCostUSD'] = float(usage.get('estimatedCostUSD', 0.0) or 0.0) + max(0.0, float(estimated_cost_usd or 0.0))
         self.data['ai_usage_totals'] = usage
         self.save_sanitized()
 
+    def reset_ai_usage(self) -> None:
+        """#477: zero the lifetime counter and date the reset. The per-verse
+        figures stored on each review are untouched."""
+        self.data['ai_usage_totals'] = {
+            'tokens': 0, 'estimatedCostUSD': 0.0, 'since': datetime.now(timezone.utc).isoformat(),
+        }
+        self.save_sanitized()
+
     def get_ai_usage_totals(self) -> dict:
         usage = self.data.get('ai_usage_totals')
         if not isinstance(usage, dict):
-            return {'tokens': 0, 'estimatedCostUSD': 0.0}
+            return {'tokens': 0, 'estimatedCostUSD': 0.0, 'since': None}
+        since = usage.get('since')
         return {
             'tokens': max(0, int(usage.get('tokens', 0) or 0)),
             'estimatedCostUSD': max(0.0, float(usage.get('estimatedCostUSD', 0.0) or 0.0)),
+            'since': str(since) if isinstance(since, str) and since else None,
         }
 
 # Production settings are deliberately simple JSON values; secrets remain DPAPI-protected above.

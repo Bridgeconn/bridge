@@ -64,3 +64,15 @@ def test_refused_checker_settings_are_coverage_notes_not_errors():
     assert any("checker.suggest.max refused" in p for p in pack.problems)
     common = apply_overrides(default_pack("ta-irv"), {"checker": {"suggest": {"max": 3}}})
     assert common.checker_settings == {"suggest": {"max": 3}}
+
+
+@pytest.mark.parametrize("name", ["ml-irv", "hi-irv", "pa-irv", "or-irv"])
+def test_reviewed_quotation_switches_are_preserved_until_a_policy_is_saved(name):
+    pack = default_pack(name)
+    original = {rule.id: rule.enabled for rule in pack.rules}
+    assert indic_qa_adapter._settings(pack)['rules'] == original
+    delegated = indic_qa_adapter._settings(pack, delegate_quotations=True)['rules']
+    for rid, enabled in original.items():
+        assert delegated[rid] == (False if indic_qa_adapter.delegated_quotation_rule(rid) else enabled)
+    assert indic_qa_adapter.checker_key(pack) != indic_qa_adapter.checker_key(pack, delegate_quotations=True)
+    assert {rule.id: rule.enabled for rule in pack.rules} == original

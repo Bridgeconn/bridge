@@ -43,7 +43,7 @@
       previewed = clamp(raw);
       onPreview(previewed, closing);
     };
-    const end = (): void => {
+    const end = (event: PointerEvent): void => {
       handle.removeEventListener("pointermove", move);
       handle.removeEventListener("pointerup", end);
       handle.removeEventListener("pointercancel", end);
@@ -51,6 +51,7 @@
       dragging = false;
       closing = false;
       onPreview(null, false);
+      if (event.type === "pointercancel") return;
       if (close) onClose();
       else if (previewed !== null) onCommit(previewed);
     };
@@ -83,12 +84,10 @@
 {#if closing}<div class="close-hint" aria-hidden="true">Release to close</div>{/if}
 
 <style>
-  .resize-handle { position: absolute; top: 0; bottom: 0; left: -3px; width: 6px; z-index: 5; cursor: col-resize;
+  .resize-handle { position: absolute; top: 0; bottom: 0; left: 0; width: 8px; z-index: 5; cursor: col-resize;
     touch-action: none; }
-  .resize-handle:hover, .resize-handle:focus-visible, .resize-handle.dragging {
-    background: color-mix(in srgb, var(--accent) 45%, transparent); outline: none; }
-  .resize-handle.closing { background: var(--danger); }
+  .resize-handle:focus-visible { outline: 1px solid var(--text-3); outline-offset: -2px; }
   .close-hint { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 6;
-    padding: 3px 8px; border-radius: 6px; background: var(--danger); color: white; font-size: var(--fs-3xs);
+    padding: 3px 8px; border-radius: 6px; background: var(--text-2); color: var(--surface); font-size: var(--fs-3xs);
     font-weight: 700; pointer-events: none; }
 </style>

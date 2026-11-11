@@ -1,4 +1,7 @@
 <script lang="ts">
+  import OverflowMenu from "./OverflowMenu.svelte";
+  let workspace: AlignmentWorkspace | undefined;
+  import IconButton from "./IconButton.svelte";
   import "../alignmentCards.css";
   import AlignmentWorkspace from "./AlignmentWorkspace.svelte";
   import SourceSplitControls from "./SourceSplitControls.svelte";
@@ -716,14 +719,17 @@
 <div class="overlay" class:standalone role="presentation">
   <section class="page alignment-cards" role="dialog" aria-modal="true" aria-label={`Cross-verse alignment, chapter ${chapter}`}>
     <header>
-      <div class="window-controls">
-        <button type="button" disabled={busy} on:click={() => onPin ? onPin() : alignmentPinned.update((v) => !v)} aria-pressed={$alignmentPinned}>{$alignmentPinned ? "Pinned verse" : "Follow editor"}</button>
-        {#if onDetach}<button type="button" disabled={busy} on:click={onDetach}>{standalone ? "Dock in Bridge" : "Move to separate window"}</button>{/if}
-      </div>
+
       <div class="title">
-        <div class="eyebrow">CROSS-VERSE ALIGNMENT</div>
-        <h2>Chapter {chapter} · verses {span ? (span[0] === span[1] ? span[0] : `${span[0]}–${span[1]}`) : verse}</h2>
+        <h2>Cross-verse alignment · Chapter {chapter} · verses {span ? (span[0] === span[1] ? span[0] : `${span[0]}–${span[1]}`) : verse}</h2>
       </div>
+      <div class="window-controls">
+        <OverflowMenu label="Alignment layout tools" actions={[{ id: "reset", label: "Reset layout", disabled: !workspace }, { id: "help", label: "Moving and resizing help", disabled: !workspace }]} on:action={(event) => workspace?.layoutAction(event.detail.id)} />
+        <IconButton icon={$alignmentPinned ? "pin" : "follow"} label={$alignmentPinned ? "Follow editor (verse is pinned)" : "Pin verse (following editor)"} disabled={busy} pressed={$alignmentPinned} on:click={() => onPin ? onPin() : alignmentPinned.update((v) => !v)} />
+        {#if onDetach}<IconButton icon={standalone ? "dock" : "detach"} label={standalone ? "Dock in Bridge" : "Move to separate window"} disabled={busy} on:click={onDetach} />{/if}
+        <button class="close" on:click={onClose} disabled={busy} aria-label="Close cross-verse alignment">×</button>
+      </div>
+    </header>
       <div class="picker" aria-label="Verse range">
         <label>From
           <select value={span?.[0] ?? verse} on:change={onFromChange} disabled={busy}>
@@ -749,8 +755,7 @@
           {/each}
         </div>
       </div>
-      <button class="close" on:click={onClose} disabled={busy} aria-label="Close cross-verse alignment">×</button>
-    </header>
+
 
     {#if loading && ordered.length === 0}
       <div class="loading"><span class="spin" /> Loading {selection.length} verse{selection.length === 1 ? "" : "s"}…</div>
@@ -843,7 +848,7 @@
       {#if loading}<div class="reloading"><span class="spin" /> Updating range…</div>{/if}
 
       <AlignmentChapterReset {chapter} busy={busy || autoBusy} onBusy={(value) => busy = value} onChanged={(values) => { for (const value of values) if (value.chapter === chapter) contexts = { ...contexts, [value.verse]: value }; }} />
-      <AlignmentWorkspace kind="cross">
+      <AlignmentWorkspace kind="cross" bind:this={workspace} toolbar={false}>
         <AlignmentPane id="read" label="Read">
           {#each visibleVerses as v}<p class="range-reading" dir={contexts[v].targetDirection} lang={$targetLang}><strong>{chapter}:{v}</strong> {reading[v] ?? ""}</p>{/each}
         </AlignmentPane>
@@ -1110,17 +1115,17 @@
   .source-words.joined { border: 1px solid var(--accent); padding: 3px; border-radius: 8px; }
   .standalone { padding: 0; background: var(--surface); }
   .standalone .modal, .standalone .page { width: 100%; height: 100vh; max-height: 100vh; border-radius: 0; }
-  .window-controls { display: flex; flex-wrap: wrap; gap: 4px; }
+  .window-controls { display: flex; align-items: center; gap: 4px; flex: none; margin-left: auto; }
   .overlay { position: fixed; inset: 0; z-index: var(--z-dialog); background: rgba(15, 20, 26, .58); display: grid; place-items: center; padding: 16px; }
   .page {
     width: min(1340px, 100%); height: calc(100vh - 32px); display: flex; flex-direction: column; min-height: 0;
     background: var(--surface); border-radius: 14px; box-shadow: 0 24px 80px rgba(0,0,0,.24); padding: 14px 18px; color: var(--text);
   }
-  header { display: flex; gap: 16px; align-items: flex-start; border-bottom: 1px solid var(--border); padding-bottom: 10px; flex-shrink: 0; }
-  .title { min-width: 220px; }
-  .eyebrow { color: var(--accent); font-size: var(--fs-2xs); letter-spacing: .12em; font-weight: 800; }
-  h2 { margin: 3px 0 0; font-size: var(--fs-xl); }
-  .picker { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; flex: 1; font-size: var(--fs-xs); color: var(--text-2); }
+  header { display: flex; gap: 8px; align-items: center; border-bottom: 1px solid var(--border); padding: 4px 0 6px; flex: none; min-height: 36px; }
+  .title { flex: 1; min-width: 0; text-align: left; }
+
+  h2 { margin: 0; font-size: var(--fs-sm); line-height: 1.4; font-weight: 600; }
+  .picker { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: none; padding: 6px 0; font-size: var(--fs-xs); color: var(--text-2); }
   .picker label { display: inline-flex; align-items: center; gap: 5px; }
   button, select { font: inherit; }
   button { border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); border-radius: 7px; padding: 6px 9px; cursor: pointer; }
@@ -1130,7 +1135,7 @@
   .chips { display: flex; flex-wrap: wrap; gap: 4px; }
   .chip { padding: 3px 8px; border-radius: 999px; font-size: var(--fs-xs); color: var(--text-3); background: var(--surface-2); border-color: transparent; }
   .chip.on { color: var(--accent); background: var(--accent-bg); border-color: var(--accent); font-weight: 700; }
-  .close { border: 0; font-size: var(--fs-5xl); padding: 0 5px; color: var(--text-2); line-height: 1; }
+  .close { display: grid; place-items: center; width: 28px; height: 28px; border: 0; font-size: var(--fs-xl); padding: 0; color: var(--text-2); line-height: 1; }
   .link { border: 0; background: none; color: var(--accent); padding: 0; text-decoration: underline; }
   .loading, .reloading { padding: 12px; display: flex; gap: 10px; align-items: center; justify-content: center; color: var(--text-2); font-size: var(--fs-sm); }
   .loading { padding: 36px; }

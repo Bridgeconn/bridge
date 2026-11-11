@@ -24158,6 +24158,560 @@ QA matrix and host checklist with the visibility contract and remaining checks.
 GitHub connector comment writes returned 403; the authenticated CLI completed
 the updates. No release, installer replacement or Defender exemption is claimed.
 
+## 2026-11-04 — Quotation rules and local reference-assisted QA (#456)
+
+Benz clarified quotation requirements and authorized reference-assisted detection
+of passages where both target marks are absent. Updated #456 through the GitHub
+CLI after the connector refused the issue-body write (403). The confirmed scope
+supersedes the proposed chapter boundary and wait for Malayalam examples.
+
+Implemented a validated, versioned common quotation policy, independent target
+and reference conventions, symmetric or directional marks, configured nesting,
+permissive paragraph/verse-leading continuation or strict no-repeat mode, and
+book-wide state. Matthew 5–7 is a regression fixture. Inline USFM is lifted through
+the existing wrapper; findings retain raw Unicode spans, exact bridge/segment
+keys, stable identity and no automatic correction. Rule/evidence versions change
+when settings/reference evidence change so earlier decisions are rechecked
+without deleting history.
+
+Reference comparison uses existing local ReferenceText resources, complete outer
+quotation spans and exact verse correspondence. A target passage with no
+quotation evidence produces a possible-missing finding with source/range/boundary
+text evidence. Indirect speech and different boundaries remain human judgements.
+Unavailable/unbalanced reference conventions and ambiguous correspondence are
+limitations. A shared fingerprinted loader prevents simultaneous panel/QA
+cache-file writes and refreshes an edited reference. Collection hash coverage is
+v3; reference changes and common overrides invalidate completed-run skip hashes.
+
+Settings → Language QA now exposes the form, scope, preview, reset, enable and
+reference switches. The dedicated Quotations filter includes both finding types;
+reference evidence expands in the panel. Saves use existing authorization,
+atomic overrides and project-state mirroring, including lazy roots. No schema
+change, Scripture write, confidence threshold, golden rebaseline or network
+dependency. Older indic-qa quotation checks delegate to this common policy and
+their obsolete switches are hidden. New coverage wording awaits human Tamil
+review.
+
+Validation is recorded below after source and frozen checks finish. Installed
+Windows acceptance at 1366×768 remains a separate release gate; no installed
+app update or release is claimed.
+
+Verified:
+
+- 363 focused Python cases passed across quotation policy/settings, Language QA,
+  collection jobs, cached book stages, checker settings and role authorization.
+  Follow-up final quotation runs passed 24 policy/service cases, 21 pure-policy
+  cases after the trailing-apostrophe addition, and the explicit reporter refusal
+  (overlap is intentional; these counts are not added).
+- Real `43LUKIRVTam.SFM` (24 chapters) and `51PHPIRVTam.SFM` (4 chapters) completed
+  with zero unmatched quotation findings under the preset. This demonstrates
+  execution on real input, not human-labelled precision/recall.
+- `npm run check`: 0 errors/warnings. `npm run test -- --maxWorkers=2
+  --minWorkers=2`: 1,152 passed in 118 files. `npm run build`: app and dashboard
+  passed. The first full frontend run exposed the old category-list fixture;
+  it was extended to include quotations, then the complete suite passed.
+- Final isolated engine/helper binaries built in `.test-temp-quotation-dist`.
+  `scripts/smoke_sidecars.py .test-temp-quotation-dist/bridge-engine.exe` passed
+  the complete frozen suite, including quotation defaults/save, Matthew 5–7
+  and local reference evidence. The first attempt identified missing alignment
+  data in the new throwaway fixture; the fixture was completed and rerun.
+- `git diff --check` passes. Initial sandbox denials prevented pytest temporary
+  fixtures and Vitest's worker launch; normal test permissions resolved these.
+
+The full Python run and its reported failure are reconciled below. Installed
+desktop acceptance has not run; no golden was regenerated and no release made.
+
+Full-suite reconciliation: `pytest -n 4 --maxfail=5 -q` finished with **5,504
+passed, 3 xfailed, 5 failed**, stopping before the entire collected suite ran.
+The broad run was started before the category vocabulary edits were finished;
+three metadata/TypeScript vocabulary failures came from workers holding the old
+`CATEGORIES` tuple while reading the new files. The final 363-case focused run
+and an explicit final-source serial rerun pass those contracts. Starting that
+broad run before freezing the implementation made its vocabulary result stale;
+it is not claimed as a clean full-suite pass.
+
+The other failures were `test_an_existing_book_is_skipped_unless_named_to_be_replaced`
+(add-books replacement job failed in commit) and
+`test_continuous_foreground_polling_does_not_starve_worker` (three-second polling
+deadline). **All five failed nodes passed together serially against final source**
+in 48.77 s. Their behavior under parallel load and the baseline remain unconfirmed;
+filed separate investigations [#464](https://github.com/Bridgeconn/bridge/issues/464)
+and [#465](https://github.com/Bridgeconn/bridge/issues/465), without changing the
+replacement logic or weakening a deadline. A complete clean full-suite run and
+installed desktop acceptance remain release gates. #456 stays open with this
+evidence and those limits. The working-tree implementation is not committed or
+published in this session.
+
+
+## 2026-11-04 - Coordinated workspace UI (#457-#463, #415)
+
+Benz authorized building on the existing uncommitted quotation/Language QA work.
+That work is retained. The UI changes share editor layout state and existing tree
+operations rather than separate resizing/docking implementations. Benz approved
+editor panels in separate OS windows as well as floating inside Bridge; existing
+alignment and review-queue window lifecycles remain independent. The agreed
+Paratext-style model is user-specified; no observed Paratext parity is claimed.
+
+Recent projects records successful local opens per named user in this device's
+webview storage, deduplicates collections and filters the existing registry. It
+does not borrow a teammate's last-opened timestamp or create a second registry.
+Versioned workspace snapshots preserve collection/project layout and last book,
+chapter, exact verse, reading offset and editor/review view. Global text-size/Raw
+preferences retain their previous scope. Navigation validates references against
+loaded content, stale chapter responses check project identity, layout reset only
+changes geometry/visibility, and malformed snapshots fall back without blocking.
+Scroll writes are bounded (200 ms) and pagehide/navigation flush the snapshot;
+an abrupt process kill may lose the final unflushed scroll movement. No editable
+draft is persisted as Scripture.
+
+Shared IconButton/OverflowMenu reuse the existing tooltip action, SVG inventory
+and keyboard menu implementation. The editor chapter header is inside the editor
+column and outside its verse scroller. Alignment pin/follow/window controls use
+compact icons; secondary layout commands use menus. Resize/dock feedback is gray.
+SidePanel keeps one content slot through dock/float/split changes. The old clipped
+left-edge resize hit area is moved inside its frame. Standalone Language QA gains
+keyboard/pointer movement and two-dimensional resizing. About content uses the
+effective language/pack, gates Tamil glosses, states off/common/unavailable modes,
+and rejects stale pages following configuration changes.
+
+Native editor panels reuse the one engine and the existing panel components.
+Main-window messages are guarded by project path and detached-panel state; each
+panel has its own targeted context topic. Existing edit, alignment and review
+queue actions route back to the main workbench. Closing a panel hides it; Dock in
+Bridge returns it to the saved editor layout. Native geometry uses the existing
+window-state plugin. Five hidden windows are created at startup, consistent with
+the existing auxiliary-window setup, and destroyed on main exit.
+
+Desktop investigation found and fixed three concrete problems: a reactive promise
+assignment in the new host scheduled itself repeatedly; a shared event topic let
+other panels overwrite a detached panel's context; and docked Language QA's flex
+item z-index covered its resize handle. Regression tests cover the first two;
+the last requires actual hit testing and was verified by dragging its width from
+440 to 384 pixels. Floating-panel Escape cancels a pending move before the normal
+close shortcut; dock/float transitions retain the mounted content/filter state.
+
+Observed in the native Windows debug app on a real Tamil Philemon project:
+Recent opening, centered chapter header while scrolling, Language QA resizing,
+in-app floating, detach to its own window with findings visible, Dock in Bridge,
+and docking above Scripture with a gray divider. Returning through Projects and
+reopening restored the split layout and verse-3 reading offset. A normal main
+exit stopped the sidecar; after a process restart, Recent still listed Philemon
+first and reopening again restored that split and reading offset. The Language
+QA About popup named Tamil, declared `ta`, and effective `ta-irv`. A temporarily
+blank cold-start window was inspected; the app subsequently loaded and DevTools
+showed only a missing development favicon, with no application exception.
+The existing word-alignment window also detached and docked back with its compact
+toolbar and gray splitters visible. A separate Source text window displayed Greek
+and alignment indicators; selecting verse 4 there updated the main editor's Review
+heading to PHM 1:4. These checks did not modify Scripture or alignment data.
+
+Initial Rust compilation was blocked by the running sidecar's Windows file lock.
+After Benz closed Bridge, `cargo check --offline` and all 19 Rust tests passed.
+Shutdown tests require ordinary process permissions outside the restricted
+sandbox; no tests or deadlines were weakened. Final frontend results follow.
+
+The final stable-source frontend run passed **1,172 tests in 122 files** with two
+workers (451.95 s). Earlier broad runs are not claimed as clean: a concurrent
+build pushed the existing 100 ms interaction budget over its deadline; an import
+dialog assertion needed to await asynchronous restoration; and a docking test
+ran while its component source was still changing. The asynchronous assertion
+was corrected, the deadline was preserved, and both the 62-case focused run and
+the final complete run passed after freezing the source.
+Final `npm run check` reported **0 errors and 0 warnings**; `npm run build`
+completed the application (including `panel.html`) and dashboard production
+bundles. `git diff --check` passed. Verification logs are retained locally under
+the ignored `.test-temp-workspace-ui-20261104/` directory.
+
+These observations are debug-app acceptance for the sampled interactions, not
+installed-package acceptance. Physical drag outside Bridge, every native panel's
+full action inventory, review-queue window regression painting, mixed DPI,
+monitor removal and long RTL layouts still need desktop acceptance. No new engine
+code, database schema, Scripture writer or golden was introduced by this UI work.
+The pre-existing quotation changes and their engine verification limits above
+remain separate. Nothing was committed, pushed or released in this task.
+
+### Follow-up: Benz's fourteen UI refinements
+
+The editor and side panels now share compact 36px header geometry and centered
+titles; move grips lead their headers. Editor/alignment dividers paint only a
+one-pixel rule over an invisible pointer target. Hover changes the resize cursor
+without painting a thick bar; keyboard focus remains visible. Alignment pane
+padding/borders no longer create a wide seam. Word/cross-verse alignment titles
+are compact and left aligned; layout tools, pin, native-window and close controls
+share one row. The workspace retains its layout state/content when the external
+header menu resets geometry.
+
+Language QA puts incomplete coverage and limitations behind About; it retains
+errors in the main panel. Pause is available while running, Resume while paused,
+and neither appears for completed/idle/failed scans. Quotations uses the same
+category-count-driven Kinds menu as other findings and is absent at zero count.
+Verse finding counts are red at the upper left of the verse number. Diagnostics
+is reached through Settings and Escape from its dialog does not discard the
+underlying Settings screen. Navigation sync uses a clearer circular-arrow SVG
+and retains the existing enabled/error/connection indicators.
+
+Benz clarified that reinstalling must preserve saved check selections. The
+existing `bridge.editor.checks.v1` storage key and application identity are
+unchanged: a saved selection wins over the new Language-QA-only fallback. The
+collection runner keeps its independently saved selection and original default.
+Source tests initialize a fresh profile and reinitialize the module with saved
+choices to verify this boundary; deleting the app's user data is outside that
+retention guarantee. Final verification and native observations follow below.
+
+Native debug observations on the existing Tamil Genesis workspace: compact panel
+headers with leading grips, upper-left red verse badges, thin split lines, no
+completed-scan Pause control or separate Quotations button, and no inline coverage
+warning. Hebrew source and Tamil target content rendered in compact word and
+cross-verse alignment views; the layout menu and pin/detach/close controls shared
+the header row. Settings opened the existing diagnostic log, and Escape returned
+to Settings with focus on Diagnostics. No Scripture or alignment data was edited.
+
+An initial focused run passed QA/preferences interactions but found two tests
+pinning the old 41px/8px-padding header. Their expectations now match the requested
+compact geometry. An interrupted broad run exposed fixtures assuming the old
+all-checks default and old alignment instruction heading; those fixtures now
+explicitly select their intended checks and await the compact heading. The final
+targeted rerun passed 213 tests in five files. A separate regression verifies that
+Language-QA-only rechecks avoid native verse-check RPCs and clear stale text
+findings after an edit. The existing engine/frozen gates were not rerun for these
+frontend-only refinements; no Rust source or app identity changed.
+The native About popup showed the incomplete-coverage message and details, and
+the existing profile's Checks menu still showed its five previously selected
+checks after reload. This is evidence for retaining an existing selection;
+actually uninstalling/reinstalling a signed package was not performed.
+The first complete refinement run finished with 1,175 passing and one outdated
+chapter-entry fixture expectation: its selection inherited the new default while
+expecting the old full-check missing-group list. Like the edit-path fixtures, it
+now specifies the full selection it intends to exercise. The application code
+was unchanged by these fixture updates; final clean-run results follow.
+The final clean refinement run passed **1,176 tests in 123 files** (290.27 s,
+four workers), including the unchanged 100 ms interaction budget. Svelte check
+reported **0 errors and 0 warnings**. Production bundle evidence follows.
+`npm run build` completed both the app/panel and dashboard bundles. Vite retained
+its advisory about large chunks; there were no build errors. `git diff --check`
+passed. Logs remain in `.test-temp-workspace-ui-20261104/refinement-*.log`.
+
+### Commit/push preparation and issue reconciliation
+
+Benz requested commits, a push to main and issue updates/closure. Quotation
+rules (#456) are committed separately from the coordinated workspace UI. The
+shared files are staged by feature without rewriting the tested working tree.
+Remaining installed-package, monitor/DPI, physical out-of-window drag and full
+detached-panel action acceptance is tracked in #466; debug observations are not
+relabelled as installed evidence. The agreed native-window scope and latest
+cursor-only resize/compact-header refinements supersede the planning-only wording
+in #462/#463. No installer or release is produced by this push.
+
+#415 stays open: the effective-pack/Tamil-gloss/stale-response fixes are present,
+but the later-expanded requirement for explicit maintained About descriptions,
+examples and content review for every supported language is not complete. #456
+also retains its documented complete-engine/installed/human-language acceptance
+gaps and #464/#465 remain separate investigations. Completed workspace feature
+issues can close with the remaining manual release acceptance linked to #466.
+
+## 2026-11-05 — Quotation default/override precedence repair (#456)
+
+CI run 41816920298 passed frontend, Rust, the complete engine suite (5,860
+passed, 2 skipped, 3 xfailed), foreground latency and Tamil human labels. Its
+indic-qa accuracy gate lost 29 reviewed Malayalam findings: 6 quote-direction,
+7 quotes-unbalanced and 16 straight-quote. The #456 adapter had unconditionally
+disabled profile quotation rules, even without saved project quotation settings.
+Benz explicitly chose to retain reviewed defaults with saved settings taking
+precedence (DECISIONS, same date).
+
+The common policy loader now returns the validated rules and explicit-save
+state in one read. Absence of the quotations member, including common files
+holding other keys, retains the pack's rules and overrides. A saved policy,
+even unchanged defaults or disabled checks, delegates only the conflicting
+profile quotation rules. Effective settings participate in resident and book
+cache identities. language-qa-9 invalidates results from the former blanket
+suppression. Checker settings shows legacy switches only while they apply;
+existing switches remain stored if superseded. Invalid saved configuration
+produces a coverage limitation and suppresses conflicting fallback conventions.
+Vendor files, human labels, thresholds and goldens remain untouched.
+
+Regression coverage exercises explicit save detection, every profile's effective
+switches, real Malayalam dispatcher scans, unchanged-default saves, disabling,
+symmetric quotes, resident/project switching and stable legacy finding IDs.
+Verification results are appended below once complete.
+
+Verification so far: 56 focused Python tests passed (59.13 s). The unchanged
+Malayalam human-label gate passed over 50 books / 323 labels, restoring the 29
+findings lost by CI. Hindi passed over 44 books / 120 labels, and the Tamil human
+label gate also passed. Both isolated frozen executables rebuilt successfully;
+the complete frozen smoke passed, including quotation settings/save, Matthew
+5–7 and reference evidence. Full engine pytest is running; no full-suite result
+is claimed yet. Logs: `.test-temp-workspace-ui-20261104/quotation-policy-*.log`.
+
+### Final local verification and push
+
+Pushed `409c6b2` to main: Preserve reviewed quotation checks until project rules
+are saved (#456). The complete engine suite then finished successfully with
+**5,881 passed, 3 xfailed, 4 warnings**, exit code 0, in 1,896.16 s (31m36s,
+`pytest -n 4 -q`). The warnings are the existing Starlette/httpx test-client
+deprecation repeated by workers. No failing cases or worker crashes occurred.
+This supersedes the pending local full-suite status above. The 56 focused tests,
+unchanged Malayalam/Hindi/Tamil human-label gates and rebuilt frozen smoke also
+passed. No frontend or Rust source changed in this repair; their prior gates
+remain the evidence for the workspace implementation.
+
+Issue #456 records the decision, repair and verification; it remains open for
+remote CI and installed/human quotation acceptance. Run 41966282886 is the CI
+run for the code commit; its outcome is not yet claimed. Completed workspace
+issues #457–#463 remain closed, with Windows acceptance in #466 and the expanded
+language-content work still in #415. No installer or release was produced.
+
+## 2026-11-05 — AI cost batch: #470 privacy trim, #471 payload trim, #472 prefix cache, #473 model per task; #474 design note
+
+**Why.** Benz's estimate of about $10 per chapter for the tN/tW AI review (#469 has the
+numbers and the plan for the one paid run, which Revant does by hand). Measured offline
+first, on a copy of the Hindi IRV Genesis project with the request body captured by a fake
+transport instead of sent: 101,013 / 97,798 / 82,483 chars per request for GEN 1:1–3, of
+which 49,695 was the same thirteen Translation Academy checking articles on every verse,
+and the reviewer-decision list carried `note`, `model`, `evidenceProvenance` paths and
+timestamps. The capture script is session-local (it copies the project into a temp root
+beside a junction to the real `resources/`, deletes the copy's `.apps/translationCoreAI`
+and never touches the real project); the numbers are in the comments on #470–#472.
+
+**#470 (40261df, test fix 516c78b).** `project_reviewer_decision` / `project_term_rendering`
+in `ai_client.py` project the two project-history lists to the fields the prompt uses
+(reference, tool, groupId, checkId, decision, selectionText; reference, source_quote,
+selection texts, nothingToSelect, invalidated). `ai_payload_manifest` gains
+`containsReviewerIdentity`, computed on the payload it is handed (any reviewer-history
+record with a key outside that shape). The audit of a check record's keys is on the issue;
+the reviewer's name and device were never in the payload (row columns), the note was.
+
+**#471 (9a16d47).** `CHECKING_METHOD_DIGEST`: the method of the thirteen articles in about
+3,400 chars of static instruction text; `evidence_pack_for_verse` no longer reads them per
+verse (`global_checking_evidence()` stays for its own test). The `tamil_verse` /
+`hebrew_topWords` / `tamil_bottomWords` copies are gone from the review payload (the
+alignment proposal's own fields are untouched). Body per verse: 101,013 → 49,507;
+97,798 → 44,309; 82,483 → 31,309.
+
+**#472 (863c1df).** `REVIEW_INSTRUCTIONS_STATIC` (role, rules, Stage 3 rules, digest) is
+built once and comes first; `review_instructions(language, check_count)` appends the
+project tail. The input serialises `resource_provenance`, `language_context` and the
+projected decisions before the verse. `prompt_cache_key` = the registered project id on
+every review request, with the reasoning guard's discipline: an explicit rejection gets one
+retry without it and the session stops sending it. Stored reviews and job results carry
+`usage {inputTokens, cachedInputTokens, outputTokens, totalTokens}`; the AI tab line reads
+"~$0.0123 · 12,345 tokens (8,000 cached)". Shared prefix between consecutive verses:
+368 + 21 chars → 7,920 + 2,692 (instructions + input). Not verified against a real provider;
+#469 will show the cached count.
+
+**#473 (1112455).** `AppSettings.ai_tasks` and `ai_task_choice(task)`; `_ai_client(task)`
+for review / alignment / triage; Settings > AI "Use one model for everything", **on by
+default** so no install changes model or quality on upgrade (alignment auto-apply and
+triage have never been measured on the cheap tier, #131); off, review = the configured
+model at medium (the review tier waits on #469), alignment and triage = `cheapest_model()`
+(gpt-5.6-luna) at low. The model and effort are recorded on the alignment proposal,
+cross-verse and auto-align verdict results. `ModelRouter`/`ModelChoice` deleted;
+`model_router.py` keeps the price table and `estimate_cost` (#147's fallback is unchanged).
+Four triage tests that stubbed `_ai_client` with a zero-argument lambda now take the task.
+
+**#474.** Design note only, as a comment on the issue: 4-verse windows (6 max) cut at
+section headings, one content-keyed evidence catalog per window, verse-scoped token ids,
+one `check_reviews` list split back into per-verse stored reviews with per-verse
+fingerprints taken at window start, missing-row rows for a skipped verse, half-size then
+single-verse retry for a failed window, 90 s + 40 s per verse timeout capped at 300 s, a
+"verses per request" setting with 1 = today. Prototype on GEN 1 offline, then one paid
+chapter beside #469.
+
+**Gates, batch.** Frontend (after #473): `npm run check` 0 errors / 0 warnings;
+`npm run test` 101 files, 1047 passed (2 new); `npm run build` ok. Engine: per-issue
+`pytest tests/ai` runs (126 / 130 / 128 passed) and `tests/service/test_ai_task_settings.py`
+(4 new); the first full `pytest -n auto` on the pre-fix tree gave 5660 passed, 20 failed,
+all test-side (the four stubs and a Stage 9B.1 exact-manifest expectation), fixed in
+516c78b / 1112455; the re-run on the committed tree (1112455) is 5680 passed, 3 xfailed, 0 failed in 10:06. Not run: cargo (no Rust change); the frozen pair (the
+engine changed, so `scripts/smoke_sidecars.py` is owed before the next release build);
+the installed app at 1366x768 (the per-task rows in Settings > AI and the AI tab usage
+line are a visual check still owed).
+
+**Not verified anywhere today:** any real provider call. That OpenAI honours
+`prompt_cache_key` on the Responses API, that the cached count lands in
+`input_tokens_details.cached_tokens`, and what the digest does to verdict quality are all
+believed from reading; #469 is where they are measured.
+
+**Rebase.** The push found origin/main about fifty commits ahead of this checkout (0.22.0–0.24.4, the Paratext and workspace work), so the six commits were rebased onto it (one import-line conflict in `SettingsModal.svelte`, this entry re-appended). Gates on the rebased tree: `npm run check` 0/0, `npm run test` 123 files / 1178 passed, `npm run build` ok; full `pytest -n auto` 5867 passed, 23 failed, every failure `ModuleNotFoundError: spylls` (the #414 spelling-pack dependency this venv had never installed) and all 214 tests of those files pass after `pip install -e ".[dev]"`. The commit ids above are the rebased ones.
+
+## 2026-11-06 — #469 measured: one chapter on a real key, three runs (baseline / new build / terra)
+
+**Why.** Every AI cost figure in this repo was an estimate from a fake transport. #469 is
+the one paid measurement the rest of the "AI cost" batch (#470–#474) is judged against, and
+the review tier default (`DEFAULT_USE_ONE_MODEL`, #473) waits on it. Revant ran it by hand
+on 2026-11-05 on the OpenAI account; the comment on #469 has the full tables, this is the
+record and what it means for the code.
+
+**Method.** Hindi IRV Genesis 1 (31 verses, 281 tN/tW checks: 160 tN, 121 tW), the
+Chapter button of the AI review tab, medium reasoning, advanced reviewer mode, all six
+checks ticked, each run on a **fresh import** so nothing was skipped as current:
+run 1 installed 0.24.4 on gpt-5.6 (`hin_hindi-irv-1_gen`), run 3 main at 9aae7e7 on
+gpt-5.6-terra (`hin_hindi-irv-2_gen`), run 2 main on gpt-5.6 (`hin_bible_gen`). Per-verse
+tokens and cost were read read-only from `ai_review_results.payload_json` (a scratch script,
+`mode=ro`), the lifetime counter from `workspace.sqlite3 settings_kv ai_usage_totals`, and the
+bill from the OpenAI usage CSV export per model per day plus the spend movement on the
+billing page. Run 2's dashboard line is today's gpt-5.6-sol minus run 1; it matches the
+spend movement ($17.93 → $28.11) to the cent. Total spent $28.11.
+
+| | Run 1 baseline | Run 2 after | Run 3 tier |
+|---|---|---|---|
+| Build / model | 0.24.4 / gpt-5.6 (billed gpt-5.6-sol) | main 9aae7e7 / gpt-5.6 | main 9aae7e7 / gpt-5.6-terra |
+| Verses | 31/31 | 31/31 (1:30 timed out at 240 s once; Retry) | 31/31 |
+| Dashboard requests | 109 | 106 | 111 |
+| Dashboard input (cached) / output tokens | 1,704,755 (19,260) / 204,916 | 1,265,228 (49,805) / 203,882 | 1,340,845 (31,716) / 176,720 |
+| **Dashboard cost** | **$12.53** | **$10.18** (−19%) | **$5.40** (−57%) |
+| Bridge-counted input (cached) / output | not stored in 0.24.4 | 921,005 (36,967) / 140,438 | 925,049 (31,716) / 123,417 |
+| Bridge estimate | $10.58 | $8.65 | $3.27 |
+| Verse 1 → 31 finished; mean s/verse | 40:11; 80 | 45:00 incl. the timeout; 90 | 36:46; 74 |
+| Checks pass / review | 128 / 153 | 119 / 162 | 123 / 158 |
+| Per Bible (×1,189) / NT (×260) | ≈ $14,900 / $3,300 | ≈ $12,100 / $2,600 | ≈ $6,400 / $1,400 |
+
+**Verdicts.** Same 281 checks in every run. Terra vs baseline: same verdict 276/281, same
+selected text 252, same word set 260, every difference pass→review (1:3 o0zd, 1:18 iq2u,
+1:25 hr2n, 1:27 fhpd, 1:27 nqtf). New build vs baseline on the same model: same verdict
+272/281, the nine pass→review (verses 1, 25, 30) all checks that the baseline and terra
+passed with the identical selection, so the #471 digest made gpt-5.6 more cautious on 3%
+of checks. All three agree on verdict for 268 and on word set for 244. The 37 checks where
+any run differs are in `human_pass_run1_run2_run3.csv` (Revant's scratch, with the Hindi
+verse, each run's words and rationale); nobody on the measurement reads Hindi well enough to
+judge them, so the "flagged wrong" / "cheaper tier clearly worse" counts wait on the
+translation team (Rina asked 2026-11-06). The tier default stays as it is until then.
+
+**What the bill taught that the code did not know** (filed as #475–#478):
+- Input is about two thirds of the cost on both tiers, output one third.
+- About 3.5 requests per verse; Bridge counts one. The semantic-mapping and gap-fill
+  alignment calls are outside `usage`, `estimatedCostUSD` and the lifetime counter: 31% of
+  run 3's bill, about a quarter of run 2's. A call that times out after it was sent is
+  billed (the 1:30 retry came back with 7,013 cached tokens) and never counted (#476).
+- #472's `prompt_cache_key` is honoured and the cached count does land in
+  `input_tokens_details.cached_tokens` — but the hit is exactly 1,762 tokens, on 17–18 of
+  31 verses, about 3% of input, not the ~10,600-token prefix the design expected. Only the
+  fixed instruction block matches; the per-verse part diverges earlier than assumed.
+- Price table: gpt-5.6-sol output is $20/M (table $30), gpt-5.6-terra input $2.50/M (table
+  $2.00); cached $0.50 / $0.25 (#475). 0.24.4 stores no `usage` at all, only the estimate.
+- The lifetime counter is written and never displayed (#477). A fresh webview profile
+  defaults the check selection to Language QA only, so the AI tab sat on "Preparing
+  translationNotes and translationWords resources…" until the core checks were ticked and
+  the chapter run once (#478).
+
+**Verified / not.** Verified: the three runs end to end on the installed 0.24.4 and on a
+dev build of main (sidecars rebuilt with `build-sidecars.ps1` after `pip install -e
+".[dev]"` for spylls; `scripts/smoke_sidecars.py` passed on the new `bridge-engine.exe`);
+the stored payloads, the lifetime counter deltas (run 3 matched Bridge's own sum exactly)
+and the dashboard CSV. Not verified: the quality of any verdict (the human pass); any
+Tamil chapter; the Basic reviewer mode. Confound: main also carries #456 and the
+0.22–0.24 Paratext and workspace work beside #470–#473. No code changed in this entry;
+`docs/QA_TEST_MATRIX.md` A29 gains the real-provider line.
+
+**Addendum, 2026-11-06 — the human pass, and #469 closed.** A translator on the Hindi team
+judged the 37 disagreeing checks: 33 acceptable in every run (span length, word order, or a
+word left unselected); run 2 wrong on 2 (1:1 pd9r, 1:29 nv8q), run 1 on 1 (1:29 nv8q), run 3
+on 1 (1:24 f3l5, the rationale's wording, verdict and words agreeing with run 1), all three on
+1:30 hifc ("small trees" for vegetation, a content question). "Cheaper tier clearly worse":
+1 of 281; terra the only correct run: 1 of 281. Reading the rationales behind the pass→review
+changes corrected an inference in the entry above: eight of run 2's nine (1:1 ×4, 1:25 ×4)
+say the semantic-mapping call timed out (`mapping_error`) and the location rule forbids a
+selection in that state; all five of terra's say the Hindi is accurate but Stage 3 reported
+`needs_extended_passage` / not securely grounded. So the #471 digest did not measurably change
+verdict quality on the same model; what looked like caution was the mapping state. The
+mapping call shares the client's 240 s timeout (no shorter one exists; the 30 s in
+`ai_client.py` is `test_connection`'s), and on gpt-5.6 it ran past it on 2 of 31 verses, on
+terra and on 0.24.4 never; the verse is then stored as a finished review with every check
+forced to `review`, and the chapter job treats it as current (#480). Recommendation posted on
+#469 and filed as #479: gpt-5.6-terra as the review default. #469 closed; card Done. No code
+changed.
+
+
+## 2026-11-06 — #469 follow-ups: #480 mapping timeout fails the verse, #475 prices, #476 every call counted, #477 counter shown, #478 fresh-profile hint; #479 waits on Benz
+
+Five of the six follow-ups filed from the #469 measurement, one commit each on `main`
+in the order #480, #475, #476, #477, #478. Step 0 first: `git log origin/main` since
+2026-11-04, every branch, open PRs, the issues' timelines and board 40 — nobody else had
+touched any of them (Joel's last commits are the 2026-11-03 Paratext fixes; Benz's are
+#456 and a docs commit); the code for each was read before deciding. #476, #477 and #478
+were not on the board despite the previous entry saying so; added as Backlog, then moved.
+
+**#479 (terra as the review default) is not flipped.** No approval on the issue, nothing in
+`docs/DECISIONS.md`; `DEFAULT_USE_ONE_MODEL` stays `True` and the model default stays
+`gpt-5.6`. It is Benz's decision; nothing was posted.
+
+**#480 (b266ae2).** `prepare_semantic_mappings_for_review` folded every exception into the
+`mapping_error` state. For a transport failure — the mapping call past the client's 240 s on
+#469 run 2, GEN 1:1 and 1:25 — the review call still ran and was billed, every check came
+back `review` with no selection, and the verse was stored as a finished, current review the
+chapter job's Retry never re-ran. A `TransportFailure` is now re-raised (same
+`AITransportError`, the mapping named in the message) before the review request is built,
+so the verse fails in the job and Retry re-runs it; a schema/validation/resource failure
+keeps the fail-closed `mapping_error`. `default_transport` also wraps a raw
+`TimeoutError`/`OSError`/`HTTPException` from the body read as `AITransportError` — urllib
+wraps only the connect and the wait for headers in `URLError`. No automatic retry of the
+mapping call: each attempt is up to 240 s and billed; Retry is the retry. Test:
+`tests/service/test_ai_review_mapping_timeout.py` (marked `stage3db` + `slow` in
+`tests/conftest.py`): the real Stage 3 DB covers TIT, so the live `ai.review.start` job on
+the Titus fixture sends the real mapping request, the fake transport raises, nothing is sent
+after it, the verse fails with the timeout in its error, `check.listForVerse` shows no
+current review, `ai.review.retry` re-runs it, and a non-transport mapping failure still
+completes the verse.
+
+**#475 (52367b0).** `DEFAULT_PRICES`: sol output $30 → $20, terra input $2.00 → $2.50 and
+cached $0.20 → $0.25, with the source in the comment (the #469 dashboard CSV arithmetic).
+The old "configurable, users can override in settings" claim was wrong — nothing reads the
+table but `estimate_cost` — and is gone. `tests/ai/test_model_prices.py`.
+
+**#476 (2ba3008).** The client keeps a call ledger (`call_log`): one entry per request
+sent — the provider's counts for an answered one; for a transport failure after the
+request went out, the input estimated from the body (`estimate_input_tokens`: ~4 ASCII
+chars per token, ~2 tokens per non-ASCII char; flagged as `unanswered_calls`).
+`usage_mark()` / `usage_since(mark)` sum a span. `prepare_verse_review` marks before the
+mapping and sums after the review (mapping + gap-fill + review); `run_full_review` on its
+own does the same around its mapping + review; the job records the sum on success and, on
+failure, whatever the verse already spent (before, a verse that failed after its first
+call counted as free). `AIUsage` gains `calls` / `unanswered_calls`; `usage_dict`, the job
+result's `usage` and the AI tab's line carry them ("N requests", "N unanswered, input
+estimated"). Tests: `tests/ai/test_ai_usage_ledger.py`;
+`tests/service/test_ai_usage_accounting.py` (`stage3db` + `slow`): the live job on Titus
+1:1 with each schema answered with its own counts — the job's usage line, the stored
+review's `usage` and the lifetime counter all equal the sum, `calls == 3`; and a review
+call that times out after the mapping and gap-fill were answered fails the verse while the
+counter carries the two answered calls plus the estimated review input.
+
+**#477 (ae5689c).** Settings > AI provider shows "Used so far on this device: N tokens ·
+~$X (since <date>)" under the API key with a Reset counter button behind `askConfirmation`.
+`settings.get`'s `aiUsage` gains `since` (first counted call or last reset; `null` for a
+pre-#477 counter until reset); `settings.set {resetAiUsage: true}` zeroes and dates it.
+Same `settings_kv` row, no schema change. `tests/service/test_ai_usage_settings.py`; four
+Vitest cases in `SettingsModal.test.ts` (digit grouping follows the machine locale — en-IN
+groups 71,59,086 — so the assertions strip commas).
+
+**#478 (976440a).** `check.listForVerse` keeps `state: "preparing"` and adds `pending:
+"resourceIndexes"` and `running` (`_check_jobs.active()`); with no run under way the
+message says to tick Translation Notes and Translation Words under Checks and run the
+chapter once, and the poll slows to 2 s. The tN/tW tab shows that without the spinner and a
+"Prepare now" button, which sets a new `checkRunRequest` store (the `reviewTabRequest`
+pattern); App ticks both boxes with the Checks menu's `toggleCheck` and calls the same
+`beginChecks` as Run chapter. The indexes are still never built on the dispatcher thread.
+One test in `test_check_selection.py`, two in `TranslationHelpsReview.test.ts`.
+
+**Verified / not.** Verified: each commit's own tests as listed in its message; the batch
+gates once — the full engine suite (`pytest -n auto`), `npm run check` / `test` / `build`,
+`build-sidecars.ps1` then `scripts/smoke_sidecars.py` on the frozen `bridge-engine.exe` —
+the full engine suite 5901 passed / 3 xfailed / 1 failed (`tests/connectors/test_logos_connector.py::test_get_state_round_trips_through_the_real_helper_process`, the real PowerShell helper's 15 s startup under the parallel suite + PyInstaller + Vitest load; passes alone in 1.2 s; untouched by this batch), svelte-check 0/0, Vitest 1184 passed, the build, and `smoke_sidecars.py` passed on the rebuilt pair. Not verified: the real desktop app (no walk; the
+#478 button and the Settings counter are jsdom-tested only); a real provider timeout
+(the fake transport raises `AITransportError`; the `default_transport` body-read branch is
+unit-tested with a stub `urlopen`); the token estimate against a real tokenizer (it is an
+estimate and labelled one). No change to verdicts, thresholds, auto-apply or project-file
+writes; #479 is untouched.
+
+**Addendum, 2026-11-06 — #479 flipped.** Rina approved the terra default the same day
+(relayed by Revant; DECISIONS.md 2026-11-06), so it did not wait on Benz. `DEFAULT_REVIEW_MODEL
+= "gpt-5.6-terra"` in `model_router.py`; `AppSettings.model` and `OpenAIResponsesClient`'s
+default follow it, a saved model is kept, a blank save falls back to it, and Settings > AI
+provider's hint carries the #469 numbers. One-model mode is unchanged, so every task now runs
+on terra at medium on a fresh install; alignment and triage tiers are unchanged. Tests:
+`test_the_review_default_is_terra_and_a_saved_model_is_kept` in `test_ai_task_settings.py`;
+two Vitest cases in `SettingsModal.test.ts`. No existing test pinned the old default (all set
+the model explicitly).
+
 ## 2026-11-11 — Reorder a column and rubber-band pick in the word bank (#410, partial)
 
 Two gaps in the one-verse alignment modal, both raised in #410 (only these

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.client
 import json
 import re
 import urllib.error
@@ -14,7 +15,7 @@ from .alignment_engine import apply_proposal, make_inventory, validate_proposal,
 from .alignment_reliability import compile_link_proposal
 from .models import AICheckReview, QAIssue, VerseAlignment
 from .tc_project import TranslationCoreProject
-from .model_router import estimate_cost
+from .model_router import DEFAULT_REVIEW_MODEL, estimate_cost
 from .cache_engine import dependency_snapshot
 from .security import ai_payload_manifest
 from .plugins import PluginRegistry
@@ -76,12 +77,207 @@ def _recover_quoted_target_selections(rationale: str, target_text: str) -> list[
     ]
 
 
+# #470: a reviewer's past decision contributes *what was decided* to a verse
+# review -- the check, the verdict and the target words chosen -- never who
+# decided it, when, what they wrote about it, which model proposed it, or where
+# the evidence lived on disk. These are the only keys the two project-history
+# lists may carry; `security.ai_payload_manifest` reports a record outside this
+# shape as `containsReviewerIdentity: true`.
+REVIEWER_DECISION_FIELDS = ('reference', 'tool', 'groupId', 'checkId', 'decision', 'selectionText')
+PROJECT_RENDERING_FIELDS = ('reference', 'source_quote', 'selections', 'nothingToSelect', 'invalidated')
+
+
+# #471: the whole-verse QA used to carry the full text of thirteen Translation
+# Academy "checking" articles (49,695 chars serialised, about half of every
+# request) as evidence items, resent for every verse. The model is asked to
+# review one verse; it needs the method, not the articles. This digest is the
+# method, written once as static instruction text so the provider's prefix
+# cache can hold it (#472). The articles themselves stay on disk and
+# `TranslationHelpsKnowledgeBase.global_checking_evidence()` still reads them
+# for any caller that wants the text; they are simply no longer sent.
+CHECKING_METHOD_DIGEST = (
+    'CHECKING METHOD (digest of the unfoldingWord Translation Academy "Checking" articles: '
+    'Accuracy Check, Complete, Clear, Natural, Acceptable Style, Spelling, Punctuation, Formatting, '
+    'Alignment Checking, translationNotes Check, translationWords Check, Language Community Check, '
+    'Quality Checker Evaluation). '
+    'Accuracy: compare the translation with the original-language passage, never with an English gloss. '
+    'Does the translation add anything to the original meaning (implicit information is part of the original meaning)? '
+    'Is any part of the meaning left out? Has the meaning changed? Was everything mentioned in the source also '
+    'mentioned in the flow of the translation? Does the message, not necessarily the wording or the order, follow '
+    'the source? Are the same participants doing the same things, and is it easy to see who did what? Do the key '
+    'terms used match the source concepts? Check a difficult sentence part by part; a different order of ideas can '
+    'still be accurate. Ask of the translation alone: who did what, when, where, how and why. '
+    'Complete: nothing is missing: every event, every verse, no place where something seems left out or the '
+    'message differs from the source. Verse-numbering differences (bridged verses, verses moved to a footnote) do '
+    'not by themselves make a translation incomplete. '
+    'Clear: the words and phrases make the message understandable; the community\'s own words rather than borrowings '
+    'from a national language; a style that fits the intended audience; a reader can follow without re-reading, and '
+    'each part fits what precedes and follows it. '
+    'Natural: it sounds as if written by a member of the language community, not by a foreigner; judged as speech, '
+    'without reference to the source: would people say it this way when talking about such a thing? '
+    'Acceptable style: understood by young and old; the formality the community prefers; not too many borrowed '
+    'words; a form of the language the wider community understands, not one dialect only. '
+    'Spelling: one agreed spelling used consistently through the book, especially for names of people and places. '
+    'Punctuation: one agreed system (quotation marks, pauses, sentence ends) applied consistently. '
+    'Formatting: alphabet, spelling and punctuation are decided before translating; versification and section '
+    'headings are checked after a book is finished. '
+    'Alignment checking: every target word is aligned to the original-language word or words it renders; a word with '
+    'no counterpart is a question to raise, and the alignment shows where meaning was added, omitted or shifted. '
+    'translationNotes check: for each Note, find the target rendering of the quoted word or phrase, select it, and '
+    'judge whether it makes sense in context and handles the issue the Note raises; a problem becomes an edit or a '
+    'comment for a reviewer, never a silent pass. '
+    'translationWords check: for each key term, find and select the target rendering; judge it in context against '
+    'the term\'s definition; allow contextually justified variation; note inconsistency across the book. '
+    'Language community check and quality checker evaluation: community members not involved in the translation '
+    'must be able to answer comprehension questions from the translation alone, and church leaders affirm accuracy, '
+    'clarity, acceptable style and community approval. Those are human steps: prepare evidence for them, do not '
+    'replace them. This digest is method, not evidence: cite only evidence_catalog items as evidence.'
+)
+
+
+# #472: everything that is the same for every verse of every project comes
+# first, byte-identical, so the provider's prefix cache (first 1,024+ tokens
+# must match) can hold it; the language pair, the editorial categories and
+# the check count follow as a short tail. The static block is built once at
+# import. Sentence content is the pre-#472 prompt's; only the order and the
+# two language-name mentions ("target-language" instead of the name, which
+# the tail supplies) changed.
+REVIEW_INSTRUCTIONS_STATIC = (
+    'You are a senior Bible translation reviewer operating translationCore checks. '
+    'The human reviewer should not have to read every resource or manually find/select target words: do that preparation now, then present concise evidence-backed final results. '
+    'Return exactly one check_reviews row for EVERY supplied translationCore check. Use every supplied check_id exactly once; do not omit, combine, duplicate, rename, or invent checks. '
+    'For each check, read its evidence_catalog items, understand the source quote and note/key-term concept, examine EVERY supplied target bottomWord (including inflected and compound surface forms), locate the exact existing target-language bottomWord IDs that represent it, and return those IDs. '
+    'Use ONLY supplied target-language selection IDs; never invent/normalize/rewrite tokens. '
+    'A correct translation still requires selection_ids for the exact target word or phrase that carries the checked meaning. '
+    'Do not set nothing_to_select merely because the verdict is pass or because you think selecting text is optional. '
+    'A genuinely absent or incorrectly rendered checked meaning is a problem: return verdict=problem, empty selection_ids, and nothing_to_select=false so the issue remains unresolved. '
+    'Set nothing_to_select=true only when the check is structurally not applicable. A source key term that is translated by a suffix-bearing or compound target token is applicable and must select that entire supplied token ID. '
+    'If the rationale names or quotes a target rendering, include every corresponding supplied target ID in selection_ids. '
+    'For Translation Notes, apply the linked Translation Academy method/principle and judge whether the target translation handles the specific issue. '
+    'For Translation Words, use the Translation Word article, TWL occurrence, source morphology, and approved project renderings; allow contextually justified variation. '
+    'Then perform whole-verse QA following the CHECKING METHOD below: accuracy/completeness first, including omission, unsupported addition, wrong lexical meaning, negation/scope, participants/pronouns, number/person, commands/questions, semantic relations, figures, terminology, and stale/misaligned meaning. '
+    'Separately evaluate only the language-appropriate editorial categories listed at the end of these instructions. '
+    'False-positive discipline: before reporting a missing-rendering or wrong-lexical-meaning issue, inspect every supplied target token for a valid inflected, suffixed, compounded, transliterated, or contextually equivalent rendering. Do not call a rendering absent merely because it differs from an English gloss or citation form. Test the strongest plausible explanation that the target rendering is valid, consult existing alignment/approved decisions/terminology, and report only one finding for one underlying problem. '
+    'Critical findings require very high confidence and explicit evidence. Low-confidence possibilities should be review-level or omitted, not exaggerated. '
+    'Reference only evidence IDs that exist in evidence_catalog. Reference Bibles/English are secondary aids, never authority over source data. '
+    'Do not propose a correction merely because a literal rendering differs. Human/community final approval remains human. Return only the schema. '
+    'IMPORTANT STAGE 3 LOCATION RULES: source and target verse numbers are reference anchors, not mandatory semantic boundaries. '
+    'Use semantic_passage_mappings to determine where each checked source meaning is realized. '
+    'selection_ids can encode ONLY the current verse bottom IDs. '
+    'When a check state is found_another_verse or split_across_verses, return an empty selection_ids array and nothing_to_select=false; do not invent a current-verse token. '
+    'When represented_implicitly, return empty selection_ids and nothing_to_select=false because Bridge records an explicit semantic state. '
+    'When needs_passage_review, needs_extended_passage_review, target_not_located, source_anchor_unresolved, or mapping_error, do not infer omission merely from non-location; use verdict=review unless independent supplied evidence securely demonstrates a problem. '
+    'Never encode found-in-another-verse as Nothing to Select. '
+    + CHECKING_METHOD_DIGEST
+)
+
+
+def review_instructions(language: Any, check_count: int) -> str:
+    """The full-review instructions: the static block, then the per-project
+    and per-verse tail (#472). `language` is a plugin language context
+    (`source_name`, `target_name`, `qa_categories`, `prompt_guidance`)."""
+    tail = (
+        f' PROJECT: this is a {language.source_name} → {language.target_name} project; '
+        f'the target language is {language.target_name}. '
+        f'Language-appropriate editorial categories for this project: {", ".join(language.qa_categories)}. '
+        f'{language.prompt_guidance} '
+        f'THIS VERSE: {check_count} input checks require exactly {check_count} result rows.'
+    )
+    return REVIEW_INSTRUCTIONS_STATIC + tail
+
+
+def review_prompt_cache_key(project: Any) -> str:
+    """The provider-side cache key for one project's review calls (#472): the
+    registered project id, so every verse of a chapter or book run shares a
+    prefix cache. Empty when the project has no identity (never sent)."""
+    identity = getattr(project, 'workbench_identity', None)
+    return str(getattr(identity, 'project_id', '') or '')
+
+
+def usage_dict(usage: AIUsage) -> dict[str, int]:
+    """The usage of one or more calls as stored on a review and shown in the
+    AI tab (#472). `cachedInputTokens` is the part of `inputTokens` the
+    provider served from its prefix cache at a tenth of the input price.
+    `calls` is every request sent (#476: the semantic mapping, the gap-fill
+    alignment and the review, not the review alone); `unansweredCalls` the
+    ones the provider never answered, whose input is an estimate from the
+    request body and whose output is unknown (counted as 0)."""
+    return {
+        'inputTokens': int(usage.input_tokens), 'cachedInputTokens': int(usage.cached_input_tokens),
+        'outputTokens': int(usage.output_tokens), 'totalTokens': int(usage.total_tokens),
+        'calls': int(usage.calls), 'unansweredCalls': int(usage.unanswered_calls),
+    }
+
+
+def estimate_input_tokens(body: bytes) -> int:
+    """A rough token count for a request body the provider never answered
+    (#476), so the call is not counted as free: ~4 ASCII characters per token
+    and ~2 tokens per non-ASCII character (Devanagari, Tamil, Hebrew and Greek
+    script are several bytes each under a byte-pair tokenizer). An estimate,
+    and reported as one through `AIUsage.unanswered_calls`."""
+    try:
+        text = body.decode('utf-8')
+    except UnicodeDecodeError:
+        return max(1, len(body) // 4)
+    ascii_chars = sum(1 for ch in text if ord(ch) < 128)
+    return max(1, ascii_chars // 4 + (len(text) - ascii_chars) * 2)
+
+
+def project_reviewer_decision(record: dict[str, Any]) -> dict[str, Any]:
+    """Project one `human_decisions` check record to the fields the prompt uses.
+
+    Dropped on purpose: `note` (free text), `model`, `evidenceProvenance`
+    (resource paths), `modifiedTimestamp`, `selectionIds` (verse-local opaque
+    ids), `bookId`, `app`, `schemaVersion`. A record's author and device are
+    row columns, not payload keys, so they were never here; the note was."""
+    return {
+        'reference': f"{record.get('chapter', '')}:{record.get('verse', '')}",
+        'tool': str(record.get('tool') or ''),
+        'groupId': str(record.get('groupId') or ''),
+        'checkId': str(record.get('checkId') or ''),
+        'decision': str(record.get('decision') or ''),
+        'selectionText': [str(x) for x in (record.get('selectionText') or []) if isinstance(x, (str, int, float))],
+    }
+
+
+def project_term_rendering(record: dict[str, Any]) -> dict[str, Any]:
+    """Project one `project_term_renderings` entry to its rendering: where, for
+    which source words, which target words. The selection's occurrence
+    counters are verse-local and are dropped."""
+    selections = record.get('selections')
+    texts: list[str] = []
+    if isinstance(selections, list):
+        for item in selections:
+            if isinstance(item, dict) and item.get('text') not in (None, ''):
+                texts.append(str(item['text']))
+            elif isinstance(item, str) and item:
+                texts.append(item)
+    return {
+        'reference': str(record.get('reference') or ''),
+        'source_quote': str(record.get('source_quote') or ''),
+        'selections': texts,
+        'nothingToSelect': bool(record.get('nothingToSelect', False)),
+        'invalidated': bool(record.get('invalidated', False)),
+    }
+
+
 @dataclass
 class AIUsage:
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
     cached_input_tokens: int = 0
+    # #476: requests sent, and of those the ones never answered (a transport
+    # failure after the request went out; the provider may still bill it).
+    calls: int = 0
+    unanswered_calls: int = 0
+
+    def __add__(self, other: 'AIUsage') -> 'AIUsage':
+        return AIUsage(
+            self.input_tokens + other.input_tokens, self.output_tokens + other.output_tokens,
+            self.total_tokens + other.total_tokens, self.cached_input_tokens + other.cached_input_tokens,
+            self.calls + other.calls, self.unanswered_calls + other.unanswered_calls,
+        )
 
 
 Transport = Callable[[str, dict[str, str], bytes, float], tuple[int, bytes]]
@@ -96,17 +292,23 @@ def default_transport(url: str, headers: dict[str, str], body: bytes, timeout: f
         return e.code, e.read()
     except urllib.error.URLError as e:
         raise AITransportError(f'Network error contacting OpenAI: {e.reason}') from e
+    except (OSError, http.client.HTTPException) as e:
+        # #480: a timeout or a dropped connection while the body is being read
+        # arrives raw, not wrapped in URLError (urllib wraps only the connect
+        # and the wait for headers). It is the same thing: the provider never
+        # answered, and the request may still be billed (#476).
+        raise AITransportError(f'Network error contacting OpenAI: {e}') from e
 
 
 class OpenAIResponsesClient:
     ENDPOINT = 'https://api.openai.com/v1/responses'
     MODELS_ENDPOINT = 'https://api.openai.com/v1/models'
 
-    def __init__(self, api_key: str, model: str = 'gpt-5.6', transport: Transport = default_transport, timeout: float = 240.0, reasoning_effort: str = 'medium', base_url: str = ''):
+    def __init__(self, api_key: str, model: str = DEFAULT_REVIEW_MODEL, transport: Transport = default_transport, timeout: float = 240.0, reasoning_effort: str = 'medium', base_url: str = ''):
         if not api_key.strip():
             raise AIError('No OpenAI API key is configured.')
         self.api_key = api_key.strip()
-        self.model = model.strip() or 'gpt-5.6'
+        self.model = model.strip() or DEFAULT_REVIEW_MODEL
         self.transport = transport
         self.timeout = timeout
         self.reasoning_effort = reasoning_effort if reasoning_effort in ('none','low','medium','high','xhigh','max') else 'medium'
@@ -127,7 +329,15 @@ class OpenAIResponsesClient:
             self.endpoint = self.ENDPOINT
             self.models_endpoint = self.MODELS_ENDPOINT
         self.last_cost_usd = 0.0
+        # #476: one entry per request sent, answered or not, with its cost.
+        # `usage_mark` / `usage_since` sum a verse's calls (mapping, gap-fill,
+        # review) so none is left out of the stored usage or the lifetime
+        # counter; `last_usage` is still the most recent call alone.
+        self.call_log: list[tuple[AIUsage, float]] = []
         self.last_privacy_manifest: dict[str, Any] = {}
+        # #472: set once a provider has rejected `prompt_cache_key`, so a
+        # chapter run pays the 400 once, not once per verse.
+        self.prompt_cache_key_unsupported = False
 
     def _model_supports_reasoning_effort(self) -> bool:
         name = self.model.lower()
@@ -164,7 +374,18 @@ class OpenAIResponsesClient:
         # Retry only transient transport/server failures. Schema/auth/input
         # errors fail immediately and are handled by the caller.
         for attempt in range(3):
-            status, raw = self.transport(self.endpoint, headers, body, self.timeout)
+            try:
+                status, raw = self.transport(self.endpoint, headers, body, self.timeout)
+            except ai_http.TransportFailure:
+                # #476: the request went out and was never answered (a read
+                # timeout, a dropped connection). The provider may bill the
+                # input, so it is logged as an unanswered call with the input
+                # estimated from the body, never as a free call.
+                estimated = estimate_input_tokens(body)
+                self.last_usage = AIUsage(estimated, 0, estimated, 0, calls=1, unanswered_calls=1)
+                self.last_cost_usd = estimate_cost(self.model, estimated, 0)
+                self.call_log.append((self.last_usage, self.last_cost_usd))
+                raise
             if status not in (408, 409, 429, 500, 502, 503, 504):
                 break
             if attempt < 2:
@@ -204,10 +425,49 @@ class OpenAIResponsesClient:
         mentions_reasoning = 'reasoning.effort' in message or 'reasoning_effort' in message
         return explicitly_unsupported and (reasoning_parameter or mentions_reasoning)
 
+    @staticmethod
+    def _prompt_cache_key_unsupported(status: int, response: dict[str, Any]) -> bool:
+        """Recognize only an explicit rejection of the optional ``prompt_cache_key``
+        (#472), with the same discipline as the reasoning guard: an arbitrary
+        400 is a real problem and is not retried."""
+        if status != 400:
+            return False
+        error = response.get('error')
+        if not isinstance(error, dict):
+            return False
+        parameter = str(error.get('param') or '').strip().lower()
+        code = str(error.get('code') or '').strip().lower()
+        message = str(error.get('message') or '').strip().lower()
+        explicitly_unsupported = (
+            code in {'unsupported_parameter', 'unsupported_value', 'unknown_parameter'}
+            or 'not supported' in message
+            or 'unsupported parameter' in message
+            or 'unknown parameter' in message
+            or 'unrecognized request argument' in message
+        )
+        return explicitly_unsupported and (parameter == 'prompt_cache_key' or 'prompt_cache_key' in message)
+
     def _effective_reasoning_effort(self) -> str:
         return self.last_reasoning_effort or 'provider-default'
 
-    def _post_text(self, instructions: str, input_text: str, schema_name: str, schema: dict[str, Any]) -> str:
+    def usage_mark(self) -> int:
+        """A position in the call log, for `usage_since`."""
+        return len(self.call_log)
+
+    def usage_since(self, mark: int) -> tuple[AIUsage, float]:
+        """The summed usage and estimated cost of every request sent since
+        `mark` (#476), answered or not."""
+        total = AIUsage()
+        cost = 0.0
+        for usage, call_cost in self.call_log[mark:]:
+            total = total + usage
+            cost += call_cost
+        return total, cost
+
+    def _post_text(
+        self, instructions: str, input_text: str, schema_name: str, schema: dict[str, Any],
+        prompt_cache_key: str | None = None,
+    ) -> str:
         """Issue one Responses API call and return its raw output text.
 
         Split out of _post_structured so a caller that must tolerate a
@@ -237,6 +497,12 @@ class OpenAIResponsesClient:
         # only attach it when the configured model is known to support it.
         if self._model_supports_reasoning_effort():
             payload['reasoning'] = {'effort': self.reasoning_effort}
+        # #472: the provider caches an identical prompt prefix and charges it
+        # at a tenth of the input price; the key routes every call of one
+        # project to the same cache. Optional, and dropped for the session the
+        # first time an OpenAI-compatible endpoint rejects it.
+        if prompt_cache_key and not self.prompt_cache_key_unsupported:
+            payload['prompt_cache_key'] = str(prompt_cache_key)
         headers = {
             'Authorization': f'Bearer {self.api_key}',
             'Content-Type': 'application/json',
@@ -245,10 +511,15 @@ class OpenAIResponsesClient:
         self.last_reasoning_effort = self.reasoning_effort
         status, response = self._request_json(payload, headers)
         if self._reasoning_parameter_unsupported(status, response):
-            fallback_payload = dict(payload)
-            fallback_payload.pop('reasoning', None)
-            status, response = self._request_json(fallback_payload, headers)
+            payload = dict(payload)
+            payload.pop('reasoning', None)
+            status, response = self._request_json(payload, headers)
             self.last_reasoning_effort = None
+        if 'prompt_cache_key' in payload and self._prompt_cache_key_unsupported(status, response):
+            payload = dict(payload)
+            payload.pop('prompt_cache_key', None)
+            self.prompt_cache_key_unsupported = True
+            status, response = self._request_json(payload, headers)
         if status < 200 or status >= 300:
             err = response.get('error', {})
             msg = err.get('message') if isinstance(err, dict) else None
@@ -261,15 +532,20 @@ class OpenAIResponsesClient:
             int(usage.get('output_tokens', 0) or 0),
             int(usage.get('total_tokens', 0) or 0),
             cached,
+            calls=1,
         )
         self.last_cost_usd=estimate_cost(self.model,self.last_usage.input_tokens,self.last_usage.output_tokens,self.last_usage.cached_input_tokens)
+        self.call_log.append((self.last_usage, self.last_cost_usd))
         text = self._extract_text(response)
         if not text:
             raise AIError('OpenAI response contained no output text.')
         return text
 
-    def _post_structured(self, instructions: str, input_text: str, schema_name: str, schema: dict[str, Any]) -> dict[str, Any]:
-        text = self._post_text(instructions, input_text, schema_name, schema)
+    def _post_structured(
+        self, instructions: str, input_text: str, schema_name: str, schema: dict[str, Any],
+        prompt_cache_key: str | None = None,
+    ) -> dict[str, Any]:
+        text = self._post_text(instructions, input_text, schema_name, schema, prompt_cache_key=prompt_cache_key)
         try:
             result = json.loads(text)
         except json.JSONDecodeError as e:
@@ -608,7 +884,10 @@ class OpenAIResponsesClient:
                 evidence_catalog[eid] = ev
                 ev_ids.append(eid)
             group = str(c.get('groupId') or '')
-            history = kb.project_term_renderings(group, 120) if c.get('tool') == 'translationWords' else []
+            history = (
+                [project_term_rendering(r) for r in kb.project_term_renderings(group, 120)]
+                if c.get('tool') == 'translationWords' else []
+            )
             check_inputs.append({
                 'tool': c.get('tool'), 'groupId': group, 'checkId': c.get('checkId'),
                 'source_quote': c.get('source_quote'), 'occurrence': c.get('occurrence'),
@@ -616,12 +895,17 @@ class OpenAIResponsesClient:
                 'nothingToSelect': c.get('nothingToSelect'), 'invalidated': c.get('invalidated'),
                 'evidence_ids': ev_ids, 'approved_project_renderings': history,
             })
-        global_evidence_ids=[]
-        for ev in pack.get('global_checking_evidence', []):
-            eid=f'E{ev_n:03d}'; ev_n += 1; evidence_catalog[eid]=ev; global_evidence_ids.append(eid)
+        # The Translation Academy checking articles are no longer catalogued
+        # here (#471): the method is `CHECKING_METHOD_DIGEST` in the
+        # instructions, so a `qa_issues` row cites verse evidence only.
         for rb in pack.get('reference_bibles', []):
             eid=f'E{ev_n:03d}'; ev_n += 1; evidence_catalog[eid]=rb
 
+        # #476: everything from here to the review's answer is this review's
+        # usage -- the mapping call below when this runs on its own (from
+        # prepare_verse_review the mapping and the gap-fill came before and
+        # are summed there), then the review call.
+        usage_mark = self.usage_mark()
         if semantic_mapping_pack is None:
             semantic_mapping_pack = prepare_semantic_mappings_for_review(
                 project=project,
@@ -630,21 +914,30 @@ class OpenAIResponsesClient:
                 verse=verse,
             )
 
+        # Each token list and the verse go once, under the language-neutral
+        # names (#471). The `tamil_verse` / `hebrew_topWords` /
+        # `tamil_bottomWords` aliases were a second copy of the same data for
+        # old tests and plugins; nothing reads them from this payload now
+        # (the alignment proposal in `propose_alignment` has its own fields).
+        # Key order is the serialised order (#472): the project-level constants
+        # first so the input's prefix is identical from verse to verse, the
+        # verse itself last.
         input_obj = {
-            'reference': f'{project.book_id} {chapter}:{verse}',
-            'tamil_verse': project.target_verse_text(chapter, verse),
-            'hebrew_topWords': top_tokens,
-            'tamil_bottomWords': bottom_tokens,
-            'current_alignment_groups': aligned,
-            'translationCore_checks': check_inputs,
-            'evidence_catalog': evidence_catalog,
             'resource_provenance': pack.get('resource_provenance', {}),
-            'global_checking_evidence_ids': global_evidence_ids,
-            'project_reviewer_decisions': sorted(project.project_decisions(), key=lambda d: str(d.get('modifiedTimestamp','')))[-100:],
             'language_context': language.to_dict(),
+            # Ordered by the timestamp, which is then dropped with the rest of
+            # the record's identity (#470, `project_reviewer_decision`).
+            'project_reviewer_decisions': [
+                project_reviewer_decision(d)
+                for d in sorted(project.project_decisions(), key=lambda d: str(d.get('modifiedTimestamp', '')))[-100:]
+            ],
+            'reference': f'{project.book_id} {chapter}:{verse}',
             'target_verse': project.target_verse_text(chapter, verse),
             'source_topWords': top_tokens,
             'target_bottomWords': bottom_tokens,
+            'current_alignment_groups': aligned,
+            'translationCore_checks': check_inputs,
+            'evidence_catalog': evidence_catalog,
             'semantic_passage_mappings': semantic_mapping_pack.get('mappings', []) if semantic_mapping_pack else [],
             'semantic_mapping_check_states': semantic_mapping_pack.get('checkStates', []) if semantic_mapping_pack else [],
             'semantic_mapping_unresolved': semantic_mapping_pack.get('unresolved', []) if semantic_mapping_pack else [],
@@ -694,37 +987,13 @@ class OpenAIResponsesClient:
             },
             'required': ['summary','check_reviews','qa_issues'],
         }
-        instructions = (
-            f'You are a senior Bible translation reviewer operating translationCore checks for a {language.source_name} → {language.target_name} project. '
-            'The human reviewer should not have to read every resource or manually find/select target words: do that preparation now, then present concise evidence-backed final results. '
-            f'Return exactly one check_reviews row for EVERY supplied translationCore check: {len(check_inputs)} input checks require exactly {len(check_inputs)} result rows. Use every supplied check_id exactly once; do not omit, combine, duplicate, rename, or invent checks. '
-            f'For each check, read its evidence_catalog items, understand the source quote and note/key-term concept, examine EVERY supplied target bottomWord (including inflected and compound surface forms), locate the exact existing {language.target_name} bottomWord IDs that represent it, and return those IDs. '
-            f'Use ONLY supplied {language.target_name} selection IDs; never invent/normalize/rewrite tokens. '
-            'A correct translation still requires selection_ids for the exact target word or phrase that carries the checked meaning. '
-            'Do not set nothing_to_select merely because the verdict is pass or because you think selecting text is optional. '
-            'A genuinely absent or incorrectly rendered checked meaning is a problem: return verdict=problem, empty selection_ids, and nothing_to_select=false so the issue remains unresolved. '
-            'Set nothing_to_select=true only when the check is structurally not applicable. A source key term that is translated by a suffix-bearing or compound target token is applicable and must select that entire supplied token ID. '
-            'If the rationale names or quotes a target rendering, include every corresponding supplied target ID in selection_ids. '
-            'For Translation Notes, apply the linked Translation Academy method/principle and judge whether the target translation handles the specific issue. '
-            'For Translation Words, use the Translation Word article, TWL occurrence, source morphology, and approved project renderings; allow contextually justified variation. '
-            'Then perform whole-verse QA using the supplied checking evidence: accuracy/completeness first, including omission, unsupported addition, wrong lexical meaning, negation/scope, participants/pronouns, number/person, commands/questions, semantic relations, figures, terminology, and stale/misaligned meaning. '
-            f'Separately evaluate only the language-appropriate editorial categories: {", ".join(language.qa_categories)}. {language.prompt_guidance} '
-            'False-positive discipline: before reporting a missing-rendering or wrong-lexical-meaning issue, inspect every supplied target token for a valid inflected, suffixed, compounded, transliterated, or contextually equivalent rendering. Do not call a rendering absent merely because it differs from an English gloss or citation form. Test the strongest plausible explanation that the target rendering is valid, consult existing alignment/approved decisions/terminology, and report only one finding for one underlying problem. '
-            'Critical findings require very high confidence and explicit evidence. Low-confidence possibilities should be review-level or omitted, not exaggerated. '
-            'Reference only evidence IDs that exist in evidence_catalog. Reference Bibles/English are secondary aids, never authority over source data. '
-            'Do not propose a correction merely because a literal rendering differs. Human/community final approval remains human. Return only the schema.'
-        )
-        instructions += (
-            ' IMPORTANT STAGE 3 LOCATION RULES: source and target verse numbers are reference anchors, not mandatory semantic boundaries. '
-            'Use semantic_passage_mappings to determine where each checked source meaning is realized. '
-            'selection_ids can encode ONLY the current verse bottom IDs. '
-            'When a check state is found_another_verse or split_across_verses, return an empty selection_ids array and nothing_to_select=false; do not invent a current-verse token. '
-            'When represented_implicitly, return empty selection_ids and nothing_to_select=false because Bridge records an explicit semantic state. '
-            'When needs_passage_review, needs_extended_passage_review, target_not_located, source_anchor_unresolved, or mapping_error, do not infer omission merely from non-location; use verdict=review unless independent supplied evidence securely demonstrates a problem. '
-            'Never encode found-in-another-verse as Nothing to Select.'
-        )
+        instructions = review_instructions(language, len(check_inputs))
         if progress_callback: progress_callback(64, 'AI reviewing Notes, Words and whole verse')
-        result = self._post_structured(instructions, json.dumps(input_obj, ensure_ascii=False), 'tc_full_review', schema)
+        result = self._post_structured(
+            instructions, json.dumps(input_obj, ensure_ascii=False), 'tc_full_review', schema,
+            prompt_cache_key=review_prompt_cache_key(project),
+        )
+        review_usage, review_cost = self.usage_since(usage_mark)
         if progress_callback: progress_callback(88, 'Validating AI selections and evidence')
 
         reviews: list[AICheckReview] = []
@@ -860,17 +1129,18 @@ class OpenAIResponsesClient:
             'summary': summary,
             'model': self.model,
             'reasoningEffort': self._effective_reasoning_effort(),
-            'estimatedCostUSD': self.last_cost_usd,
+            'estimatedCostUSD': review_cost,
             'dependencySnapshot': dependency_snapshot(project, chapter, verse, knowledge_base, self.model),
             'resourceProvenance': pack.get('resource_provenance', {}),
             'privacyManifest': self.last_privacy_manifest,
+            'usage': usage_dict(review_usage),
             'checkReviews': [x.to_dict() for x in reviews],
             'qaIssues': [x.to_dict() for x in issues],
             'suppressedQaIssues': [x.to_dict() for x in suppressed_issues],
             'languageContext': language.to_dict(),
             'semanticMapping': semantic_mapping_pack,
         })
-        return reviews, issues, summary, {'resource_provenance': pack.get('resource_provenance', {}), 'saved_to': str(saved), 'evidence_catalog': evidence_catalog, 'model': self.model, 'reasoning_effort': self._effective_reasoning_effort(), 'estimated_cost_usd': self.last_cost_usd, 'privacy_manifest': self.last_privacy_manifest, 'language_context': language.to_dict(), 'suppressed_qa_count': len(suppressed_issues), 'semantic_mapping': semantic_mapping_pack}
+        return reviews, issues, summary, {'resource_provenance': pack.get('resource_provenance', {}), 'saved_to': str(saved), 'evidence_catalog': evidence_catalog, 'model': self.model, 'reasoning_effort': self._effective_reasoning_effort(), 'estimated_cost_usd': review_cost, 'usage': usage_dict(review_usage), 'privacy_manifest': self.last_privacy_manifest, 'language_context': language.to_dict(), 'suppressed_qa_count': len(suppressed_issues), 'semantic_mapping': semantic_mapping_pack}
 
     def prepare_verse_review(self, project: TranslationCoreProject, chapter: str, verse: str, alignment: VerseAlignment, knowledge_base=None, progress_callback=None) -> tuple[dict[str, Any] | None, VerseAlignment, list[AICheckReview], list[QAIssue], str, dict[str, Any]]:
         """
@@ -881,6 +1151,11 @@ class OpenAIResponsesClient:
         alignment. Nothing is written to translationCore alignmentData or checkData.
         """
         start_input_fingerprint = project.review_input_fingerprint(chapter, verse)
+        # #476: the semantic mapping, the gap-fill alignment and the review
+        # are all this verse's calls; the stored usage, the job's cost line
+        # and the lifetime counter get their sum, not the review alone (on
+        # #469 the review alone was 70-75% of the bill).
+        usage_mark = self.usage_mark()
         if progress_callback: progress_callback(5, 'Preparing verse review')
         if progress_callback:
             progress_callback(7, 'Mapping source meanings across target passage')
@@ -893,8 +1168,6 @@ class OpenAIResponsesClient:
         needs_alignment = bool(alignment.word_bank) or any(g.top_words and not g.bottom_words for g in alignment.alignments)
         proposal: dict[str, Any] | None = None
         review_alignment = alignment
-        first_usage = 0
-        first_cost = 0.0
         if needs_alignment:
             if progress_callback: progress_callback(12, 'AI preparing incomplete alignment')
             proposal = self.propose_alignment(project, chapter, verse, alignment, mode='gap_fill', semantic_mapping_pack=semantic_mapping_pack)
@@ -902,20 +1175,17 @@ class OpenAIResponsesClient:
             # rewrite already-established project alignment relationships.
             validate_preparation_proposal(alignment, proposal)
             review_alignment = apply_proposal(alignment, proposal)
-            first_usage = self.last_usage.total_tokens
-            first_cost = self.last_cost_usd
             if progress_callback: progress_callback(38, 'Alignment proposal validated locally')
         else:
             if progress_callback: progress_callback(38, 'Existing alignment ready')
         if project.review_input_fingerprint(chapter, verse) != start_input_fingerprint:
             raise AIError('Verse/project data changed while AI was preparing alignment; stale result was discarded.')
         reviews, issues, summary, meta = self.run_full_review(project, chapter, verse, review_alignment, knowledge_base, progress_callback=progress_callback, expected_input_fingerprint=start_input_fingerprint, semantic_mapping_pack=semantic_mapping_pack)
-        second_usage = self.last_usage.total_tokens
-        second_cost = self.last_cost_usd
-        total_cost = first_cost + second_cost
+        prepare_usage, total_cost = self.usage_since(usage_mark)
         meta = dict(meta)
         meta['alignment_was_ai_proposed'] = proposal is not None
-        meta['total_tokens_for_prepare'] = first_usage + second_usage
+        meta['total_tokens_for_prepare'] = prepare_usage.total_tokens
+        meta['usage'] = usage_dict(prepare_usage)
         meta['estimated_cost_usd'] = total_cost
         meta['model'] = self.model
         meta['reasoning_effort'] = self._effective_reasoning_effort()
@@ -930,6 +1200,7 @@ class OpenAIResponsesClient:
             'dependencySnapshot': dependency_snapshot(project, chapter, verse, knowledge_base, self.model),
             'resourceProvenance': meta.get('resource_provenance', {}),
             'privacyManifest': self.last_privacy_manifest,
+            'usage': usage_dict(prepare_usage),
             'alignmentProposal': proposal,
             'alignmentWasAIProposed': proposal is not None,
             'reviewedAlignment': review_alignment.to_dict(),

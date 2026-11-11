@@ -726,7 +726,7 @@ export interface AiExplainResult {
   qaIssues: AiQaIssue[];
   alignmentProposal: AlignmentAiProposal | null;
   alignmentWasAIProposed: boolean;
-  usage: { totalTokens: number; estimatedCostUSD: number };
+  usage: { totalTokens: number; estimatedCostUSD: number; cachedInputTokens?: number; calls?: number; unansweredCalls?: number };
 }
 
 export interface DesktopConnectorState {
@@ -1281,6 +1281,12 @@ export interface NativeCheckListResponse {
   state: "ready" | "preparing";
   retryAfterMs: number;
   message: string;
+  /** #478: "preparing" because the book's translationNotes/Words indexes
+   *  are not built. `running` says a check run is under way (and may be
+   *  building them); when it is false nothing will, until a run with
+   *  Translation Notes and Translation Words ticked. Absent before #478. */
+  pending?: "resourceIndexes";
+  running?: boolean;
   aiReviewState: "missing" | "current" | "stale";
   aiReviews: AiCheckReview[];
   aiQaIssues: AiQaIssue[];
@@ -1467,7 +1473,10 @@ export interface AIReviewJobVerseResult {
   skippedSelections: Array<Record<string, unknown>>;
   alignmentProposal: AlignmentAiProposal | null;
   alignmentWasAIProposed: boolean;
-  usage: { totalTokens: number; estimatedCostUSD: number };
+  /** `cachedInputTokens` (#472): input tokens the provider served from its
+   *  prefix cache, billed at a tenth of the input price. Absent from
+   *  results stored before #472. */
+  usage: { totalTokens: number; estimatedCostUSD: number; cachedInputTokens?: number; calls?: number; unansweredCalls?: number };
   error: string | null;
 }
 
@@ -1478,7 +1487,7 @@ export interface AIReviewJobVerseStatus {
   summary: string;
   appliedCount: number;
   skippedCount: number;
-  usage: { totalTokens?: number; estimatedCostUSD?: number };
+  usage: { totalTokens?: number; estimatedCostUSD?: number; cachedInputTokens?: number; calls?: number; unansweredCalls?: number };
   error: string | null;
 }
 
@@ -1515,10 +1524,27 @@ export interface AIReviewChapterResponse {
   missing: number;
 }
 
+/** #473: one AI task's model and reasoning effort. A blank model means the
+ *  configured `model`. */
+export interface AiTaskChoice {
+  model: string;
+  reasoningEffort: AiReasoningEffort;
+}
+export type AiReasoningEffort = "low" | "medium" | "high" | "xhigh";
+export type AiTask = "review" | "alignment" | "triage";
+export interface AiTaskSettings {
+  /** True (the default, today's behaviour): every task runs on `model` at
+   *  medium reasoning and the rows below are ignored. */
+  useOneModel: boolean;
+  tasks: Record<AiTask, AiTaskChoice>;
+}
+
 export interface SettingsData {
   provider: string;
   apiBaseUrl: string;
   model: string;
+  /** Absent only from engines older than #473. */
+  aiTasks?: AiTaskSettings;
   reviewerName: string;
   /** ISO-8601 UTC, or "" if never explicitly changed via Settings (the
    * OS-seeded default on a fresh profile does not count as a change). */
@@ -1560,7 +1586,11 @@ export interface SettingsData {
   bookmarks?: Place[];
   recentChapters?: Place[];
   hasApiKey: boolean;
-  aiUsage: { tokens: number; estimatedCostUSD: number };
+  /** The lifetime counter of every counted AI call on this device (#477):
+   *  shown in Settings > AI provider with a Reset. `since` is the UTC time
+   *  it started (first counted call or last reset); null for a counter from
+   *  before #477 that has not been reset. */
+  aiUsage: { tokens: number; estimatedCostUSD: number; since?: string | null };
 }
 
 export type InlineConfidence = "low" | "medium" | "high";

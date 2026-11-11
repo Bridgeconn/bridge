@@ -420,9 +420,14 @@ class TranslationHelpsKnowledgeBase:
                 'invalidated': bool(entry.get('invalidated', False)),
                 'evidence': ev,
             })
+        # The thirteen Translation Academy checking articles are not part of
+        # the pack any more (#471): the review prompt carries their method as
+        # a static digest (`ai_client.CHECKING_METHOD_DIGEST`), and reading
+        # 13 files per verse for text that was never cited was most of the
+        # request. `global_checking_evidence()` stays for any caller that
+        # wants the articles themselves.
         return {
             'resource_provenance': self.inventory()['resources'],
-            'global_checking_evidence': [x.to_dict() for x in self.global_checking_evidence()],
             'reference_bibles': [x.to_dict() for x in self.reference_bible_text(chapter, verse)],
             'checks': packs,
         }

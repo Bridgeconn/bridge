@@ -42,6 +42,12 @@ vi.mock("../../api/bridgeClient", () => ({
     languageQaSetPack,
     languageQaCheckerSettingsGet: checkerGet,
     languageQaCheckerSettingsSet: checkerSet,
+    languageQaQuotationRulesGet: async () => ({
+      rules: { version: 1, enabled: true, referenceEnabled: true,
+        target: { pairs: [{ open: '“', close: '”' }], continuation: 'repeat-opening' },
+        reference: { pairs: [{ open: '“', close: '”' }], continuation: 'repeat-opening' } },
+      defaults: {}, scope: 'project', books: ['rut'],
+    }),
     languageQaWordsList: wordsList,
     pickFolder,
     languageQaSetReference: setReference,
@@ -52,7 +58,7 @@ vi.mock("../../api/bridgeClient", () => ({
 }));
 
 import SettingsModal from "../SettingsModal.svelte";
-import { project } from "../../stores";
+import { diagnosticsOpen, project } from "../../stores";
 import type { ProjectInfo } from "../../types/finding";
 
 const target = {
@@ -95,6 +101,16 @@ describe("SettingsModal connections", () => {
       paratextNavigation: true,
       logosNavigation: true,
     });
+  });
+
+  it("opens diagnostics from Settings without closing unsaved Settings on Escape", async () => {
+    const onClose = vi.fn();
+    render(SettingsModal, { props: { onClose } });
+    await fireEvent.click(await screen.findByRole("button", { name: "Diagnostics" }));
+    expect(get(diagnosticsOpen)).toBe(true);
+    await fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+    diagnosticsOpen.set(false);
   });
 
   it("keeps the saved update opt out when switching settings panes", async () => {
@@ -824,5 +840,165 @@ describe("SettingsModal Escape (#321)", () => {
     expect(onClose).not.toHaveBeenCalled();
     await fireEvent.keyDown(window, { key: "Escape" });
     expect(onClose).toHaveBeenCalledOnce();
+  });
+});
+
+describe("SettingsModal model per task (#473)", () => {
+  const stored = {
+    useOneModel: false,
+    tasks: {
+      review: { model: "", reasoningEffort: "medium" },
+      alignment: { model: "gpt-5.6-luna", reasoningEffort: "low" },
+      triage: { model: "gpt-5.6-luna", reasoningEffort: "low" },
+    },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    engineInfo.mockResolvedValue({
+      bridgeVersion: "0.9.6", companionSchemaVersion: 14, projectOpen: false, greekRoom: {},
+    });
+    getNavigationStatus.mockResolvedValue(navigationState());
+    setSettings.mockImplementation(async (params: Record<string, unknown>) => ({
+      ...params, hasApiKey: false, reviewerMode: "basic",
+    }));
+  });
+
+  it("hides the per-task rows while one model is used for everything, and an engine without aiTasks still loads", async () => {
+    getSettings.mockResolvedValue({
+      provider: "openai", apiBaseUrl: "", model: "gpt-5.6", hasApiKey: false,
+      reviewerMode: "basic", paratextNavigation: false, logosNavigation: false,
+    });
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+
+    const toggle = await screen.findByRole("checkbox", { name: /Use one model for everything/ });
+    expect(toggle).toBeChecked();
+    expect(screen.queryByLabelText("Triage model")).not.toBeInTheDocument();
+
+    await fireEvent.click(toggle);
+    expect(screen.getByLabelText("Triage model")).toBeInTheDocument();
+    expect(screen.getByLabelText("Alignment reasoning effort")).toHaveValue("low");
+  });
+
+  it("shows the stored per-task choice and saves an edit back as aiTasks", async () => {
+    getSettings.mockResolvedValue({
+      provider: "openai", apiBaseUrl: "", model: "gpt-5.6", hasApiKey: false, aiTasks: stored,
+      reviewerMode: "basic", paratextNavigation: false, logosNavigation: false,
+    });
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+
+    expect(await screen.findByRole("checkbox", { name: /Use one model for everything/ })).not.toBeChecked();
+    const triageModel = screen.getByLabelText("Triage model");
+    expect(triageModel).toHaveValue("gpt-5.6-luna");
+
+    await fireEvent.input(triageModel, { target: { value: "gpt-5.6-terra" } });
+    await fireEvent.change(screen.getByLabelText("Triage reasoning effort"), { target: { value: "high" } });
+    await fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
+
+    await waitFor(() => expect(setSettings).toHaveBeenCalledWith(expect.objectContaining({
+      aiTasks: {
+        useOneModel: false,
+        tasks: {
+          review: { model: "", reasoningEffort: "medium" },
+          alignment: { model: "gpt-5.6-luna", reasoningEffort: "low" },
+          triage: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+        },
+      },
+    })));
+  });
+});
+
+describe("SettingsModal lifetime AI usage counter (#477)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    engineInfo.mockResolvedValue({
+      bridgeVersion: "0.9.6", companionSchemaVersion: 14, projectOpen: false, greekRoom: {},
+    });
+    getNavigationStatus.mockResolvedValue(navigationState());
+    getSettings.mockResolvedValue({
+      provider: "openai", apiBaseUrl: "", model: "gpt-5.6", hasApiKey: true,
+      reviewerMode: "basic", paratextNavigation: false, logosNavigation: false,
+      aiUsage: { tokens: 7159086, estimatedCostUSD: 45.3812, since: "2026-10-14T06:00:00+00:00" },
+    });
+  });
+
+  afterEach(() => { answerConfirmation(false); });
+
+  it("shows the counter with its cost and start date in the AI provider pane", async () => {
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+    const line = await screen.findByTestId("ai-usage");
+    // Digit grouping follows the machine locale (en-IN groups 71,59,086).
+    expect(line.textContent?.replace(/,/g, "")).toContain("7159086 tokens");
+    expect(line.textContent).toContain("~$45.38");
+    expect(line.textContent).toMatch(/since .*2026/);
+    expect(screen.getByRole("button", { name: "Reset counter" })).toBeInTheDocument();
+  });
+
+  it("shows a counter from before #477 without a start date", async () => {
+    getSettings.mockResolvedValue({
+      provider: "openai", apiBaseUrl: "", model: "gpt-5.6", hasApiKey: false,
+      reviewerMode: "basic", paratextNavigation: false, logosNavigation: false,
+      aiUsage: { tokens: 1200, estimatedCostUSD: 0.02 },
+    });
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+    const line = await screen.findByTestId("ai-usage");
+    expect(line.textContent?.replace(/,/g, "")).toBe("1200 tokens · ~$0.02");
+  });
+
+  it("asks first, then sends only the reset and shows the zeroed counter", async () => {
+    setSettings.mockResolvedValue({
+      hasApiKey: true, reviewerMode: "basic",
+      aiUsage: { tokens: 0, estimatedCostUSD: 0, since: "2026-11-06T10:00:00+00:00" },
+    });
+    const onClose = vi.fn();
+    render(SettingsModal, { props: { initialPane: "ai", onClose } });
+    await fireEvent.click(await screen.findByRole("button", { name: "Reset counter" }));
+
+    expect(get(confirmRequest)?.title).toBe("Reset the AI usage counter?");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(setSettings).not.toHaveBeenCalled();
+    answerConfirmation(true);
+    await waitFor(() => expect(setSettings).toHaveBeenCalledWith({ resetAiUsage: true }));
+    await waitFor(() => expect(screen.getByTestId("ai-usage").textContent).toContain("0 tokens · ~$0.00"));
+    expect(screen.getByText("AI usage counter reset.")).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("sends nothing when the reset is declined", async () => {
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+    await fireEvent.click(await screen.findByRole("button", { name: "Reset counter" }));
+    answerConfirmation(false);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(setSettings).not.toHaveBeenCalled();
+    expect(screen.getByTestId("ai-usage").textContent?.replace(/,/g, "")).toContain("7159086 tokens");
+  });
+});
+
+describe("SettingsModal review model default (#479)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    engineInfo.mockResolvedValue({
+      bridgeVersion: "0.9.6", companionSchemaVersion: 14, projectOpen: false, greekRoom: {},
+    });
+    getNavigationStatus.mockResolvedValue(navigationState());
+  });
+
+  it("shows gpt-5.6-terra when no model has been saved, and the saved one otherwise", async () => {
+    getSettings.mockResolvedValue({
+      provider: "openai", apiBaseUrl: "", model: "", hasApiKey: false,
+      reviewerMode: "basic", paratextNavigation: false, logosNavigation: false,
+    });
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+    expect(await screen.findByLabelText("Model")).toHaveValue("gpt-5.6-terra");
+    expect(screen.getByText(/276 of 281 checks/)).toBeInTheDocument();
+  });
+
+  it("keeps a saved gpt-5.6", async () => {
+    getSettings.mockResolvedValue({
+      provider: "openai", apiBaseUrl: "", model: "gpt-5.6", hasApiKey: false,
+      reviewerMode: "basic", paratextNavigation: false, logosNavigation: false,
+    });
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+    expect(await screen.findByLabelText("Model")).toHaveValue("gpt-5.6");
   });
 });

@@ -89,6 +89,7 @@ from tc_ai_bridge.language_qa import FINDING_SOURCE as LANGUAGE_QA_SOURCE, UNSPE
 from tc_ai_bridge.language_qa_jobs import LanguageQaManager, project_pack_name, project_rule_pack
 from tc_ai_bridge import check_timing
 from tc_ai_bridge import language_qa_checker_settings as checker_settings_rpc
+from tc_ai_bridge import quotation_rules
 from tc_ai_bridge.language_packs import indic_qa_adapter
 from tc_ai_bridge.language_qa_learned import learned_pair
 from tc_ai_bridge import language_qa_scope
@@ -556,6 +557,8 @@ class Methods:
     LANGUAGE_QA_SET_PACK = "languageQa.setPack"
     LANGUAGE_QA_CHECKER_SETTINGS_GET = "languageQa.checkerSettings.get"
     LANGUAGE_QA_CHECKER_SETTINGS_SET = "languageQa.checkerSettings.set"
+    LANGUAGE_QA_QUOTATION_RULES_GET = "languageQa.quotationRules.get"
+    LANGUAGE_QA_QUOTATION_RULES_SET = "languageQa.quotationRules.set"
     LANGUAGE_QA_LEARNED_LIST = "languageQa.learned.list"
     LANGUAGE_QA_LEARNED_FORGET = "languageQa.learned.forget"
     LANGUAGE_QA_LEARNED_RESTORE = "languageQa.learned.restore"
@@ -1767,7 +1770,7 @@ class BridgeEngine:
             timer.mark("project_info")
             _trace(f"project.open {candidate.book_id} RECOVERY_REQUIRED {timer.summary()}")
             if not getattr(self, '_active_session', ''):  # #79: the scan follows the desktop session only
-                self._language_qa.bind(candidate, blocked_reason="Project recovery requires attention.")
+                self._bind_language_qa(candidate, blocked_reason="Project recovery requires attention.")
             return info
         self._passage_semantic_status = {
             "available": False, "readOnly": True, "state": "BUILDING",
@@ -1798,7 +1801,7 @@ class BridgeEngine:
         timer.mark("project_info")
         _trace(f"project.open {candidate.book_id} {timer.summary()}")
         if not getattr(self, '_active_session', ''):  # #79: the scan follows the desktop session only
-            self._language_qa.bind(candidate)
+            self._bind_language_qa(candidate)
         # Rebuilt from the book's decisions on first use: anything recorded
         # while the book was closed (an import, another device) is picked up.
         self._housestyle_learner.forget(str(candidate.path))
@@ -2543,7 +2546,7 @@ class BridgeEngine:
         should be enabled — they ask the same question the same way.
         """
         try:
-            return self._ai_client(), ""
+            return self._ai_client("triage"), ""
         except AIError as exc:
             return None, str(exc)
 
@@ -2805,10 +2808,21 @@ class BridgeEngine:
         # dispatcher.  A blocking request here prevents even checks.status
         # and checks.cancel from being read until Rust's 30-second timeout.
         if self._resource_indexes_pending(project):
+            # #478: a fresh profile's check selection is Language QA only, so
+            # nothing asks for the tN/tW indexes and this answer used to say
+            # "Preparing…" for good. It now says whether a run is under way
+            # (one may be building them) and, when none is, what to do.
+            running = self._check_jobs.active()
             return {
                 "chapter": str(chapter), "verse": str(verse), "checks": [],
-                "state": "preparing", "retryAfterMs": 750,
-                "message": "Preparing translationNotes and translationWords resources…",
+                "state": "preparing", "retryAfterMs": 750 if running else 2000,
+                "pending": "resourceIndexes", "running": running,
+                "message": (
+                    "Preparing translationNotes and translationWords resources…" if running
+                    else "translationNotes and translationWords are not prepared for this book yet. "
+                    "Tick Translation Notes and Translation Words under Checks and run the chapter "
+                    "once; the AI review needs them too."
+                ),
             }
         if not self._checker_lock.acquire(blocking=False):
             return {
@@ -3481,7 +3495,7 @@ class BridgeEngine:
         if not isinstance(verses, list) or not verses:
             raise ProjectError("A cross-verse AI proposal needs at least one verse.")
         try:
-            client = self._ai_client()
+            client = self._ai_client("alignment")
         except AIError as exc:
             return {
                 "chapter": chapter, "verses": [str(v) for v in verses], "proposals": [],
@@ -3519,6 +3533,9 @@ class BridgeEngine:
             error=AIError,
         )
         if result.get("modelConsulted"):
+            # #473: which model answered, recorded with the result.
+            result["model"] = client.model
+            result["reasoningEffort"] = client._effective_reasoning_effort()
             usage = getattr(client, "last_usage", None)
             self.settings.record_ai_usage(
                 getattr(usage, "total_tokens", 0) or 0, getattr(client, "last_cost_usd", 0.0) or 0.0,
@@ -4192,9 +4209,13 @@ class BridgeEngine:
 
         if passes is None:
             try:
-                client = self._ai_client()
+                client = self._ai_client("alignment")
             except AIError as exc:
                 return {**base, "results": [], "unavailable": {"reason": "no-api-key", "message": str(exc)}}
+            # #473: the model behind every verdict of this run, on the run
+            # result and (below) on each stored verdict row.
+            base["model"] = client.model
+            base["reasoningEffort"] = client.reasoning_effort
 
             def call_model(instructions: str, input_text: str, direction: str) -> dict[str, Any]:
                 raw = client.propose_window_alignment(instructions, input_text, alignment_window.SCHEMA, direction)
@@ -4425,6 +4446,7 @@ class BridgeEngine:
                 "alignmentFingerprint": alignment_fingerprint(alignment),
                 "targetFingerprint": target_token_fingerprint(alignment, self.project.target_verse_text(chapter, verse)),
                 "window": ordered, "usage": usage, "createdAt": self.project.workbench._now(),
+                "model": str(base.get("model") or ""), "reasoningEffort": str(base.get("reasoningEffort") or ""),
             }
             self._write_auto_verdict(chapter, verse, payload)
             results.append({
@@ -4537,7 +4559,7 @@ class BridgeEngine:
                 chars = len(json.dumps(built.payload, ensure_ascii=False)) + len(alignment_window.INSTRUCTIONS[alignment_window.SOURCE_FIRST]) + len(guidance)
                 input_tokens += 2 * (chars // 3 + 1)
         output_tokens = count * 2 * 1500
-        model = self.settings.model
+        model, _effort = self.settings.ai_task_choice("alignment")
         try:
             cost = estimate_cost(model, input_tokens, output_tokens)
         except Exception:
@@ -4553,7 +4575,7 @@ class BridgeEngine:
                              verses: Any = None) -> dict[str, Any]:
         windows = self._auto_job_windows(scope, chapters, verses)
         try:
-            self._ai_client()
+            self._ai_client("alignment")
         except AIError as exc:
             return {"state": "failed", "unavailable": {"reason": "no-api-key", "message": str(exc)}}
         spec = auto_align_jobs.AutoAlignJobSpec(
@@ -4787,7 +4809,13 @@ class BridgeEngine:
         restored = self.project.load_verse_alignment_history(chapter, verse, history_id=history_id)
         return self._save_alignment(chapter, verse, restored, expected_original, "restore")
 
-    def _ai_client(self) -> OpenAIResponsesClient:
+    def _ai_client(self, task: str = "review") -> OpenAIResponsesClient:
+        """The client for one AI task (#473): `review` (the tN/tW review, its
+        gap-fill alignment inside `prepare_verse_review`, correction wording),
+        `alignment` (the proposal, cross-verse links, the window auto-align)
+        or `triage`. The model and reasoning effort come from
+        `AppSettings.ai_task_choice`; in one-model mode every task gets the
+        configured model at medium, as before."""
         api_key = self.settings.get_api_key()
         if not api_key:
             raise AIError(
@@ -4797,8 +4825,10 @@ class BridgeEngine:
         kwargs: dict[str, Any] = {}
         if self._ai_transport is not None:
             kwargs["transport"] = self._ai_transport
+        model, reasoning_effort = self.settings.ai_task_choice(task)
         return OpenAIResponsesClient(
-            api_key, model=self.settings.model, base_url=self.settings.api_base_url, **kwargs
+            api_key, model=model, base_url=self.settings.api_base_url,
+            reasoning_effort=reasoning_effort, **kwargs
         )
 
     def propose_ai_alignment(self, chapter: str, verse: str, mode: str = "gap_fill") -> dict[str, Any]:
@@ -4812,7 +4842,7 @@ class BridgeEngine:
         validate_preparation_proposal safety check if it would detach an established
         group)."""
         self._require_project()
-        client = self._ai_client()
+        client = self._ai_client("alignment")
         alignment = self.project.load_verse_alignment(chapter, verse)
         proposal = client.propose_alignment(self.project, chapter, verse, alignment, mode=mode)
         self.settings.record_ai_usage(client.last_usage.total_tokens, client.last_cost_usd)
@@ -4825,8 +4855,12 @@ class BridgeEngine:
             # benefit, since the frontend only needs to read top_ids/bottom_ids generically to
             # resolve token labels, the same way it already does for existing alignment groups.
             "proposal": proposal,
+            # #473: which model proposed it.
+            "model": client.model,
+            "reasoningEffort": client._effective_reasoning_effort(),
             "usage": {
                 "totalTokens": client.last_usage.total_tokens,
+                "cachedInputTokens": client.last_usage.cached_input_tokens,
                 "estimatedCostUSD": round(client.last_cost_usd, 6),
             },
         }
@@ -4967,14 +5001,18 @@ class BridgeEngine:
         project.mark_issue_resolutions_recheck(
             chapter, verse, "running", reason="Automatic AI recheck started.",
         )
+        client: OpenAIResponsesClient | None = None
+        usage_mark = 0
         try:
             with self._checker_lock:
                 self._ensure_resource_indexes(project)
             client = self._ai_client()
+            usage_mark = client.usage_mark()
             alignment = project.load_verse_alignment(chapter, verse)
             proposal, review_alignment, reviews, issues, summary, meta = client.prepare_verse_review(
                 project, chapter, verse, alignment, progress_callback=progress_callback,
             )
+            # #476: the sum of the verse's calls (mapping, gap-fill, review).
             total_tokens = int(meta.get("total_tokens_for_prepare", 0) or 0)
             cost = float(meta.get("estimated_cost_usd", 0.0) or 0.0)
             self.settings.record_ai_usage(total_tokens, cost)
@@ -5031,9 +5069,28 @@ class BridgeEngine:
                 "appliedSelections": applied,
                 "skippedSelections": skipped,
                 "resolutionLifecycle": lifecycle,
-                "usage": {"totalTokens": total_tokens, "estimatedCostUSD": round(cost, 6)},
+                # #472: `cachedInputTokens` is what the provider served from
+                # its prefix cache; the AI tab shows it beside the total.
+                "usage": {
+                    "totalTokens": total_tokens,
+                    "cachedInputTokens": int((meta.get("usage") or {}).get("cachedInputTokens", 0) or 0),
+                    "estimatedCostUSD": round(cost, 6),
+                    # #476: how many requests the verse made, and how many
+                    # went unanswered (their input estimated, output unknown).
+                    "calls": int((meta.get("usage") or {}).get("calls", 0) or 0),
+                    "unansweredCalls": int((meta.get("usage") or {}).get("unansweredCalls", 0) or 0),
+                },
             }
         except Exception as exc:
+            # #476: what the failed verse already spent -- a mapping or gap-fill
+            # call that was answered, or a call that was sent and never
+            # answered -- is billed all the same, so it reaches the lifetime
+            # counter here; before, a verse that failed after its first call
+            # counted as free.
+            if client is not None:
+                spent, spent_cost = client.usage_since(usage_mark)
+                if spent.calls:
+                    self.settings.record_ai_usage(spent.total_tokens, spent_cost)
             if not cancel_event.is_set():
                 project.mark_issue_resolutions_recheck(
                     chapter, verse, "failed",
@@ -7418,6 +7475,7 @@ class BridgeEngine:
             run_book=lambda book, cancel: self._run_collection_book(book, selected, cancel),
             record_run=lambda entry: record_collection_qa_run(collection_path, entry),
             final_stage=lambda done, cancel: self._collection_final_stage(collection_path, done, cancel),
+            book_hash=self._quotation_book_hash,
         )
 
     def _run_collection_book(self, book: dict[str, Any], checks: tuple[str, ...],
@@ -7435,7 +7493,7 @@ class BridgeEngine:
         manager = CheckJobManager()
         try:
             if language_qa is not None:
-                language_qa.bind(project, autostart=False)
+                language_qa.bind(project, autostart=False, reference_provider=self._quotation_reference_provider())
             snapshot = self._start_check_job_from_spec(spec, project, language_qa=language_qa, check_jobs=manager)
             # Progress polls ask for no results at all (a cursor past every
             # verse); the full set is read once, after the job ends (#229).
@@ -7903,10 +7961,15 @@ class BridgeEngine:
             # #277: the same document as a project_state row, so it syncs.
             for project in self._collection_book_projects():
                 self._mirror_language_qa_overrides(project)
-            self._language_qa.bind(self.project)
+            self._bind_language_qa(self.project)
             pack, _notes = project_rule_pack(self.project.path, name)
         counts = self._language_qa.rule_counts()
-        return checker_settings_rpc.describe(pack, counts=counts, books=books)
+        try:
+            _rules, delegate_quotations = quotation_rules.load_policy(self.project.path)
+        except (OSError, ValueError):
+            delegate_quotations = True  # matches the scan's invalid-policy handling
+        return checker_settings_rpc.describe(pack, counts=counts, books=books,
+                                             delegate_quotations=delegate_quotations)
 
     def _collection_book_projects(self) -> list[TranslationCoreProject]:
         """The open book and every materialized sibling (a lazy one has no
@@ -8418,7 +8481,7 @@ class BridgeEngine:
         folder = self.settings.reference_bibles.get(self._reference_key) if self._reference_key else None
         if folder:
             return folder, Path(folder).name or folder, "project"
-        pack = self._language_qa.pack_name()
+        pack = project_pack_name(self.project, self._language_qa)
         if pack:
             bundled = packs_dir() / pack / "dictionary"
             if (bundled / "verses.tsv").is_file():
@@ -8433,12 +8496,79 @@ class BridgeEngine:
             return None
         folder, label, origin = choice
         key = str(Path(folder).resolve())
-        holder = self._reference_holders.get(key)
-        if holder is None or holder.label != label:
-            holder = ReferenceHolder(folder, label, self.settings.path.parent / "reference-cache")
-            self._reference_holders[key] = holder
+        holder = quotation_rules.reference_holder(folder, label, self.settings.path.parent / "reference-cache")
+        self._reference_holders[key] = holder
         holder.origin = origin
         return holder
+
+    def _quotation_reference_provider(self) -> Any:
+        # Snapshot the machine-local choice before a worker starts. Bundled
+        # fallback resolves after that worker detects its own language pack.
+        folder = self.settings.reference_bibles.get(getattr(self, '_reference_key', ''), '')
+        cache = self.settings.path.parent / 'reference-cache'
+
+        def provide(pack: str | None, proceed: Any) -> Any:
+            selected = folder
+            label = Path(folder).name if folder else 'Old Version (bundled)'
+            if not selected and pack:
+                bundled = packs_dir() / pack / 'dictionary'
+                if (bundled / 'verses.tsv').is_file():
+                    selected = str(bundled)
+            return quotation_rules.reference_source(selected, label, cache, proceed) if selected else (None, '')
+        return provide
+
+    def _bind_language_qa(self, project: Any, **kwargs: Any) -> None:
+        self._language_qa.bind(project, reference_provider=self._quotation_reference_provider(), **kwargs)
+
+    def _quotation_book_hash(self, book: dict[str, Any]) -> str:
+        from collection_jobs import book_content_hash
+        from tc_ai_bridge.language_packs.reference_text import detect, fingerprint
+        base = book_content_hash(book.get('path', ''), str(book.get('bookId') or ''))
+        if not base:
+            return ''
+        folder = self.settings.reference_bibles.get(getattr(self, '_reference_key', ''), '')
+        folders = [Path(folder)] if folder else sorted(packs_dir().glob('*/dictionary'))
+        inputs = []
+        for path in folders:
+            try:
+                kind = detect(path)
+                inputs.append((str(path), fingerprint(path, kind) if kind else 'unavailable'))
+            except OSError:
+                inputs.append((str(path), 'unreadable'))
+        return hashlib.sha256(json.dumps([base, inputs], ensure_ascii=False).encode('utf-8')).hexdigest()
+
+    def language_qa_quotation_rules(self, action: str, params: dict[str, Any]) -> dict[str, Any]:
+        self._require_project()
+        roots = [Path(self.project.path)]
+        roots.extend(Path(e['path']) for e in collection_projects(self.project.path)
+                     if e.get('path') and Path(e['path']).is_dir())
+        roots = sorted(set(p.resolve() for p in roots))
+        if action == 'set':
+            if self._collection_jobs.active() or self._check_jobs.active():
+                raise ProjectError('Wait for the running check to finish before changing quotation rules.')
+            try:
+                rules = quotation_rules.validate(params.get('rules'))
+                documents = []
+                for root in roots:
+                    path = root / quotation_rules.RELATIVE_PATH
+                    document = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
+                    if not isinstance(document, dict):
+                        raise ValueError(f'{path}: common overrides must be an object')
+                    documents.append((path, {**document, 'quotations': rules}))
+                for path, document in documents:
+                    checker_settings_rpc._write_atomic(path, document)
+                for project in self._collection_book_projects():
+                    self._mirror_language_qa_overrides(project)
+                self._bind_language_qa(self.project)
+            except (OSError, ValueError) as exc:
+                raise ProjectError(str(exc)) from exc
+        try:
+            rules = quotation_rules.load(self.project.path)
+        except (OSError, ValueError) as exc:
+            raise ProjectError(str(exc)) from exc
+        return {'rules': rules, 'defaults': quotation_rules.DEFAULTS,
+                'scope': 'collection' if len(roots) > 1 else 'project',
+                'books': [p.name for p in roots]}
 
     def language_qa_set_reference(self, params: dict[str, Any]) -> dict[str, Any]:
         """languageQa.setReference (#289): choose, change or clear the open
@@ -8457,6 +8587,7 @@ class BridgeEngine:
                 raise ProjectError(f"{folder}: no such folder on this computer")
             folder = str(Path(folder))
         self.settings.set_reference_bible(self._reference_key, folder or None)
+        self._bind_language_qa(self.project)
         choice = self._reference_choice()
         return {"folder": folder, "origin": choice[2] if choice else "none",
                 "label": choice[1] if choice else "", "path": choice[0] if choice else ""}
@@ -9130,6 +9261,10 @@ class BridgeEngine:
             "provider": self.settings.provider,
             "apiBaseUrl": self.settings.api_base_url,
             "model": self.settings.model,
+            # #473: per-task model and reasoning effort, complete (defaults
+            # filled in), with `useOneModel` true meaning every task runs on
+            # `model` at medium reasoning.
+            "aiTasks": self.settings.ai_tasks,
             "reviewerName": self.settings.reviewer_name,
             "reviewerNameUpdatedAt": self.settings.reviewer_name_updated_at,
             # The stable id to stamp on a write (#78). The UI used to send the
@@ -9166,6 +9301,14 @@ class BridgeEngine:
             self.settings.api_base_url = kwargs["apiBaseUrl"]
         if "model" in kwargs:
             self.settings.model = kwargs["model"]
+        if "aiTasks" in kwargs:
+            # Validated and merged by the setter; a bad task name or effort
+            # raises ValueError, which the dispatcher reports as a failure
+            # like an invalid reviewerMode.
+            self.settings.ai_tasks = kwargs["aiTasks"]
+        if kwargs.get("resetAiUsage") is True:
+            # #477: Settings > AI provider's Reset for the lifetime counter.
+            self.settings.reset_ai_usage()
         if "reviewerName" in kwargs:
             self.settings.reviewer_name = kwargs["reviewerName"]
             # Keep the workspace users row in step immediately rather than at
@@ -9370,7 +9513,7 @@ class BridgeEngine:
             # #277: a hub pull rewrote this book's overrides file.
             self._language_qa_rebind_paths.discard(rebind_path)
             try:
-                self._language_qa.bind(self.project)
+                self._bind_language_qa(self.project)
             except Exception as exc:  # noqa: BLE001
                 _trace(f"language QA rebind after a pull failed: {exc}")
         try:
@@ -9453,7 +9596,8 @@ class BridgeEngine:
                      Methods.LANGUAGE_QA_BOOK_WORDS, Methods.LANGUAGE_QA_OCCURRENCES, Methods.LANGUAGE_QA_REFERENCE,
                      Methods.LANGUAGE_QA_SET_REFERENCE,
                      Methods.LANGUAGE_QA_RELATED, Methods.LANGUAGE_QA_CHECKER_SETTINGS_GET,
-                     Methods.LANGUAGE_QA_CHECKER_SETTINGS_SET}:
+                     Methods.LANGUAGE_QA_CHECKER_SETTINGS_SET,
+                     Methods.LANGUAGE_QA_QUOTATION_RULES_GET, Methods.LANGUAGE_QA_QUOTATION_RULES_SET}:
                 self._require_project()
                 # Compared canonically, not as strings. `project.open` resolves
                 # the path it is given, so a caller echoing back the path *it*
@@ -9480,6 +9624,8 @@ class BridgeEngine:
                     result = self.language_qa_set_reference(p)
                 elif m == Methods.LANGUAGE_QA_RELATED:
                     result = self.language_qa_related(p)
+                elif m in {Methods.LANGUAGE_QA_QUOTATION_RULES_GET, Methods.LANGUAGE_QA_QUOTATION_RULES_SET}:
+                    result = self.language_qa_quotation_rules(m.rsplit('.', 1)[1], p)
                 elif m in {Methods.LANGUAGE_QA_FLAGS_LIST, Methods.LANGUAGE_QA_FLAGS_ADD,
                            Methods.LANGUAGE_QA_FLAGS_UPDATE, Methods.LANGUAGE_QA_FLAGS_DELETE}:
                     result = self.language_qa_flags(m.rsplit(".", 1)[1], p)
@@ -9507,7 +9653,7 @@ class BridgeEngine:
                     if not isinstance(pack, str) or pack not in allowed:
                         raise ProjectError(f"pack must be one of {sorted(allowed)}")
                     self.project.set_language_qa_pack(pack)
-                    self._language_qa.bind(self.project)
+                    self._bind_language_qa(self.project)
                     result = self._language_qa.status(limit=0)
                 elif m == Methods.LANGUAGE_QA_PAUSE:
                     if not isinstance(p.get("paused"), bool):

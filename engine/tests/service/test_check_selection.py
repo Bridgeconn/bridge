@@ -173,6 +173,32 @@ def test_list_does_not_materialize_pending_resources_on_dispatch_thread(check_pr
     assert response["result"]["checks"] == []
 
 
+def test_list_says_what_to_do_when_the_indexes_were_never_asked_for(check_project, tmp_path, monkeypatch):
+    """#478: with tN/tW unticked (a fresh profile's default) nothing builds the
+    indexes, and the answer must say so and what to do, not "Preparing…" for
+    good. While a check run is under way it is "Preparing…" again."""
+    engine = _engine(tmp_path)
+    _open(engine, check_project)
+    _write_json(check_project / ".bridge" / "import.json", {
+        "capabilities": {
+            "translationNotes": "requires-resource-index",
+            "translationWords": "requires-resource-index",
+        },
+    })
+    idle = _call(engine, "check.listForVerse", {"chapter": "1", "verse": "1"})["result"]
+    assert idle["state"] == "preparing" and idle["checks"] == []
+    assert idle["pending"] == "resourceIndexes" and idle["running"] is False
+    assert "Translation Notes and Translation Words under Checks" in idle["message"]
+    assert "run the chapter" in idle["message"]
+    assert idle["retryAfterMs"] >= 750
+
+    monkeypatch.setattr(engine._check_jobs, "active", lambda: True)
+    busy = _call(engine, "check.listForVerse", {"chapter": "1", "verse": "1"})["result"]
+    assert busy["state"] == "preparing" and busy["pending"] == "resourceIndexes"
+    assert busy["running"] is True
+    assert busy["message"].startswith("Preparing translationNotes and translationWords")
+
+
 def test_validation_is_read_only_and_checks_repeated_occurrences(check_project, tmp_path):
     engine = _engine(tmp_path)
     _open(engine, check_project)
