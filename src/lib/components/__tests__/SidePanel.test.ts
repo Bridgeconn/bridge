@@ -8,13 +8,11 @@ import { readFileSync } from "node:fs";
 // @ts-expect-error As above.
 import { resolve } from "node:path";
 import SidePanel from "../SidePanel.svelte";
-import SideRail from "../SideRail.svelte";
 import PanelHeader from "../PanelHeader.svelte";
 import {
   PANEL_MIN, SIDE_PANEL_LIMITS, SIDE_PANEL_ORDER, clampPanelFloat, movePanel, setSidePanel, sidePanelOrder, sidePanels,
   undockSidePanel,
 } from "../../editorPrefs";
-import { languageQaChannel } from "../../languageQaInline";
 
 /** jsdom has no PointerEvent: a MouseEvent carries the pointer event's name and fields. */
 async function pointer(target: HTMLElement, type: string, clientX = 0): Promise<void> {
@@ -23,16 +21,17 @@ async function pointer(target: HTMLElement, type: string, clientX = 0): Promise<
 }
 
 function reset(): void {
-  for (const id of ["reference", "languageQa", "review"] as const) {
+  for (const id of ["reference", "paratext", "review"] as const) {
     setSidePanel(id, { open: id === "review", width: SIDE_PANEL_LIMITS[id].initial, float: null });
   }
   sidePanelOrder.set([...SIDE_PANEL_ORDER]);
 }
 
 describe("SIDE_PANEL_LIMITS (#379 item 6)", () => {
-  it("gives every panel one minimum width except Language QA, which keeps 320", () => {
+  it("gives every panel one minimum width (Language QA, which kept 320, is the Review panel's tab since #487)", () => {
+    expect(SIDE_PANEL_ORDER).toEqual(["source", "reference", "paratext", "review"]);
     for (const id of SIDE_PANEL_ORDER) {
-      expect(SIDE_PANEL_LIMITS[id].min, id).toBe(id === "languageQa" ? 320 : PANEL_MIN);
+      expect(SIDE_PANEL_LIMITS[id].min, id).toBe(PANEL_MIN);
       expect(SIDE_PANEL_LIMITS[id].initial, id).toBeGreaterThanOrEqual(SIDE_PANEL_LIMITS[id].min);
     }
     expect(PANEL_MIN).toBe(260);
@@ -99,59 +98,12 @@ describe("SidePanel (Benz, 2026-10-09)", () => {
   });
 });
 
-describe("SideRail", () => {
-  beforeEach(reset);
-  afterEach(() => {
-    reset();
-    languageQaChannel.set({ projectPath: "", status: null, error: "" });
-  });
-
-  it("toggles each panel's column and opens Settings", async () => {
-    const onOpenSettings = vi.fn();
-    render(SideRail, { props: { onOpenSettings } });
-    const lqa = screen.getByRole("button", { name: /Language QA/ });
-    expect(lqa.getAttribute("aria-pressed")).toBe("false");
-    await fireEvent.click(lqa);
-    expect(get(sidePanels).languageQa.open).toBe(true);
-    expect(lqa.getAttribute("aria-pressed")).toBe("true");
-    await fireEvent.click(screen.getByRole("button", { name: /Review/ }));
-    expect(get(sidePanels).review.open).toBe(false);
-    await fireEvent.click(screen.getByRole("button", { name: /Settings/ }));
-    expect(onOpenSettings).toHaveBeenCalled();
-  });
-
-  // #379 item 6: the buttons run top to bottom as the columns run left to right.
-  it("lists the panels in SIDE_PANEL_ORDER by default, Settings last", () => {
-    render(SideRail);
-    const names = screen.getAllByRole("button").map((button) => button.getAttribute("aria-controls"));
-    expect(names).toEqual([...SIDE_PANEL_ORDER.map((id) => `side-panel-${id}`), null]);
-  });
-
-  // #389 step 2: the reviewer's order, and the rail follows it.
-  it("follows the reviewer's order as it changes", async () => {
-    render(SideRail);
-    movePanel("reference", -1);
-    await tick();
-    const names = screen.getAllByRole("button").map((button) => button.getAttribute("aria-controls"));
-    expect(names.slice(0, 2)).toEqual(["side-panel-reference", "side-panel-source"]);
-  });
-
-  it("badges Language QA with its total, or ! when the channel failed", async () => {
-    languageQaChannel.set({ projectPath: "/p", error: "", status: { totalFindings: 18 } as never });
-    render(SideRail);
-    expect(screen.getByRole("button", { name: /Language QA/ }).textContent).toContain("18");
-    languageQaChannel.set({ projectPath: "/p", error: "engine gone", status: null });
-    await tick();
-    expect(screen.getByRole("button", { name: /Language QA/ }).textContent).toContain("!");
-  });
-});
-
 // #379 (Benz's item 7): one header bar with a line under it on every panel.
 describe("PanelHeader (#379)", () => {
   beforeEach(reset);
   afterEach(reset);
 
-  it("shows the title, carries the hint as its tooltip, and Close closes the column as the rail does", async () => {
+  it("shows the title, carries the hint as its tooltip, and Close closes the column as the View menu does", async () => {
     setSidePanel("reference", { open: true });
     render(PanelHeader, { props: { id: "reference", title: "Reference · OV", hint: "C:/bibles/ov", label: "the Reference panel" } });
     const title = screen.getByRole("heading", { level: 2, name: "Reference · OV" });
@@ -163,24 +115,21 @@ describe("PanelHeader (#379)", () => {
 
   // #389 step 2: ◂ ▸ in the bar reorder the columns, the order is remembered,
   // and a saved order that lost a panel gets it back in its default place.
-  it("moves its column with ◂ ▸, which the saved order and the rail follow", async () => {
+  it("moves its column with ◂ ▸, which the saved order follows", async () => {
     setSidePanel("reference", { open: true });
     render(PanelHeader, { props: { id: "reference", title: "Reference", label: "the Reference panel" } });
-    render(SideRail);
     const tools = screen.getByRole("button", { name: "the Reference panel panel tools" });
     await fireEvent.click(tools);
     expect(await screen.findByRole("menuitem", { name: "Move panel left" })).toBeEnabled();
     await fireEvent.click(screen.getByRole("menuitem", { name: "Move panel left" }));
-    expect(get(sidePanelOrder)).toEqual(["reference", "source", "languageQa", "paratext", "review"]);
+    expect(get(sidePanelOrder)).toEqual(["reference", "source", "paratext", "review"]);
     expect(JSON.parse(localStorage.getItem("bridge.editor.sidePanelOrder.v1") ?? "[]")[0]).toBe("reference");
     await fireEvent.click(tools);
     expect(await screen.findByRole("menuitem", { name: "Move panel left" })).toBeDisabled();
-    const rail = screen.getAllByRole("button").filter(b => b.getAttribute("aria-controls")).map(b => b.getAttribute("aria-controls"));
-    expect(rail[0]).toBe("side-panel-reference");
     await fireEvent.click(screen.getByRole("menuitem", { name: "Move panel right" }));
     await fireEvent.click(tools);
     await fireEvent.click(await screen.findByRole("menuitem", { name: "Move panel right" }));
-    expect(get(sidePanelOrder)).toEqual(["source", "languageQa", "reference", "paratext", "review"]);
+    expect(get(sidePanelOrder)).toEqual(["source", "paratext", "reference", "review"]);
     render(PanelHeader, { props: { id: "review", title: "Review", label: "the Review panel" } });
     await fireEvent.click(screen.getByRole("button", { name: "the Review panel panel tools" }));
     expect(await screen.findByRole("menuitem", { name: "Move panel right" })).toBeDisabled();
@@ -192,22 +141,26 @@ describe("PanelHeader (#379)", () => {
 
   it("names Close after the title when no label is given, and defers to onClose when one is given", async () => {
     const onClose = vi.fn();
-    setSidePanel("languageQa", { open: true });
-    render(PanelHeader, { props: { id: "languageQa", title: "Language QA", onClose } });
-    await fireEvent.click(screen.getByRole("button", { name: "Close Language QA" }));
+    setSidePanel("paratext", { open: true });
+    render(PanelHeader, { props: { id: "paratext", title: "Paratext notes", onClose } });
+    await fireEvent.click(screen.getByRole("button", { name: "Close Paratext notes" }));
     expect(onClose).toHaveBeenCalledOnce();
-    expect(get(sidePanels).languageQa.open).toBe(true);
+    expect(get(sidePanels).paratext.open).toBe(true);
   });
 
-  it("is the first thing every one of the five panels draws, with the actions in its slot", () => {
+  it("is the first thing every one of the four panels draws, with the actions in its slot", () => {
     const source = (name: string) => readFileSync(resolve(process.cwd(), "src/lib/components", `${name}.svelte`), "utf-8");
-    for (const [name, id] of [["SourceTextPanel", "source"], ["ReferencePanel", "reference"], ["LanguageQaPanel", "languageQa"],
+    for (const [name, id] of [["SourceTextPanel", "source"], ["ReferencePanel", "reference"],
       ["ParatextNotesPanel", "paratext"], ["ReviewPanel", "review"]] as const) {
       const text = source(name);
       expect(text, name).toMatch(new RegExp(`<PanelHeader id="${id}"`));
       // No panel keeps a header of its own beside the shared one.
       expect(text, name).not.toMatch(/class="(head|pt-head|head-row)"/);
     }
+    // #487: Language QA is a tab of the Review panel and draws no bar.
+    expect(source("LanguageQaPanel")).not.toContain("<PanelHeader");
+    // #488: the rail is gone; nothing mounts or imports it.
+    expect(readFileSync(resolve(process.cwd(), "src/App.svelte"), "utf-8")).not.toMatch(/SideRail|editor-toolbar/);
     // One bar: one padding, one title size, one background, one line under it.
     const bar = source("PanelHeader");
     expect(bar).toContain("padding: 0 8px");

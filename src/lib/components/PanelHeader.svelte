@@ -3,7 +3,7 @@
   // with a line under it. Title on the left, the panel's own actions (follow
   // box, Change, Pause, the (i)) in the slot, then the layout controls (#389:
   // ◂ ▸ move the column, ⧉ undocks it into a box inside the window, ⇲ docks
-  // it back), and a ✕ Close on the right that does what the rail button does.
+  // it back), and a ✕ Close on the right that does what the View menu's entry does.
   // One padding, one title size, one background.
   //
   // Each panel mounts this as its first child rather than SidePanel drawing
@@ -28,7 +28,7 @@
   /** The title's tooltip, where the bar's text is cut or stands for a path. */
   export let hint: string = "";
   /** What Close does when it is not simply closing the column (the floating
-   *  Language QA box). Default: close the column, as the rail does. */
+   *  Language QA box). Default: close the column, as the View menu does. */
   export let onClose: (() => void) | null = null;
   /** The ◂ ▸ / undock controls: only where the bar heads an editor column or
    *  an undocked box, not the Language QA box of the other screens. */
@@ -81,7 +81,7 @@
     <OverflowMenu label={`${label} panel tools`} {actions} on:action={(event) => arrange(event.detail.id)} />
   {/if}
   <button type="button" class="panel-close" on:click={close}
-    aria-label={`Close ${label}`} title="Close (the button on the right-hand rail opens it again)">✕</button>
+    aria-label={`Close ${label}`} title="Close (the View menu opens it again)">✕</button>
 </div>
 
 <style>

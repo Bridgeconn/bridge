@@ -1,6 +1,10 @@
 <script lang="ts">
-  // "Align chapter with AI" in the chapter toolbar (#221/#222). Four states in
-  // one place, so the toolbar never grows a second row:
+  // "Align chapter with AI" (#221/#222). Since #488 (2026-11-11) the action is
+  // an entry of the top bar's Alignment menu and the editor's second bar is
+  // gone: App mounts this with `strip`, starts it through `ask()`, and it
+  // draws nothing while idle. Its other states show as one strip above the
+  // editor, there only while there is something to confirm, watch or read.
+  // Without `strip` it is the button it always was. Four states in one place:
   //   idle      -> the button;
   //   confirm   -> the offline estimate, with Start / Cancel (nothing sent yet);
   //   running   -> progress and Cancel (cancel takes effect between requests);
@@ -18,10 +22,14 @@
   /** Called once a job ends, so the editor can reload what it wrote. */
   export let onFinished: () => void = () => {};
   export let disabled = false;
+  /** No button of its own: the Alignment menu starts it (see above). */
+  export let strip = false;
 
   type Phase = "idle" | "estimating" | "confirm" | "running" | "finished";
-  let phase: Phase = "idle";
-  let hasKey: boolean | undefined = undefined;
+  /** Read by the Alignment menu's entry (bind:phase, bind:hasKey) for its
+   *  label, disabled state and tooltip; this component alone changes them. */
+  export let phase: Phase = "idle";
+  export let hasKey: boolean | undefined = undefined;
   let estimate: AutoAlignEstimate | null = null;
   let job: AutoAlignJobStatus | null = null;
   let error = "";
@@ -42,6 +50,12 @@
   $: if (chapter !== shownFor) {
     shownFor = chapter;
     if (phase === "confirm" || phase === "finished") phase = "idle";
+  }
+
+  /** The Alignment menu's entry: the same first step as the button. */
+  export function ask(): void {
+    if (disabled || !hasKey || phase !== "idle") return;
+    void askEstimate();
   }
 
   async function askEstimate() {
@@ -134,8 +148,13 @@
   $: review = job?.verdictCounts?.NEEDS_REVIEW ?? 0;
 </script>
 
-<span class="auto-chapter">
-  {#if phase === "idle" || phase === "estimating"}
+{#if !strip || phase !== "idle" || error}
+<span class="auto-chapter" class:strip>
+  {#if strip && phase === "estimating"}
+    <span class="progress" role="status"><span class="spin" aria-hidden="true" /> Working out the cost…</span>
+  {:else if strip && phase === "idle"}
+    <!-- only an error to show; the entry is in the Alignment menu -->
+  {:else if phase === "idle" || phase === "estimating"}
     <button
       class="whole-book-btn"
       on:click={askEstimate}
@@ -172,11 +191,15 @@
       <button class="dismiss" on:click={() => (phase = "idle")} aria-label="Dismiss">×</button>
     </span>
   {/if}
-  {#if error}<span class="error" role="alert">{error}</span>{/if}
+  {#if error}<span class="error" role="alert">{error}</span>
+    {#if strip && phase === "idle"}<button class="dismiss" on:click={() => (error = "")} aria-label="Dismiss">×</button>{/if}{/if}
 </span>
+{/if}
 
 <style>
   .auto-chapter { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  /* The strip above the editor: a row of its own, only while it has content. */
+  .auto-chapter.strip { display: flex; flex-shrink: 0; min-height: 32px; padding: 4px 16px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
   .whole-book-btn { font-size: var(--fs-xs); font-weight: 600; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); cursor: pointer; }
   .whole-book-btn:disabled { opacity: 0.6; cursor: not-allowed; }
   .whole-book-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }

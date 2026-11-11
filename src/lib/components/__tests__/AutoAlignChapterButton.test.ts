@@ -97,3 +97,46 @@ describe("AutoAlignChapterButton", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("No key configured.");
   });
 });
+
+// #488: the editor's second bar is gone. App mounts this with `strip`: the
+// entry is in the top bar's Alignment menu, and the strip is drawn only
+// while there is an estimate to confirm, a run to watch or a result to read.
+describe("AutoAlignChapterButton as a strip (#488)", () => {
+  it("draws nothing while idle, and ask() opens the same estimate with Start and Cancel", async () => {
+    const { component, container } = render(AutoAlignChapterButton, { props: { chapter: "1", onOpenReview: vi.fn(), strip: true } });
+    await waitFor(() => expect(getSettings).toHaveBeenCalled());
+    await Promise.resolve();
+    expect(container.querySelector(".auto-chapter")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Align chapter with AI" })).toBeNull();
+    await waitFor(() => { component.ask(); expect(autoAlignEstimate).toHaveBeenCalledWith("chapter", ["1"]); });
+    expect(await screen.findByText(/15 windows · 30 requests · ~612k tokens · about \$2\.31/)).toBeInTheDocument();
+    expect(container.querySelector(".auto-chapter.strip")).not.toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(autoAlignStart).not.toHaveBeenCalled();
+    await waitFor(() => expect(container.querySelector(".auto-chapter")).toBeNull());
+    expect(autoAlignEstimate).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not start without an API key or while disabled", async () => {
+    getSettings.mockResolvedValue({ hasApiKey: false });
+    const first = render(AutoAlignChapterButton, { props: { chapter: "1", onOpenReview: vi.fn(), strip: true } });
+    await waitFor(() => expect(getSettings).toHaveBeenCalled());
+    await Promise.resolve();
+    first.component.ask();
+    getSettings.mockResolvedValue({ hasApiKey: true });
+    const second = render(AutoAlignChapterButton, { props: { chapter: "1", onOpenReview: vi.fn(), strip: true, disabled: true } });
+    await waitFor(() => expect(getSettings).toHaveBeenCalledTimes(2));
+    await Promise.resolve();
+    second.component.ask();
+    expect(autoAlignEstimate).not.toHaveBeenCalled();
+  });
+
+  it("shows a failed estimate in the strip, with a way to dismiss it", async () => {
+    autoAlignEstimate.mockRejectedValue(new Error("The engine did not answer."));
+    const { component, container } = render(AutoAlignChapterButton, { props: { chapter: "1", onOpenReview: vi.fn(), strip: true } });
+    await waitFor(() => { component.ask(); expect(autoAlignEstimate).toHaveBeenCalled(); });
+    expect(await screen.findByRole("alert")).toHaveTextContent("The engine did not answer.");
+    await fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(container.querySelector(".auto-chapter")).toBeNull());
+  });
+});

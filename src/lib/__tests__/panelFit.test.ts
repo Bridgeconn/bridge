@@ -4,24 +4,23 @@ import { get } from "svelte/store";
 import { tick } from "svelte";
 
 import SidePanel from "../components/SidePanel.svelte";
-import SideRail from "../components/SideRail.svelte";
+import ViewMenu from "../components/ViewMenu.svelte";
 import { SIDE_PANEL_LIMITS, setSidePanel, sidePanelRecency, sidePanels, toggleSidePanel } from "../editorPrefs";
 import type { SidePanels } from "../editorPrefs";
-import { RAIL_WIDTH, VERSE_MIN_WIDTH, foldedPanels, foldedSidePanels, verseMinWidth } from "../panelFit";
+import { VERSE_MIN_WIDTH, foldedPanels, foldedSidePanels, verseMinWidth } from "../panelFit";
 
 function layout(open: Partial<Record<keyof SidePanels, boolean>>): SidePanels {
   return {
     source: { open: !!open.source, width: 320 },
     reference: { open: !!open.reference, width: 300 },
-    languageQa: { open: !!open.languageQa, width: 440 },
     paratext: { open: !!open.paratext, width: 340 },
     review: { open: !!open.review, width: 400 },
   };
 }
 
-/** The width the verse list, the rail and these panels at their minimums take. */
+/** The width the verse list and these panels at their minimums take (no rail since #488). */
 const needed = (ids: (keyof SidePanels)[], verse = VERSE_MIN_WIDTH): number =>
-  verse + RAIL_WIDTH + ids.reduce((sum, id) => sum + SIDE_PANEL_LIMITS[id].min + 1, 0);
+  verse + ids.reduce((sum, id) => sum + SIDE_PANEL_LIMITS[id].min + 1, 0);
 
 function setWindowWidth(px: number): void {
   Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: px });
@@ -37,13 +36,6 @@ describe("foldedSidePanels (#324)", () => {
     floating.reference.float = { x: 10, y: 10, width: 300, height: 400 };
     expect(foldedSidePanels(needed(["source", "review"]), floating, [], VERSE_MIN_WIDTH)).toEqual([]);
     expect(foldedSidePanels(needed(["source", "reference", "review"]) - 1, three, [], VERSE_MIN_WIDTH)).toEqual(["reference"]);
-  });
-
-  // #487: Language QA is the Review panel's tab; its flag (on by default) is no column.
-  it("leaves the Language QA flag out of the budget, on by default", () => {
-    const withTab = layout({ source: true, reference: true, review: true, languageQa: true });
-    expect(foldedSidePanels(needed(["source", "reference", "review"]), withTab, [], VERSE_MIN_WIDTH)).toEqual([]);
-    expect(foldedSidePanels(needed(["source", "reference", "review"]) - 1, withTab, ["languageQa"], VERSE_MIN_WIDTH)).toEqual(["reference"]);
   });
 
   it("folds nothing while the verse list and every open panel's minimum fit", () => {
@@ -79,7 +71,7 @@ describe("foldedSidePanels (#324)", () => {
 
 describe("folding in the editor (#324)", () => {
   afterEach(() => {
-    for (const id of ["source", "reference", "languageQa", "paratext", "review"] as const) {
+    for (const id of ["source", "reference", "paratext", "review"] as const) {
       setSidePanel(id, { open: id === "review", width: SIDE_PANEL_LIMITS[id].initial });
     }
     sidePanelRecency.set([]);
@@ -108,32 +100,41 @@ describe("folding in the editor (#324)", () => {
     expect(column().hidden).toBe(false);
   });
 
-  it("shows a folded panel's rail entry as not pressed, and a click brings it back instead of closing it", async () => {
+  // #488: the rail is gone; the View menu is where a folded panel is seen
+  // and brought back.
+  it("the View menu marks a folded panel, and choosing it brings it back instead of closing it", async () => {
     setWindowWidth(984);
     setSidePanel("source", { open: true });
     setSidePanel("reference", { open: true });
     setSidePanel("review", { open: true });
     sidePanelRecency.set([]);
-    render(SideRail);
-    const reference = screen.getByRole("button", { name: /^Reference/ });
-    const source = screen.getByRole("button", { name: /^Source/ });
-    expect(reference.getAttribute("aria-pressed")).toBe("false");
+    render(ViewMenu);
+    const trigger = screen.getByRole("button", { name: /^View/ });
+    // Seen before the menu is opened: the button says a panel is folded.
+    expect(trigger.title).toMatch(/too narrow/);
+    await fireEvent.click(trigger);
+    const reference = screen.getByRole("menuitemcheckbox", { name: /^Reference/ });
+    const source = screen.getByRole("menuitemcheckbox", { name: /^Source/ });
+    expect(reference.getAttribute("aria-checked")).toBe("mixed");
     expect(reference.title).toMatch(/too narrow/);
-    expect(source.getAttribute("aria-pressed")).toBe("true");
+    expect(reference.textContent).toContain("folded: window too narrow");
+    expect(reference.textContent).not.toContain("✓");
+    expect(source.getAttribute("aria-checked")).toBe("true");
 
     await fireEvent.click(reference);
     expect(get(sidePanels).reference.open).toBe(true);
-    expect(reference.getAttribute("aria-pressed")).toBe("true");
+    expect(reference.getAttribute("aria-checked")).toBe("true");
     // Source, now the one opened longest ago, folds in its place.
-    expect(source.getAttribute("aria-pressed")).toBe("false");
+    expect(source.getAttribute("aria-checked")).toBe("mixed");
 
-    // An ordinary open panel still closes from the rail.
+    // An ordinary open panel still closes from the menu.
     await fireEvent.click(reference);
     expect(get(sidePanels).reference.open).toBe(false);
-    expect(source.getAttribute("aria-pressed")).toBe("true");
+    expect(source.getAttribute("aria-checked")).toBe("true");
+    expect(trigger.title).not.toMatch(/too narrow/);
   });
 
-  it("a panel opened from the rail is the one shown", async () => {
+  it("a panel opened from the View menu is the one shown", async () => {
     setWindowWidth(984);
     setSidePanel("source", { open: true });
     setSidePanel("review", { open: true });

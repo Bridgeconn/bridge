@@ -41,7 +41,7 @@
 
   $: limits = SIDE_PANEL_LIMITS[id];
   $: open = $sidePanels[id].open && !$sidePanels[id].detached;
-  // Open but folded to its rail entry because the window is too narrow (#324):
+  // Open but folded because the window is too narrow (#324; the View menu marks it):
   // hidden like a closed panel, its saved state untouched.
   $: folded = open && !$editorTree && $foldedPanels.has(id);
   // A column never takes more than 45% of the window, whatever was saved.

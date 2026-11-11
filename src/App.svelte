@@ -32,7 +32,6 @@
   import { TEXT_SCALES, bumpTextScale, sidePanelOrder, sidePanels, textScale, toggleSidePanel } from "./lib/editorPrefs";
   import { verseMin } from "./lib/panelFit";
   import SidePanel from "./lib/components/SidePanel.svelte";
-  import SideRail from "./lib/components/SideRail.svelte";
   import {
     bookmarks, buildPlacesMenu, collectionOf, recentChapters, recordRecentChapter, setPlaces, toggleBookmark,
   } from "./lib/bookmarks";
@@ -76,6 +75,7 @@
   import { projectRoles, refreshProjectRoles } from "./lib/projectRole";
   import CheckMenu from "./lib/components/CheckMenu.svelte";
   import ViewMenu from "./lib/components/ViewMenu.svelte";
+  import AlignmentMenu from "./lib/components/AlignmentMenu.svelte";
   import EditorHeader from "./lib/components/EditorHeader.svelte";
   import { editingChapter, editingVerse, editSaving } from "./lib/verseEditor";
   import { languageQaChannel, nudgeLanguageQa, startLanguageQaInline } from "./lib/languageQaInline";
@@ -104,6 +104,11 @@
   // Alignment Review is a top-level surface alongside the editor, not a
   // replacement for ReviewPanel's per-verse alignment modal.
   let showingAlignmentReview = false;
+  // #488: the Alignment menu entry for AutoAlignChapterButton (its phase and
+  // whether an API key is saved are the component's; these only mirror them).
+  let autoAlign: AutoAlignChapterButton | undefined;
+  let autoAlignPhase: "idle" | "estimating" | "confirm" | "running" | "finished" = "idle";
+  let autoAlignHasKey: boolean | undefined = undefined;
   let bookProgress: BookProgressEntry[] = [];
   let dashboardLoading = false;
   let dashboardError = "";
@@ -1663,7 +1668,7 @@
     exportEnabled={$project !== null}
     bookSwitching={Boolean(openingBook)}
   >
-    <!-- #488: the editor's three menus, right of the name. -->
+    <!-- #488: the editor's four menus, right of the name. -->
     <svelte:fragment slot="menus">
       <ViewMenu />
       <CheckMenu
@@ -1675,6 +1680,23 @@
         onRunGreekRoom={runGreekRoom}
       />
       <button type="button" class="top-menu-btn" aria-haspopup="menu" aria-expanded={Boolean(placesMenu)}
+      <!-- The three actions of the old second bar. "Align chapter with AI"
+           is AutoAlignChapterButton's (mounted in the editor below): the
+           entry reads its phase and key, and starts it. -->
+      <AlignmentMenu
+        onAlignmentReview={() => (showingAlignmentReview = true)}
+        onCrossVerse={() => openCrossVerse($selectedVerse ?? "", $selectedVerseSet)}
+        crossVerseDisabled={!$selectedVerse}
+        selectedCount={$selectedVerseSet.length}
+        onAlignChapter={() => autoAlign?.ask()}
+        alignChapterDisabled={Boolean(activeJobId) || !autoAlignHasKey || autoAlignPhase !== "idle"}
+        alignChapterTitle={autoAlignHasKey === false
+          ? "Add an API key in Settings to align automatically"
+          : autoAlignPhase === "idle" || autoAlignPhase === "estimating"
+            ? "Align this chapter automatically: three verses at a time, each asked twice. Shows the cost before anything is sent."
+            : "An automatic alignment of this chapter is open in the strip above the text"}
+        alignChapterLabel={autoAlignPhase === "estimating" ? "Working out the cost…" : "Align chapter with AI"}
+      />
         title="Bookmarks and recent chapters" on:click={openPlacesMenu}>Bookmarks ▾</button>
     </svelte:fragment>
   </TopBar>
@@ -1782,42 +1804,32 @@
     {/key}
   {:else}
     <div class="body">
-      <!-- The toolbar spans the text and the reference panel, so the two start
-           at the same height under it. The review panel keeps the full height. -->
       <div class="work-col" style:--verse-scale={$textScale}>
         {#if $projectRoles?.effectiveRole === "reporter"}
           <!-- #279: the engine refuses every change; say so before a click finds out. -->
           <p class="role-banner" role="status">You are a reporter on this project: you can read, report and export, and changes are refused.</p>
         {/if}
-        <div class="editor-toolbar">
-          <button class="whole-book-btn" on:click={() => (showingAlignmentReview = true)}>
-            Alignment Review
-          </button>
-          <button
-            class="whole-book-btn"
-            on:click={() => openCrossVerse($selectedVerse ?? "", $selectedVerseSet)}
-            disabled={!$selectedVerse}
-            title={$selectedVerseSet.length > 1
-              ? `Open the ${$selectedVerseSet.length} selected verses side by side`
-              : "Align several verses of this chapter side by side (Ctrl-click or Shift-click verses to pick them first)"}
-          >
-            Cross-verse alignment{#if $selectedVerseSet.length > 1}&nbsp;({$selectedVerseSet.length}){/if}
-          </button>
-          <AutoAlignChapterButton
-            chapter={$currentChapter}
-            disabled={Boolean(activeJobId)}
-            onOpenReview={(verse, verses) => openCrossVerse(verse, verses)}
-            onFinished={() => { void activateChapter($currentChapter); }}
-          />
-        </div>
+        <!-- #488: no second bar. Alignment Review, Cross-verse alignment and
+             Align chapter with AI are the top bar's Alignment menu. This
+             draws nothing while idle; the estimate to confirm, the progress
+             and the result of an automatic alignment show as one strip. -->
+        <AutoAlignChapterButton
+          strip
+          bind:this={autoAlign}
+          bind:phase={autoAlignPhase}
+          bind:hasKey={autoAlignHasKey}
+          chapter={$currentChapter}
+          disabled={Boolean(activeJobId)}
+          onOpenReview={(verse, verses) => openCrossVerse(verse, verses)}
+          onFinished={() => { void activateChapter($currentChapter); }}
+        />
         <!-- The text, then the side-panel columns (Benz, 2026-10-09): each
-             opened from the rail at the far right, resized or closed by
-             dragging its left edge; several may be open at once. All start
-             under the toolbar, level with the text. -->
+             shown from the View menu, resized or closed by dragging its left
+             edge; several may be open at once, level with the text. -->
         <div class="work-row">
           <EditorWorkspace let:editorFrame onDetach={id => { if ("__TAURI_INTERNALS__" in window) setSidePanel(id, { detached: true, open: true }); }}>
           <!-- #324: the verse list never goes below this width; the side
-               panels shrink and then fold to the rail first (panelFit.ts). -->
+               panels shrink and then fold first (panelFit.ts; View brings one back). -->
           <div data-editor-pane="editor" class="editor-col" style={editorFrame || `min-width:${$verseMin}px`}>
             <!-- #489: the chapter and the Raw toggle, above the scrolling verses. -->
             <EditorHeader chapter={$currentChapter} total={$project?.chapters.length ?? "?"}>
@@ -1861,7 +1873,6 @@
             {/if}
           {/each}
           </EditorWorkspace>
-          <SideRail onOpenSettings={() => openSettings("ai")} />
         </div>
       </div>
     </div>
@@ -1954,13 +1965,6 @@
   .work-col { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
   .work-row { flex: 1; min-height: 0; display: flex; overflow: hidden; }
   .editor-col { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
-  /* min-height + wrap, not a fixed height: on a narrow window the items used to
-     shrink, break their labels onto two lines and get clipped by the 34px box.
-     Now each item keeps its label on one line and the row wraps instead. */
-  .editor-toolbar { min-height: 34px; background: var(--surface-2); border-bottom: 1px solid var(--border); display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 4px 16px; font-size: var(--fs-xs); color: var(--text-2); flex-shrink: 0; }
-  .editor-toolbar > * { white-space: nowrap; flex-shrink: 0; }
-  .whole-book-btn { font-size: var(--fs-xs); font-weight: 600; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); cursor: pointer; }
-  .whole-book-btn:disabled { opacity: 0.6; cursor: not-allowed; }
   /* The Bookmarks menu button, matching ViewMenu's and CheckMenu's own. */
   .top-menu-btn { height: var(--control-h); box-sizing: border-box; display: inline-flex; align-items: center; font: inherit; font-size: var(--fs-sm); font-weight: 600; line-height: 1; padding: 0 8px; border-radius: 6px; border: 1px solid transparent; background: transparent; color: var(--text-2); cursor: pointer; white-space: nowrap; }
   .top-menu-btn:hover, .top-menu-btn[aria-expanded="true"] { background: var(--surface-2); color: var(--text); border-color: var(--border); }
