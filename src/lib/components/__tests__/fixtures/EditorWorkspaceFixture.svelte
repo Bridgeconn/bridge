@@ -5,6 +5,6 @@
 </script>
 <EditorWorkspace let:editorFrame>
   <div data-editor-pane="editor" style={editorFrame}><input aria-label="Editor draft" /></div>
-  <SidePanel id="languageQa" label="Language QA"><PanelHeader id="languageQa" title="Language QA" /><input aria-label="QA filter" /></SidePanel>
+  <SidePanel id="paratext" label="Language QA"><PanelHeader id="paratext" title="Language QA" /><input aria-label="QA filter" /></SidePanel>
   <SidePanel id="reference" label="Reference"><PanelHeader id="reference" title="Reference" /></SidePanel>
 </EditorWorkspace>

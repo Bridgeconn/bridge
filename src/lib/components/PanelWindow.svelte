@@ -17,7 +17,6 @@
   import { answerConfirmation, confirmRequest } from "../confirmAction";
   import SourceTextPanel from "./SourceTextPanel.svelte";
   import ReferencePanel from "./ReferencePanel.svelte";
-  import LanguageQaPanel from "./LanguageQaPanel.svelte";
   import ParatextNotesPanel from "./ParatextNotesPanel.svelte";
   import ReviewPanel from "./ReviewPanel.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
@@ -83,7 +82,6 @@
     {#key path}
       {#if id === "source"}<SourceTextPanel onSelectVerse={verse => { void navigate(($project?.bookId || ""), $currentChapter, verse); }} />
       {:else if id === "reference"}<ReferencePanel onSelectVerse={verse => { void navigate(($project?.bookId || ""), $currentChapter, verse); }} onOpenSettings={() => message("settings")} />
-      {:else if id === "languageQa"}<LanguageQaPanel projectPath={path} onNavigate={navigate} docked />
       {:else if id === "paratext"}<ParatextNotesPanel />
       {:else if id === "review"}<ReviewPanel onNavigate={navigate} />{/if}
     {/key}

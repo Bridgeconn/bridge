@@ -2,16 +2,12 @@
   // #487: the Language QA tab of the Review panel. Until 2026-11-11 this was
   // a panel of its own -- a docked column, a floating box on the other
   // screens, a launcher, Pause, ◂ ▸, Undock and Close in its bar. All of
-  // that is gone: ReviewPanel mounts this inside its Language QA tab, the
-  // View menu's Language QA entry shows or hides that tab (viewMenu.ts), and
-  // a verse's findings, whatever their scope, are acted on here with the
-  // same buttons the verse's right-click menu offers.
-  //
-  // PanelWindow.svelte still mounts it in a separate window (`docked`), where
-  // it draws the shared bar so the window can be docked back or closed.
+  // that is gone: ReviewPanel mounts this inside its Language QA tab, which
+  // is always present (no toggle of its own, no window of its own), and a
+  // verse's findings, whatever their scope, are acted on here with the same
+  // buttons the verse's right-click menu offers.
   import { getContext as getSvelteContext, onDestroy, tick } from "svelte";
   import { get as getStore } from "svelte/store";
-  import PanelHeader from "./PanelHeader.svelte";
   import { revealFinding } from "../findingFocus";
   import { bridge as bridgeApi } from "../api/bridgeClient";
   import { bindReviewProject } from "../reviewProjectGuard";
@@ -51,9 +47,6 @@
   export let active = true;
   /** The selected verse's open findings: the Review panel's tab badge. */
   export let verseCount = 0;
-  /** In a separate window (PanelWindow.svelte): draw the shared bar. */
-  export let docked = false;
-  $: ownBar = docked || Boolean(native);
 
   const PAGE = 50;
 
@@ -715,10 +708,7 @@
 
 <svelte:window on:keydown={onWindowKeydown} on:pointerdown={onWindowPointerdown} />
 
-<div class="language-qa" class:window={ownBar} aria-label="Language QA">
-  {#if ownBar}
-    <PanelHeader id="languageQa" title={`Language QA · ${stateWord}`} label="Language QA" layout={false} />
-  {/if}
+<div class="language-qa" aria-label="Language QA">
   <p class="walk-status" role="status" aria-live="polite">{walkStatus}</p>
 
   <!-- The pinned rows: the state line with the (i), the section tabs and,
@@ -1217,8 +1207,6 @@
      takes that padding back and the pinned rows, the body and the pager each
      span the column with their own gutters. */
   .language-qa { font-size: var(--fs-xs); color: var(--text); margin: -10px -12px; display: flex; flex-direction: column; min-height: 0; }
-  /* A separate window (PanelWindow.svelte) has no host padding and scrolls here. */
-  .language-qa.window { margin: 0; flex: 1; overflow: auto; }
   .panel-head { position: sticky; top: 0; z-index: 3; background: var(--surface); border-bottom: 1px solid var(--border); }
   .state-row { display: flex; align-items: center; gap: 8px; padding: 6px 12px; font-size: var(--fs-2xs); color: var(--text-2); }
   .state { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

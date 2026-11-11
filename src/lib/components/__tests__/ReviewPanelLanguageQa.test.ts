@@ -1,4 +1,10 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
+// @ts-expect-error The app tsconfig has no node types; vitest runs under node.
+import { readFileSync } from "node:fs";
+// @ts-expect-error As above.
+import { resolve } from "node:path";
+// @ts-expect-error As above.
+import process from "node:process";
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 
 // Layered-rules Phase 4.3: the review panel lists the selected verse's
@@ -28,6 +34,7 @@ import { currentChapter, project, selectedVerse, verseTexts, verseKey } from "..
 import { languageQaChannel } from "../../languageQaInline";
 import { setSidePanel, sidePanels } from "../../editorPrefs";
 import { reviewTabRequest } from "../../stores";
+import { showLanguageQaTab } from "../../languageQaPanelUi";
 import { get } from "svelte/store";
 import { lqaFinding } from "./languageQaFixture";
 import { scopeDialog } from "../../scopedApply";
@@ -54,8 +61,6 @@ describe("ReviewPanel Language QA tab", () => {
     });
     channel(3);
     selectedVerse.set("6");
-    // #487: the tab is shown by the View menu's flag (languageQaShown).
-    setSidePanel("languageQa", { open: true });
   });
 
   afterEach(() => {
@@ -137,20 +142,64 @@ describe("ReviewPanel Language QA tab", () => {
     await waitFor(() => expect(languageQaVerse).toHaveBeenCalledTimes(3));
   });
 
-  it("the View menu's flag hides the tab; a request for it (a verse's open-issue pill) shows it again (#487)", async () => {
-    setSidePanel("languageQa", { open: false });
+  // #487: the tab has no toggle of its own. A profile saved with the old
+  // Language QA column closed still shows it (the saved flag is dropped on
+  // read: sourcePanelPrefs.test.ts), and a request lands on it.
+  it("the tab is always present, and a request for it (the status bar button, a verse's open-issue pill) selects it", async () => {
     render(ReviewPanel);
-    expect(screen.queryByRole("tab", { name: /Language QA/ })).toBeNull();
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent?.trim().replace(/\s*\d+$/, "")))
-      .toEqual(["Greek Room", "Core check", "AI review"]);
-    reviewTabRequest.set("lqa");
-    const tab = await screen.findByRole("tab", { name: /Language QA/ });
-    expect(tab.getAttribute("aria-selected")).toBe("true");
-    expect(get(sidePanels).languageQa.open).toBe(true);
-    // Hidden again while it is up: the panel falls back to Greek Room.
-    setSidePanel("languageQa", { open: false });
-    await waitFor(() => expect(screen.queryByRole("tab", { name: /Language QA/ })).toBeNull());
-    expect(screen.getByRole("tab", { name: /Greek Room/ }).getAttribute("aria-selected")).toBe("true");
+      .toEqual(["Greek Room", "Core check", "Language QA", "AI review"]);
+    setSidePanel("review", { open: false });
+    showLanguageQaTab();
+    await waitFor(() => expect(screen.getByRole("tab", { name: /Language QA/ }).getAttribute("aria-selected")).toBe("true"));
+    expect(get(sidePanels).review.open).toBe(true);
+    expect(get(reviewTabRequest)).toBeNull();
+  });
+
+  // #487 bug (Revant's desktop check, 2026-11-11): after Language QA -> AI
+  // review, Language QA stayed drawn at the top with AI review under it. The
+  // tab is kept mounted and hidden with the `hidden` attribute, and
+  // `.lqa-panel { display: flow-root }` on that same element overrode the
+  // browser's `[hidden] { display: none }`, so it was never hidden on any
+  // tab; its sticky head then sat over whatever scrolled beneath.
+  it("only the selected tab's panel is shown, whichever order the tabs are visited in", async () => {
+    render(ReviewPanel);
+    const shown = () => Array.from(document.querySelectorAll<HTMLElement>("[role='tabpanel']")).filter((panel) => !panel.hidden);
+    const lqa = () => document.querySelector<HTMLElement>("[role='tabpanel'][data-tab='lqa']")!;
+    const visit = [/Language QA/, /AI review/, /Greek Room/, /Language QA/, /Core check/, /AI review/, /Language QA/];
+    for (const name of visit) {
+      await fireEvent.click(screen.getByRole("tab", { name }));
+      expect(shown(), String(name)).toHaveLength(1);
+      expect(lqa().hidden, String(name)).toBe(String(name) !== String(/Language QA/));
+      // The Language QA body stays mounted (its scope and lists survive), hidden or not.
+      expect(lqa().querySelector("[aria-label='Language QA']")).not.toBeNull();
+    }
+  });
+
+  // jsdom applies no component stylesheet, so the DOM test above cannot see
+  // the override itself. This pins the rule that caused it: no element that
+  // is hidden with `hidden` may be given a `display` by ReviewPanel's styles.
+  it("no style rule gives a hidden tab panel a display of its own", () => {
+    const source: string = readFileSync(resolve(process.cwd(), "src/lib/components/ReviewPanel.svelte"), "utf-8");
+    const style = source.slice(source.indexOf("<style>")).replace(/\/\*[\s\S]*?\*\//g, "");
+    const markup = source.slice(0, source.indexOf("<style>"));
+    // Every class carried by an element that also carries `hidden={...}`.
+    const hiddenClasses = new Set<string>();
+    for (const tag of markup.match(/<[a-z][^>]*\shidden=\{[^>]*>/g) ?? []) {
+      for (const name of (/class="([^"]*)"/.exec(tag)?.[1] ?? "").split(/\s+/).filter(Boolean)) hiddenClasses.add(name);
+    }
+    expect([...hiddenClasses]).toContain("tab-panel");
+    const offenders: string[] = [];
+    for (const [, selector, body] of style.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+      if (!/(^|[;\s])display\s*:/.test(body)) continue;
+      for (const name of hiddenClasses) {
+        const targets = selector.split(",").some((part) => new RegExp(`\\.${name}(?![\\w-])[^\\s>+~]*$`).test(part.trim()));
+        const hides = /display\s*:\s*none/.test(body);
+        if (targets && !hides) offenders.push(selector.trim());
+      }
+    }
+    expect(offenders).toEqual([]);
+    expect(style).toMatch(/\.tab-panel\[hidden\]\s*\{\s*display:\s*none\s*!important/);
   });
 
   it("puts a finding back when recording its decision fails", async () => {

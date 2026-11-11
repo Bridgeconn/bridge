@@ -1835,8 +1835,8 @@
             <VerseList onSelect={selectVerse} onNavigate={navigateToReportRow} />
           </div>
           <!-- #389: the columns run in the reviewer's order (sidePanelOrder,
-               ◂ ▸ in each panel's bar); the rail lists them the same way.
-               Review stays mounted with no project, as before. -->
+               ◂ ▸ in each panel's bar). Review stays mounted with no project,
+               as before; Language QA is its tab (#487), not a column. -->
           {#each $sidePanelOrder as panelId (panelId)}
             {#if panelId === "review"}
               <SidePanel id="review" label="Review" keepMounted>
@@ -1853,8 +1853,6 @@
                     <ReferencePanel onOpenSettings={() => openSettings("languageQa")} onSelectVerse={selectVerse} />
                   {/key}
                 </SidePanel>
-              {:else if panelId === "languageQa"}
-                <!-- #487: Language QA is the Review panel's tab, not a column. -->
               {:else if panelId === "paratext"}
                 <SidePanel id="paratext" label="Paratext notes">
                   {#key $project.path}<ParatextNotesPanel />{/key}

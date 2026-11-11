@@ -32,11 +32,44 @@ const isBoolean = (value: unknown): value is boolean => typeof value === "boolea
 
 /**
  * The editor's side panels: each a column right of the text with its own
- * width, opened from the rail at the far right and closed from the rail, its
- * Close button, or by dragging its left edge to the right past its minimum
- * (Benz, 2026-10-09). Several may be open side by side.
+ * width, shown and hidden from the top bar's View menu (the rail at the far
+ * right is gone, #488) and closed from its Close button or by dragging its
+ * left edge to the right past its minimum (Benz, 2026-10-09). Several may be
+ * open side by side.
+ *
+ * Language QA was one of them until #487: it is the Review panel's tab now,
+ * always present, so it has no id here and no saved open flag. Layouts saved
+ * while it was a panel are read through `withoutRetiredPanels`.
  */
-export type SidePanelId = "source" | "reference" | "languageQa" | "paratext" | "review";
+export type SidePanelId = "source" | "reference" | "paratext" | "review";
+/** Panel ids a saved layout may still carry. They are dropped on read. */
+export const RETIRED_PANEL_IDS: readonly string[] = ["languageQa"];
+
+/** A saved panels map and order with the retired ids taken out; anything
+ * that is not the expected shape is returned as it is, for the validators. */
+export function withoutRetiredPanels<P, O>(panels: P, order: O): { panels: P; order: O } {
+  let nextPanels = panels;
+  if (typeof panels === "object" && panels !== null && RETIRED_PANEL_IDS.some((id) => id in (panels as object))) {
+    nextPanels = Object.fromEntries(Object.entries(panels as object).filter(([id]) => !RETIRED_PANEL_IDS.includes(id))) as P;
+  }
+  const nextOrder = Array.isArray(order) ? order.filter((id) => !RETIRED_PANEL_IDS.includes(id)) as O : order;
+  return { panels: nextPanels, order: nextOrder };
+}
+
+/** Rewrites one saved key without the retired ids, before its store reads it:
+ * a saved order naming a retired panel would otherwise fail validation and the
+ * reviewer's own order would be thrown away with it. */
+function dropRetiredFromSaved(key: string): void {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return;
+    const value: unknown = JSON.parse(raw);
+    const cleaned = Array.isArray(value) ? withoutRetiredPanels(null, value).order : withoutRetiredPanels(value, null).panels;
+    if (JSON.stringify(cleaned) !== JSON.stringify(value)) localStorage.setItem(key, JSON.stringify(cleaned));
+  } catch {
+    // unreadable: the store falls back to its default
+  }
+}
 /** An undocked panel's box inside the window (#389), in CSS pixels. */
 export interface PanelFloat { x: number; y: number; width: number; height: number }
 /** `float` (#389): set while the panel is undocked into a box; absent or null
@@ -45,22 +78,20 @@ export interface PanelFloat { x: number; y: number; width: number; height: numbe
 export interface SidePanelState { open: boolean; width: number; float?: PanelFloat | null; detached?: boolean }
 export type SidePanels = Record<SidePanelId, SidePanelState>;
 
-/** Left to right, as they stand between the text and the rail. The source text
- * (#67) sits next to the verses it is the original of. */
+/** Left to right, as they stand right of the text. The source text (#67) sits
+ * next to the verses it is the original of. */
 /** Paratext notes (#357) sit beside Review, where findings are decided. */
-export const SIDE_PANEL_ORDER: readonly SidePanelId[] = ["source", "reference", "languageQa", "paratext", "review"];
+export const SIDE_PANEL_ORDER: readonly SidePanelId[] = ["source", "reference", "paratext", "review"];
 /** Panels a saved layout from before they existed lacks; they start closed
  * rather than throwing the reviewer's other widths away. */
 const ADDED_LATER: readonly SidePanelId[] = ["source", "paratext"];
 /** One minimum for every panel (#379 item 6, Benz 2026-10-26): `PANEL_MIN`,
  * 260, which keeps the fold points of #324 (two panels still fit beside the
- * text at 1366x768 under 150% scaling). Language QA keeps 320: its filter row
- * and five tabs need it. */
+ * text at 1366x768 under 150% scaling). */
 export const PANEL_MIN = 260;
 export const SIDE_PANEL_LIMITS: Record<SidePanelId, { min: number; max: number; initial: number }> = {
   source: { min: PANEL_MIN, max: 640, initial: 320 },
   reference: { min: PANEL_MIN, max: 640, initial: 300 },
-  languageQa: { min: 320, max: 760, initial: 440 },
   paratext: { min: PANEL_MIN, max: 640, initial: 340 },
   review: { min: PANEL_MIN, max: 720, initial: 400 },
 };
@@ -90,9 +121,6 @@ function defaultSidePanels(): SidePanels {
     source: { open: false, width: SIDE_PANEL_LIMITS.source.initial },
     reference: { open: legacy("bridge.editor.referencePanel.v1", isBoolean) ?? false,
                  width: width === undefined ? SIDE_PANEL_LIMITS.reference.initial : clampPanelWidth("reference", width) },
-    // #487: this flag is the Review panel's Language QA tab (viewMenu.ts), shown
-    // by default (Joel, 2026-11-11). It is no column: panelFit leaves it out.
-    languageQa: { open: true, width: SIDE_PANEL_LIMITS.languageQa.initial },
     paratext: { open: false, width: SIDE_PANEL_LIMITS.paratext.initial },
     review: { open: !(legacy("bridge.editor.reviewPanelCollapsed.v1", isBoolean) ?? false),
               width: SIDE_PANEL_LIMITS.review.initial },
@@ -119,6 +147,7 @@ const isSidePanels = (value: unknown): value is SidePanels =>
     return isPanelState(entry) || (entry === undefined && ADDED_LATER.includes(id));
   });
 
+dropRetiredFromSaved("bridge.editor.sidePanels.v1");
 export const sidePanels = persisted<SidePanels>("bridge.editor.sidePanels.v1", defaultSidePanels(), isSidePanels);
 sidePanels.update((all) => {
   const missing = ADDED_LATER.filter((id) => !isPanelState(all[id]));
@@ -151,8 +180,7 @@ export function setSidePanel(id: SidePanelId, patch: Partial<SidePanelState>): v
 
 /**
  * The columns' order, left to right (#389 step 2): the reviewer's, saved on
- * its own key beside the panels; `SIDE_PANEL_ORDER` is the default and the
- * rail follows this store. A saved order that lost a panel (one added later)
+ * its own key beside the panels; `SIDE_PANEL_ORDER` is the default. A saved order that lost a panel (one added later)
  * gets it appended in the default place; an unknown id is dropped.
  */
 const isPanelOrder = (value: unknown): value is SidePanelId[] =>
@@ -170,6 +198,7 @@ export function resetPanelLayout(): void {
   sidePanelRecency.set([]);
 }
 
+dropRetiredFromSaved("bridge.editor.sidePanelOrder.v1");
 export const sidePanelOrder = persisted<SidePanelId[]>("bridge.editor.sidePanelOrder.v1", [...SIDE_PANEL_ORDER], isPanelOrder);
 sidePanelOrder.update((order) => {
   const missing = SIDE_PANEL_ORDER.filter((id) => !order.includes(id));

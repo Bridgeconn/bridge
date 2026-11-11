@@ -8,7 +8,6 @@
   import { get as getStore } from "svelte/store";
   import { decideLocalFinding } from "../findingActions";
   import LanguageQaPanel from "./LanguageQaPanel.svelte";
-  import { languageQaShown, setLanguageQaShown } from "../viewMenu";
   import TranslationHelpsReview from "./TranslationHelpsReview.svelte";
   import { aiJobAppliesToReference, isAIReviewJobActive } from "../utils/aiJobScope";
   import { categoryClass, findingNumbers } from "../utils/highlight";
@@ -59,10 +58,9 @@
   // actions as the verse's right-click menu, the chapter and book lists, and
   // the Words / Flags / Edits / Dictionary sections. It is mounted once and
   // hidden with the tab, so its scope, kinds and F8 walk survive a tab
-  // switch; `active` tells it when the paged list is on screen. The tab
-  // itself is shown by the View menu's Language QA entry (viewMenu.ts).
+  // switch; `active` tells it when the paged list is on screen. The tab is
+  // always there: showing or hiding the Review panel is the only toggle.
   let lqaCount = 0;
-  $: if (!$languageQaShown && activeTab === "lqa") activeTab = "greekroom";
   /** Opens a verse anywhere in the book (an occurrence, a listed finding). */
   export let onNavigate: (book: string, chapter: string, verse: string) => void = () => {};
 
@@ -450,7 +448,6 @@
   // finding; taken once, then cleared, so a later click on the row's tab
   // bar is not overridden.
   $: if ($reviewTabRequest) {
-    if ($reviewTabRequest === "lqa") setLanguageQaShown(true);
     activeTab = $reviewTabRequest;
     reviewTabRequest.set(null);
   }
@@ -553,15 +550,13 @@
           <span class="tab-label">Core check</span>
           {#if tntwOpenCount > 0}<span class="tab-count">{tntwOpenCount}</span>{/if}
         </button>
-        {#if $languageQaShown}
-          <button
-            type="button" role="tab" aria-selected={activeTab === "lqa"} title="Language QA"
-            class:active={activeTab === "lqa"} on:click={() => (activeTab = "lqa")}
-          >
-            <span class="tab-label">Language QA</span>
-            {#if lqaCount > 0}<span class="tab-count">{lqaCount}</span>{/if}
-          </button>
-        {/if}
+        <button
+          type="button" role="tab" aria-selected={activeTab === "lqa"} title="Language QA"
+          class:active={activeTab === "lqa"} on:click={() => (activeTab = "lqa")}
+        >
+          <span class="tab-label">Language QA</span>
+          {#if lqaCount > 0}<span class="tab-count">{lqaCount}</span>{/if}
+        </button>
         <button
           type="button" role="tab" aria-selected={activeTab === "ai"} title="AI review"
           class:active={activeTab === "ai"} on:click={() => (activeTab = "ai")}
@@ -741,11 +736,16 @@
           {/if}
         </div>
       {/if}
-      {#if $languageQaShown && $project}
-        <div class="tab-panel lqa-panel" role="tabpanel" hidden={activeTab !== "lqa"}>
-          {#key $project.path}
-            <LanguageQaPanel projectPath={$project.path} {onNavigate} active={activeTab === "lqa"} bind:verseCount={lqaCount} />
-          {/key}
+      {#if $project}
+        <!-- Kept mounted and hidden with its tab. The element that carries
+             `hidden` must have no `display` of its own (see the style block):
+             the layout that needs one is on the inner .lqa-body. -->
+        <div class="tab-panel" role="tabpanel" data-tab="lqa" hidden={activeTab !== "lqa"}>
+          <div class="lqa-body">
+            {#key $project.path}
+              <LanguageQaPanel projectPath={$project.path} {onNavigate} active={activeTab === "lqa"} bind:verseCount={lqaCount} />
+            {/key}
+          </div>
         </div>
       {/if}
       {#if activeTab === "ai"}
@@ -914,6 +914,12 @@
   .tabs button.active .tab-count { background: var(--accent); color: white; }
   .tab-live { position: absolute; top: 4px; left: 0; width: 6px; height: 6px; border-radius: 50%; background: var(--pass); }
   .tab-panel:empty { display: none; }
+  /* #487: a tab kept mounted is hidden by the `hidden` attribute, and any
+     author `display` on the same element beats the browser's rule for it.
+     `.lqa-panel { display: flow-root }` did exactly that: the Language QA tab
+     stayed drawn under every other tab, its pinned head on top of them. So
+     no `display` is ever set on a .tab-panel, and this rule holds the line. */
+  .tab-panel[hidden] { display: none !important; }
   .section { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; }
   .section-title { font-size: var(--fs-xs); font-weight: 700; color: var(--text); display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
   .ignored-summary { cursor: pointer; user-select: none; margin-bottom: 0; list-style: none; }
@@ -1003,6 +1009,8 @@
   .ai-job-background { margin-top: 9px; padding: 8px; border-radius: 7px; font-size: var(--fs-3xs); line-height: 1.4; color: var(--text-2); background: var(--surface-2); }
   .ai-control-error { margin: 8px 0 0; font-size: var(--fs-2xs); line-height: 1.4; color: var(--danger); overflow-wrap: anywhere; }
   /* #487: the Language QA tab is its own component; it lays out the full
-     column (its pinned rows and pager span the gutters). */
-  .lqa-panel { display: flow-root; }
+     column (its pinned rows and pager span the gutters). flow-root keeps its
+     negative margins inside; it is on the inner element, never on the
+     .tab-panel that carries `hidden`. */
+  .lqa-body { display: flow-root; }
 </style>

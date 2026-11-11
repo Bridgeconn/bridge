@@ -156,13 +156,15 @@ describe("Language QA tab (#487)", () => {
     expect(css).toMatch(/\.panel-head \{[^}]*position: sticky; top: 0/);
   });
 
-  it("draws the shared bar only in a separate window (PanelWindow mounts it docked)", async () => {
+  // #487: it is a tab only. It draws no panel bar and has no window of its own.
+  it("never draws a panel bar of its own, and PanelWindow no longer hosts it", async () => {
     publish({ state: "running", completedChapters: 12, totalChapters: 50 });
-    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn(), docked: true });
-    expect(await screen.findByRole("heading", { level: 2, name: "Language QA · running 12/50" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Close Language QA" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Language QA panel tools" })).toBeNull();
-    expect(screen.getByText(/Checks running 12\/50/)).toBeTruthy();
+    render(LanguageQaPanel, { projectPath: "C:/project", onNavigate: vi.fn() });
+    expect(await screen.findByText(/Checks running 12\/50/)).toBeTruthy();
+    expect(screen.queryByRole("heading", { level: 2 })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Close Language QA" })).toBeNull();
+    const host = readFileSync(resolve(process.cwd(), "src/lib/components/PanelWindow.svelte"), "utf-8");
+    expect(host).not.toContain("LanguageQa");
   });
 
   it("refetches the open page when a new pass lands on the channel, and not otherwise", async () => {

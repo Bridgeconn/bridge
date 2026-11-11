@@ -3,13 +3,15 @@ import { fireEvent, render, screen } from "@testing-library/svelte";
 import { get } from "svelte/store";
 
 import ViewMenu from "../ViewMenu.svelte";
-import { SIDE_PANEL_LIMITS, SIDE_PANEL_ORDER, setSidePanel, sidePanels } from "../../editorPrefs";
-import { languageQaShown, setLanguageQaShown, toggleLanguageQaShown } from "../../viewMenu";
+import { SIDE_PANEL_LIMITS, SIDE_PANEL_ORDER, setSidePanel, sidePanelRecency, sidePanels } from "../../editorPrefs";
 
 function reset(): void {
   for (const id of SIDE_PANEL_ORDER) {
     setSidePanel(id, { open: id === "review", width: SIDE_PANEL_LIMITS[id].initial, float: null });
   }
+  sidePanelRecency.set([]);
+  Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1366 });
+  window.dispatchEvent(new Event("resize"));
 }
 
 const trigger = () => screen.getByRole("button", { name: /^View/ });
@@ -18,16 +20,20 @@ const entry = (name: string) => screen.getByRole("menuitemcheckbox", { name });
 describe("ViewMenu (#488)", () => {
   beforeEach(reset);
 
-  it("lists the five panels, ticked where the panel is on", async () => {
+  // #487: Language QA is a tab of the Review panel, with no toggle of its own.
+  it("lists the four panels, ticked where the panel is on, and has no Language QA entry", async () => {
     render(ViewMenu);
     expect(screen.queryByRole("menu")).toBeNull();
     await fireEvent.click(trigger());
     const names = screen.getAllByRole("menuitemcheckbox").map((item) => item.textContent?.replace("✓", "").trim());
-    expect(names).toEqual(["Source", "Reference", "Paratext", "Language QA", "Review"]);
+    expect(names).toEqual(["Source", "Reference", "Paratext", "Review"]);
+    expect(screen.queryByRole("menuitemcheckbox", { name: /Language QA/ })).toBeNull();
     expect(entry("Review")).toHaveAttribute("aria-checked", "true");
     expect(entry("Review")).toHaveTextContent("✓");
     expect(entry("Source")).toHaveAttribute("aria-checked", "false");
     expect(entry("Source")).not.toHaveTextContent("✓");
+    // Nothing is folded at 1366 with one panel open.
+    expect(trigger().title).not.toMatch(/too narrow/);
   });
 
   it("toggles a panel and stays open, so several can be changed in one visit", async () => {
@@ -39,20 +45,6 @@ describe("ViewMenu (#488)", () => {
     await fireEvent.click(entry("Review"));
     expect(get(sidePanels).review.open).toBe(false);
     expect(entry("Review")).toHaveAttribute("aria-checked", "false");
-  });
-
-  it("the Language QA entry follows languageQaShown and calls its toggle", async () => {
-    render(ViewMenu);
-    await fireEvent.click(trigger());
-    expect(get(languageQaShown)).toBe(false);
-    await fireEvent.click(entry("Language QA"));
-    expect(get(languageQaShown)).toBe(true);
-    expect(entry("Language QA")).toHaveAttribute("aria-checked", "true");
-    toggleLanguageQaShown();
-    await Promise.resolve();
-    expect(entry("Language QA")).toHaveAttribute("aria-checked", "false");
-    setLanguageQaShown(true);
-    expect(get(sidePanels).languageQa.open).toBe(true);
   });
 
   it("is keyboard operable: arrows move, Escape closes and returns focus", async () => {
@@ -78,4 +70,6 @@ describe("ViewMenu (#488)", () => {
     await fireEvent.mouseDown(document.body);
     expect(screen.queryByRole("menu")).toBeNull();
   });
+  // A panel folded for width: see panelFit.test.ts ("the View menu marks a
+  // folded panel ...").
 });

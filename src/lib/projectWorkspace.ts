@@ -2,7 +2,8 @@ import { editorTree, validEditorTree } from "./editorDocking";
 import type { LayoutNode } from "./alignmentLayout";
 import { get } from "svelte/store";
 import { localUserId } from "./stores";
-import { sidePanels, sidePanelOrder, resetPanelLayout, validPanelSnapshot, type SidePanels, type SidePanelId } from "./editorPrefs";
+import { RETIRED_PANEL_IDS, sidePanels, sidePanelOrder, resetPanelLayout, validPanelSnapshot, withoutRetiredPanels, type SidePanels, type SidePanelId } from "./editorPrefs";
+import { without } from "./alignmentLayout";
 import type { ProjectInfo, RegisteredProject } from "./types/finding";
 
 export interface WorkspaceSnapshot {
@@ -15,7 +16,12 @@ const key = (kind: string, id = "") => `bridge.${kind}.v1.${encodeURIComponent(g
 function read<T>(name: string): T | null { try { return JSON.parse(localStorage.getItem(name) || "null"); } catch { return null; } }
 function write(name: string, value: unknown) { try { localStorage.setItem(name, JSON.stringify(value)); } catch { /* session only */ } }
 export function savedWorkspace(p: ProjectInfo | RegisteredProject): WorkspaceSnapshot | null {
-  const v = read<WorkspaceSnapshot>(key("workspace", identity(p)));
+  const raw = read<WorkspaceSnapshot>(key("workspace", identity(p)));
+  // #487: a workspace saved while Language QA was a panel keeps its place,
+  // widths, order and arrangement; only the retired panel is taken out.
+  const v = raw && typeof raw === "object"
+    ? { ...raw, ...withoutRetiredPanels(raw.panels, raw.order), tree: raw.tree ? without(raw.tree, RETIRED_PANEL_IDS) : raw.tree }
+    : raw;
   return v?.version === 1 && typeof v.book === "string" && typeof v.chapter === "string" && typeof v.verse === "string"
     && ["editor", "review"].includes(v.view) && Number.isFinite(v.scroll) && v.scroll >= 0
     && validEditorTree(v.tree ?? null) && validPanelSnapshot(v.panels, v.order) ? v : null;

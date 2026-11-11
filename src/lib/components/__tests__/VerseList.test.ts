@@ -690,18 +690,18 @@ describe("VerseList alignment glyph (issue #70)", () => {
 
   it("opens the Review side panel the modal is mounted in when it is closed (#306)", async () => {
     setSidePanel("review", { open: false });
-    setSidePanel("languageQa", { open: true });
+    setSidePanel("paratext", { open: true });
     render(VerseList, { props: { onSelect: vi.fn() } });
     await fireEvent.click(glyph());
     expect(get(alignmentOpen)).toBe(true);
     expect(get(sidePanels).review.open).toBe(true);
     // The other panels are left as they were.
-    expect(get(sidePanels).languageQa.open).toBe(true);
+    expect(get(sidePanels).paratext.open).toBe(true);
     // Opening again with Review already open never toggles it shut.
     alignmentOpen.set(false);
     await fireEvent.click(glyph());
     expect(get(sidePanels).review.open).toBe(true);
-    setSidePanel("languageQa", { open: false });
+    setSidePanel("paratext", { open: false });
   });
 
   it("leaves the Review panel closed when the guard refuses to open (#306)", async () => {

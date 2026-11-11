@@ -5,7 +5,7 @@ import Fixture from "./fixtures/EditorWorkspaceFixture.svelte";
 import { editorTree, validEditorTree } from "../../editorDocking";
 import { resetPanelLayout, setSidePanel, sidePanels } from "../../editorPrefs";
 const original = document.elementsFromPoint;
-beforeEach(() => { editorTree.set(null); resetPanelLayout(); setSidePanel("review", { open: false }); setSidePanel("languageQa", { open: true }); });
+beforeEach(() => { editorTree.set(null); resetPanelLayout(); setSidePanel("review", { open: false }); setSidePanel("paratext", { open: true }); });
 afterEach(() => { document.elementsFromPoint = original; editorTree.set(null); resetPanelLayout(); vi.unstubAllGlobals(); });
 it("docks above Scripture through the keyboard menu without remounting its filter", async () => {
   render(Fixture); const draft = screen.getByLabelText("QA filter"); await fireEvent.input(draft, { target: { value: "keep me" } });
@@ -27,7 +27,7 @@ it("Escape cancels a drag without floating, closing or changing panel state", as
 });
 it("Escape on a floating panel cancels its active move before the panel's ordinary close shortcut", async () => {
   vi.stubGlobal("PointerEvent", MouseEvent); document.elementsFromPoint = () => [];
-  setSidePanel("languageQa", { float: { x: 20, y: 40, width: 440, height: 400 } });
+  setSidePanel("paratext", { float: { x: 20, y: 40, width: 440, height: 400 } });
   render(Fixture); const before = structuredClone(get(sidePanels));
   const grip = screen.getByRole("button", { name: "Move the Language QA panel" });
   await fireEvent.pointerDown(grip, { button: 0, clientX: 40, clientY: 50 });

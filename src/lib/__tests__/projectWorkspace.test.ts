@@ -14,11 +14,11 @@ afterEach(releaseWorkspace);
 it("restores exact references, reading position, layout and view independently for A → B → A", () => {
   const a = info("A"), b = info("B");
   bindWorkspace(a); rememberLocation(a, "2", "3-4", "review"); rememberScroll(a.path, "2", 412);
-  setSidePanel("languageQa", { open: true, width: 620 }); editorTree.set(defaultEditorTree());
-  bindWorkspace(b); rememberLocation(b, "1", "3a", "editor"); setSidePanel("languageQa", { width: 350 });
+  setSidePanel("paratext", { open: true, width: 620 }); editorTree.set(defaultEditorTree());
+  bindWorkspace(b); rememberLocation(b, "1", "3a", "editor"); setSidePanel("paratext", { width: 350 });
   const restored = bindWorkspace(a);
   expect(restored).toMatchObject({ chapter: "2", verse: "3-4", scroll: 412, view: "review" });
-  expect(get(sidePanels).languageQa.width).toBe(620);
+  expect(get(sidePanels).paratext.width).toBe(620);
   expect(get(editorTree)).toEqual(defaultEditorTree());
   expect(savedWorkspace(b)?.verse).toBe("3a");
 });
@@ -45,12 +45,28 @@ it("keeps local users independent and never writes Alice's active layout under B
 });
 it("invalid or corrupt saved state cannot block opening, and reset only changes layout", () => {
   const a = info("A"); bindWorkspace(a); rememberLocation(a, "2", "3-4", "review");
-  setSidePanel("languageQa", { open: true, detached: true }); resetWorkspaceLayout();
+  setSidePanel("paratext", { open: true, detached: true }); resetWorkspaceLayout();
   expect(savedWorkspace(a)).toMatchObject({ chapter: "2", verse: "3-4", view: "review" });
-  expect(get(sidePanels).languageQa.detached).toBeUndefined();
+  expect(get(sidePanels).paratext.detached).toBeUndefined();
   const name = Object.keys(localStorage).find(k => k.startsWith("bridge.workspace."))!;
   localStorage.setItem(name, "{"); expect(savedWorkspace(a)).toBeNull();
   localStorage.setItem(name, JSON.stringify({ version: 99 })); expect(savedWorkspace(a)).toBeNull();
+});
+// #487: Language QA was a panel when this workspace was saved.
+it("reads a workspace saved with the retired Language QA panel, keeping its place, widths, order and arrangement", () => {
+  const a = info("A"); bindWorkspace(a); rememberLocation(a, "2", "3-4", "review");
+  setSidePanel("reference", { open: true, width: 410 }); flushWorkspace();
+  const name = Object.keys(localStorage).find(k => k.startsWith("bridge.workspace."))!;
+  const old = JSON.parse(localStorage.getItem(name)!);
+  old.panels.languageQa = { open: false, width: 440 };
+  old.order = ["source", "reference", "languageQa", "paratext", "review"];
+  old.tree = { id: "x", axis: "horizontal", ratio: .5, first: defaultEditorTree(), second: "languageQa" };
+  releaseWorkspace(); localStorage.setItem(name, JSON.stringify(old));
+  const saved = savedWorkspace(a);
+  expect(saved).toMatchObject({ chapter: "2", verse: "3-4", view: "review", order: ["source", "reference", "paratext", "review"] });
+  expect(saved!.panels.reference).toMatchObject({ open: true, width: 410 });
+  expect("languageQa" in saved!.panels).toBe(false);
+  expect(saved!.tree).toEqual(defaultEditorTree());
 });
 it("Recent uses only this user's successful activity, filters unavailable rows and deduplicates collections", () => {
   recordProjectOpen(info("A")); recordProjectOpen(info("B"));
