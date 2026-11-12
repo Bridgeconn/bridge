@@ -634,6 +634,26 @@ impl EngineSidecar {
         Ok(())
     }
 
+    /// Keep the app handle a request needs to start the engine itself.
+    ///
+    /// `start()` stores it, but `start()` is first called from the setup
+    /// hook, and the setup hook runs after every window in the config has
+    /// been created. With eight windows, a release build's main page loads
+    /// and sends its first requests (engine.info, project.list, ping) before
+    /// that. They used to fail with "sidecar has not been initialized"; the
+    /// page cleared that error on the next startup stage, never asked again,
+    /// and showed "The engine did not answer within 30 seconds" over an
+    /// engine that had been ready for 27 of them, with an empty project list
+    /// (0.25.1, 2026-11-12). With the handle known, such a request starts the
+    /// engine under `start_lock`, or waits for the start already running,
+    /// and is answered once the engine is ready.
+    pub async fn remember_app(&self, app: &AppHandle) {
+        let mut slot = self.app.lock().await;
+        if slot.is_none() {
+            *slot = Some(app.clone());
+        }
+    }
+
     /// Send one JSON-RPC-style request to the sidecar and await its
     /// matching response by `id`. Timeout protects the UI from hanging
     /// forever if the sidecar crashes mid-request.
@@ -916,5 +936,19 @@ mod tests {
             request_timeout_seconds("correction.acknowledgeCorrected"),
             30
         );
+    }
+
+    /// The only caller of `send_request` must hand the sidecar the app
+    /// handle first: a request that beats the setup hook has to be able to
+    /// start the engine, not fail with "sidecar has not been initialized".
+    #[test]
+    fn engine_call_can_start_the_engine_before_the_setup_hook_has() {
+        let commands = include_str!("commands.rs");
+        let body = commands.split("pub async fn engine_call(").nth(1).unwrap();
+        let body = &body[..body.find("#[tauri::command]").unwrap()];
+        let remember = body.find("sidecar.remember_app(&app).await").expect("engine_call must call remember_app");
+        let send = body.find(".send_request(").expect("engine_call must call send_request");
+        assert!(remember < send);
+        assert_eq!(commands.matches(".send_request(").count(), 1, "another caller of send_request needs remember_app too");
     }
 }

@@ -25299,3 +25299,48 @@ tried (four of four). `cargo check` passed; `cargo test` 20 passed, one new:
 `window_commands_save_and_restore_only_through_this_module`. Not verified:
 an installer from the release workflow; opening and hiding each detached window by
 hand in a release build.
+
+### 0.25.1 starts, then says the engine did not answer (#483)
+
+**What was seen.** The maintainer installed 0.25.1. The freeze was gone and the
+detached windows open and close, but every start ended on "Bridge could not start its
+engine. The engine did not answer within 30 seconds." Retry opened the app at once,
+with an empty project list that filled after a project was opened and closed.
+
+**Cause, from a trace.** The log showed the engine ready three seconds after launch
+and never restarted. A local release build showed the same card (screen captured at
+34 s), and temporary `eprintln!` lines in `send_request` and `start` gave the order:
+`engine.info`, `project.list` and `ping` each reached `send_request`, found no child,
+and returned before `start()` had been entered once. `start()` is first called from
+the setup hook, and the setup hook runs after every window in the config is created;
+with eight windows a release build's main page is loaded and calling before that. At
+that point `EngineSidecar.app` is still `None`, so each call failed with "sidecar has
+not been initialized". In `App.svelte` the ping's error set `startupFailure`, the
+"spawning" stage that followed cleared it, nothing pinged again, and the 30 s timer
+then wrote its own sentence. The project list had failed the same way and is loaded
+once.
+
+0.24.4 had two windows, so the setup hook ran before the page could call. The debug
+build's page loads later. 0.25.0 had this too, hidden behind its freeze.
+
+**Fix.** `engine_call` takes the `AppHandle` and gives it to
+`EngineSidecar::remember_app` before `send_request`. A request that beats the setup
+hook now starts the engine itself under `start_lock` (the setup hook's own `start()`
+then finds the child there), and is answered once the engine is ready.
+
+**Verified.** Local release build, three starts, screen captured at 10 s and 34 s:
+the project list each time, no error card. Before the fix the same build showed the
+card at 34 s. `cargo check` passed; `cargo test` 21 passed (one new:
+`engine_call_can_start_the_engine_before_the_setup_hook_has`). The local build's top
+bar reads 0.24.4 because `src-tauri/binaries` holds a sidecar built on 2026-11-06;
+the release workflow builds its own.
+
+**Also seen, not changed.** The main window is on screen within a second of launch,
+before the engine is ready: the window-state plugin restores a saved maximized state
+with `maximize()`, which shows a hidden window on Windows. So the splash (#287, #435)
+is covered at once on any profile whose main window was last closed maximized.
+
+**About the earlier "8 of 8".** That check counted the process responding, the engine
+running and the windows existing. It could not see the error card, and the main
+window being shown meant nothing for the reason above. The freeze fix it was testing
+stands; it said nothing about whether the app reached Home.

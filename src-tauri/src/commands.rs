@@ -25,10 +25,14 @@ use tauri_plugin_shell::ShellExt;
 /// the raw engine envelope; bridgeClient.ts unwraps `success` / `result`.
 #[tauri::command]
 pub async fn engine_call(
+    app: tauri::AppHandle,
     sidecar: State<'_, EngineSidecar>,
     method: String,
     params: Option<Value>,
 ) -> Result<Value, String> {
+    // A request may arrive before the setup hook has started the engine;
+    // see EngineSidecar::remember_app.
+    sidecar.remember_app(&app).await;
     sidecar
         .send_request(&method, params.unwrap_or_else(|| serde_json::json!({})))
         .await
