@@ -152,6 +152,44 @@ class AppSettings:
                     # credential store is temporarily unavailable.
                     pass
             self.save_sanitized()
+        self._switch_stored_review_model_once()
+
+    def _switch_stored_review_model_once(self) -> None:
+        """#492: a stored review model of exactly the pre-#479 default becomes
+        `DEFAULT_REVIEW_MODEL`, once per installation.
+
+        It cannot tell an old default from a deliberate choice; that is the
+        decision (DECISIONS 2026-11-12). The `review_model_switch` marker is
+        written whether or not anything changed, so the same model chosen
+        again afterwards is kept."""
+        from .model_router import DEFAULT_REVIEW_MODEL, SUPERSEDED_REVIEW_MODEL
+        if isinstance(self.data.get('review_model_switch'), dict):
+            return
+        switched = False
+        if str(self.data.get('model') or '').strip() == SUPERSEDED_REVIEW_MODEL:
+            self.data['model'] = DEFAULT_REVIEW_MODEL
+            switched = True
+        stored = self.data.get('ai_tasks')
+        tasks = stored.get('tasks') if isinstance(stored, dict) else None
+        review = tasks.get('review') if isinstance(tasks, dict) else None
+        if isinstance(review, dict) and str(review.get('model') or '').strip() == SUPERSEDED_REVIEW_MODEL:
+            review['model'] = DEFAULT_REVIEW_MODEL
+            switched = True
+        self.data['review_model_switch'] = {
+            'from': SUPERSEDED_REVIEW_MODEL if switched else '',
+            'at': datetime.now(timezone.utc).isoformat(),
+        }
+        self.save_sanitized()
+
+    @property
+    def review_model_switched_from(self) -> str:
+        """The model the one-time switch replaced, while the review model is
+        still the default it was switched to; '' otherwise."""
+        from .model_router import DEFAULT_REVIEW_MODEL
+        marker = self.data.get('review_model_switch')
+        if not isinstance(marker, dict) or self.model != DEFAULT_REVIEW_MODEL:
+            return ''
+        return str(marker.get('from') or '')
 
     def save(self) -> None:
         """Persist non-secret settings without serializing session values.

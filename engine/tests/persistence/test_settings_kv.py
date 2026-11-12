@@ -64,6 +64,8 @@ def test_a_pre_77_settings_file_is_adopted_once_and_rewritten_to_secrets_only(tm
     on_disk = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
     assert on_disk == {"api_key_dpapi": "wrapped:legacy"}
     stored = WorkspaceRepository(tmp_path / "workspace.sqlite3").load_settings()
+    # #492: every settings load also records that the one-time model switch ran.
+    assert stored.pop("review_model_switch")["from"] == ""
     assert stored == {"model": "gpt-legacy", "reviewer_mode": "advanced"}
 
     # The database wins over a stale file value from then on.

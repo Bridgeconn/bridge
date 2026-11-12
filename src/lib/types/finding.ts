@@ -1558,6 +1558,8 @@ export interface SettingsData {
    *  must be shown (several active users and none chosen yet). */
   localUserRole?: UserRole;
   needsUserChoice?: boolean;
+  /** #492: the review model the one-time upgrade switch replaced, or "". */
+  reviewModelSwitchedFrom?: string;
   reviewerMode: "basic" | "advanced";
   paratextUsername: string;
   paratextNavigation: boolean;

@@ -25344,3 +25344,40 @@ is covered at once on any profile whose main window was last closed maximized.
 running and the windows existing. It could not see the error card, and the main
 window being shown meant nothing for the reason above. The freeze fix it was testing
 stands; it said nothing about whether the app reached Home.
+
+
+## 2026-11-12 — Review model: one-time switch from a stored gpt-5.6, admin-only, confirmed (#492)
+
+**Why.** After installing 0.25.2 the maintainer's Settings still showed `gpt-5.6`.
+`SettingsModal.save()` sends the whole form, so any installation that saved Settings
+before 0.25 has `model = "gpt-5.6"` in `settings_kv`, and #479's default only applies
+while nothing is stored. Decision in DECISIONS 2026-11-12; 0.25.2 stays a draft and
+this ships as 0.25.3.
+
+**Engine.**
+- `model_router.SUPERSEDED_REVIEW_MODEL = 'gpt-5.6'`.
+- `AppSettings._switch_stored_review_model_once()`, called at the end of `__init__`:
+  a stored `model`, or a stored `ai_tasks.tasks.review.model`, of exactly that value
+  becomes `DEFAULT_REVIEW_MODEL`. It writes `review_model_switch = {from, at}` whether
+  or not anything changed and returns at once when that key exists, so it runs once
+  per installation and a later choice of `gpt-5.6` is kept. A fresh install gets the
+  marker with `from: ""`.
+- `settings.get` reports `reviewModelSwitchedFrom` while the model is still the
+  default it was switched to.
+- `BridgeEngine.set_settings` raises `AuthorizationError` (protocol `forbidden`)
+  before saving anything when the call would change `model` or `aiTasks` and the
+  local user is not a project admin. It compares values, because the dialog sends
+  the unchanged form on every Save. `settings.set` stays a write-role method.
+
+**Settings dialog.** Model, "Use one model for everything", the per-task model and
+reasoning-effort fields are disabled for a non-admin, with a line saying so. Save
+asks through `askConfirmation` when the review model the form would give (the main
+model, or the per-task review model when one-model mode is off) is not
+`gpt-5.6-terra` and is not the one already saved; declining puts the model fields
+back and saves nothing. A line under the field says when the update changed it.
+
+**Test changed.** `test_a_pre_77_settings_file_is_adopted_once_and_rewritten_to_secrets_only`
+pinned the exact stored settings; it now expects the marker as well.
+
+**Not done.** No workspace schema change (the marker is a `settings_kv` value). The
+approved model name is duplicated in the dialog rather than read from the engine.

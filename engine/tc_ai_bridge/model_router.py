@@ -24,6 +24,12 @@ DEFAULT_PRICES = {
 # it back. The alignment and triage tiers are unchanged (#131 unmeasured).
 DEFAULT_REVIEW_MODEL = 'gpt-5.6-terra'
 
+# #492 (maintainer, 2026-11-12): the default before #479. Settings > Save
+# writes the whole form, so an installation that saved anything before 0.25
+# has this stored and never saw the new default. `AppSettings` switches a
+# stored value of exactly this to `DEFAULT_REVIEW_MODEL` once.
+SUPERSEDED_REVIEW_MODEL = 'gpt-5.6'
+
 # #473: the AI tasks a model and a reasoning effort can be chosen for. The
 # `ModelRouter` class that used to live here (severity-based routing with
 # economy/balanced/quality profiles) was never instantiated outside its own

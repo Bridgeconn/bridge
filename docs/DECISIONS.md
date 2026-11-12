@@ -1607,3 +1607,29 @@ model keeps it; Settings > AI provider changes it back at any time, which is why
 this is a default and not a behaviour change. **Rules out:** nothing — the
 alignment and triage tiers are unchanged (#131 unmeasured), and the two-method
 agreement gates of #146 and #219 are untouched.
+
+## 2026-11-12 — A stored gpt-5.6 is switched to gpt-5.6-terra once; the model is an admin's, and confirmed (#492)
+
+**Decision:** three things, the maintainer's (Revant, 2026-11-12). On the first
+engine start after the upgrade, a stored review model of exactly `gpt-5.6` (the
+main model, and the per-task review model) becomes `gpt-5.6-terra`, once per
+installation; the `review_model_switch` setting records that it ran, so the same
+model chosen again afterwards is kept. Only a project admin changes the model,
+the per-task models or their reasoning effort; the engine refuses anyone else
+(`forbidden`), not only the screen. An admin saving a review model other than
+`gpt-5.6-terra` confirms it first, with the measured cost per chapter.
+**Because:** Settings > Save writes the whole form, so every installation that
+saved anything before 0.25 has `gpt-5.6` stored and never saw #479's default,
+the maintainer's own among them; and the model was a free-text field anyone
+could change by mistake, at about twice the cost per chapter (#469). The
+alternative, leaving stored models alone and asking each person to change it,
+leaves the machines nobody remembers on the costlier model.
+**Reverses:** the "an install that saved a model keeps it" clause of the
+2026-11-06 entry above, once. The switch cannot tell an old default from a
+deliberate choice of `gpt-5.6`; a person who chose it on purpose chooses it
+again. **Rules out:** nothing else. The default, the prices and the alignment
+and triage tiers are unchanged, and a single-user installation is its own admin,
+so the confirmation is its only guard there.
+**Revisit when:** another model is approved as the review default; the approved
+name is in two places (`DEFAULT_REVIEW_MODEL`, `APPROVED_REVIEW_MODEL` in
+`SettingsModal.svelte`) and the confirmation quotes the #469 figures.

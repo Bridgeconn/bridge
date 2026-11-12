@@ -1011,3 +1011,94 @@ describe("SettingsModal review model default (#479)", () => {
     expect(await screen.findByLabelText("Model")).toHaveValue("gpt-5.6");
   });
 });
+
+describe("SettingsModal review model guard (#492)", () => {
+  const settings = (extra: Record<string, unknown> = {}) => ({
+    provider: "openai", apiBaseUrl: "", model: "gpt-5.6-terra", hasApiKey: false,
+    reviewerMode: "basic", paratextNavigation: false, logosNavigation: false, ...extra,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    engineInfo.mockResolvedValue({
+      bridgeVersion: "0.9.6", companionSchemaVersion: 14, projectOpen: false, greekRoom: {},
+    });
+    getNavigationStatus.mockResolvedValue(navigationState());
+    setSettings.mockImplementation(async (params: Record<string, unknown>) => ({ ...settings(), ...params }));
+  });
+
+  it("asks an admin before saving another review model, with the measured cost", async () => {
+    getSettings.mockResolvedValue(settings());
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+    await fireEvent.input(await screen.findByLabelText("Model"), { target: { value: "gpt-5.6" } });
+    await fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
+
+    await waitFor(() => expect(get(confirmRequest)).not.toBeNull());
+    expect(get(confirmRequest)?.title).toBe("Review with gpt-5.6 instead of gpt-5.6-terra?");
+    expect(get(confirmRequest)?.body).toMatch(/\$5\.40.*\$10\.18/);
+    expect(get(confirmRequest)?.cancelLabel).toBe("Keep gpt-5.6-terra");
+    expect(setSettings).not.toHaveBeenCalled();
+
+    answerConfirmation(true);
+    await waitFor(() => expect(setSettings).toHaveBeenCalledWith(expect.objectContaining({ model: "gpt-5.6" })));
+  });
+
+  it("saves nothing and puts the model back when the admin declines", async () => {
+    getSettings.mockResolvedValue(settings());
+    const onClose = vi.fn();
+    render(SettingsModal, { props: { initialPane: "ai", onClose } });
+    await fireEvent.input(await screen.findByLabelText("Model"), { target: { value: "gpt-5.6" } });
+    await fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
+    await waitFor(() => expect(get(confirmRequest)).not.toBeNull());
+
+    answerConfirmation(false);
+
+    await waitFor(() => expect(screen.getByLabelText("Model")).toHaveValue("gpt-5.6-terra"));
+    expect(screen.getByText("The model was not changed. Nothing was saved.")).toBeInTheDocument();
+    expect(setSettings).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("asks for the per-task review model too, and not for the other tasks", async () => {
+    getSettings.mockResolvedValue(settings());
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+    await fireEvent.click(await screen.findByRole("checkbox", { name: /Use one model for everything/ }));
+    await fireEvent.input(screen.getByLabelText("Triage model"), { target: { value: "gpt-5.6" } });
+    await fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
+    await waitFor(() => expect(setSettings).toHaveBeenCalledTimes(1));
+    expect(get(confirmRequest)).toBeNull();
+  });
+
+  it("does not ask again for a costlier model that is already the saved one", async () => {
+    getSettings.mockResolvedValue(settings({ model: "gpt-5.6" }));
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+    await screen.findByLabelText("Model");
+    await fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
+    await waitFor(() => expect(setSettings).toHaveBeenCalledTimes(1));
+    expect(get(confirmRequest)).toBeNull();
+  });
+
+  it("locks every model field for someone who is not a project admin", async () => {
+    getSettings.mockResolvedValue(settings({
+      localUserRole: "editor",
+      aiTasks: { useOneModel: false, tasks: {
+        review: { model: "", reasoningEffort: "medium" },
+        alignment: { model: "gpt-5.6-luna", reasoningEffort: "low" },
+        triage: { model: "gpt-5.6-luna", reasoningEffort: "low" },
+      } },
+    }));
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+    expect(await screen.findByLabelText("Model")).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: /Use one model for everything/ })).toBeDisabled();
+    expect(screen.getByLabelText("tN / tW review model")).toBeDisabled();
+    expect(screen.getByLabelText("Triage reasoning effort")).toBeDisabled();
+    expect(screen.getByText("Only a project admin can change the AI model.")).toBeInTheDocument();
+  });
+
+  it("says when the update changed a stored gpt-5.6", async () => {
+    getSettings.mockResolvedValue(settings({ reviewModelSwitchedFrom: "gpt-5.6" }));
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+    await screen.findByLabelText("Model");
+    expect(screen.getByText(/Changed from gpt-5\.6 when Bridge was updated/)).toBeInTheDocument();
+  });
+});

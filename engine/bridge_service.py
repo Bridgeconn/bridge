@@ -182,7 +182,7 @@ from check_jobs import (
 )
 from tc_ai_bridge import alignment_reset, alignment_source_split, alignment_reset_jobs
 import alignment_auto_align_jobs as auto_align_jobs
-from tc_ai_bridge.model_router import estimate_cost
+from tc_ai_bridge.model_router import DEFAULT_REVIEW_MODEL, estimate_cost
 from ai_review_jobs import (
     AIReviewJobConflict,
     AIReviewJobError,
@@ -9265,6 +9265,8 @@ class BridgeEngine:
             # filled in), with `useOneModel` true meaning every task runs on
             # `model` at medium reasoning.
             "aiTasks": self.settings.ai_tasks,
+            # #492: the model the one-time upgrade switch replaced, or "".
+            "reviewModelSwitchedFrom": self.settings.review_model_switched_from,
             "reviewerName": self.settings.reviewer_name,
             "reviewerNameUpdatedAt": self.settings.reviewer_name_updated_at,
             # The stable id to stamp on a write (#78). The UI used to send the
@@ -9290,7 +9292,39 @@ class BridgeEngine:
             "aiUsage": self.settings.get_ai_usage_totals(),
         }
 
+    def _ai_model_settings_would_change(self, kwargs: dict[str, Any]) -> bool:
+        """Whether a `settings.set` names a model or per-task choice different
+        from the stored one. The Settings dialog sends its whole form on every
+        Save, so presence alone says nothing."""
+        if "model" in kwargs:
+            wanted = str(kwargs["model"] or "").strip() or DEFAULT_REVIEW_MODEL
+            if wanted != self.settings.model:
+                return True
+        value = kwargs.get("aiTasks")
+        if isinstance(value, dict):
+            current = self.settings.ai_tasks
+            if "useOneModel" in value and value["useOneModel"] != current["useOneModel"]:
+                return True
+            tasks = value.get("tasks")
+            for task, row in (tasks.items() if isinstance(tasks, dict) else ()):
+                stored = current["tasks"].get(task)
+                if stored is None or not isinstance(row, dict):
+                    return True  # the setter refuses it with its own message
+                if "model" in row and str(row.get("model") or "").strip() != stored["model"]:
+                    return True
+                if "reasoningEffort" in row and str(row.get("reasoningEffort") or "").strip().lower() != stored["reasoningEffort"]:
+                    return True
+        return False
+
     def set_settings(self, **kwargs) -> dict[str, Any]:
+        # #492: the AI model decides what a chapter costs, so only a project
+        # admin changes it. Refused before anything else in the call is saved.
+        if self._ai_model_settings_would_change(kwargs):
+            role = str(self.local_user().get("role") or Role.PROJECT_ADMIN.value)
+            if role != Role.PROJECT_ADMIN.value:
+                raise AuthorizationError(
+                    "Only a project admin can change the AI model. Ask an admin, or leave the model as it is."
+                )
         if "automaticUpdates" in kwargs:
             self.settings.automatic_updates = kwargs["automaticUpdates"]
         if "apiKey" in kwargs:

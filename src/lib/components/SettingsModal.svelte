@@ -53,6 +53,17 @@
   let reviewerName = "";
   let reviewerNameUpdatedAt = "";
   let localUserRole: UserRole = "project_admin";
+  // #492: the AI model decides what a chapter costs. Only a project admin
+  // changes it (the engine refuses anyone else), and an admin confirms a
+  // review model other than the approved one before it is saved.
+  const APPROVED_REVIEW_MODEL = "gpt-5.6-terra";
+  $: canChangeModel = localUserRole === "project_admin";
+  let savedReviewModel = APPROVED_REVIEW_MODEL;
+  let savedModelFields = "";
+  let reviewModelSwitchedFrom = "";
+  const modelFields = () => JSON.stringify({ model, useOneModel, aiTasks });
+  /** The model tN/tW review runs on with the form as it stands. */
+  const reviewModelNow = () => (useOneModel ? model : aiTasks.review.model.trim() || model).trim() || APPROVED_REVIEW_MODEL;
   let engineInfo: EngineInfo | null = null;
   let automaticUpdates = true;
   // Settings > Language QA: which findings are drawn in the text (#250).
@@ -163,6 +174,9 @@
       reviewerName = s.reviewerName || "";
       reviewerNameUpdatedAt = s.reviewerNameUpdatedAt || "";
       localUserRole = s.localUserRole ?? "project_admin";
+      reviewModelSwitchedFrom = s.reviewModelSwitchedFrom ?? "";
+      savedReviewModel = reviewModelNow();
+      savedModelFields = modelFields();
       inlinePrecision = s.languageQaInlinePrecision ?? 0;
       inlineConfidence = s.languageQaInlineConfidence ?? "low";
       learnedFixes = s.languageQaLearnedFixes ?? true;
@@ -191,8 +205,26 @@
   }
 
   async function save() {
-    saving = true;
     saveMessage = "";
+    // #492: a review model other than the approved one is confirmed before
+    // it is saved. Not asked again for a model that is already the saved one.
+    const wanted = reviewModelNow();
+    if (wanted !== APPROVED_REVIEW_MODEL && wanted !== savedReviewModel) {
+      const confirmed = await askConfirmation({
+        title: `Review with ${wanted} instead of ${APPROVED_REVIEW_MODEL}?`,
+        body: `${APPROVED_REVIEW_MODEL} is the approved review model. On a measured chapter it cost about $5.40, against $10.18 on gpt-5.6. Every tN/tW review on this device will run on ${wanted} until this is changed back.`,
+        confirmLabel: `Use ${wanted}`,
+        cancelLabel: `Keep ${savedReviewModel}`,
+        danger: true,
+      });
+      if (!confirmed) {
+        const kept = JSON.parse(savedModelFields);
+        model = kept.model; useOneModel = kept.useOneModel; aiTasks = kept.aiTasks;
+        saveMessage = "The model was not changed. Nothing was saved.";
+        return;
+      }
+    }
+    saving = true;
     try {
       const params: Record<string, unknown> = {
         provider, apiBaseUrl, model, reviewerMode: manualOverrideMode(allowOverride),
@@ -202,6 +234,8 @@
       if (apiKey.trim()) params.apiKey = apiKey.trim();
       const result = await bridge.setSettings(params);
       hasApiKey = result.hasApiKey;
+      savedReviewModel = reviewModelNow();
+      savedModelFields = modelFields();
       reviewerName = result.reviewerName || "";
       reviewerNameUpdatedAt = result.reviewerNameUpdatedAt || "";
       reviewerMode.set(result.reviewerMode);
@@ -665,14 +699,20 @@
 
         <div class="field">
           <label for="model">Model</label>
-          <input id="model" type="text" bind:value={model} placeholder="e.g. gpt-5.6-terra, gpt-5.6, claude-sonnet-5, llama3" />
+          <input id="model" type="text" bind:value={model} disabled={!canChangeModel} placeholder="e.g. gpt-5.6-terra, gpt-5.6, claude-sonnet-5, llama3" />
+          {#if !canChangeModel}
+            <div class="hint" data-model-locked>Only a project admin can change the AI model.</div>
+          {/if}
+          {#if reviewModelSwitchedFrom && model === APPROVED_REVIEW_MODEL}
+            <div class="hint" data-model-switched>Changed from {reviewModelSwitchedFrom} when Bridge was updated: {APPROVED_REVIEW_MODEL} is the approved review model.</div>
+          {/if}
           <div class="hint">For tN/tW review, use a model with strong multilingual reasoning and structured-output support. Small/mini models may miss inflected target-language renderings or omit checks; Bridge keeps uncertain results pending for human review. The default, gpt-5.6-terra, matched gpt-5.6's verdict on 276 of 281 checks of a measured chapter (a translator judged every difference: terra wrong once, the only correct run once) at about $5.40 a chapter against $10.18.</div>
         </div>
 
         <div class="field">
           <div class="field-label">Model per task</div>
           <label class="mode-option" class:selected={useOneModel}>
-            <input type="checkbox" bind:checked={useOneModel} />
+            <input type="checkbox" bind:checked={useOneModel} disabled={!canChangeModel} />
             <span><b>Use one model for everything</b><small>Every AI task runs on the model above at medium reasoning. Turn off to choose a cheaper tier for alignment and triage.</small></span>
           </label>
           {#if !useOneModel}
@@ -680,8 +720,8 @@
               {#each aiTaskRows as row (row.task)}
                 <div class="task-row">
                   <label for={`task-model-${row.task}`}>{row.label}</label>
-                  <input id={`task-model-${row.task}`} type="text" bind:value={aiTasks[row.task].model} placeholder={row.task === "review" ? model : "e.g. gpt-5.6-luna"} aria-label={`${row.label} model`} />
-                  <select bind:value={aiTasks[row.task].reasoningEffort} aria-label={`${row.label} reasoning effort`}>
+                  <input id={`task-model-${row.task}`} type="text" bind:value={aiTasks[row.task].model} disabled={!canChangeModel} placeholder={row.task === "review" ? model : "e.g. gpt-5.6-luna"} aria-label={`${row.label} model`} />
+                  <select bind:value={aiTasks[row.task].reasoningEffort} disabled={!canChangeModel} aria-label={`${row.label} reasoning effort`}>
                     {#each reasoningEfforts as effort (effort)}<option value={effort}>{effort}</option>{/each}
                   </select>
                   <div class="hint">{row.hint}</div>
