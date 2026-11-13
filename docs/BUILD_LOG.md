@@ -25524,3 +25524,51 @@ pass; `npm run build` builds. Cargo and pytest not run: no Rust or Python file c
 hover, approved. **Not confirmed by anyone:** that a one-book run with a check
 unticked really skips it; the narrow-window fix (it was made from the code, without a
 split-screen screenshot of this page); the dialog on a single-book project.
+
+## 2026-11-14 — Editor: VS Code layout (top bar, left rail, tab groups, status chips)
+
+Third step of Joel's page-by-page UI pass on branch `uifixes-v25` (not merged to
+`main`; one issue for the whole pass is filed when it is done). Committed at Joel's
+request as work in progress: he is still reviewing the editor and will continue.
+
+**What changed.**
+- **Top bar** 32 px on every screen (was 52/48), window buttons with instant hints and
+  the Settings hover. In the editor: no version, the breadcrumb Projects › project › book
+  with a close button, Export project and Settings on the bar, the bar on the window's
+  background with no line. The book is `BookPicker.svelte` (searchable by name or code);
+  the `<select>` left `EditorHeader`. A non-Latin crumb is set two steps smaller.
+- **Left rail** (`ActivityBar.svelte`) replaces the File, View, Check, Bookmarks and
+  Alignment menus; `FileMenu`, `ViewMenu`, their tests and `TopBarMenusFixture` are deleted
+  (basenames grepped across `src` first). `tooltip` takes `{ text, side: "right" }`.
+  Menus on the rail and the book list also close on a pointerdown, because the top bar's
+  drag region swallows mousedown.
+- **Verses is a pane** (`versesOpen`), with an empty-state message when nothing is open.
+- **Tab groups** (`editorTabs.ts`, `EditorWorkspace.svelte`, `EditorTabs.svelte`): see
+  ARCHITECTURE "Editor chrome". Default is verses left, Review right. The old
+  pane-docking tree (`editorTree`) is no longer read by the layout; it is still saved
+  per project and unused.
+- **Removed behaviours:** the floating box inside the window (a saved one is cleared),
+  resizing a column by its left edge, "Move panel left/right", folding for width. Closing
+  a panel's separate window makes it a tab next time.
+- **Status bar:** chips at one size; "Project" and "Chapter" dropped as repeats; the
+  engine is a dot.
+
+**Tests.** Deleted with their features: FileMenu and ViewMenu tests, the SidePanel
+edge-resize pair, the two fold-in-the-editor tests, the three floating-box tests and
+the floating Escape test. New: `ActivityBar.test.ts` (rail, tab groups, EditorTabs),
+drag and dock tests in `EditorWorkspace.test.ts`, BookPicker and editor-bar tests in
+`TopBar.test.ts`.
+
+**Ran.** `npm run check` 0 errors 0 warnings; `npm run test` 131 files / 1260 tests
+pass; `npm run build` builds. Cargo and pytest not run: no Rust or Python file changed.
+
+**Seen on the desktop app by Joel:** top bar, breadcrumb, book picker, rail, status
+chips, frame, tab look (approved in turn). **Not confirmed by anyone:** tab dragging
+after the hit-test fix (Joel reported it broken before the fix), divider resize, a
+panel in a small group, split screen at 640 px, the separate-window close rule, the
+Check / Alignment / Bookmarks pop-outs from the rail, Malayalam search in the book list.
+
+**Open, for when Joel returns.** His deferred suggestions on #493 to #495; whether the
+tab layout should be per project; `editorTree`, `foldedSidePanels`, `sidePanelOrder`
+moves and `PanelResizeHandle`'s side-panel use are now unused or half-used and want a
+clean-up pass; the panels' own header bars repeat the tab's name and close.

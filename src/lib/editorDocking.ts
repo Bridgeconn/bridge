@@ -19,7 +19,7 @@ export function defaultEditorTree(): LayoutNode {
 }
 export interface EditorDockContext {
   frames: Readable<Partial<Record<string, Frame>>>;
-  beginMove: (id: SidePanelId, event: PointerEvent) => void;
+  beginMove: (id: SidePanelId | "editor", event: PointerEvent) => void;
   dock: (id: SidePanelId, target: string, edge: DockEdge) => void;
   cancelMove: () => boolean;
 }

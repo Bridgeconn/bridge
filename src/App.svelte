@@ -30,7 +30,8 @@
   import ReviewQueueHost from "./lib/components/ReviewQueueHost.svelte";
   import FindingContextMenu from "./lib/components/FindingContextMenu.svelte";
   import { TEXT_SCALES, bumpTextScale, sidePanelOrder, sidePanels, textScale, toggleSidePanel } from "./lib/editorPrefs";
-  import { verseMin } from "./lib/panelFit";
+  import { verseMin, versesShown, workAreaEmpty } from "./lib/panelFit";
+  import { showTab } from "./lib/editorTabs";
   import SidePanel from "./lib/components/SidePanel.svelte";
   import {
     bookmarks, buildPlacesMenu, collectionOf, recentChapters, recordRecentChapter, setPlaces, toggleBookmark,
@@ -74,11 +75,11 @@
   import { greekRoomChapterSummary, runVerseGreekRoom } from "./lib/verseChecks";
   import { projectRoles, refreshProjectRoles } from "./lib/projectRole";
   import CheckMenu from "./lib/components/CheckMenu.svelte";
-  import ViewMenu from "./lib/components/ViewMenu.svelte";
+  import ActivityBar from "./lib/components/ActivityBar.svelte";
+  import UiIcon from "./lib/components/UiIcon.svelte";
+  import { tooltip } from "./lib/tooltip";
   import AlignmentMenu from "./lib/components/AlignmentMenu.svelte";
-  import FileMenu from "./lib/components/FileMenu.svelte";
   import { parseGoTo, resolveVerse, verseMissing } from "./lib/goTo";
-  import { getCurrentWindow } from "@tauri-apps/api/window";
   import EditorHeader from "./lib/components/EditorHeader.svelte";
   import { editingChapter, editingVerse, editSaving } from "./lib/verseEditor";
   import { languageQaChannel, nudgeLanguageQa, startLanguageQaInline } from "./lib/languageQaInline";
@@ -249,7 +250,7 @@
   function openPlacesMenu(event: MouseEvent): void {
     perfBegin("menu.open", "places");
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-    placesMenu = { x: rect.left, y: rect.bottom + 4 };
+    placesMenu = { x: rect.right + 10, y: rect.top };
     void perfEnd("menu.open");
   }
 
@@ -1549,15 +1550,6 @@
     return "";
   }
 
-  /** File > Exit: the same close the window's own button asks for. */
-  async function exitApp(): Promise<void> {
-    try {
-      await getCurrentWindow().close();
-    } catch {
-      window.close();
-    }
-  }
-
   // The stores are named here, not read inside a function: Svelte 4 re-runs a
   // `$:` statement only for the names written in it, and the old
   // `currentBridgeReference()` call never re-ran, so Bridge never published a
@@ -1636,19 +1628,20 @@
     },
     { complete: 0, complete_cross_verse: 0, partial: 0, untouched: 0, invalid: 0 },
   );
-  // The status bar's facts, one per line, for its tooltip: a narrow window
-  // cuts the bar short (#324).
-  $: statusFacts = $project ? [
-    `Project: ${$project.bookName}`,
-    `Chapter: ${$currentChapter}`,
-    `✓ Approved: ${$approvedCount}/${$verseNums.length}`,
-    `Word alignment in this chapter: ${alignmentChapterSummary.complete} complete`
-      + (alignmentChapterSummary.complete_cross_verse ? ` · ${alignmentChapterSummary.complete_cross_verse} via cross-verse` : "")
-      + ` · ${alignmentChapterSummary.partial} partial`
-      + (alignmentChapterSummary.invalid ? ` · ${alignmentChapterSummary.invalid} invalid` : ""),
-    `${bookSummary.approvedChapters}/${bookSummary.totalChapters} chapters approved`,
-    `Greek Room on this chapter (open findings · verses checked): ${$greekRoomChapterSummary.checkedVerses === 0 ? "not run" : `${$greekRoomChapterSummary.openFindings} open · ${$greekRoomChapterSummary.checkedVerses}/${$greekRoomChapterSummary.totalVerses} verses`}`,
-  ].join("\n") : "";
+  // The status bar's chips (2026-11-13). The book and the chapter are not
+  // among them: the top bar and the editor's header already say both.
+  $: versesTotal = $verseNums.length;
+  $: versesDone = versesTotal > 0 && $approvedCount === versesTotal;
+  $: chaptersDone = bookSummary.totalChapters > 0 && bookSummary.approvedChapters === bookSummary.totalChapters;
+  $: alignmentText = `${alignmentChapterSummary.complete} complete`
+    + (alignmentChapterSummary.complete_cross_verse ? ` · ${alignmentChapterSummary.complete_cross_verse} via cross-verse` : "")
+    + ` · ${alignmentChapterSummary.partial} partial`
+    + (alignmentChapterSummary.invalid ? ` · ${alignmentChapterSummary.invalid} invalid` : "");
+  $: greekRoomRun = $greekRoomChapterSummary.checkedVerses > 0;
+  $: languageQaText = $languageQaChannel.error ? "unavailable"
+    : $languageQaChannel.status
+      ? `${$languageQaChannel.status.state}${$languageQaChannel.status.totalFindings ? ` · ${$languageQaChannel.status.totalFindings}` : ""}`
+      : "";
 </script>
 
 <PanelWindowsHost onNavigate={navigateToReportRow} onSettings={() => openSettings("languageQa")}
@@ -1689,44 +1682,11 @@
     onGoHome={showProjectHome}
     onGoToDashboard={openDashboard}
     onOpenSettings={() => openSettings("ai")}
+    onExport={() => exportOpen.set(true)} exportDisabled={$project === null}
     onOpenConnections={() => openSettings("connections")}
     bookSwitching={Boolean(openingBook)}
-  >
-    <!-- #488: the editor's menus, right of the name; File first. -->
-    <svelte:fragment slot="menus">
-      <FileMenu onCloseEditor={openDashboard} onCloseProject={showProjectHome}
-        onExport={() => exportOpen.set(true)} exportDisabled={$project === null}
-        onSettings={() => openSettings("ai")} onExit={() => void exitApp()} busy={Boolean(openingBook)} />
-      <ViewMenu />
-      <CheckMenu
-        disabled={Boolean(activeJobId) || $checkingProgress.running}
-        verse={$selectedVerse ? `${$currentChapter}:${$selectedVerse}` : ""}
-        chapter={$currentChapter}
-        onRunChapter={runChapterChecks}
-        onRunBook={runWholeBook}
-        onRunGreekRoom={runGreekRoom}
-      />
-      <button type="button" class="top-menu-btn" aria-haspopup="menu" aria-expanded={Boolean(placesMenu)}
-        title="Bookmarks and recent chapters" on:click={openPlacesMenu}>Bookmarks ▾</button>
-      <!-- The three actions of the old second bar. "Align chapter with AI"
-           is AutoAlignChapterButton's (mounted in the editor below): the
-           entry reads its phase and key, and starts it. -->
-      <AlignmentMenu
-        onAlignmentReview={() => (showingAlignmentReview = true)}
-        onCrossVerse={() => openCrossVerse($selectedVerse ?? "", $selectedVerseSet)}
-        crossVerseDisabled={!$selectedVerse}
-        selectedCount={$selectedVerseSet.length}
-        onAlignChapter={() => autoAlign?.ask()}
-        alignChapterDisabled={Boolean(activeJobId) || !autoAlignHasKey || autoAlignPhase !== "idle"}
-        alignChapterTitle={autoAlignHasKey === false
-          ? "Add an API key in Settings to align automatically"
-          : autoAlignPhase === "idle" || autoAlignPhase === "estimating"
-            ? "Align this chapter automatically: three verses at a time, each asked twice. Shows the cost before anything is sent."
-            : "An automatic alignment of this chapter is open in the strip above the text"}
-        alignChapterLabel={autoAlignPhase === "estimating" ? "Working out the cost…" : "Align chapter with AI"}
-      />
-    </svelte:fragment>
-  </TopBar>
+    onBookChange={switchBook}
+  />
 
   {#if (openingBook && !(screen === "dashboard" && dashboardOpeningPath)) || $prepareProgress}
     <!-- The book switch's strip; a Home-screen open that prepares a lazy
@@ -1831,6 +1791,38 @@
     {/key}
   {:else}
     <div class="body">
+      <!-- 2026-11-13: the left rail, in place of the top bar's File, View,
+           Check, Bookmarks and Alignment menus. The four panels are
+           ActivityBar's own buttons; Close editor and Close project are the
+           breadcrumb's, Export and Settings the top bar's. -->
+      <ActivityBar>
+      <CheckMenu rail
+        disabled={Boolean(activeJobId) || $checkingProgress.running}
+        verse={$selectedVerse ? `${$currentChapter}:${$selectedVerse}` : ""}
+        chapter={$currentChapter}
+        onRunChapter={runChapterChecks}
+        onRunBook={runWholeBook}
+        onRunGreekRoom={runGreekRoom}
+      />
+      <button type="button" class="rail-btn" aria-label="Bookmarks" aria-haspopup="menu" aria-expanded={Boolean(placesMenu)}
+        use:tooltip={{ text: placesMenu ? "" : "Bookmarks and recent chapters", side: "right" }} on:click={openPlacesMenu}><UiIcon name="bookmark" /></button>
+      <!-- "Align chapter with AI" is AutoAlignChapterButton's (mounted in
+           the editor below): the entry reads its phase and key, and starts it. -->
+      <AlignmentMenu rail
+        onAlignmentReview={() => (showingAlignmentReview = true)}
+        onCrossVerse={() => openCrossVerse($selectedVerse ?? "", $selectedVerseSet)}
+        crossVerseDisabled={!$selectedVerse}
+        selectedCount={$selectedVerseSet.length}
+        onAlignChapter={() => autoAlign?.ask()}
+        alignChapterDisabled={Boolean(activeJobId) || !autoAlignHasKey || autoAlignPhase !== "idle"}
+        alignChapterTitle={autoAlignHasKey === false
+          ? "Add an API key in Settings to align automatically"
+          : autoAlignPhase === "idle" || autoAlignPhase === "estimating"
+            ? "Align this chapter automatically: three verses at a time, each asked twice. Shows the cost before anything is sent."
+            : "An automatic alignment of this chapter is open in the strip above the text"}
+        alignChapterLabel={autoAlignPhase === "estimating" ? "Working out the cost…" : "Align chapter with AI"}
+      />
+      </ActivityBar>
       <div class="work-col" style:--verse-scale={$textScale}>
         {#if $projectRoles?.effectiveRole === "reporter"}
           <!-- #279: the engine refuses every change; say so before a click finds out. -->
@@ -1854,13 +1846,21 @@
              shown from the View menu, resized or closed by dragging its left
              edge; several may be open at once, level with the text. -->
         <div class="work-row">
+          {#if $workAreaEmpty}
+            <!-- The verse list and every docked panel are hidden. -->
+            <div class="work-empty" role="status">
+              <span class="work-empty-icon" aria-hidden="true"><UiIcon name="verses" /></span>
+              <p class="work-empty-title">Nothing is open</p>
+              <p class="work-empty-text">Choose Verses or a panel from the icons on the left.</p>
+              <button type="button" class="ui-btn" on:click={() => showTab("editor")}><UiIcon name="verses" />Show verses</button>
+            </div>
+          {/if}
           <EditorWorkspace let:editorFrame onDetach={id => { if ("__TAURI_INTERNALS__" in window) setSidePanel(id, { detached: true, open: true }); }}>
           <!-- #324: the verse list never goes below this width; the side
                panels shrink and then fold first (panelFit.ts; View brings one back). -->
-          <div data-editor-pane="editor" class="editor-col" style={editorFrame || `min-width:${$verseMin}px`}>
+          <div data-editor-pane="editor" id="editor-verses-pane" class="editor-col" hidden={!$versesShown} style={editorFrame || `min-width:${$verseMin}px`}>
             <!-- #489: book, chapter picker, Go to, Raw toggle and tools, above the scrolling verses. -->
-            <EditorHeader onBookChange={switchBook} onChapterChange={switchChapter} onGoTo={goTo}
-              bookSwitching={Boolean(openingBook)}>
+            <EditorHeader onChapterChange={switchChapter} onGoTo={goTo}>
               <OverflowMenu label="Editor tools" actions={[
                 { id: "smaller", label: "Smaller text", disabled: $textScale === TEXT_SCALES[0] },
                 { id: "larger", label: "Larger text", disabled: $textScale === TEXT_SCALES[TEXT_SCALES.length - 1] },
@@ -1905,35 +1905,42 @@
       </div>
     </div>
 
+    <!-- 2026-11-13: one row of chips, one size. Left: this chapter and this
+         book. Right: Language QA (opens its tab), notices, the engine's
+         state as a dot. In a narrow window the left group is cut (#324);
+         each chip's hint says what it counts. -->
     <div class="statusbar">
       {#if $project}
-        <!-- One line (#324): the chapter facts truncate with an ellipsis in a
-             narrow window, the full line in the tooltip. -->
-        <span class="status-facts" title={statusFacts}>
-        <span>Project: <b>{$project.bookName}</b></span>
-        <span>Chapter: <b>{$currentChapter}</b></span>
-        <span style="color:var(--success);">✓ Approved: {$approvedCount}/{$verseNums.length}</span>
-        <span>
-          Alignment: {alignmentChapterSummary.complete} complete{#if alignmentChapterSummary.complete_cross_verse} · {alignmentChapterSummary.complete_cross_verse} via cross-verse{/if} · {alignmentChapterSummary.partial} partial
-          {#if alignmentChapterSummary.invalid} · {alignmentChapterSummary.invalid} invalid{/if}
-        </span>
-        <span>{bookSummary.approvedChapters}/{bookSummary.totalChapters} chapters approved</span>
-        <span>
-          Greek Room: {$greekRoomChapterSummary.checkedVerses === 0 ? "not run" : `${$greekRoomChapterSummary.openFindings} open · ${$greekRoomChapterSummary.checkedVerses}/${$greekRoomChapterSummary.totalVerses} verses`}
-        </span>
+        <span class="status-facts">
+          <span class="ui-chip" class:pass={versesDone}
+            use:tooltip={`Verses approved in chapter ${$currentChapter}: ${$approvedCount} of ${versesTotal}`}>
+            <b>{$approvedCount}/{versesTotal}</b> verses approved</span>
+          <span class="ui-chip" class:pass={chaptersDone}
+            use:tooltip={`Chapters approved in this book: ${bookSummary.approvedChapters} of ${bookSummary.totalChapters}`}>
+            <b>{bookSummary.approvedChapters}/{bookSummary.totalChapters}</b> chapters approved</span>
+          <span class="ui-chip" class:danger={alignmentChapterSummary.invalid > 0}
+            use:tooltip={`Word alignment in chapter ${$currentChapter}: ${alignmentText}`}>
+            Alignment <b>{alignmentText}</b></span>
+          <span class="ui-chip" class:warning={greekRoomRun && $greekRoomChapterSummary.openFindings > 0}
+            use:tooltip={greekRoomRun
+              ? `Greek Room on chapter ${$currentChapter}: ${$greekRoomChapterSummary.openFindings} open findings; ${$greekRoomChapterSummary.checkedVerses} of ${$greekRoomChapterSummary.totalVerses} verses checked`
+              : `Greek Room has not run on chapter ${$currentChapter}`}>
+            Greek Room <b>{greekRoomRun ? `${$greekRoomChapterSummary.openFindings} open` : "not run"}</b></span>
         </span>
       {/if}
       <span class="grow" />
       {#if $project && opened}
-        <button class="diagnostics-btn" on:click={showLanguageQaTab}
-          title="Show Language QA in the Review panel">
-          Language QA{#if $languageQaChannel.error}: unavailable{:else if $languageQaChannel.status}: {$languageQaChannel.status.state}{#if $languageQaChannel.status.totalFindings} · {$languageQaChannel.status.totalFindings}{/if}{/if}
+        <button class="ui-chip status-link" class:danger={Boolean($languageQaChannel.error)} on:click={showLanguageQaTab}
+          use:tooltip={"Language QA scan of this book. Click to show Language QA in the Review panel"}>
+          Language QA{#if languageQaText}&nbsp;<b>{languageQaText}</b>{/if}
         </button>
       {/if}
       {#if engineNotice}<span class="engine-notice" title={engineNotice}>{engineNotice}</span>{/if}
       {#if $updateStatus.phase === "ready"}<span title={$updateStatus.message}>Bridge {$updateStatus.version} will install on close.</span>{/if}
-      <span>Engine: {engineStatus}</span>
-
+      <span class="engine-state" class:ready={engineStatus === "ready"} class:error={engineStatus === "error"}
+        role="status" aria-label={`Engine: ${engineStatus}`} use:tooltip={`Engine: ${engineStatus}`}>
+        <span class="engine-dot" aria-hidden="true" />{#if engineStatus !== "ready"}Engine {engineStatus}{/if}
+      </span>
     </div>
   {/if}
 
@@ -1988,26 +1995,39 @@
   .progress-action:disabled { opacity: 0.55; cursor: wait; }
   .check-notice { color: var(--danger); height: auto; min-height: 32px; max-height: 96px; align-items: flex-start; padding-top: 7px; padding-bottom: 7px; }
   .check-message { flex: 1; min-width: 0; max-height: 78px; overflow: auto; white-space: normal; overflow-wrap: anywhere; line-height: 1.35; }
-  .body { flex: 1; display: flex; overflow: hidden; }
+  /* The editor's frame (2026-11-13), after VS Code: the top bar, this row and
+     the status bar share the window's background with no lines between them;
+     the rail and the work area are two rounded boxes on it. */
+  .body { flex: 1; display: flex; gap: 6px; padding: 0 6px; overflow: hidden; background: var(--bg); }
   /* A 66-book table must not push the dashboard off screen: it scrolls. */
-  .work-col { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
-  .work-row { flex: 1; min-height: 0; display: flex; overflow: hidden; }
+  .work-col { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+  .work-row { position: relative; flex: 1; min-height: 0; display: flex; overflow: hidden; }
+  .work-empty { position: absolute; inset: 0; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 24px; text-align: center; background: var(--surface); }
+  .work-empty-icon { display: grid; place-items: center; width: 44px; height: 44px; margin-bottom: 4px; border-radius: 12px; background: var(--bg); color: var(--text-3); }
+  .work-empty-icon :global(svg) { width: 22px; height: 22px; }
+  .work-empty-title { margin: 0; font-size: var(--fs-sm); font-weight: 700; color: var(--text); }
+  .work-empty-text { margin: 0 0 8px; font-size: var(--fs-2xs); color: var(--text-2); }
   .editor-col { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
-  /* The Bookmarks menu button, matching ViewMenu's and CheckMenu's own. */
-  .top-menu-btn { height: var(--control-h); box-sizing: border-box; display: inline-flex; align-items: center; font: inherit; font-size: var(--fs-sm); font-weight: 600; line-height: 1; padding: 0 8px; border-radius: 6px; border: 1px solid transparent; background: transparent; color: var(--text-2); cursor: pointer; white-space: nowrap; }
-  .top-menu-btn:hover, .top-menu-btn[aria-expanded="true"] { background: var(--surface-2); color: var(--text); border-color: var(--border); }
+  .editor-col[hidden] { display: none; }
   .role-banner { margin: 0; padding: 6px 14px; background: var(--accent-bg); color: var(--accent); font-size: var(--fs-xs); font-weight: 600; border-bottom: 1px solid var(--border); }
   .grow { flex: 1; }
-  .statusbar { height: 28px; background: var(--surface); border-top: 1px solid var(--border); display: flex; align-items: center; padding: 0 16px; gap: 16px; font-size: var(--fs-xs); color: var(--text-2); flex-shrink: 0; overflow: hidden; white-space: nowrap; }
+  .statusbar { height: 26px; background: var(--bg); display: flex; align-items: center; padding: 0 10px; gap: 8px; font-size: var(--fs-3xs); color: var(--text-2); flex-shrink: 0; overflow: hidden; white-space: nowrap; }
+  .statusbar :global(.ui-chip) { padding: 1px 8px; font-weight: 500; background: var(--surface); }
+  .statusbar :global(.ui-chip b) { font-weight: 700; }
+  .status-link { font: inherit; font-size: var(--fs-3xs); cursor: pointer; transition: color .15s, background .15s; }
+  .status-link:hover, .status-link:focus-visible { border-color: transparent; background: var(--accent-bg); color: var(--accent); }
+  .engine-state { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; }
+  .engine-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border-strong); }
+  .engine-state.ready .engine-dot { background: var(--success); }
+  .engine-state.error { color: var(--danger); }
+  .engine-state.error .engine-dot { background: var(--danger); }
   .statusbar > * { flex-shrink: 0; }
   /* The facts give way first, then an engine notice; buttons keep their labels. */
-  .statusbar > .status-facts { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  .status-facts > span + span { margin-left: 16px; }
+  .statusbar > .status-facts { flex-shrink: 1; min-width: 0; overflow: hidden; display: flex; align-items: center; gap: 6px; }
+  .status-facts > :global(.ui-chip) { flex: none; }
   .statusbar > .grow { flex-shrink: 1; min-width: 0; }
   .engine-notice { color: var(--warning); font-weight: 600; }
   .statusbar > .engine-notice { flex-shrink: 1; min-width: 40px; overflow: hidden; text-overflow: ellipsis; }
-  .diagnostics-btn { position: relative; font-size: var(--fs-2xs); font-weight: 650; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--text-2); cursor: pointer; display: flex; align-items: center; gap: 5px; }
-  .diagnostics-btn:hover { background: var(--surface); }
   .global-drop { position: absolute; inset: 12px; z-index: 100; display: grid; place-items: center; border: 3px dashed var(--accent); border-radius: 14px; background: color-mix(in srgb, var(--accent-bg) 92%, transparent); color: var(--accent); font-size: var(--fs-2xl); font-weight: 750; pointer-events: none; }
   .drop-error { position: absolute; z-index: 101; left: 50%; bottom: 42px; transform: translateX(-50%); display: flex; align-items: center; gap: 14px; border: 1px solid var(--danger); border-radius: 8px; background: var(--surface); color: var(--danger); padding: 9px 12px; font-size: var(--fs-xs); box-shadow: 0 8px 24px rgba(0,0,0,.14); }
   .drop-error button { border: 0; background: transparent; color: var(--accent); cursor: pointer; font-size: var(--fs-xs); }

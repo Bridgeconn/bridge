@@ -4,7 +4,6 @@ import { get } from "svelte/store";
 import { tick } from "svelte";
 
 import SidePanel from "../components/SidePanel.svelte";
-import ViewMenu from "../components/ViewMenu.svelte";
 import { SIDE_PANEL_LIMITS, setSidePanel, sidePanelRecency, sidePanels, toggleSidePanel } from "../editorPrefs";
 import type { SidePanels } from "../editorPrefs";
 import { VERSE_MIN_WIDTH, foldedPanels, foldedSidePanels, verseMinWidth } from "../panelFit";
@@ -66,79 +65,5 @@ describe("foldedSidePanels (#324)", () => {
     expect(verseMinWidth(1.5)).toBe(VERSE_MIN_WIDTH + 100);
     // At 911 px, Review still fits beside the largest text.
     expect(foldedSidePanels(911, layout({ review: true }), [], verseMinWidth(1.7))).toEqual([]);
-  });
-});
-
-describe("folding in the editor (#324)", () => {
-  afterEach(() => {
-    for (const id of ["source", "reference", "paratext", "review"] as const) {
-      setSidePanel(id, { open: id === "review", width: SIDE_PANEL_LIMITS[id].initial });
-    }
-    sidePanelRecency.set([]);
-    setWindowWidth(1024);
-  });
-
-  it("hides a folded panel without touching its saved state, and shows it again when the window widens", async () => {
-    setWindowWidth(1600);
-    sidePanelRecency.set([]);
-    setSidePanel("source", { open: true });
-    setSidePanel("reference", { open: true });
-    setSidePanel("review", { open: true });
-    sidePanelRecency.set([]);
-    render(SidePanel, { props: { id: "reference", label: "Reference" } });
-    const column = () => document.getElementById("side-panel-reference") as HTMLElement;
-    expect(column().hidden).toBe(false);
-
-    setWindowWidth(984);
-    await tick();
-    expect([...get(foldedPanels)]).toEqual(["reference"]);
-    expect(column().hidden).toBe(true);
-    expect(get(sidePanels).reference.open).toBe(true);
-
-    setWindowWidth(1366);
-    await tick();
-    expect(column().hidden).toBe(false);
-  });
-
-  // #488: the rail is gone; the View menu is where a folded panel is seen
-  // and brought back.
-  it("the View menu marks a folded panel, and choosing it brings it back instead of closing it", async () => {
-    setWindowWidth(984);
-    setSidePanel("source", { open: true });
-    setSidePanel("reference", { open: true });
-    setSidePanel("review", { open: true });
-    sidePanelRecency.set([]);
-    render(ViewMenu);
-    const trigger = screen.getByRole("button", { name: /^View/ });
-    // Seen before the menu is opened: the button says a panel is folded.
-    expect(trigger.title).toMatch(/too narrow/);
-    await fireEvent.click(trigger);
-    const reference = screen.getByRole("menuitemcheckbox", { name: /^Reference/ });
-    const source = screen.getByRole("menuitemcheckbox", { name: /^Source/ });
-    expect(reference.getAttribute("aria-checked")).toBe("mixed");
-    expect(reference.title).toMatch(/too narrow/);
-    expect(reference.textContent).toContain("folded: window too narrow");
-    expect(reference.textContent).not.toContain("✓");
-    expect(source.getAttribute("aria-checked")).toBe("true");
-
-    await fireEvent.click(reference);
-    expect(get(sidePanels).reference.open).toBe(true);
-    expect(reference.getAttribute("aria-checked")).toBe("true");
-    // Source, now the one opened longest ago, folds in its place.
-    expect(source.getAttribute("aria-checked")).toBe("mixed");
-
-    // An ordinary open panel still closes from the menu.
-    await fireEvent.click(reference);
-    expect(get(sidePanels).reference.open).toBe(false);
-    expect(source.getAttribute("aria-checked")).toBe("true");
-    expect(trigger.title).not.toMatch(/too narrow/);
-  });
-
-  it("a panel opened from the View menu is the one shown", async () => {
-    setWindowWidth(984);
-    setSidePanel("source", { open: true });
-    setSidePanel("review", { open: true });
-    toggleSidePanel("reference");
-    expect([...get(foldedPanels)]).toEqual(["source"]);
   });
 });

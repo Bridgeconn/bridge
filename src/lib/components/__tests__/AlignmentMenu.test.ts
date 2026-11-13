@@ -84,14 +84,14 @@ describe("AlignmentMenu (#488)", () => {
   });
 
   // The wiring is App's, which no test mounts: pinned as written.
-  it("is in the top bar's menus beside View, Check and Bookmarks, and the second bar is gone", () => {
+  it("is on the editor's left rail after Check and Bookmarks, and the second bar is gone", () => {
     const app: string = readFileSync(resolve("src/App.svelte"), "utf8");
-    const menus = app.slice(app.indexOf('<svelte:fragment slot="menus">'), app.indexOf("</svelte:fragment>"));
+    const menus = app.slice(app.indexOf("<ActivityBar>"), app.indexOf("</ActivityBar>"));
     const at = (text: string) => menus.indexOf(text);
-    expect(at("<ViewMenu")).toBeGreaterThan(-1);
-    expect(at("<ViewMenu")).toBeLessThan(at("<CheckMenu"));
-    expect(at("<CheckMenu")).toBeLessThan(at("Bookmarks ▾"));
-    expect(at("Bookmarks ▾")).toBeLessThan(at("<AlignmentMenu"));
+    expect(at("<CheckMenu rail")).toBeGreaterThan(-1);
+    expect(at("<CheckMenu rail")).toBeLessThan(at('aria-label="Bookmarks"'));
+    expect(at('aria-label="Bookmarks"')).toBeLessThan(at("<AlignmentMenu rail"));
+    expect(app).not.toContain('slot="menus"');
     expect(app).not.toContain("editor-toolbar");
     expect(app).not.toContain("whole-book-btn");
     // "Align chapter with AI" is still AutoAlignChapterButton's job, as a strip.

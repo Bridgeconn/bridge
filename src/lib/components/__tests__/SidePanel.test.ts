@@ -10,8 +10,7 @@ import { resolve } from "node:path";
 import SidePanel from "../SidePanel.svelte";
 import PanelHeader from "../PanelHeader.svelte";
 import {
-  PANEL_MIN, SIDE_PANEL_LIMITS, SIDE_PANEL_ORDER, clampPanelFloat, movePanel, setSidePanel, sidePanelOrder, sidePanels,
-  undockSidePanel,
+  PANEL_MIN, SIDE_PANEL_LIMITS, SIDE_PANEL_ORDER, movePanel, setSidePanel, sidePanelOrder, sidePanels,
 } from "../../editorPrefs";
 
 /** jsdom has no PointerEvent: a MouseEvent carries the pointer event's name and fields. */
@@ -45,47 +44,6 @@ describe("SidePanel (Benz, 2026-10-09)", () => {
   });
   afterEach(reset);
 
-  it("resizes from its left edge by keyboard and by drag, within limits, and remembers the width", async () => {
-    setSidePanel("reference", { open: true });
-    render(SidePanel, { props: { id: "reference", label: "Reference" } });
-    const handle = screen.getByRole("separator", { name: /Resize the Reference panel/ });
-    const width = () => (document.getElementById("side-panel-reference") as HTMLElement).style.width;
-    expect(width()).toBe("300px");
-
-    await fireEvent.keyDown(handle, { key: "ArrowLeft" });
-    expect(width()).toBe("316px");
-    expect(JSON.parse(localStorage.getItem("bridge.editor.sidePanels.v1") ?? "{}").reference.width).toBe(316);
-    await fireEvent.keyDown(handle, { key: "End" });
-    expect(width()).toBe("640px");
-
-    // A drag shows as it goes and is saved when it ends.
-    await pointer(handle, "pointerdown", 500);
-    await pointer(handle, "pointermove", 700);
-    expect(width()).toBe("440px");
-    expect(get(sidePanels).reference.width).toBe(640);
-    await pointer(handle, "pointerup");
-    expect(get(sidePanels).reference.width).toBe(440);
-
-    await fireEvent.dblClick(handle);
-    expect(width()).toBe("300px");
-  });
-
-  it("closes when its edge is dragged far to the right, and reopens at its last width", async () => {
-    setSidePanel("reference", { open: true, width: 360 });
-    render(SidePanel, { props: { id: "reference", label: "Reference" } });
-    const handle = screen.getByRole("separator", { name: /Resize the Reference panel/ });
-    // 360 wide; 80px to the right is 280, still above the minimum (260): stays open.
-    await pointer(handle, "pointerdown", 500);
-    await pointer(handle, "pointermove", 580);
-    expect(screen.queryByText("Release to close")).toBeNull();
-    // Past min - 60 (200): the hint shows, and release closes it.
-    await pointer(handle, "pointermove", 800);
-    expect(screen.getByText("Release to close")).toBeInTheDocument();
-    await pointer(handle, "pointerup");
-    expect(get(sidePanels).reference).toEqual({ open: false, width: 360, float: null });
-    expect(document.getElementById("side-panel-reference")).toBeNull();
-  });
-
   it("caps the width at 45% of the window, and a kept-mounted panel is hidden, not removed, when closed", async () => {
     window.innerWidth = 1000;
     setSidePanel("review", { open: true, width: 700 });
@@ -113,26 +71,18 @@ describe("PanelHeader (#379)", () => {
     expect(get(sidePanels).reference.open).toBe(false);
   });
 
-  // #389 step 2: ◂ ▸ in the bar reorder the columns, the order is remembered,
-  // and a saved order that lost a panel gets it back in its default place.
-  it("moves its column with ◂ ▸, which the saved order follows", async () => {
+  // 2026-11-14: a panel is a tab, placed by dragging it (EditorTabs); the
+  // tools menu no longer moves a column left or right. The saved order
+  // still names every panel: it is the order new tabs are listed in.
+  it("offers no column moves in its tools menu, and a saved order that lost a panel gets it back", async () => {
     setSidePanel("reference", { open: true });
     render(PanelHeader, { props: { id: "reference", title: "Reference", label: "the Reference panel" } });
-    const tools = screen.getByRole("button", { name: "the Reference panel panel tools" });
-    await fireEvent.click(tools);
-    expect(await screen.findByRole("menuitem", { name: "Move panel left" })).toBeEnabled();
-    await fireEvent.click(screen.getByRole("menuitem", { name: "Move panel left" }));
-    expect(get(sidePanelOrder)).toEqual(["reference", "source", "paratext", "review"]);
-    expect(JSON.parse(localStorage.getItem("bridge.editor.sidePanelOrder.v1") ?? "[]")[0]).toBe("reference");
-    await fireEvent.click(tools);
-    expect(await screen.findByRole("menuitem", { name: "Move panel left" })).toBeDisabled();
-    await fireEvent.click(screen.getByRole("menuitem", { name: "Move panel right" }));
-    await fireEvent.click(tools);
-    await fireEvent.click(await screen.findByRole("menuitem", { name: "Move panel right" }));
-    expect(get(sidePanelOrder)).toEqual(["source", "paratext", "reference", "review"]);
-    render(PanelHeader, { props: { id: "review", title: "Review", label: "the Review panel" } });
-    await fireEvent.click(screen.getByRole("button", { name: "the Review panel panel tools" }));
-    expect(await screen.findByRole("menuitem", { name: "Move panel right" })).toBeDisabled();
+    await fireEvent.click(screen.getByRole("button", { name: "the Reference panel panel tools" }));
+    expect(await screen.findByRole("menuitem", { name: "Move to separate window" })).toBeInTheDocument();
+    // The floating box inside the window is gone (2026-11-14).
+    expect(screen.queryByRole("menuitem", { name: "Float inside Bridge" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Move panel left" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Move panel right" })).toBeNull();
     // A saved order missing a panel (added after the save) is completed.
     sidePanelOrder.set(["review", "source"] as never);
     sidePanelOrder.update((order) => order);
@@ -165,7 +115,7 @@ describe("PanelHeader (#379)", () => {
     const bar = source("PanelHeader");
     expect(bar).toContain("padding: 0 8px");
     expect(bar).toContain("border-bottom: 1px solid var(--border)");
-    expect(bar).toContain("background: var(--surface-2)");
+    expect(bar).toContain("background: var(--surface)");
     expect(bar).toMatch(/\.panel-title \{[^}]*font-size: var\(--fs-xs\)/);
   });
 
@@ -207,81 +157,14 @@ describe("PanelHeader (#379)", () => {
   });
 });
 
-// #389 step 3: undock into a box inside the window, dock back, remembered.
-describe("undocked panels (#389)", () => {
-  beforeEach(() => {
-    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1366 });
-    Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: 768 });
-    reset();
-  });
-  afterEach(reset);
-
-  it("Undock in the bar turns the column into a box at its place; Dock puts it back; both are remembered", async () => {
-    setSidePanel("reference", { open: true, width: 300 });
-    render(SidePanel, { props: { id: "reference", label: "Reference" } });
-    render(PanelHeader, { props: { id: "reference", title: "Reference", label: "the Reference panel" } });
-    await fireEvent.click(screen.getByRole("button", { name: "the Reference panel panel tools" }));
-    await fireEvent.click(await screen.findByRole("menuitem", { name: "Float inside Bridge" }));
-    const saved = get(sidePanels).reference;
-    expect(saved.open).toBe(true);
-    expect(saved.width).toBe(300);
-    // jsdom lays nothing out, so the column's rect is empty and the default place is used.
-    expect(saved.float).toEqual({ x: 1366 - 60 - 360, y: 80, width: 360, height: 480 });
-    await tick();
-    const box = document.getElementById("side-panel-reference") as HTMLElement;
-    expect(box.classList.contains("floating")).toBe(true);
-    expect(box.style.left).toBe("946px");
-    expect(box.style.width).toBe("360px");
-    expect(box.style.height).toBe("480px");
-    expect(JSON.parse(localStorage.getItem("bridge.editor.sidePanels.v1") ?? "{}").reference.float.width).toBe(360);
-    // The bar now offers Dock instead of ◂ ▸ / Undock.
-    expect(screen.queryByRole("button", { name: "Undock the Reference panel" })).toBeNull();
-    await fireEvent.click(screen.getByRole("button", { name: "the Reference panel panel tools" }));
-    await fireEvent.click(await screen.findByRole("menuitem", { name: "Dock in column" }));
+// 2026-11-14: no floating box. A saved one (an older save, a project's
+// workspace) is cleared as it reaches the store, so the panel is a tab.
+describe("a saved floating box", () => {
+  it("is cleared, and the panel is an ordinary tab", () => {
+    sidePanels.update((all) => ({ ...all, reference: { ...all.reference, open: true, float: { x: 20, y: 40, width: 440, height: 400 } } }));
     expect(get(sidePanels).reference.float).toBeNull();
-    await tick();
-    const column = document.getElementById("side-panel-reference") as HTMLElement;
-    expect(column.classList.contains("floating")).toBe(false);
-    expect(column.style.width).toBe("300px");
-  });
-
-  it("moves by its grip (pointer and keys), resizes from its corner, stays inside the window, and Escape closes it", async () => {
-    undockSidePanel("reference", { x: 100, y: 100, width: 400, height: 300 });
-    render(SidePanel, { props: { id: "reference", label: "Reference" } });
-    const grip = screen.getByRole("button", { name: "Move the Reference panel" });
-    await pointer(grip, "pointerdown", 150);
-    grip.dispatchEvent(new MouseEvent("pointermove", { bubbles: true, clientX: 250, clientY: 40 }));
-    await tick();
-    const box = () => document.getElementById("side-panel-reference") as HTMLElement;
-    expect(box().style.left).toBe("200px");
-    expect(box().style.top).toBe("140px");
-    await pointer(grip, "pointerup");
-    expect(get(sidePanels).reference.float).toEqual({ x: 200, y: 140, width: 400, height: 300 });
-
-    await fireEvent.keyDown(grip, { key: "ArrowLeft", shiftKey: true });
-    expect(get(sidePanels).reference.float?.x).toBe(152);
-    // Dragged past the right edge: the box stops at the window's edge.
-    await fireEvent.keyDown(grip, { key: "ArrowRight", shiftKey: true });
-    for (let i = 0; i < 40; i += 1) await fireEvent.keyDown(grip, { key: "ArrowRight", shiftKey: true });
-    expect(get(sidePanels).reference.float?.x).toBe(1366 - 400);
-
-    const corner = screen.getByRole("separator", { name: /Resize the Reference panel; drag the corner/ });
-    await fireEvent.keyDown(corner, { key: "ArrowDown", shiftKey: true });
-    expect(get(sidePanels).reference.float?.height).toBe(348);
-    // Never below the minimum size.
-    for (let i = 0; i < 20; i += 1) await fireEvent.keyDown(corner, { key: "ArrowLeft", shiftKey: true });
-    expect(get(sidePanels).reference.float?.width).toBe(260);
-
-    await fireEvent.keyDown(box(), { key: "Escape" });
-    expect(get(sidePanels).reference.open).toBe(false);
-    // Closed, not docked: it reopens as a box where it was.
-    expect(get(sidePanels).reference.float?.width).toBe(260);
-  });
-
-  it("keeps a saved box inside a window that shrank, and the saved shape stays valid without it", () => {
-    expect(clampPanelFloat({ x: 1200, y: 700, width: 600, height: 900 }, 1000, 600)).toEqual({ x: 400, y: 16, width: 600, height: 584 });
-    expect(clampPanelFloat({ x: 0, y: 0, width: 1200, height: 300 }, 1000, 600)).toEqual({ x: 0, y: 0, width: 984, height: 300 });
-    expect(clampPanelFloat({ x: -20, y: -5, width: 100, height: 50 }, 1366, 768)).toEqual({ x: 0, y: 0, width: 260, height: 200 });
-    expect(clampPanelFloat({ x: 10, y: 20, width: 300, height: 250 }, 1366, 768)).toEqual({ x: 10, y: 20, width: 300, height: 250 });
+    setSidePanel("reference", { float: { x: 1, y: 2, width: 300, height: 300 } });
+    expect(get(sidePanels).reference.float).toBeNull();
+    setSidePanel("reference", { open: false });
   });
 });

@@ -26,12 +26,13 @@ const submitGoTo = () => fireEvent.submit(goToBox().closest("form") as HTMLFormE
 describe("EditorHeader (#489)", () => {
   beforeEach(() => { rawView.set(false); openBook(); currentChapter.set("2"); });
 
-  // 2026-11-11, third round: no breadcrumb; book, chapter "of N", Go to, Raw USFM icon, tools.
-  it("reads, left to right: book, chapter picker of N, Go to, Raw USFM, and has no breadcrumb", () => {
+  // 2026-11-13: the book moved to the top bar; chapter "of N", Go to, Raw USFM icon, tools.
+  it("reads, left to right: chapter picker of N, Go to, Raw USFM, and has no book or breadcrumb", () => {
     const { container } = render(EditorHeader);
     const header = container.querySelector(".editor-header") as HTMLElement;
     const [where, goto, tools] = Array.from(header.children) as HTMLElement[];
-    expect(where).toHaveTextContent("Philippians");
+    expect(where).not.toHaveTextContent("Philippians");
+    expect(screen.queryByRole("combobox", { name: "Book" })).toBeNull();
     expect(where).toContainElement(screen.getByRole("group", { name: "Chapter navigation" }));
     expect(screen.getByRole("group", { name: "Chapter navigation" })).toHaveTextContent("of 4");
     expect((screen.getByRole("combobox", { name: "Chapter" }) as HTMLSelectElement).value).toBe("2");
@@ -57,30 +58,14 @@ describe("EditorHeader (#489)", () => {
     expect(get(rawView)).toBe(false);
   });
 
-  it("a collection's book is the book switcher; a single book is its name as text", async () => {
-    const onBookChange = vi.fn();
-    openBook(["1"], [{ path: "/c/php", bookName: "Philippians" }, { path: "/c/col", bookName: "Colossians" }]);
-    const view = render(EditorHeader, { props: { onBookChange } });
-    const books = screen.getByRole("combobox", { name: "Book" }) as HTMLSelectElement;
-    expect(books.value).toBe("/c/php");
-    await fireEvent.change(books, { target: { value: "/c/col" } });
-    expect(onBookChange).toHaveBeenCalledWith("/c/col");
-    view.unmount();
-    openBook();
-    render(EditorHeader, { props: { bookSwitching: true } });
-    expect(screen.queryByRole("combobox", { name: "Book" })).toBeNull();
-    expect(screen.getByText("Philippians")).toBeInTheDocument();
-  });
-
   // jsdom lays nothing out, so these pin the rules, not the rendering.
-  it("is styled to stay at the top of the panel, on one row, with the book giving way first", () => {
+  it("is styled to stay at the top of the panel, on one row", () => {
     const source: string = readFileSync(resolve("src/lib/components/EditorHeader.svelte"), "utf8");
     const rule = (selector: string) => new RegExp(`${selector.replace(/[.]/g, "\\.")}\\s*\\{([^}]*)\\}`).exec(source)?.[1] ?? "";
     expect(rule(".editor-header")).toContain("position: sticky");
     expect(rule(".editor-header")).toContain("top: 0");
     expect(rule(".editor-header")).toContain("flex: none");
     expect(rule(".editor-header")).not.toContain("flex-wrap");
-    expect(rule(".book-name")).toContain("text-overflow: ellipsis");
     expect(rule(".chapter-nav")).toContain("flex: none");
     expect(rule(".tools")).toContain("flex: none");
     // The error sits over the verses; it does not change the header's height.
@@ -92,11 +77,13 @@ describe("EditorHeader (#489)", () => {
     expect(rule(".goto")).not.toContain("position: relative");
   });
 
-  it("App hands the header the book, chapter and Go to handlers, and its overflow menu has no Raw USFM", () => {
+  it("App hands the header the chapter and Go to handlers, the top bar the book switch, and the overflow menu has no Raw USFM", () => {
     const app: string = readFileSync(resolve("src/App.svelte"), "utf8");
     expect(app).not.toContain("Raw USFM");
     const use = /<EditorHeader[^>]*>/.exec(app)?.[0] ?? "";
-    expect(use).toContain("onBookChange={switchBook}");
+    expect(use).not.toContain("onBookChange");
+    const bar = app.slice(app.indexOf("<TopBar"), app.indexOf("/>", app.indexOf("<TopBar")));
+    expect(bar).toContain("onBookChange={switchBook}");
     expect(use).toContain("onChapterChange={switchChapter}");
     expect(use).toContain("onGoTo={goTo}");
   });

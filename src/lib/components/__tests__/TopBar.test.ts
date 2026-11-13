@@ -16,7 +16,6 @@ vi.mock("../../api/bridgeClient", () => ({
 }));
 
 import TopBar from "../TopBar.svelte";
-import TopBarMenusFixture from "./fixtures/TopBarMenusFixture.svelte";
 import { project, currentChapter, navigationStatus } from "../../stores";
 import type { ProjectInfo } from "../../types/finding";
 
@@ -105,6 +104,18 @@ describe("TopBar window controls", () => {
     expect(closeWindow).toHaveBeenCalledOnce();
   });
 
+  it("shows an instant hint on each window button, not a delayed native title", async () => {
+    mount({ screen: "home" });
+    for (const [name, hint] of [["Minimize window", "Minimize"], ["Maximize window", "Maximize"], ["Close window", "Close"]]) {
+      const button = screen.getByRole("button", { name });
+      expect(button).not.toHaveAttribute("title");
+      await fireEvent.mouseEnter(button);
+      expect(screen.getByRole("tooltip")).toHaveTextContent(hint);
+      await fireEvent.mouseLeave(button);
+      expect(screen.queryByRole("tooltip")).toBeNull();
+    }
+  });
+
   it("keeps settings accessible, hides the sync indicator, and releases its resize listener", async () => {
     const onOpenSettings = vi.fn();
     const onOpenConnections = vi.fn();
@@ -140,49 +151,96 @@ describe("TopBar window controls", () => {
   });
 });
 
-// #488: View, Check and Bookmarks sit right of the name, in the editor only.
-describe("TopBar menus slot (#488)", () => {
+// 2026-11-13: the editor's bar is the name, the breadcrumb, then Sync, Export
+// and Settings. Its menus moved to the left rail (ActivityBar.svelte).
+describe("TopBar on the editor screen", () => {
   beforeEach(() => {
+    desktop.mockReturnValue(false);
     engineInfo.mockResolvedValue({ bridgeVersion: "0.9.7", companionSchemaVersion: 15 });
     openBook(["1", "2"]);
     currentChapter.set("1");
   });
 
-  it("shows the menus right after the name on the editor screen, then the project's name", async () => {
+  it("shows Projects, the project and the open book, with a button that closes the editor", async () => {
     const onGoToDashboard = vi.fn();
-    const { container } = render(TopBarMenusFixture, { props: { screen: "editor", onGoToDashboard } });
-    const menus = screen.getByRole("group", { name: "Menus" });
-    expect(menus).toContainElement(screen.getByRole("button", { name: "View" }));
-    const brand = container.querySelector(".brand") as HTMLElement;
-    const name = screen.getByRole("button", { name: "Philippians" });
-    expect(brand.compareDocumentPosition(menus) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(menus.compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // The project's name opens the project page.
-    expect(name).toHaveAttribute("title", "Philippians: open the project page");
+    const onGoHome = vi.fn();
+    const { container } = mount({ projectName: "IRV Tamil", onGoToDashboard, onGoHome });
+    const crumbs = screen.getByRole("navigation", { name: "Navigation" });
+    const name = screen.getByRole("button", { name: "IRV Tamil" });
+    expect(crumbs).toContainElement(screen.getByRole("button", { name: "Projects" }));
+    expect(crumbs).toContainElement(name);
+    expect(crumbs.querySelector(".crumb.current")).toHaveTextContent("Philippians");
+    expect(screen.queryByRole("group", { name: "Menus" })).toBeNull();
+    // No version number on the editor screen.
+    await tick();
+    expect(container.querySelector(".version")).toBeNull();
+    expect(name).toHaveAttribute("title", "IRV Tamil: open the project page");
     await fireEvent.click(name);
     expect(onGoToDashboard).toHaveBeenCalledOnce();
+    await fireEvent.click(screen.getByRole("button", { name: "Close editor" }));
+    expect(onGoToDashboard).toHaveBeenCalledTimes(2);
+    await fireEvent.click(screen.getByRole("button", { name: "Projects" }));
+    expect(onGoHome).toHaveBeenCalledOnce();
   });
 
-  // 2026-11-11, third round: the chapter picker and Go to are in the editor
-  // panel's header; Export and Settings are in the File menu.
-  it("has no breadcrumb, chapter picker, Go to, Export button or Settings gear on the editor screen", () => {
-    render(TopBarMenusFixture, { props: { screen: "editor" } });
-    expect(screen.queryByRole("navigation", { name: "Navigation" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Projects" })).toBeNull();
+  it("a collection's book is a searchable picker; a single book is its name as text", async () => {
+    const onBookChange = vi.fn();
+    project.update((info) => ({ ...(info as ProjectInfo), importedProjects: [
+      { path: "C:/projects/php", bookId: "php", bookName: "Philippians" },
+      { path: "C:/projects/col", bookId: "col", bookName: "Colossians" },
+      { path: "C:/projects/phm", bookId: "phm", bookName: "Philemon" },
+    ] }) as ProjectInfo);
+    const view = mount({ onBookChange });
+    const trigger = screen.getByRole("button", { name: "Book: Philippians" });
+    expect(screen.queryByRole("listbox")).toBeNull();
+    await fireEvent.click(trigger);
+    const search = screen.getByRole("combobox", { name: "Search books" });
+    await waitFor(() => expect(document.activeElement).toBe(search));
+    expect(screen.getAllByRole("option").map((item) => item.querySelector(".label")?.textContent)).toEqual(["Philippians", "Colossians", "Philemon"]);
+    expect(screen.getByRole("option", { name: /Philippians/ })).toHaveAttribute("aria-selected", "true");
+    // Filters as typed, by name or by book code.
+    await fireEvent.input(search, { target: { value: "phi" } });
+    expect(screen.getAllByRole("option").map((item) => item.querySelector(".label")?.textContent)).toEqual(["Philippians", "Philemon"]);
+    await fireEvent.input(search, { target: { value: "zzz" } });
+    expect(screen.queryByRole("option")).toBeNull();
+    expect(screen.getByText(/No book matches/)).toBeInTheDocument();
+    await fireEvent.input(search, { target: { value: "COL" } });
+    await fireEvent.keyDown(search, { key: "Enter" });
+    expect(onBookChange).toHaveBeenCalledWith("C:/projects/col");
+    expect(screen.queryByRole("listbox")).toBeNull();
+    // Arrow keys move the mark; the open book chosen again changes nothing.
+    await fireEvent.click(trigger);
+    await fireEvent.keyDown(screen.getByRole("combobox", { name: "Search books" }), { key: "ArrowDown" });
+    await fireEvent.keyDown(screen.getByRole("combobox", { name: "Search books" }), { key: "ArrowUp" });
+    await fireEvent.keyDown(screen.getByRole("combobox", { name: "Search books" }), { key: "Enter" });
+    expect(onBookChange).toHaveBeenCalledOnce();
+    await fireEvent.click(trigger);
+    await fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("listbox")).toBeNull();
+    view.unmount();
+    openBook(["1"]);
+    mount();
+    expect(screen.queryByRole("button", { name: /^Book:/ })).toBeNull();
+    expect(screen.getByText("Philippians", { selector: ".crumb.current" })).toBeInTheDocument();
+  });
+
+  it("has Settings and Export project on the bar, and no chapter picker or Go to", async () => {
+    const onExport = vi.fn();
+    const onOpenSettings = vi.fn();
+    mount({ onExport, onOpenSettings });
+    await fireEvent.click(screen.getByRole("button", { name: "Export project" }));
+    expect(onExport).toHaveBeenCalledOnce();
+    await fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(onOpenSettings).toHaveBeenCalledOnce();
     expect(screen.queryByRole("group", { name: "Chapter navigation" })).toBeNull();
     expect(screen.queryByPlaceholderText("Go to 1:4")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Export" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Settings" })).toBeNull();
   });
 
-  it("keeps the breadcrumb on the dashboard", () => {
-    render(TopBarMenusFixture, { props: { screen: "dashboard" } });
+  it("keeps the breadcrumb and the version on the dashboard, with no Export there", async () => {
+    const { container } = mount({ screen: "dashboard", onExport: vi.fn() });
     expect(screen.getByRole("navigation", { name: "Navigation" })).toContainElement(screen.getByRole("button", { name: "Projects" }));
     expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
-  });
-
-  it("shows no menus off the editor screen", () => {
-    render(TopBarMenusFixture, { props: { screen: "dashboard" } });
-    expect(screen.queryByRole("group", { name: "Menus" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Export project" })).toBeNull();
+    await waitFor(() => expect(container.querySelector(".version")).toHaveTextContent("0.9.7"));
   });
 });

@@ -4,6 +4,7 @@ import { get } from "svelte/store";
 import { localUserId } from "./stores";
 import { RETIRED_PANEL_IDS, sidePanels, sidePanelOrder, resetPanelLayout, validPanelSnapshot, withoutRetiredPanels, type SidePanels, type SidePanelId } from "./editorPrefs";
 import { without } from "./alignmentLayout";
+import { resetTabLayout } from "./editorTabs";
 import type { ProjectInfo, RegisteredProject } from "./types/finding";
 
 export interface WorkspaceSnapshot {
@@ -69,7 +70,7 @@ export function rememberScroll(path: string, chapter: string, scroll: number) {
   active.snapshot.scroll = Math.max(0, scroll);
   if (active.snapshot.books?.[active.snapshot.book.toLowerCase()]) active.snapshot.books[active.snapshot.book.toLowerCase()].scroll = active.snapshot.scroll; // flushed on navigation, layout, pagehide or bounded scroll timer
 }
-export function resetWorkspaceLayout() { editorTree.set(null); resetPanelLayout(); }
+export function resetWorkspaceLayout() { editorTree.set(null); resetPanelLayout(); resetTabLayout(); }
 export function recordProjectOpen(p: ProjectInfo) {
   const name = key("recentProjects");
   const rows = read<Record<string, { at: number; book: string }>>(name) || {};

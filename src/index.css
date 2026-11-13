@@ -249,6 +249,21 @@ mark.reveal-flash { animation: reveal-flash 1.2s ease-out; }
    of control it has instead of restyling <button> itself. Project Home and
    the add-books dialog drew these shapes first; the dashboard uses the
    classes, and the other pages can move over without a visual change. */
+/* The editor's left rail (ActivityBar.svelte): one icon button. Grey at
+   rest; a pane that is open as a tab has a blue icon; the pane that is
+   showing, or a menu that is open, also has the accent tint and a bar on the
+   rail's edge. */
+.rail-btn { position: relative; display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); cursor: pointer; transition: color .15s, background .15s; }
+.rail-btn svg { width: 20px; height: 20px; }
+/* Hover is grey, never the accent: blue means "on", and a hovered button
+   must still say whether it is. */
+.rail-btn:hover:not(:disabled), .rail-btn:focus-visible { color: var(--text); background: var(--bg); }
+.rail-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.rail-btn:disabled { opacity: .5; cursor: not-allowed; }
+.rail-btn.active, .rail-btn[aria-expanded="true"], .rail-btn.active:hover:not(:disabled), .rail-btn[aria-expanded="true"]:hover:not(:disabled) { color: var(--accent); background: var(--accent-bg); }
+.rail-btn.active::before, .rail-btn[aria-expanded="true"]::before { content: ""; position: absolute; left: -4px; top: 6px; bottom: 6px; width: 2px; border-radius: 2px; background: var(--accent); }
+.rail-btn.open, .rail-btn.open:hover:not(:disabled) { color: var(--accent); }
+@media (prefers-reduced-motion: reduce) { .rail-btn { transition: none; } }
 .ui-btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 34px; padding: 6px 12px; box-sizing: border-box; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: var(--fs-2xs); font-weight: 600; line-height: 1.2; cursor: pointer; white-space: nowrap; transition: color .15s, background .15s, border-color .15s; }
 .ui-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .ui-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }

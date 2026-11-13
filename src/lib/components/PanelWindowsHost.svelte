@@ -45,7 +45,9 @@
       if (!SIDE_PANEL_ORDER.includes(message.id)) return;
       if (message.kind === "ready") { void synchronize(context).catch(cause => error = String(cause)); return; }
       if (message.path !== $project?.path || !$sidePanels[message.id].detached) return;
-      if (message.kind === "close") setSidePanel(message.id, { open: false });
+      // Closing its own window also ends "separate window": opened again, the
+      // panel is a tab (Joel, 2026-11-14).
+      if (message.kind === "close") setSidePanel(message.id, { open: false, detached: false });
       else if (message.kind === "dock") setSidePanel(message.id, { detached: false, float: null });
       else if (message.kind === "changed") void onRefresh().catch(cause => error = String(cause));
       else if (message.kind === "settings") onSettings();
