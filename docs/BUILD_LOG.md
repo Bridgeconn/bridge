@@ -25491,3 +25491,36 @@ no Rust or Python file changed.
 chip, bullet and time, the order, the icon, the row of action icons and the spacing;
 approved. **Not checked by anyone:** the "Delete permanently? Confirm Cancel" row and
 a missing-folder row on a narrow window, and a right-to-left project name.
+
+## 2026-11-13 — Project dashboard: Run QA on a book opens the check dialog, quiet header buttons, report card on a narrow window
+
+Second step of Joel's page-by-page UI pass on branch `uifixes-v25` (not merged to
+`main`; one issue for the whole pass is filed when it is done).
+
+**What changed.**
+- **Run QA on one book asks first.** The row's Run QA, "Run QA again" in the report
+  header and after a failed run, and "Run QA on <book>" all open
+  `CollectionCheckDialog` (new `bookName` prop: titled "Check <book>", no
+  "re-check unchanged books" option, a one-book note). Start saves the ticks to
+  `collectionChecks`, the same selection as the header's Check, and calls
+  `onRunBookQa`; `App.svelte` already ran the book with `$selectedCollectionChecks`,
+  so no engine or App change. Cancel runs nothing.
+- **Header buttons.** "Project report" (was a gradient pill with its own CSS) and
+  "Check" (was `ui-btn primary`) are both `ui-btn quiet`: no border at rest or on
+  hover, the book-list icon colours (accent, success) and a label. Joel tried
+  icon-only first and found it too easy to miss.
+- **QA Report card.** The icon above "Pick a book on the left" is gone. At 900 px and
+  below `.panels` is `flex: none`, so the stacked cards take their content's height
+  and the screen scrolls; with `flex: 1` the report card was squeezed and its last
+  lines drew outside the card.
+
+**Tests changed.** `ProjectDashboard.test.ts`: the four Run QA tests now click Start
+in the dialog (one also checks Cancel runs nothing and the dialog's title).
+
+**Ran.** `npm run check` 0 errors 0 warnings; `npm run test` 132 files / 1263 tests
+pass; `npm run build` builds. Cargo and pytest not run: no Rust or Python file changed.
+
+**Seen on the desktop app by Joel** (2026-11-13): the two header buttons and their
+hover, approved. **Not confirmed by anyone:** that a one-book run with a check
+unticked really skips it; the narrow-window fix (it was made from the code, without a
+split-screen screenshot of this page); the dialog on a single-book project.
