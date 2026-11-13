@@ -25432,3 +25432,29 @@ at below 960 px on a real window.
 **Not verified (needs the desktop app).** Snap the main window and the Alignment
 window half and half at 1366x768; check the top bar menus, the verse list and the
 status bar at 640-700 px wide; drag the edge between the two freely.
+
+## 2026-11-13 — Cross-verse page: the same verse sits level on both sides (#495)
+
+Benz's request (branch `uifixes-v25`). Source and Target are two separate panes, each
+a stack of verse blocks of different heights, so by mid-chapter verse 1:7 on the left
+sat beside 1:15 on the right.
+
+**What changed.** New `src/lib/verseRowSync.ts`, a Svelte action on the page. Each
+verse block (and each column title) carries `data-verse-row`; the action pairs the
+elements that share a key, and when their columns stand side by side it gives both
+the taller one's height as `min-height`. When the panes are stacked or one is
+floating it clears the heights. It re-runs from a `ResizeObserver` and a
+`MutationObserver`, once per animation frame. The panes stay rearrangeable (#448);
+no markup moved between them.
+
+**Tests.** `verseRowSync.test.ts` covers the pairing, the side-by-side test and the
+clearing with stubbed rectangles. jsdom has no layout, so this proves the logic only.
+
+**Ran (whole batch #493-#495).** `npm run check` 0 errors 0 warnings, `npm run test`
+131 files / 1261 tests pass, `npm run build` builds, `cargo check` clean, `cargo test`
+21 pass. The engine pytest suite was not run: no Python file changed.
+
+**Not verified (needs the desktop app).** That verse N really starts level on both
+sides down a 22-verse range, after a drop changes a block's height, after resizing
+the window, after dragging the divider, and that stacking the panes removes the
+extra space. Sticky verse heads were not re-checked.

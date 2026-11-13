@@ -43,6 +43,7 @@
     suggestionKey, suggestionsForSource, suggestionsForTarget, verdictView, windowJobError, windowProblem,
   } from "../autoAlign";
   import { createPointerDrag } from "../alignmentDrag";
+  import { syncVerseRows } from "../verseRowSync";
   import {
     alignedTargetsFor, bottomIdsAfterDrop, groupForTarget, occurrenceLabel as occurrence, unaccountedTargets,
     unrealizedSources, topIdsFor, sourceColumns, canSeparateSource,
@@ -736,7 +737,7 @@
 <svelte:window on:keydown={(event) => { if (event.key !== "Escape") return; if (menu) { menu = null; return; } if (!busy && !lexiconToken) onClose(); }} on:pointermove={trackEdge} on:pointerup={() => (edgeStep = 0)} />
 
 <div class="overlay" class:standalone role="presentation">
-  <section class="page alignment-cards" role="dialog" aria-modal="true" aria-label={`Cross-verse alignment, chapter ${chapter}`} bind:this={dialogEl}>
+  <section class="page alignment-cards" role="dialog" aria-modal="true" aria-label={`Cross-verse alignment, chapter ${chapter}`} bind:this={dialogEl} use:syncVerseRows>
     <header>
 
       <div class="title">
@@ -872,12 +873,12 @@
           {#each visibleVerses as v}<p class="range-reading" dir={contexts[v].targetDirection} lang={$targetLang}><strong>{chapter}:{v}</strong> {reading[v] ?? ""}</p>{/each}
         </AlignmentPane>
         <AlignmentPane id="source" label="Source">
-        <section class="col sources" aria-label="Source words">
-          <div class="col-title">Source words <small>click a word for its lexicon entry · drop target words into the cell beside it</small></div>
+        <section class="col sources" aria-label="Source words" data-verse-col="source">
+          <div class="col-title" data-verse-row="title">Source words <small>click a word for its lexicon entry · drop target words into the cell beside it</small></div>
           <div class="scroll">
             {#each visibleVerses as v (v)}
               {@const context = contexts[v]}
-              <div class="verse-block">
+              <div class="verse-block" data-verse-row={v}>
                 <div class="verse-head">
                   <span class="vnum">{chapter}:{v}</span>
                   {#if !context.sourceAvailable}<span class="warn">no original-language source</span>{/if}
@@ -1006,12 +1007,12 @@
 
         </AlignmentPane>
         <AlignmentPane id="target" label="Target">
-        <section class="col targets" aria-label="Target words">
-          <div class="col-title">Target words <small>in verse order · drag a blue word into a source cell, or click it then click a cell</small></div>
+        <section class="col targets" aria-label="Target words" data-verse-col="target">
+          <div class="col-title" data-verse-row="title">Target words <small>in verse order · drag a blue word into a source cell, or click it then click a cell</small></div>
           <div class="scroll">
             {#each visibleVerses as v (v)}
               {@const context = contexts[v]}
-              <div class="verse-block">
+              <div class="verse-block" data-verse-row={v}>
                 <div class="verse-head">
                   <span class="vnum">{chapter}:{v}</span>
                   <span class="status {context.status}">{alignmentStatusLabel(context.status)}</span>
@@ -1242,6 +1243,9 @@
   /* Two vertically scrolling columns: the range view never scrolls sideways (#72). */
   .range-reading { font-family: var(--font-target); line-height: 1.8; }
   .col { display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--border); border-radius: 10px; }
+  /* #495: verseRowSync gives a verse block (and the title) the height of its
+     partner in the other column as min-height, measured border to border. */
+  .col-title, .verse-block { box-sizing: border-box; }
   .col-title { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; padding: 8px 12px; font-size: var(--fs-sm); font-weight: 700; border-bottom: 1px solid var(--border); flex-shrink: 0; }
   .col-title small { color: var(--text-3); font-weight: 400; }
   /* #485: no scrolling inside a column (clip, not hidden: not a scroll container). */
