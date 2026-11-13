@@ -25458,3 +25458,36 @@ clearing with stubbed rectangles. jsdom has no layout, so this proves the logic 
 sides down a 22-verse range, after a drop changes a block's height, after resizing
 the window, after dragging the divider, and that stacking the panes removes the
 extra space. Sticky verse heads were not re-checked.
+
+## 2026-11-13 — Projects page: Recent chip and time on each card, last opened first, one layout at every width
+
+First step of Joel's page-by-page UI pass on branch `uifixes-v25` (not merged to
+`main`). No issue yet by Joel's choice: one issue will be filed for the whole pass
+once the pages are done. Everything is in `ImportScreen.svelte` plus one helper.
+
+**What changed.**
+- The Recent projects strip above the search box is removed. The project opened
+  last carries a green "Recent" chip; every opened project shows a bullet and
+  "5 min ago" after its name (`src/lib/utils/relativeTime.ts`: sec, min, hr, days,
+  weeks, months, years; exact time in the tooltip; the page's clock ticks every 15 s).
+- The list is sorted last opened first, on the page (`byLastOpened`); never-opened
+  projects keep the registry order after the opened ones. No engine change.
+- Every card reads "N-book collection", a single book included; the book-code badge
+  (LEV, NUM) is one open-book icon for all. Search still matches book name and code.
+- The action icons stay on the card's first row at every width (the 1024 px rule
+  that moved them under the text is gone); a long name ends in an ellipsis with the
+  full name as its tooltip. The three lines of a card are closer together, the
+  icon is centred on them, and the details sit under the text column at every width.
+
+**Left in place.** `recentProjects` in `projectWorkspace.ts` and its test: the app
+no longer calls it (the time now comes from the registry's `lastOpenedAt`), but
+`recordProjectOpen` still writes the list it reads. Removing both is a separate step.
+
+**Ran.** `npm run check` 0 errors 0 warnings; `npm run test` 132 files / 1263 tests
+pass (new `relativeTime.test.ts`); `npm run build` builds. Cargo and pytest not run:
+no Rust or Python file changed.
+
+**Seen on the desktop app by Joel** (full width and split screen, 2026-11-13): the
+chip, bullet and time, the order, the icon, the row of action icons and the spacing;
+approved. **Not checked by anyone:** the "Delete permanently? Confirm Cancel" row and
+a missing-folder row on a narrow window, and a right-to-left project name.

@@ -16,8 +16,7 @@
 
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
-  import { recentProjects } from "../projectWorkspace";
-  import { localUserId } from "../stores";
+  import { relativeTime } from "../utils/relativeTime";
   import UiIcon from "./UiIcon.svelte";
   import DuplicateImportDialog, { type RelatedImportProject } from "./DuplicateImportDialog.svelte";
   import AddBooksDialog from "./AddBooksDialog.svelte";
@@ -83,8 +82,12 @@
     projectName: "", bibleName: "",
   };
 
-  onMount(() => { void loadProjects(); });
-  onDestroy(() => { importGeneration += 1; clearTimeout(importPollTimer); clearTimeout(errorHideTimer); });
+  // The "5 min ago" on each project card is worked out against this clock,
+  // which ticks so a list left open does not go stale.
+  let now = Date.now();
+  let nowTimer: ReturnType<typeof setInterval> | undefined;
+  onMount(() => { void loadProjects(); nowTimer = setInterval(() => (now = Date.now()), 15000); });
+  onDestroy(() => { importGeneration += 1; clearTimeout(importPollTimer); clearTimeout(errorHideTimer); clearInterval(nowTimer); });
 
   $: importing = importJob !== null && !IMPORT_TERMINAL.has(importJob.state);
 
@@ -123,9 +126,18 @@
   let projectSearch = "";
   let renamingId = "";
   let renameDraft = "";
-  $: recent = recentProjects(projects, 5, $localUserId);
-  $: activeProjects = projects.filter((item) => !item.archivedAt);
-  $: archivedProjects = projects.filter((item) => Boolean(item.archivedAt));
+  // The one project opened last carries the Recent chip; it replaces the
+  // separate Recent projects strip. Archived, missing and conflicting rows
+  // never carry it.
+  $: recentProjectId = projects
+    .filter((item) => !item.archivedAt && !item.missing && !item.conflict && Number.isFinite(Date.parse(item.lastOpenedAt ?? "")))
+    .reduce<RegisteredProject | null>((latest, item) =>
+      !latest || Date.parse(item.lastOpenedAt ?? "") > Date.parse(latest.lastOpenedAt ?? "") ? item : latest, null)?.projectId ?? "";
+  // Last opened first; a project never opened keeps the registry's order,
+  // after the opened ones (Array.sort is stable).
+  $: byLastOpened = [...projects].sort((a, b) => openedMs(b) - openedMs(a));
+  $: activeProjects = byLastOpened.filter((item) => !item.archivedAt);
+  $: archivedProjects = byLastOpened.filter((item) => Boolean(item.archivedAt));
   $: visibleProjects = showArchived ? [...activeProjects, ...archivedProjects] : activeProjects;
   $: projectSearchTerms = projectSearch.trim().normalize("NFKC").toLocaleLowerCase().split(/\s+/).filter(Boolean);
   $: filteredProjects = visibleProjects.filter((item) => {
@@ -171,6 +183,17 @@
     } finally {
       loading = false;
     }
+  }
+
+  function openedMs(item: RegisteredProject): number {
+    const at = Date.parse(item.lastOpenedAt ?? "");
+    return Number.isFinite(at) ? at : 0;
+  }
+
+  /** The exact time behind a card's "5 min ago", for its tooltip. */
+  function openedAt(item: RegisteredProject): string {
+    const when = new Date(item.lastOpenedAt ?? "");
+    return Number.isNaN(when.getTime()) ? "" : `Last opened ${when.toLocaleString()}`;
   }
 
   function lastOpened(item: RegisteredProject): string {
@@ -563,17 +586,6 @@
     </div>
 
     <div class="list-area">
-      {#if !projectsLoading}
-        <section class="recent-projects" aria-label="Recent projects">
-          <h2>Recent projects</h2>
-          {#if recent.length === 0}<p class="drop-hint">Projects you successfully open on this device appear here.</p>{/if}
-          {#each recent as item (item.collectionId || item.projectId)}
-            <button type="button" class="recent-project" disabled={loading} on:click={() => openPath(item.path, item.projectId)}>
-              <UiIcon name="open" /><span><b>{displayName(item)}</b><small>{item.targetLanguage || item.targetLanguageId} · {item.bibleName || item.bookName}</small></span>
-            </button>
-          {/each}
-        </section>
-      {/if}
       {#if projects.length > 0}
       <div class="project-toolbar">
         <div class="project-search">
@@ -618,10 +630,10 @@
               <!-- #309: a managed folder whose identity the registry refused. It
                    has no projectId of its own, so it offers no actions. -->
               <article class="project-row conflict">
-                <div class="book-badge">{item.bookId?.toUpperCase() || "?"}</div>
+                <div class="book-badge" aria-hidden="true"><UiIcon name="open" /></div>
                 <div class="project-copy">
                   <strong>{displayName(item)}</strong>
-                  <span>{(item.bookCount ?? 1) > 1 ? `${item.bookCount} books` : item.bookName}{item.bibleName ? ` · ${item.bibleName}` : ""}</span>
+                  <span>{item.bookCount ?? 1}-book collection{item.bibleName ? ` · ${item.bibleName}` : ""}</span>
                   <span class="conflict-message" role="alert">{item.conflict.message}</span>
                   {#if item.conflict.registeredPath}<small title={item.conflict.registeredPath}>Registered copy: {item.conflict.registeredPath}</small>{/if}
                   <small title={item.path}>This copy: {item.path}</small>
@@ -632,16 +644,25 @@
               {#if !item.missing && confirmingId !== item.projectId}
                 <button class="open-project" aria-label={`Open ${displayName(item)}`} on:click={() => openPath(item.path, item.projectId)} disabled={loading}></button>
               {/if}
-              <div class="book-badge">{item.bookId?.toUpperCase() || "?"}</div>
+              <div class="book-badge" aria-hidden="true"><UiIcon name="open" /></div>
               <div class="project-copy">
                 {#if renamingId === item.projectId}
                   <input class="rename-input" aria-label="Project name" bind:value={renameDraft}
                     on:keydown={(event) => { if (event.key === "Enter") void commitRename(item); if (event.key === "Escape") renamingId = ""; }}
                     on:blur={() => void commitRename(item)} />
                 {:else}
-                  <strong>{displayName(item)}{item.archivedAt ? " (archived)" : ""}</strong>
+                  <div class="title-line">
+                    <strong title={displayName(item)}>{displayName(item)}{item.archivedAt ? " (archived)" : ""}</strong>
+                    {#if !item.missing && relativeTime(item.lastOpenedAt, now)}
+                      <span class="opened-meta" title={openedAt(item)}>
+                        {#if item.projectId === recentProjectId}<span class="ui-chip pass recent-chip">Recent</span>{/if}
+                        <span class="opened-dot" aria-hidden="true">•</span>
+                        <span class="opened-ago">{relativeTime(item.lastOpenedAt, now)}</span>
+                      </span>
+                    {/if}
+                  </div>
                 {/if}
-                <span>{item.collectionId ? `${item.bookCount ?? 1}-book collection` : item.bookName}{item.bibleName ? ` · ${item.bibleName}` : ""}{item.targetLanguage ? ` · ${item.targetLanguage}` : ""}</span>
+                <span>{item.bookCount ?? 1}-book collection{item.bibleName ? ` · ${item.bibleName}` : ""}{item.targetLanguage ? ` · ${item.targetLanguage}` : ""}</span>
                 {#if item.missing}<small class="missing-label">Project folder is missing</small>{/if}
               </div>
               <div class="project-actions" role="group" aria-label={`Actions for ${displayName(item)}`}>
@@ -800,12 +821,17 @@
 {/if}
 
 <style>
-  .recent-projects { margin-bottom: 20px; }
-  .recent-projects h2 { font-size: var(--fs-sm); }
-  .recent-project { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; margin: 0 8px 8px 0; padding: 10px 14px; text-align: left; border: 1px solid var(--border); border-radius: 8px; color: var(--text); background: var(--surface); cursor: pointer; }
-  .recent-project span { min-width: 0; }
-  .recent-project b, .recent-project small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .recent-project small { color: var(--text-3); }
+  /* The project's name, then, after a clear gap, when it was last opened: a
+     Recent chip on the one opened last, and a quiet "5 min ago" on every
+     card. It wraps under the name on a narrow window instead of squeezing it. */
+  .title-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 28px; min-width: 0; }
+  /* A long name ends in an ellipsis (the full name is its tooltip) so the
+     action icons keep their place on the card's first row at any width. */
+  .project-home .project-copy .title-line strong { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
+  .project-home .project-copy .opened-meta { display: inline-flex; align-items: center; gap: 6px; flex: none; overflow: visible; white-space: nowrap; line-height: 1.3; }
+  /* Green, not the accent blue the badge, hover and count already use. */
+  .project-home .project-copy .opened-meta .recent-chip { color: var(--pass); font-size: var(--fs-3xs); line-height: 1.3; white-space: nowrap; overflow: visible; }
+  .project-home .project-copy .opened-meta .opened-dot, .project-home .project-copy .opened-meta .opened-ago { color: var(--text-2); font-size: var(--fs-2xs); font-weight: 600; line-height: 1.3; white-space: nowrap; overflow: visible; }
 
   .screen { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; overflow: auto; background: var(--surface); }
   .import-banner { flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 10px 40px; border-bottom: 1px solid var(--border); background: var(--surface-2, var(--surface)); max-width: 900px; width: 100%; margin: 0 auto; box-sizing: border-box; }
@@ -930,12 +956,18 @@
     .project-search input { font-size: var(--fs-2xs); }
   }
   .project-home .projects { display: grid; gap: 12px; border: 0; }
-  .project-home .project-row { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; column-gap: 14px; row-gap: 6px; padding: 16px 18px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); box-shadow: 0 2px 4px rgb(0 0 0 / 2%); }
+  .project-home .project-row { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; column-gap: 14px; row-gap: 2px; padding: 14px 18px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); box-shadow: 0 2px 4px rgb(0 0 0 / 2%); }
   .project-home .project-row.missing { background: #fff9ed; }
-  .project-home .book-badge { width: 40px; height: 40px; border-radius: 10px; }
-  .project-home .project-copy { gap: 6px; }
+  /* The icon is centred on the card's three lines (name, collection line,
+     Project details toggle): it spans both grid rows. With the details open
+     the second row is tall, so it stays near the top where those lines are. */
+  .project-home .book-badge { width: 40px; height: 40px; border-radius: 10px; grid-row: 1 / span 2; align-self: center; }
+  .project-home .project-row:has(.project-details[open]) .book-badge { align-self: start; margin-top: .7rem; }
+  .project-home .project-row.conflict .book-badge { grid-row: auto; }
+  .project-home .project-copy { gap: 1px; }
+  .project-home .project-details summary { padding: 1px 0; }
   .project-home .project-copy strong { font-size: var(--fs-md); overflow-wrap: anywhere; }
-  .project-home .project-copy span { white-space: normal; overflow-wrap: anywhere; line-height: 1.6; }
+  .project-home .project-copy span { white-space: normal; overflow-wrap: anywhere; line-height: 1.4; }
   .project-home .project-copy small { white-space: normal; overflow-wrap: anywhere; line-height: 1.5; }
   .project-home .project-actions { max-width: 300px; }
   /* The whole card opens the project (team request, 2026-11-02): an invisible
@@ -1030,15 +1062,11 @@
   .project-home .project-actions .action-icon.danger { color: var(--danger); }
   .project-home .project-actions .action-icon:hover:not(:disabled), .project-home .project-actions .action-icon:focus-visible { background: var(--accent-bg); color: var(--accent); filter: none; }
   .project-home .project-actions .action-icon.danger:hover:not(:disabled), .project-home .project-actions .action-icon.danger:focus-visible { background: var(--danger-bg); color: var(--danger); }
-  @media (max-width: 1024px) {
-    .project-home .project-row { grid-template-columns: 40px minmax(0, 1fr); }
-    .project-home .project-actions { grid-column: 2; max-width: none; }
-  }
   @media (max-width: 640px) {
     .project-home .header, .project-home .list-area, .project-home .footer { padding-left: 20px; padding-right: 20px; }
     .project-home .header { padding-top: 24px; }
-    .project-home .project-row { padding: 16px; gap: 12px; }
-    .project-home .project-actions, .project-details { grid-column: 1 / -1; }
+    .project-home .project-row { padding: 14px 16px; column-gap: 12px; }
+    .project-home .project-actions { gap: 2px; }
     .details-body > div { grid-template-columns: 1fr; gap: 2px; }
     .project-home .project-actions button { min-height: 36px; }
     .header-row { flex-wrap: wrap; gap: 12px; }
