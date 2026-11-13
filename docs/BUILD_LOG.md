@@ -25416,3 +25416,19 @@ inside the box at 1366x768 and in a half-width window, that a long joined group
 does not get clipped, the look of the ◀ ▶ buttons and the side insert bar, and a
 right-to-left target project. Open question for Benz: the row follows the *target*
 language's direction; if the source direction was meant, it is the `dir` on the cell.
+
+## 2026-11-13 — Main window can be as narrow as 640 px, so it fits beside the Alignment window (#494)
+
+Benz's request (branch `uifixes-v25`). `tauri.conf.json`: the main window's
+`minWidth` goes from 960 to 640, the minimum the Alignment and Review notes windows
+already have. At 960 the main window could not take half of a 1366 px screen
+(683 px), so the two windows always overlapped. `minHeight` is unchanged.
+
+**Believed, not watched.** The cause is read from the config; it was not reproduced
+on the desktop app. The main layout already has narrow-width rules (`TopBar.svelte`
+at 900/640/480 px, side panels folding in `panelFit.ts`), but none of it was looked
+at below 960 px on a real window.
+
+**Not verified (needs the desktop app).** Snap the main window and the Alignment
+window half and half at 1366x768; check the top bar menus, the verse list and the
+status bar at 640-700 px wide; drag the edge between the two freely.

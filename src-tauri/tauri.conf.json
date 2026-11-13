@@ -16,7 +16,7 @@
         "decorations": false,
         "width": 1280,
         "height": 860,
-        "minWidth": 960,
+        "minWidth": 640,
         "minHeight": 640,
         "backgroundColor": "#F3F4F6",
         "dragDropEnabled": true,
