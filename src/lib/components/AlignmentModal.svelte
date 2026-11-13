@@ -532,7 +532,7 @@
         <section class="source-bank">
           <div class="panel-title">
             <span>Source words</span>
-            <small>Click a word for its lexicon entry — its target words sit in the column beneath it. Drag a target word up or down within its column, or use ▲ ▼, to change their order</small>
+            <small>Click a word for its lexicon entry — its target words sit in a row beneath it. Drag a target word along its row, or use ◀ ▶, to change their order</small>
           </div>
           <SourceSplitControls bind:this={splitControls} {context} {busy} onBusy={(value) => busy = value} onChanged={(values) => { context = values.find((v) => v.chapter === chapter && v.verse === verse) || context; }} />
           <div class="interlinear" dir={context.sourceDirection}>
@@ -597,7 +597,7 @@
                   <!-- The word itself can be picked up and moved to another
                        column, alone or with others (#285); × still returns it.
                        data-drop-slot (#410): a drop on the card lands before or
-                       after it; the up/down buttons do the same by click. -->
+                       after it; the earlier/later buttons do the same by click. -->
                   <div
                     class="token target aligned-card"
                     class:picked={picked.includes(item.id)}
@@ -622,17 +622,17 @@
                           class="step"
                           on:click|stopPropagation={() => stepWithinColumn(src.id, item.id, -1)}
                           disabled={busy || at === 0}
-                          aria-label={`Move ${item.word} up`}
-                          title="Move up"
-                        >▲</button>
+                          aria-label={`Move ${item.word} earlier`}
+                          title="Move earlier"
+                        >{context.targetDirection === "rtl" ? "▶" : "◀"}</button>
                         <button
                           type="button"
                           class="step"
                           on:click|stopPropagation={() => stepWithinColumn(src.id, item.id, 1)}
                           disabled={busy || at === (groupForSource(context, src.id)?.bottomIds.length ?? 0) - 1}
-                          aria-label={`Move ${item.word} down`}
-                          title="Move down"
-                        >▼</button>
+                          aria-label={`Move ${item.word} later`}
+                          title="Move later"
+                        >{context.targetDirection === "rtl" ? "◀" : "▶"}</button>
                       </span>
                     {/if}
                     <button
@@ -834,9 +834,14 @@
   /* max-width so a column can never be wider than the box and be silently
      clipped by the overflow-x above on a narrow window. */
   .column { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 76px; max-width: 100%; flex-shrink: 0; }
+  /* #493: the target words of a column sit in a row and wrap, in the target
+     language's direction (the cell's `dir`), instead of one below another. A
+     column is as wide as its row needs, up to the box (`.column` max-width),
+     and the row wraps from there. */
   .target-cell {
-    display: flex; flex-direction: column; align-items: center; gap: 4px; width: 100%; box-sizing: border-box;
-    min-height: 36px; justify-content: flex-end; padding: 4px; border-radius: 8px;
+    display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: center; align-content: flex-start;
+    gap: 4px; width: 100%; box-sizing: border-box;
+    min-height: 36px; padding: 4px; border-radius: 8px;
   }
   .target-cell.drop-hover { background: var(--accent-bg); outline: 2px dashed var(--accent); }
   .target-cell .placeholder { color: var(--text-3); font-size: var(--fs-xl); line-height: 1; padding-bottom: 6px; }
@@ -883,13 +888,16 @@
      word; the card shows the pick, like a bank word does. */
   .aligned-card .pick { border: 0; background: none; padding: 0; margin: 0; font: inherit; color: inherit; cursor: pointer; touch-action: none; user-select: none; }
   .aligned-card.picked { outline: 2px solid var(--accent); outline-offset: 1px; }
-  /* #410: where a dragged word will land inside the column -- a bar above or
-     below the card under the pointer. */
-  .aligned-card.insert-before { box-shadow: 0 -4px 0 0 var(--accent); }
-  .aligned-card.insert-after { box-shadow: 0 4px 0 0 var(--accent); }
-  .reorder { display: inline-flex; flex-direction: column; gap: 0; flex-shrink: 0; }
+  /* #410: where a dragged word will land inside the column -- a bar on the
+     side of the card where the word will go (#493: the row reads in the
+     cell's direction, so the sides swap for right-to-left). */
+  .aligned-card.insert-before { box-shadow: -4px 0 0 0 var(--accent); }
+  .aligned-card.insert-after { box-shadow: 4px 0 0 0 var(--accent); }
+  .target-cell[dir="rtl"] .aligned-card.insert-before { box-shadow: 4px 0 0 0 var(--accent); }
+  .target-cell[dir="rtl"] .aligned-card.insert-after { box-shadow: -4px 0 0 0 var(--accent); }
+  .reorder { display: inline-flex; flex-direction: row; gap: 0; flex-shrink: 0; }
   .step {
-    border: 0; background: none; padding: 0; width: 14px; height: 10px; line-height: 1;
+    border: 0; background: none; padding: 0; width: 12px; height: 16px; line-height: 1;
     display: inline-flex; align-items: center; justify-content: center;
     color: var(--text-3); font-size: 8px; cursor: pointer;
   }

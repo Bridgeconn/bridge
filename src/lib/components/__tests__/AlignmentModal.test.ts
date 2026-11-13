@@ -548,25 +548,25 @@ describe("AlignmentModal reorder within a column and rubber-band pick (#410)", (
     });
   }
 
-  it("shows up/down buttons only when a column holds several words, with the edges disabled", async () => {
+  it("shows earlier/later buttons only when a column holds several words, with the edges disabled", async () => {
     await open();
-    expect(screen.queryByRole("button", { name: "Move आदि up" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Move आदि earlier" })).toBeNull();
     const first = screen.getByRole("button", { name: "Pick up आदि from בְּרֵאשִׁית" });
     expect(first).toBeInTheDocument();
   });
 
-  it("the down button moves a word one place later in the same column, in one realign call", async () => {
+  it("the later button moves a word one place later in the same column, in one realign call", async () => {
     const ctx = twoInColumn();
     realignWords.mockResolvedValue(ctx);
     await open(ctx);
-    expect(screen.getByRole("button", { name: "Move आदि up" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Move में down" })).toBeDisabled();
-    await fireEvent.click(screen.getByRole("button", { name: "Move आदि down" }));
+    expect(screen.getByRole("button", { name: "Move आदि earlier" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Move में later" })).toBeDisabled();
+    await fireEvent.click(screen.getByRole("button", { name: "Move आदि later" }));
     await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "1", ["H001"], ["T002", "T001"], ctx.alignment));
     await screen.findByText(/Word order changed/);
   });
 
-  it("a word dragged onto the upper half of the first card in its own column is reordered above it", async () => {
+  it("a word dragged onto the leading half of the first card in its own column is reordered before it", async () => {
     const ctx = twoInColumn();
     realignWords.mockResolvedValue(ctx);
     await open(ctx);
@@ -574,7 +574,7 @@ describe("AlignmentModal reorder within a column and rubber-band pick (#410)", (
     rect(firstCard, { left: 0, top: 100, right: 80, bottom: 140, width: 80, height: 40 });
     (document as unknown as HitTest).elementFromPoint = () => firstCard;
     pointer("pointerdown", screen.getByRole("button", { name: "Pick up में from בְּרֵאשִׁית" }), { clientX: 10, clientY: 200 });
-    pointer("pointermove", window, { clientX: 40, clientY: 110 });
+    pointer("pointermove", window, { clientX: 20, clientY: 110 });
     await waitFor(() => expect(firstCard.classList.contains("insert-before")).toBe(true));
     pointer("pointerup", window);
     await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "1", ["H001"], ["T002", "T001"], ctx.alignment));
@@ -587,7 +587,7 @@ describe("AlignmentModal reorder within a column and rubber-band pick (#410)", (
     rect(secondCard, { left: 0, top: 150, right: 80, bottom: 190, width: 80, height: 40 });
     (document as unknown as HitTest).elementFromPoint = () => secondCard;
     pointer("pointerdown", screen.getByRole("button", { name: "Pick up में from בְּרֵאשִׁית" }), { clientX: 10, clientY: 160 });
-    pointer("pointermove", window, { clientX: 40, clientY: 180 });
+    pointer("pointermove", window, { clientX: 60, clientY: 180 });
     await waitFor(() => expect(secondCard.classList.contains("insert-after")).toBe(true));
     pointer("pointerup", window);
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -602,7 +602,7 @@ describe("AlignmentModal reorder within a column and rubber-band pick (#410)", (
     rect(firstCard, { left: 0, top: 100, right: 80, bottom: 140, width: 80, height: 40 });
     (document as unknown as HitTest).elementFromPoint = () => firstCard;
     pointer("pointerdown", screen.getByRole("button", { name: "सृष्टि" }), { clientX: 10, clientY: 300 });
-    pointer("pointermove", window, { clientX: 40, clientY: 130 }); // lower half: after आदि
+    pointer("pointermove", window, { clientX: 60, clientY: 130 }); // trailing half: after आदि
     pointer("pointerup", window);
     await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "1", ["H001"], ["T001", "T003", "T002"], ctx.alignment));
   });

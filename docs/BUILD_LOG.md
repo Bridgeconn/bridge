@@ -25381,3 +25381,38 @@ pinned the exact stored settings; it now expects the marker as well.
 
 **Not done.** No workspace schema change (the marker is a `settings_kv` value). The
 approved model name is duplicated in the dialog rather than read from the engine.
+
+## 2026-11-13 — Alignment: a column's target words sit in a row, not one below another (#493)
+
+Benz's request (branch `uifixes-v25`, not merged to `main`). Target words placed
+under a source word each took a line of their own, so a column holding six words
+was six cards tall.
+
+**Single-verse panel (`AlignmentModal.svelte`).** `.target-cell` is a wrapping flex
+row. It reads in the cell's `dir`, which is `context.targetDirection`, so the row
+runs right-to-left for a right-to-left target language. A column is as wide as its
+row needs, up to the box, and wraps from there. The reorder buttons are ◀ ▶
+("Move … earlier" / "Move … later", glyphs swapped for right-to-left) in place of
+▲ ▼, and the insert bar is drawn on the side of the card, not above or below it.
+
+**Drag (`alignmentDrag.ts`).** `slotUnder` decides before/after from the pointer's
+x against the card's horizontal middle, reversed when the nearest `dir` ancestor
+is `rtl`. It used the vertical middle.
+
+**Cross-verse page (`CrossVerseAlignmentModal.svelte`).** `.rows` was an auto-fill
+grid with a fixed one-card track, which is what stacked the cards. It is a wrapping
+flex row: a cell is at least one card wide and grows with its own row of words. A
+joined source group now also lays its source cards side by side there.
+
+**Tests changed.** The reorder and drop-slot tests in `AlignmentModal.test.ts` and
+`alignmentDrag.test.ts` used the old button names and the vertical halves; they now
+use earlier/later and the horizontal halves, plus one right-to-left case.
+
+**Ran.** The three affected Vitest files pass; the full frontend gate is recorded
+in the #495 entry below (one gate for the batch).
+
+**Not verified (needs the desktop app).** Everything visual: that the row wraps
+inside the box at 1366x768 and in a half-width window, that a long joined group
+does not get clipped, the look of the ◀ ▶ buttons and the side insert bar, and a
+right-to-left target project. Open question for Benz: the row follows the *target*
+language's direction; if the source direction was meant, it is the `dir` on the cell.

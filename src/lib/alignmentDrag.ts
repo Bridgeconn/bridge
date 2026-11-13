@@ -30,7 +30,9 @@ export interface DragState {
   overBank: string | null;
   /** The `data-drop-slot` element under the pointer (#410: an aligned card
    *  inside a column) and which half of it: `after` when the pointer is
-   *  below its vertical middle. Null when the pointer is over no card. */
+   *  past its horizontal middle in reading order (#493: the cards of a column
+   *  sit in a row, left-to-right or right-to-left by the cell's `dir`).
+   *  Null when the pointer is over no card. */
   overSlot: DropSlot | null;
 }
 
@@ -87,11 +89,13 @@ function dataValue(el: Element | null | undefined, attr: string): string | null 
   return host ? host.getAttribute(attr) : null;
 }
 
-function slotUnder(el: Element | null | undefined, attr: string, y: number): DropSlot | null {
+function slotUnder(el: Element | null | undefined, attr: string, x: number): DropSlot | null {
   const host = el?.closest?.(`[${attr}]`);
   if (!host) return null;
   const rect = host.getBoundingClientRect();
-  return { value: host.getAttribute(attr) ?? "", after: y > rect.top + rect.height / 2 };
+  const middle = rect.left + rect.width / 2;
+  const rtl = host.closest("[dir]")?.getAttribute("dir") === "rtl";
+  return { value: host.getAttribute(attr) ?? "", after: rtl ? x < middle : x > middle };
 }
 
 export function createPointerDrag(options: PointerDragOptions): PointerDrag {
@@ -132,7 +136,7 @@ export function createPointerDrag(options: PointerDragOptions): PointerDrag {
       ghost: { x: event.clientX, y: event.clientY },
       overColumn: dataValue(el, columnAttr),
       overBank: dataValue(el, bankAttr),
-      overSlot: slotUnder(el, slotAttr, event.clientY),
+      overSlot: slotUnder(el, slotAttr, event.clientX),
     });
   }
 

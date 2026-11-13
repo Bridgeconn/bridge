@@ -1251,23 +1251,20 @@
   .verse-head { display: flex; align-items: center; gap: 8px; padding: 6px 0; position: sticky; top: 0; background: var(--surface); z-index: 1; font-size: var(--fs-xs); }
   .vnum { font-weight: 800; color: var(--text); }
   .warn { color: var(--warning); }
-  /* #136: the source cells flow left-to-right and wrap, so one verse occupies
-     several short rows instead of one tall column -- on a small window that is
-     the difference between one verse on screen and four. auto-fill, not
-     auto-fit: with auto-fit a verse holding a single source word stretches that
-     one cell across the whole column, which looks like a layout bug; auto-fill
-     keeps the empty tracks and the cell its normal width. Still no sideways
-     scroll (#72) -- wrapping is what replaces it, and min(150px, 100%) rather
-     than a bare 150px because below that width a bare minimum would size the
-     track wider than the column and `.scroll`'s overflow-x would clip it. */
-  .rows { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(var(--alignment-card-width), 100%), var(--alignment-card-width))); gap: 4px 10px; align-items: start; }
-  .rows .empty { grid-column: 1 / -1; }
+  /* #136: the source cells flow in the source direction and wrap, so one verse
+     occupies several short rows instead of one tall column. #493: a wrapping
+     flex row, not the fixed-track grid it was -- a fixed track is one card
+     wide, so a cell holding several target words stacked them one below
+     another. Now a cell is one card wide at least and as wide as its own row
+     of words needs, up to the column, and wraps from there, like the
+     single-verse interlinear. Still no sideways scroll (#72): min(.., 100%)
+     and max-width keep a cell inside the column, which `.scroll` would
+     otherwise clip. */
+  .rows { display: flex; flex-wrap: wrap; align-items: flex-start; align-content: flex-start; gap: 4px 10px; }
+  .rows .empty { flex-basis: 100%; }
   /* Source word above its drop cell rather than beside it, matching the
-     single-verse interlinear. A stacked cell needs roughly half the width of a
-     side-by-side one, so the auto-fill track above drops from 230px to 150px
-     and the same column now holds two cells where it held one -- which is the
-     whole point: more of the range on screen at once. */
-  .row { display: flex; flex-direction: column; gap: 3px; padding: 3px 0; min-width: 0; }
+     single-verse interlinear. */
+  .row { display: flex; flex-direction: column; gap: 3px; padding: 3px 0; flex: 0 1 auto; min-width: min(var(--alignment-card-width), 100%); max-width: 100%; }
   .token { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; min-width: 62px; }
   /* max-width: 100% (was a fixed 160px): inside a flowed cell (#136) the label
      must ellipsize within its own track, or a long one widens the source column
