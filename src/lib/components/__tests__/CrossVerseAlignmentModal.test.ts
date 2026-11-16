@@ -3,9 +3,32 @@ import { render, screen, fireEvent, waitFor, within } from "@testing-library/sve
 import { get } from "svelte/store";
 import { answerConfirmation, confirmRequest } from "../../confirmAction";
 import CrossVerseAlignmentModal from "../CrossVerseAlignmentModal.svelte";
+// @ts-expect-error Vite's test-only raw loader is not part of the app tsconfig.
+import crossPageSource from "../CrossVerseAlignmentModal.svelte?raw";
+import { crossPanelLayout, wordPanelLayout } from "../../wordPanels";
+import { alignmentKey, alignmentOpen } from "../../alignmentUi";
+import { tabRequest } from "../../editorPrefs";
+
+// 2026-11-16: the page's hints are the app's instant tooltip, not the
+// browser's `title`. A hint is read by pointing at its element.
+function hintOf(element: Element): string {
+  fireEvent.mouseEnter(element);
+  const text = document.querySelector('[role="tooltip"]')?.textContent ?? "";
+  fireEvent.mouseLeave(element);
+  return text;
+}
+/** The element under `root` (or `root` itself) whose hint matches. */
+function byHint(root: HTMLElement, match: string | RegExp): HTMLElement {
+  const found = [root, ...root.querySelectorAll<HTMLElement>("*")].find((element) => {
+    const hint = hintOf(element);
+    return typeof match === "string" ? hint === match : match.test(hint);
+  });
+  if (!found) throw new Error(`No element with the hint ${match}`);
+  return found;
+}
 import {
   alignmentRevisionByVerse, alignmentStatusByVerse, chapterVerseNums, checkStatusByVerse, checkGroupsByVerse,
-  currentChapter, findingsByVerse,
+  currentChapter, findingsByVerse, noteAlignmentChanged,
 } from "../../stores";
 import type {
   AlignmentContext, AlignmentRange, AlignmentToken, AutoAlignJobStatus, AutoAlignWindowResult, CrossVerseLink, CrossVerseLinkResult,
@@ -15,7 +38,9 @@ const {
   getAlignmentRange, realignWords, unalignWords, runVerseChecks, getLexiconEntry, crossVerseLink, crossVerseUnlink,
   analysisJobGetScopeStatus, semanticLocationGetRange, targetSemanticGetRange, crossVersePropose,
   crossVerseAiPropose, getSettings, autoAlignWindow, autoAlignRevert, autoAlignVerdict, nullSet, nullClear, splitAlignmentSource,
+  restoreAlignment,
 } = vi.hoisted(() => ({
+  restoreAlignment: vi.fn(),
   crossVerseAiPropose: vi.fn(),
   splitAlignmentSource: vi.fn(),
   autoAlignWindow: vi.fn(),
@@ -42,6 +67,7 @@ vi.mock("../../api/bridgeClient", () => ({
     getAlignmentRange, realignWords, unalignWords, runVerseChecks, getLexiconEntry, crossVerseLink, crossVerseUnlink,
     analysisJobGetScopeStatus, semanticLocationGetRange, targetSemanticGetRange, crossVersePropose,
     crossVerseAiPropose, getSettings, autoAlignWindow, autoAlignRevert, autoAlignVerdict, nullSet, nullClear, splitAlignmentSource,
+    restoreAlignment,
   },
 }));
 
@@ -190,6 +216,13 @@ async function renderPage(verse = "2", initialVerses: string[] = []) {
   return { ...utils, onClose };
 }
 
+/** A row of the bar's automatic-alignment menu (2026-11-16: "Align
+ *  automatically" and "Suggest links" moved there), opening the menu first. */
+async function aiItem(name: RegExp): Promise<HTMLElement> {
+  if (!screen.queryByRole("menu", { name: "Automatic alignment" })) await fireEvent.click(await screen.findByRole("button", { name: "Automatic alignment" }));
+  return screen.findByRole("menuitem", { name });
+}
+
 async function pickUp(word: string, verse: string) {
   const bank = screen.getByLabelText(`Word bank of verse ${verse}`);
   await fireEvent.click(within(bank).getByRole("button", { name: word }));
@@ -212,14 +245,14 @@ describe("CrossVerseAlignmentModal", () => {
   it("opens on the selected verse ±1 and shows every verse in both columns plus the verdict strip", async () => {
     await renderPage("2");
     expect(getAlignmentRange).toHaveBeenCalledWith("1", ["1", "2", "3-4"]);
-    // Two columns, so each verse appears in Read and both alignment areas; the bridge verse keeps its string.
-    expect(screen.getAllByText("1:1")).toHaveLength(3);
-    expect(screen.getAllByText("1:3-4")).toHaveLength(3);
-    const strip = screen.getByLabelText("Verse verdicts");
+    // Each verse's reference is in both alignment panels (the Verses panel shows the bare number); the bridge verse keeps its string.
+    expect(screen.getAllByText("1:1")).toHaveLength(2);
+    expect(screen.getAllByText("1:3-4")).toHaveLength(2);
+    const strip = screen.getByRole("region", { name: "Source words" });
     // No automatic pass has run: every verse is "Not aligned yet".
     expect(within(strip).getAllByText(/Not aligned yet/)).toHaveLength(3);
     expect(within(strip).getByText("2 source · 2 target words")).toBeInTheDocument();
-    expect(within(strip).getByText(/Range: 2 source · 3 target unmatched/)).toBeInTheDocument();
+    expect(within(strip).getByText(/2 source · 3 target unmatched/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /verses 1–3-4/ })).toBeInTheDocument();
     // Nothing is asked of a provider on open.
     expect(autoAlignWindow).not.toHaveBeenCalled();
@@ -232,9 +265,13 @@ describe("CrossVerseAlignmentModal", () => {
     // The lemma is another Greek string, so it is no longer the visible label.
     await waitFor(() => expect(within(source).getByText("God, god")).toBeInTheDocument());
     expect(within(source).queryByText("λόγος·lemma")).not.toBeInTheDocument();
-    const title = source.getAttribute("title") ?? "";
-    expect(title).toContain("λόγος·lemma");
-    expect(title).toContain("a deity, especially the supreme Divinity");
+    // The hint is short (the lemma and the renderings); the whole definition is one click away.
+    expect(source).not.toHaveAttribute("title");
+    const hint = hintOf(source);
+    expect(hint).toContain("λόγος·lemma");
+    expect(hint).toContain("God, god");
+    expect(hint).toContain("Click for the full entry");
+    expect(hint).not.toContain("a deity, especially the supreme Divinity");
   });
 
   it("a same-verse drop realigns through alignment.realign, resending the column's existing words, then reruns local checks", async () => {
@@ -280,10 +317,10 @@ describe("CrossVerseAlignmentModal", () => {
     const bank2 = screen.getByLabelText("Word bank of verse 2");
     expect(within(bank2).queryByRole("button", { name: "was" })).not.toBeInTheDocument();
     expect(within(bank2).getByText("↔ v.3-4")).toBeInTheDocument();
-    expect(within(bank2).getByTitle(/Realizes φῶς from verse 3-4/)).toBeInTheDocument();
+    expect(byHint(bank2, /Realizes φῶς from verse 3-4/)).toBeInTheDocument();
     // ... and the range total counts it as linked, not as a gap. tC status is untouched.
-    const strip = screen.getByLabelText("Verse verdicts");
-    expect(within(strip).getByText(/Range: 1 source · 2 target unmatched/)).toBeInTheDocument();
+    const strip = screen.getByRole("region", { name: "Source words" });
+    expect(within(strip).getByText(/1 source · 2 target unmatched/)).toBeInTheDocument();
     expect(get(alignmentStatusByVerse)["1:2"]).toBe("partial");
     // Both ends of the link count as written (#291); neither verse's status moved.
     expect(get(alignmentRevisionByVerse)).toEqual({ "1:3-4": 1, "1:2": 1 });
@@ -308,10 +345,10 @@ describe("CrossVerseAlignmentModal", () => {
     await renderPage("2");
     const cell = screen.getByLabelText(/Target words aligned to φῶς in verse 3-4/);
     expect(within(cell).getByText(/link invalid v\.2/)).toBeInTheDocument();
-    expect(within(cell).getByTitle("was is no longer in the text of 1:2.")).toBeInTheDocument();
+    expect(byHint(cell, "was is no longer in the text of 1:2.")).toBeInTheDocument();
     // An invalid link accounts for nothing: φῶς is still a gap.
-    const strip = screen.getByLabelText("Verse verdicts");
-    expect(within(strip).getByText(/Range: 2 source · 3 target unmatched/)).toBeInTheDocument();
+    const strip = screen.getByRole("region", { name: "Source words" });
+    expect(within(strip).getByText(/2 source · 3 target unmatched/)).toBeInTheDocument();
   });
 
   it("dropping a word into another verse's word bank is refused with guidance", async () => {
@@ -331,9 +368,9 @@ describe("CrossVerseAlignmentModal", () => {
     await waitFor(() => expect(runVerseChecks).toHaveBeenCalledWith("1", "1", ["alignment"]));
   });
 
-  it("clicking a verse in the verdict strip filters both columns to that verse's gaps", async () => {
+  it("clicking a verse's state beside its number filters both columns to that verse's gaps", async () => {
     await renderPage("2");
-    const strip = screen.getByLabelText("Verse verdicts");
+    const strip = screen.getByRole("region", { name: "Source words" });
     await fireEvent.click(within(strip).getByRole("button", { name: /v\.2/ }));
     // Only verse 2 remains, only its unmatched source (ἦν) and unaligned target (was).
     expect(screen.queryAllByText("1:1")).toHaveLength(0);
@@ -342,27 +379,25 @@ describe("CrossVerseAlignmentModal", () => {
     expect(screen.queryByText("word")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "was" })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Show all" }));
-    expect(screen.getAllByText("1:1")).toHaveLength(3);
+    expect(screen.getAllByText("1:1")).toHaveLength(2);
   });
 
-  it("changing the range refetches with the new verse strings and toggling a chip drops a verse", async () => {
+  it("changing the range refetches with the new verse strings", async () => {
     await renderPage("2");
-    const [fromSelect] = screen.getAllByRole("combobox");
-    await fireEvent.change(fromSelect, { target: { value: "2" } });
+    await fireEvent.click(screen.getByRole("button", { name: /^From: verse/ }));
+    await fireEvent.click(within(screen.getByRole("listbox", { name: "From: verses" })).getByRole("option", { name: "2" }));
     await waitFor(() => expect(getAlignmentRange).toHaveBeenLastCalledWith("1", ["2", "3-4"]));
-    const chips = screen.getByRole("group", { name: "Verses in range" });
-    await fireEvent.click(within(chips).getByRole("button", { name: "3-4" }));
-    await waitFor(() => expect(getAlignmentRange).toHaveBeenLastCalledWith("1", ["2"]));
+    // 2026-11-16 (Joel): the row of verse chips is gone; From and To set the range.
+    expect(screen.queryByRole("group", { name: "Verses in range" })).toBeNull();
   });
 
   it("starts from the given verses instead of anchor ±1 when opened from a multi-selection or a finding (#118)", async () => {
     await renderPage("2", ["5", "2"]);
     expect(getAlignmentRange).toHaveBeenCalledWith("1", ["2", "5"]);
     expect(screen.getByRole("heading", { name: /verses 2–5/ })).toBeInTheDocument();
-    // The picker's chips cover the span; only the given verses are on.
-    const chips = screen.getByRole("group", { name: "Verses in range" });
-    expect(within(chips).getByRole("button", { name: "3-4" })).toHaveAttribute("aria-pressed", "false");
-    expect(within(chips).getByRole("button", { name: "5" })).toHaveAttribute("aria-pressed", "true");
+    // Only the given verses are shown, although the span covers 3-4 too.
+    expect(screen.queryByLabelText("Word bank of verse 3-4")).toBeNull();
+    expect(screen.getByLabelText("Word bank of verse 5")).toBeInTheDocument();
     // No suggestion is fetched for an explicit range.
     expect(analysisJobGetScopeStatus).not.toHaveBeenCalled();
   });
@@ -379,21 +414,35 @@ describe("CrossVerseAlignmentModal", () => {
     await renderPage("2");
     await waitFor(() => expect(getAlignmentRange).toHaveBeenLastCalledWith("1", ["1", "2", "3-4", "5"]));
     expect(await screen.findByText(/widened with v\.5/)).toBeInTheDocument();
-    expect(screen.getAllByText("1:5")).toHaveLength(3);
+    expect(screen.getAllByText("1:5")).toHaveLength(2);
     await fireEvent.click(screen.getByRole("button", { name: "Back to 2 ±1" }));
     await waitFor(() => expect(getAlignmentRange).toHaveBeenLastCalledWith("1", ["1", "2", "3-4"]));
     expect(screen.queryByText(/widened with/)).not.toBeInTheDocument();
   });
 
-  it("closes itself when the chapter changes underneath it", async () => {
+  // 2026-11-15 (Joel): Word alignment is a second tab, open beside this page.
+  it("reads the range again when one of its verses was saved somewhere else", async () => {
+    await renderPage("2");
+    await waitFor(() => expect(screen.queryByText(/Updating range/)).not.toBeInTheDocument());
+    const before = getAlignmentRange.mock.calls.length;
+    noteAlignmentChanged("1:9");
+    await Promise.resolve();
+    expect(getAlignmentRange.mock.calls.length).toBe(before);
+    noteAlignmentChanged("1:2");
+    await waitFor(() => expect(getAlignmentRange.mock.calls.length).toBe(before + 1));
+    expect(getAlignmentRange).toHaveBeenLastCalledWith("1", ["1", "2", "3-4"]);
+  });
+
+  it("stays open when the chapter changes underneath it: the host moves it", async () => {
     const { onClose } = await renderPage("2");
     currentChapter.set("2");
-    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   describe("corpus suggestions, inline (#139, #222)", () => {
     async function suggest() {
-      await fireEvent.click(screen.getByRole("button", { name: /Suggest links/ }));
+      await fireEvent.click((await aiItem(/Suggest links/)));
       await waitFor(() => expect(crossVersePropose).toHaveBeenCalled());
     }
 
@@ -417,7 +466,7 @@ describe("CrossVerseAlignmentModal", () => {
       await suggest();
       const cell = cellOf("φῶς", "3-4");
       expect(within(cell).getByText("was ?")).toBeInTheDocument();
-      expect(within(cell).getByTitle(/rendered "was" 7× in completed verses/)).toBeInTheDocument();
+      expect(byHint(cell, /rendered "was" 7× in completed verses/)).toBeInTheDocument();
     });
 
     it("accepting is an ordinary cross-verse link, and nothing was written before it", async () => {
@@ -497,7 +546,8 @@ describe("CrossVerseAlignmentModal", () => {
       await renderPage("2");
       await suggest();
       expect(screen.queryByText(/range changed/i)).not.toBeInTheDocument();
-      await fireEvent.change(screen.getByLabelText("To"), { target: { value: "5" } });
+      await fireEvent.click(screen.getByRole("button", { name: /^To: verse/ }));
+      await fireEvent.click(within(screen.getByRole("listbox", { name: "To: verses" })).getByRole("option", { name: "5" }));
       await waitFor(() => expect(getAlignmentRange).toHaveBeenLastCalledWith("1", ["1", "2", "3-4", "5"]));
       expect(await screen.findByText(/The range changed since the suggestions were worked out/)).toBeInTheDocument();
     });
@@ -533,19 +583,19 @@ describe("CrossVerseAlignmentModal", () => {
     it("runs only on a click, then shows the verdicts, the omission and the suggestion in place", async () => {
       autoAlignWindow.mockResolvedValue(after());
       await renderPage("2");
-      await fireEvent.click(await screen.findByRole("button", { name: /Align automatically/ }));
+      await fireEvent.click(await aiItem(/Align automatically/));
       await waitFor(() => expect(autoAlignWindow).toHaveBeenCalledWith("1", ["1", "2", "3-4"], true, expect.any(Function)));
-      const strip = screen.getByLabelText("Verse verdicts");
+      const strip = screen.getByRole("region", { name: "Source words" });
       expect(await within(strip).findByText(/✓ Aligned/)).toBeInTheDocument();
       expect(within(strip).getAllByText(/Needs review/).length).toBeGreaterThan(0);
       // The omission sits on ἦν's cell with the model's note and a way to say why it is fine.
       const cell = screen.getByLabelText(/Target words aligned to ἦν in verse 2/);
       expect(within(cell).getByText("possible omission")).toBeInTheDocument();
-      expect(within(cell).getByTitle("no word for 'was' (to be)")).toBeInTheDocument();
+      expect(byHint(cell, "no word for 'was' (to be)")).toBeInTheDocument();
       // The disputed link shows in φῶς's cell, with both votes on hover.
       const phos = screen.getByLabelText(/Target words aligned to φῶς in verse 3-4/);
       expect(within(phos).getByText("was ?")).toBeInTheDocument();
-      expect(within(phos).getByTitle(/source-first: yes · target-first: no/)).toBeInTheDocument();
+      expect(byHint(phos, /source-first: yes · target-first: no/)).toBeInTheDocument();
       // The placed group is tagged as the pass's own.
       expect(screen.getAllByText("ai").length).toBeGreaterThan(0);
       expect(screen.getByText(/Last run: 2 requests · 41,280 tokens/)).toBeInTheDocument();
@@ -556,17 +606,17 @@ describe("CrossVerseAlignmentModal", () => {
     it("is disabled with the reason when no key is configured, and for a range it cannot take", async () => {
       getSettings.mockResolvedValue({ hasApiKey: false });
       await renderPage("2");
-      const button = await screen.findByRole("button", { name: /Align automatically/ });
+      const button = await aiItem(/Align automatically/);
       await waitFor(() => expect(button).toBeDisabled());
-      expect(button).toHaveAttribute("title", "Add an API key in Settings to align automatically");
-      expect(screen.getByRole("button", { name: /Suggest links/ })).toBeEnabled();
+      expect(hintOf(button)).toBe("Add an API key in Settings to align automatically");
+      expect((await aiItem(/Suggest links/))).toBeEnabled();
     });
 
     it("Not missing ▸ Implicit records a null decision through alignment.null.set", async () => {
       autoAlignWindow.mockResolvedValue(after());
       nullSet.mockResolvedValue({ decision: {}, context: V2 });
       await renderPage("2");
-      await fireEvent.click(await screen.findByRole("button", { name: /Align automatically/ }));
+      await fireEvent.click(await aiItem(/Align automatically/));
       // The page rechecks every verse after a run; controls wait for that.
       const notMissing = await screen.findByRole("button", { name: "Not missing ▾" });
       await waitFor(() => expect(notMissing).toBeEnabled());
@@ -579,7 +629,7 @@ describe("CrossVerseAlignmentModal", () => {
       autoAlignWindow.mockResolvedValue(after());
       crossVerseLink.mockResolvedValue(linked());
       await renderPage("2");
-      await fireEvent.click(await screen.findByRole("button", { name: /Align automatically/ }));
+      await fireEvent.click(await aiItem(/Align automatically/));
       const accept = await screen.findByRole("button", { name: "Accept was for φῶς" });
       await waitFor(() => expect(accept).toBeEnabled());
       await fireEvent.click(accept);
@@ -593,7 +643,7 @@ describe("CrossVerseAlignmentModal", () => {
       autoAlignWindow.mockResolvedValue(after());
       autoAlignRevert.mockResolvedValue({ chapter: "1", verse: "1", skipped: [], context: V1 });
       await renderPage("2");
-      await fireEvent.click(await screen.findByRole("button", { name: /Align automatically/ }));
+      await fireEvent.click(await aiItem(/Align automatically/));
       const undo = await screen.findByLabelText("Undo a verse");
       await waitFor(() => expect(undo).toBeEnabled());
       await fireEvent.change(undo, { target: { value: "1" } });
@@ -607,7 +657,7 @@ describe("CrossVerseAlignmentModal", () => {
         unavailable: { reason: "no-api-key", message: "No OpenAI-compatible API key is configured." },
       });
       await renderPage("2");
-      await fireEvent.click(await screen.findByRole("button", { name: /Align automatically/ }));
+      await fireEvent.click(await aiItem(/Align automatically/));
       expect(await screen.findByText(/No OpenAI-compatible API key is configured/)).toBeInTheDocument();
     });
 
@@ -630,7 +680,7 @@ describe("CrossVerseAlignmentModal", () => {
         return new Promise((resolve) => { finish = resolve; });
       });
       await renderPage("2");
-      await fireEvent.click(await screen.findByRole("button", { name: /Align automatically/ }));
+      await fireEvent.click(await aiItem(/Align automatically/));
       expect(await screen.findByText("Starting…")).toBeInTheDocument();
       report(status({ currentPass: { number: 1, of: 2, direction: "source-first", stage: "" } }));
       expect(await screen.findByText("Aligning… pass 1 of 2")).toBeInTheDocument();
@@ -639,7 +689,7 @@ describe("CrossVerseAlignmentModal", () => {
       report(status({ currentPass: { number: null, of: 2, direction: "", stage: "reconcile" } }));
       expect(await screen.findByText("Comparing the two passes…")).toBeInTheDocument();
       finish(after());
-      expect(await screen.findByRole("button", { name: /Align again/ })).toBeInTheDocument();
+      expect(await aiItem(/Align again/)).toBeInTheDocument();
     });
 
     it("a provider timeout says nothing was changed, with the raw text one click away, and leaves the page usable", async () => {
@@ -651,21 +701,21 @@ describe("CrossVerseAlignmentModal", () => {
         throw new Error("1 window(s) failed.");
       });
       await renderPage("2");
-      await fireEvent.click(await screen.findByRole("button", { name: /Align automatically/ }));
+      await fireEvent.click(await aiItem(/Align automatically/));
       const alert = await screen.findByRole("alert");
       expect(alert.textContent).toContain("The AI provider did not answer within 4 minutes; nothing was changed.");
       expect(alert.textContent).not.toContain("1 window(s) failed.");
       const details = within(alert).getByText("Show details").closest("details") as HTMLDetailsElement;
       expect(details.open).toBe(false);
       expect(within(details).getByText("The read operation timed out")).toBeInTheDocument();
-      await waitFor(() => expect(screen.getByRole("button", { name: /Align automatically/ })).toBeEnabled());
-      expect(screen.getByRole("button", { name: /Suggest links/ })).toBeEnabled();
+      await waitFor(async () => expect(await aiItem(/Align automatically/)).toBeEnabled());
+      expect((await aiItem(/Suggest links/))).toBeEnabled();
     });
 
     it("an error with no plain wording is shown as it is, with no details", async () => {
       autoAlignWindow.mockRejectedValue(new Error("Verse/project data changed while AI was preparing alignment"));
       await renderPage("2");
-      await fireEvent.click(await screen.findByRole("button", { name: /Align automatically/ }));
+      await fireEvent.click(await aiItem(/Align automatically/));
       const alert = await screen.findByRole("alert");
       expect(alert.textContent).toContain("Verse/project data changed while AI was preparing alignment");
       expect(within(alert).queryByText("Show details")).toBeNull();
@@ -682,7 +732,281 @@ describe("CrossVerseAlignmentModal", () => {
       await renderPage("2");
       await waitFor(() => expect(autoAlignVerdict).toHaveBeenCalledWith("1", "1"));
       expect(autoAlignVerdict).toHaveBeenCalledTimes(1);
-      expect(await within(screen.getByLabelText("Verse verdicts")).findByText(/✓ Aligned/)).toBeInTheDocument();
+      expect(await within(screen.getByRole("region", { name: "Source words" })).findByText(/✓ Aligned/)).toBeInTheDocument();
     });
+  });
+});
+
+// 2026-11-16 (Joel): the page is drawn as the Word alignment tab is: its bar,
+// three panels with their own saved layout, instant hints, and a note that
+// is not a row of the page.
+describe("CrossVerseAlignmentModal, the page as three panels", () => {
+  beforeEach(() => { crossPanelLayout.reset(); wordPanelLayout.reset(); });
+
+  it("draws the verses, the source words and the target words as panels, with the range in the bar", async () => {
+    await renderPage("2");
+    for (const name of ["Verses", "Source words", "Target words"]) expect(screen.getByRole("region", { name })).toBeInTheDocument();
+    const bar = document.querySelector("header")!;
+    expect(bar).toHaveTextContent("Chapter 1");
+    // From and To are the Verses panel's grid picker, not the browser's list.
+    expect(bar.querySelector("select")).toBeNull();
+    const from = within(bar as HTMLElement).getByRole("button", { name: /^From: verse 1\./ });
+    expect(within(bar as HTMLElement).getByRole("button", { name: /^To: verse 3-4\./ })).toBeInTheDocument();
+    await fireEvent.click(from);
+    const grid = screen.getByRole("listbox", { name: "From: verses" });
+    expect(within(grid).getAllByRole("option").map((cell) => cell.textContent)).toEqual(["1", "2", "3-4", "5"]);
+    expect(within(grid).getByRole("option", { name: "1" })).toHaveAttribute("aria-selected", "true");
+    await fireEvent.click(within(grid).getByRole("option", { name: "2" }));
+    expect(screen.queryByRole("listbox", { name: "From: verses" })).toBeNull();
+    await waitFor(() => expect(within(bar as HTMLElement).getByRole("button", { name: /^From: verse 2\./ })).toBeInTheDocument());
+    expect(screen.getByRole("heading", { name: /^Cross-verse alignment · Chapter 1/ })).toHaveClass("sr-only");
+    // The verses panel shares the height here (a range is long), and every line between panels drags.
+    expect(document.querySelector<HTMLElement>(".word-panels")!.dataset.gridRows).toBe("minmax(96px, 25fr) minmax(96px, 75fr)");
+    expect(screen.getByRole("slider", { name: "Resize panel heights" })).toBeInTheDocument();
+    expect(screen.getByRole("slider", { name: "Resize panel widths" })).toBeInTheDocument();
+    // No chapter tally: the status bar under the editor has it.
+    expect(screen.queryByText(/^Chapter: /)).toBeNull();
+  });
+
+  it("keeps its own layout and text sizes, apart from the Word alignment tab's", async () => {
+    await renderPage("2");
+    await fireEvent.click(screen.getByRole("button", { name: "Layout" }));
+    await fireEvent.click(screen.getByRole("menuitemradio", { name: "Three columns" }));
+    expect(crossPanelLayout.preset(get(crossPanelLayout.tree))).toBe("columns3");
+    expect(wordPanelLayout.preset(get(wordPanelLayout.tree))).toBe("top1bottom2");
+    await fireEvent.click(screen.getByRole("button", { name: "Larger target words text" }));
+    expect(get(crossPanelLayout.scales).target).toBe(1.15);
+    expect(get(wordPanelLayout.scales).target).toBe(1);
+  });
+
+  it("shows a note over the page, not as a row of it, and uses no browser tooltip", async () => {
+    realignWords.mockResolvedValue({ ...V2, status: "complete", gaps: { sourceUnmatched: 0, targetUnmatched: 0 } });
+    await renderPage("2");
+    await pickUp("was", "2");
+    await fireEvent.click(screen.getByLabelText(/Align picked-up word to λόγος in verse 2/));
+    const note = await screen.findByText(/alignment checks for 1:2 are current/);
+    expect(note.closest(".toasts")).not.toBeNull();
+    expect(note.closest("[data-word-panel]")).toBeNull();
+    expect(crossPageSource).not.toMatch(/\stitle=/);
+  });
+
+  it("moves a word one place in a cell that holds several, as on the Word alignment tab", async () => {
+    const two: AlignmentContext = { ...V2, groups: [{ id: "G001", topIds: ["H001"], bottomIds: ["T001", "T002"] }, { id: "G002", topIds: ["H002"], bottomIds: [] }] };
+    getAlignmentRange.mockImplementation(async (_chapter: string, verses: string[]) => rangeFor(verses, { "1": V1, "2": two, "3-4": V34 }));
+    realignWords.mockResolvedValue(two);
+    await renderPage("2");
+    expect(screen.getByRole("button", { name: "Move word earlier" })).toBeDisabled();
+    await fireEvent.click(screen.getByRole("button", { name: "Move word later" }));
+    await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "2", ["H001"], ["T002", "T001"], two.alignment));
+    // One toolbar per card: earlier, later, remove.
+    const tools = screen.getByRole("button", { name: "Unalign word from λόγος" }).closest(".card-tools")!;
+    expect(tools.querySelectorAll("button")).toHaveLength(3);
+  });
+
+  // The cards and cells carry the Word alignment tab's values.
+  it("styles its cells and cards as the Word alignment tab does", () => {
+    const block = (selector: string) => crossPageSource.match(new RegExp(`\n  ${selector.replace(/[.\[\]()]/g, "\$&")} \{([^}]*)\}`))?.[1] ?? "";
+    expect(block(".drop-cell")).toMatch(/justify-content:\s*center/);
+    expect(block(".drop-cell")).toMatch(/border:\s*1px dashed transparent/);
+    expect(block(".token.source")).toMatch(/background:\s*var\(--term-bg\)/);
+    expect(block(".token.target.unaligned")).toMatch(/background:\s*var\(--accent-bg\)/);
+    expect(block(".row")).toMatch(/align-items:\s*center/);
+  });
+
+  // 2026-11-16 (Joel): Undo and the "more" menu are on the bar, as on the
+  // Word alignment tab; a verse's heading is its number only.
+  it("has Undo and one reset-and-backups menu on the bar, for the whole range", async () => {
+    const edited: AlignmentContext = { ...V2, history: [{ id: "h1", timestamp: "2020-01-02T10:00:00Z", operation: "realign" }] as never };
+    const older: AlignmentContext = { ...V34, history: [{ id: "h0", timestamp: "2020-01-01T10:00:00Z", operation: "unalign" }] as never };
+    getAlignmentRange.mockImplementation(async (_chapter: string, verses: string[]) => rangeFor(verses, { "1": V1, "2": edited, "3-4": older }));
+    restoreAlignment.mockResolvedValue(edited);
+    await renderPage("2");
+    const bar = document.querySelector("header") as HTMLElement;
+    // No per-verse controls are left in the panels.
+    expect(screen.queryByRole("button", { name: /Undo and reset verse/ })).toBeNull();
+    // The range's state sits beside From and To.
+    const state = within(bar).getByRole("group", { name: "Alignment of the range" });
+    // Verse 1 is complete, verse 2 partial, verse 3-4 untouched.
+    expect(Array.from(state.querySelectorAll(".status")).map((chip) => chip.textContent)).toEqual(["1 partial", "1 untouched", "1 complete"]);
+    const menu = document.querySelector<HTMLElement>('[role="menu"][aria-label="Reset and backups"]')!;
+    expect(menu).not.toBeVisible();
+    await fireEvent.click(within(bar).getByRole("button", { name: "Reset and backups" }));
+    expect(menu).toBeVisible();
+    expect(within(menu).getByRole("menuitem", { name: /Reset chapter alignment/ })).toBeInTheDocument();
+    expect(within(menu).getAllByRole("menuitem", { name: /Reset verse alignment/ })).toHaveLength(3);
+    expect(menu).toHaveTextContent("Verse 1:2");
+    // The range's backups, newest first, each named by its verse.
+    const backups = within(menu).getAllByRole("menuitem").filter((row) => /before a word/.test(row.textContent || ""));
+    expect(backups.map((row) => row.textContent?.split(" · ")[0])).toEqual(["1:2", "1:3-4"]);
+    await fireEvent.keyDown(window, { key: "Escape" });
+    expect(menu).not.toBeVisible();
+    // Undo steps back the newest change in the range: verse 2's.
+    const undo = within(bar).getByRole("button", { name: "Undo last change" });
+    expect(hintOf(undo)).toContain("1:2");
+    await fireEvent.click(undo);
+    await waitFor(() => expect(restoreAlignment).toHaveBeenCalledWith("1", "2", "h1", edited.alignment));
+  });
+
+  it("has nothing to undo in a range with no change, and reads one verse as the Word alignment bar does", async () => {
+    await renderPage("2");
+    expect(screen.getByRole("button", { name: "Undo last change" })).toBeDisabled();
+    await fireEvent.click(screen.getByRole("button", { name: /^From: verse/ }));
+    await fireEvent.click(within(screen.getByRole("listbox", { name: "From: verses" })).getByRole("option", { name: "3-4" }));
+    await waitFor(() => expect(screen.getByRole("group", { name: "Alignment of the range" })).toHaveTextContent(/^Verse: /));
+  });
+
+  // 2026-11-16 (Joel): automatic alignment, link suggestions and the chapter
+  // reset are one menu on the bar; the row of buttons and the verse chips are gone.
+  it("keeps automatic alignment and link suggestions in one menu on the bar", async () => {
+    await renderPage("2");
+    const bar = document.querySelector("header") as HTMLElement;
+    const button = within(bar).getByRole("button", { name: "Automatic alignment" });
+    const menu = document.querySelector<HTMLElement>('[role="menu"][aria-label="Automatic alignment"]')!;
+    expect(menu).not.toBeVisible();
+    // Nothing of it is drawn outside the menu.
+    expect(screen.queryByRole("button", { name: /Align automatically|Suggest links|Reset chapter alignment/ })).toBeNull();
+    await fireEvent.click(button);
+    expect(menu).toBeVisible();
+    expect(within(menu).getAllByRole("menuitem").map((item) => item.querySelector(".ai-name")?.textContent)).toEqual(
+      ["Align automatically", "Suggest links"]);
+    // Each row says what it does, so no separate info icon is needed.
+    expect(within(menu).getByRole("menuitem", { name: /Suggest links/ })).toHaveTextContent("No AI provider is needed");
+    await fireEvent.keyDown(window, { key: "Escape" });
+    expect(menu).not.toBeVisible();
+    // Choosing a row closes the menu and runs it.
+    await fireEvent.click(await aiItem(/Suggest links/));
+    expect(menu).not.toBeVisible();
+    await waitFor(() => expect(crossVersePropose).toHaveBeenCalled());
+  });
+
+  // 2026-11-16 (Joel): the row of verse cards under the bar is gone. Which
+  // verses are shown is a grid in the Verses panel's title row, where every
+  // shown verse is drawn as chosen and a click switches one off or on.
+  // 2026-11-16 (Joel): the way to Word alignment from this page, as that tab
+  // has one to this page; a tab that is open already is shown, and says so.
+  it("opens Word alignment from an icon on the bar, and shows it when it is already open", async () => {
+    alignmentOpen.set(false);
+    await renderPage("2");
+    const word = within(document.querySelector("header") as HTMLElement).getByRole("button", { name: "Word alignment" });
+    expect(hintOf(word)).toBe("Word alignment: the words of verse 2 alone");
+    await fireEvent.click(word);
+    expect(get(alignmentOpen)).toBe(true);
+    expect(get(alignmentKey)).toBe("1:2");
+    const request = get(tabRequest).seq;
+    expect(hintOf(word)).toBe("Word alignment is already open. Click to show it");
+    await fireEvent.click(word);
+    expect(get(tabRequest)).toMatchObject({ id: "alignment", seq: request + 1 });
+    alignmentOpen.set(false);
+  });
+
+  it("reads each verse under its bare number, with a hairline between verses", async () => {
+    await renderPage("2");
+    const verses = screen.getByRole("region", { name: "Verses" });
+    expect(Array.from(verses.querySelectorAll(".read-num")).map((el) => el.textContent)).toEqual(["1", "2", "3-4"]);
+    expect(verses).not.toHaveTextContent("1:2");
+    const row = crossPageSource.match(/\n  \.range-reading \{([^}]*)\}/)?.[1] ?? "";
+    expect(row).toMatch(/border-top:\s*1px solid/);
+    expect(row).toMatch(/margin:\s*0;/);
+  });
+
+  it("chooses the verses shown from a grid in the Verses panel, and has no row of verse cards", async () => {
+    await renderPage("2");
+    expect(document.querySelector(".verdict-strip")).toBeNull();
+    const verses = screen.getByRole("region", { name: "Verses" });
+    const button = within(verses).getByRole("button", { name: "Verses shown" });
+    // The last control of the row, and always shown.
+    expect(verses.querySelector(".bar .tools")!.lastElementChild).toBe(button);
+    await fireEvent.click(button);
+    const grid = screen.getByRole("group", { name: "Verses shown" });
+    const cells = within(grid).getAllByRole("button");
+    expect(cells.map((cell) => `${cell.textContent}:${cell.getAttribute("aria-pressed")}`)).toEqual(["1:true", "2:true", "3-4:true"]);
+    // Switching one off reloads the range without it, in all three panels; the grid stays open.
+    await fireEvent.click(within(grid).getByRole("button", { name: "Verse 3-4" }));
+    await waitFor(() => expect(getAlignmentRange).toHaveBeenLastCalledWith("1", ["1", "2"]));
+    await waitFor(() => expect(screen.queryAllByText("1:3-4")).toHaveLength(0));
+    expect(within(screen.getByRole("group", { name: "Verses shown" })).getByRole("button", { name: "Verse 3-4" })).toHaveAttribute("aria-pressed", "false");
+    // And back on.
+    await fireEvent.click(within(screen.getByRole("group", { name: "Verses shown" })).getByRole("button", { name: "Verse 3-4" }));
+    await waitFor(() => expect(getAlignmentRange).toHaveBeenLastCalledWith("1", ["1", "2", "3-4"]));
+    await fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("group", { name: "Verses shown" })).toBeNull();
+  });
+
+  it("picks several words of one verse and places them together; a pick in another verse starts again", async () => {
+    realignWords.mockResolvedValue(V34);
+    await renderPage("2");
+    const bank = screen.getByLabelText("Word bank of verse 3-4");
+    await fireEvent.click(within(bank).getByRole("button", { name: "light" }));
+    await fireEvent.click(within(bank).getByRole("button", { name: "shone" }), { ctrlKey: true });
+    expect(screen.getByText("2 picked")).toBeInTheDocument();
+    // Ctrl-click in another verse does not mix verses: it starts a new pick.
+    await fireEvent.click(screen.getByRole("button", { name: "was" }), { ctrlKey: true });
+    expect(screen.queryByText("2 picked")).toBeNull();
+    await fireEvent.keyDown(window, { key: "Escape" });
+    await fireEvent.click(within(bank).getByRole("button", { name: "light" }));
+    await fireEvent.click(within(bank).getByRole("button", { name: "shone" }), { shiftKey: true });
+    await fireEvent.click(screen.getByLabelText("Align 2 picked-up words to φῶς in verse 3-4"));
+    await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "3-4", ["H001"], ["T001", "T002"], V34.alignment));
+    expect(realignWords).toHaveBeenCalledTimes(1);
+  });
+
+  // A verse block is as tall as its partner in the other column, so its word
+  // bank must fill it: the empty room under the words starts a selection too.
+  it("lets a selection box start anywhere in a verse's block, not only on the row of words", async () => {
+    await renderPage("2");
+    const bank = screen.getByLabelText("Word bank of verse 3-4");
+    const block = bank.closest(".verse-block")!;
+    expect(block.closest(".targets")).not.toBeNull();
+    expect(crossPageSource).toMatch(/\.targets \.verse-block \{ display: flex; flex-direction: column; \}/);
+    expect(crossPageSource).toMatch(/\.targets \.bank \{ flex: 1 1 auto; \}/);
+    // The bank is the last thing in the block, so nothing under it is outside it.
+    expect(block.lastElementChild).toBe(bank);
+  });
+
+  it("links several picked words to a source word of another verse, one link each", async () => {
+    crossVerseLink.mockResolvedValue({ link: LINK, source: V2, target: V34 });
+    await renderPage("2");
+    const bank = screen.getByLabelText("Word bank of verse 3-4");
+    await fireEvent.click(within(bank).getByRole("button", { name: "light" }));
+    await fireEvent.click(within(bank).getByRole("button", { name: "shone" }), { ctrlKey: true });
+    await fireEvent.click(screen.getByLabelText("Align 2 picked-up words to ἦν in verse 2"));
+    await waitFor(() => expect(crossVerseLink).toHaveBeenCalledTimes(2));
+    expect(crossVerseLink).toHaveBeenNthCalledWith(1, { chapter: "1", verse: "2", topId: "H002" }, { chapter: "1", verse: "3-4", bottomId: "T001" });
+    expect(crossVerseLink).toHaveBeenNthCalledWith(2, { chapter: "1", verse: "2", topId: "H002" }, { chapter: "1", verse: "3-4", bottomId: "T002" });
+    expect(await screen.findByText(/2 words linked across verses/)).toBeInTheDocument();
+  });
+
+  it("joins a source word with the one before it", async () => {
+    realignWords.mockResolvedValue(V2);
+    await renderPage("2");
+    await fireEvent.click(screen.getByRole("button", { name: "Join ἦν with the previous source word in verse 2" }));
+    await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "2", ["H001", "H002"], ["T001"], V2.alignment));
+    // Verse 3-4 has one source word: nothing to join.
+    expect(screen.queryByRole("button", { name: /with the previous source word in verse 3-4/ })).toBeNull();
+  });
+
+  it("splits the last source word out of a joined column", async () => {
+    const joined: AlignmentContext = { ...V2, groups: [{ id: "G001", topIds: ["H001", "H002"], bottomIds: ["T001"] }] };
+    getAlignmentRange.mockImplementation(async (_chapter: string, verses: string[]) => rangeFor(verses, { "1": V1, "2": joined, "3-4": V34 }));
+    realignWords.mockResolvedValue(joined);
+    await renderPage("2");
+    await fireEvent.click(screen.getByRole("button", { name: "Split ἦν out of this column in verse 2" }));
+    await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "2", ["H001"], ["T001"], joined.alignment));
+  });
+
+  it("lets an aligned word be picked up and moved, and marks each card as a place to drop", async () => {
+    realignWords.mockResolvedValue(V2);
+    await renderPage("2");
+    const card = screen.getByRole("button", { name: "Pick up word from λόγος" });
+    expect(card.closest("[data-drop-slot]")).toHaveAttribute("data-drop-slot", "2|T001");
+    await fireEvent.click(card);
+    await fireEvent.click(screen.getByLabelText("Align picked-up word to ἦν in verse 2"));
+    await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "2", ["H002"], ["T001"], V2.alignment));
+    // An aligned word is not linked to another verse while it is aligned.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Pick up word from λόγος" })).toBeEnabled());
+    await fireEvent.click(screen.getByRole("button", { name: "Pick up word from λόγος" }));
+    await fireEvent.click(screen.getByLabelText("Align picked-up word to φῶς in verse 3-4"));
+    expect(crossVerseLink).not.toHaveBeenCalled();
+    expect(await screen.findByText(/Remove it from its cell first/)).toBeInTheDocument();
   });
 });

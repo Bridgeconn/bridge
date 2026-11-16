@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 // @ts-expect-error As above.
 import { resolve } from "node:path";
 import EditorHeader from "../EditorHeader.svelte";
-import { rawView } from "../../editorPrefs";
+import { rawView, textScale } from "../../editorPrefs";
 import { currentChapter, project } from "../../stores";
 import type { ProjectInfo } from "../../types/finding";
 
@@ -26,36 +26,105 @@ const submitGoTo = () => fireEvent.submit(goToBox().closest("form") as HTMLFormE
 describe("EditorHeader (#489)", () => {
   beforeEach(() => { rawView.set(false); openBook(); currentChapter.set("2"); });
 
-  // 2026-11-13: the book moved to the top bar; chapter "of N", Go to, Raw USFM icon, tools.
-  it("reads, left to right: chapter picker of N, Go to, Raw USFM, and has no book or breadcrumb", () => {
+  // 2026-11-15: "Chapter", the picker, "of N", the arrows; Go to; text size and the USFM toggle.
+  it("reads, left to right: Chapter, the picker, of N and the arrows, Go to, then text size and Raw USFM; no book or breadcrumb", () => {
     const { container } = render(EditorHeader);
     const header = container.querySelector(".editor-header") as HTMLElement;
-    const [where, goto, tools] = Array.from(header.children) as HTMLElement[];
-    expect(where).not.toHaveTextContent("Philippians");
+    const nav = screen.getByRole("group", { name: "Chapter navigation" });
+    const tools = container.querySelector(".tools") as HTMLElement;
+    expect(header.firstElementChild).toBe(nav);
+    expect(nav).not.toHaveTextContent("Philippians");
+    expect(nav).toHaveTextContent(/^Chapter\s*2\s*of 4/);
+    expect(nav).toContainElement(prev());
+    expect(nav).toContainElement(next());
+    expect(nav.compareDocumentPosition(goToBox()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(goToBox().compareDocumentPosition(tools) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(Array.from(tools.querySelectorAll("button")).map((item) => item.getAttribute("aria-label")))
+      .toEqual(["Smaller text", "Larger text", "Raw USFM", "What the marks mean"]);
     expect(screen.queryByRole("combobox", { name: "Book" })).toBeNull();
-    expect(where).toContainElement(screen.getByRole("group", { name: "Chapter navigation" }));
-    expect(screen.getByRole("group", { name: "Chapter navigation" })).toHaveTextContent("of 4");
-    expect((screen.getByRole("combobox", { name: "Chapter" }) as HTMLSelectElement).value).toBe("2");
-    expect(goto).toContainElement(goToBox());
-    expect(tools.firstElementChild).toBe(screen.getByRole("button", { name: "Raw USFM" }));
     expect(screen.queryByRole("navigation")).toBeNull();
     expect(screen.queryByRole("button", { name: "Projects" })).toBeNull();
   });
 
-  it("carries the Raw USFM toggle as an icon with its name in the title; it shows its state and is saved", async () => {
+  it("the picker opens a grid of the book's chapters; a click or the keyboard chooses one", async () => {
+    const onChapterChange = vi.fn();
+    render(EditorHeader, { props: { onChapterChange } });
+    const trigger = screen.getByRole("button", { name: /^Chapter 2/ });
+    expect(screen.queryByRole("listbox")).toBeNull();
+    await fireEvent.click(trigger);
+    expect(screen.getAllByRole("option").map((item) => item.textContent)).toEqual(["1", "2", "3", "4"]);
+    expect(screen.getByRole("option", { name: "2" })).toHaveAttribute("aria-selected", "true");
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("option", { name: "2" })));
+    await fireEvent.click(screen.getByRole("option", { name: "4" }));
+    expect(onChapterChange).toHaveBeenLastCalledWith("4");
+    expect(screen.queryByRole("listbox")).toBeNull();
+    // Arrow keys move the focus; the open chapter chosen again changes nothing.
+    await fireEvent.click(trigger);
+    await fireEvent.keyDown(screen.getByRole("listbox"), { key: "ArrowRight" });
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("option", { name: "3" })));
+    await fireEvent.keyDown(screen.getByRole("listbox"), { key: "ArrowLeft" });
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("option", { name: "2" })));
+    await fireEvent.click(screen.getByRole("option", { name: "2" }));
+    expect(onChapterChange).toHaveBeenCalledOnce();
+    await fireEvent.click(trigger);
+    await fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
+
+  it("carries the Raw USFM toggle as an icon with an instant hint; it shows its state and is saved", async () => {
     render(EditorHeader);
     const raw = screen.getByRole("button", { name: "Raw USFM" });
     expect(raw).toHaveAttribute("aria-pressed", "false");
-    expect(raw.getAttribute("title")).toMatch(/^Raw USFM/);
+    expect(raw).not.toHaveAttribute("title");
     expect(raw.querySelector("svg")).not.toBeNull();
     expect(raw.textContent?.trim()).toBe("");
+    await fireEvent.mouseEnter(raw);
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/^Show USFM markers/);
     await fireEvent.click(raw);
     expect(get(rawView)).toBe(true);
     expect(raw).toHaveAttribute("aria-pressed", "true");
-    expect(raw.getAttribute("title")).toMatch(/^Raw USFM \(on\)/);
+    await fireEvent.mouseEnter(raw);
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/^USFM markers are showing/);
+    await fireEvent.mouseLeave(raw);
+    // As on the left rail: the accent colour means on, and the hover is grey.
+    const css = readFileSync(resolve("src/lib/components/EditorHeader.svelte"), "utf8");
+    expect(css).toMatch(/\.raw-toggle:hover:not\(:disabled\) \{ background: var\(--bg\); color: var\(--text\); \}/);
+    expect(css).toMatch(/\.raw-toggle\[aria-pressed="true"\]:hover:not\(:disabled\) \{ color: var\(--accent\); \}/);
     expect(localStorage.getItem("bridge.editor.rawView.v1")).toBe("true");
     await fireEvent.click(raw);
     expect(get(rawView)).toBe(false);
+  });
+
+  it("the legend opens a list of what the marks mean, drawn with the real mark styles, and closes on Escape", async () => {
+    render(EditorHeader);
+    const legend = screen.getByRole("button", { name: "What the marks mean" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await fireEvent.click(legend);
+    const panel = screen.getByRole("dialog", { name: "What the marks mean" });
+    expect(panel).toHaveTextContent("The small raised number is the verse's open issues");
+    expect(panel).toHaveTextContent("Unicode: an invisible or unusual character");
+    expect(panel.querySelector("mark.m-lqa-unicode")).not.toBeNull();
+    expect(panel.querySelector("mark.m-gr")).not.toBeNull();
+    await fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("A− and A+ step the verse text size, stop at either end, and say the size in their hint", async () => {
+    textScale.set(1);
+    render(EditorHeader);
+    const smaller = screen.getByRole("button", { name: "Smaller text" });
+    const larger = screen.getByRole("button", { name: "Larger text" });
+    await fireEvent.click(larger);
+    expect(get(textScale)).toBe(1.15);
+    await fireEvent.mouseEnter(larger);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Larger text (now 115%)");
+    await fireEvent.mouseLeave(larger);
+    await fireEvent.click(smaller);
+    await fireEvent.click(smaller);
+    expect(get(textScale)).toBe(0.85);
+    expect(smaller).toBeDisabled();
+    expect(larger).not.toBeDisabled();
+    textScale.set(1);
   });
 
   // jsdom lays nothing out, so these pin the rules, not the rendering.
@@ -77,9 +146,12 @@ describe("EditorHeader (#489)", () => {
     expect(rule(".goto")).not.toContain("position: relative");
   });
 
-  it("App hands the header the chapter and Go to handlers, the top bar the book switch, and the overflow menu has no Raw USFM", () => {
+  it("App hands the header the chapter and Go to handlers and no overflow menu, and the top bar the book switch", () => {
     const app: string = readFileSync(resolve("src/App.svelte"), "utf8");
     expect(app).not.toContain("Raw USFM");
+    // Text size is the header's own; Reset layout is on the tab strip.
+    expect(app).not.toContain("Reset workspace layout");
+    expect(app).not.toContain('label="Editor tools"');
     const use = /<EditorHeader[^>]*>/.exec(app)?.[0] ?? "";
     expect(use).not.toContain("onBookChange");
     const bar = app.slice(app.indexOf("<TopBar"), app.indexOf("/>", app.indexOf("<TopBar")));
@@ -99,7 +171,8 @@ describe("EditorHeader chapter navigation (issue #53)", () => {
     expect(onChapterChange).toHaveBeenCalledWith("3");
     await fireEvent.click(prev());
     expect(onChapterChange).toHaveBeenCalledWith("1");
-    await fireEvent.change(screen.getByRole("combobox", { name: "Chapter" }), { target: { value: "4" } });
+    await fireEvent.click(screen.getByRole("button", { name: /^Chapter 2/ }));
+    await fireEvent.click(screen.getByRole("option", { name: "4" }));
     expect(onChapterChange).toHaveBeenLastCalledWith("4");
     expect(onChapterChange).toHaveBeenCalledTimes(3);
   });
@@ -146,12 +219,17 @@ describe("EditorHeader chapter navigation (issue #53)", () => {
     expect(next()).toBeDisabled();
   });
 
-  it("the steppers are real buttons with titles", () => {
+  it("the steppers are real buttons with instant hints", async () => {
+    currentChapter.set("1");
     render(EditorHeader);
     expect(prev().tagName).toBe("BUTTON");
     expect(next().tagName).toBe("BUTTON");
-    expect(prev()).toHaveAttribute("title");
-    expect(next()).toHaveAttribute("title");
+    await fireEvent.mouseEnter(next());
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Next chapter");
+    await fireEvent.mouseLeave(next());
+    await fireEvent.mouseEnter(prev());
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Already at the first chapter");
+    await fireEvent.mouseLeave(prev());
   });
 });
 

@@ -249,6 +249,15 @@ mark.reveal-flash { animation: reveal-flash 1.2s ease-out; }
    of control it has instead of restyling <button> itself. Project Home and
    the add-books dialog drew these shapes first; the dashboard uses the
    classes, and the other pages can move over without a visual change. */
+/* One scrollbar for the whole app (2026-11-15): thin, rounded, no arrow
+   buttons, no track; the thumb is a soft grey that darkens when pointed at.
+   Set with the ::-webkit-scrollbar parts only: the standard scrollbar-width /
+   scrollbar-color would switch these off in the app's webview. */
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+*::-webkit-scrollbar-track, *::-webkit-scrollbar-corner { background: transparent; }
+*::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 999px; background-color: color-mix(in srgb, var(--text-3) 45%, transparent); background-clip: content-box; }
+*::-webkit-scrollbar-thumb:hover, *::-webkit-scrollbar-thumb:active { border-width: 1px; background-color: var(--text-3); }
 /* The editor's left rail (ActivityBar.svelte): one icon button. Grey at
    rest; a pane that is open as a tab has a blue icon; the pane that is
    showing, or a menu that is open, also has the accent tint and a bar on the

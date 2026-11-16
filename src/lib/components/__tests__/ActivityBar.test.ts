@@ -5,6 +5,7 @@ import { tick } from "svelte";
 
 import ActivityBar from "../ActivityBar.svelte";
 import EditorTabs from "../EditorTabs.svelte";
+import LayoutMenu from "../EditorLayoutMenu.svelte";
 import { leaves } from "../../alignmentLayout";
 import { SIDE_PANEL_LIMITS, SIDE_PANEL_ORDER, setSidePanel, sidePanelRecency, sidePanels, versesOpen } from "../../editorPrefs";
 import {
@@ -203,5 +204,17 @@ describe("EditorTabs", () => {
     expect(Object.keys(layout().groups)).toHaveLength(3);
     // One tab left: nothing to split, so no button.
     expect(screen.queryByRole("button", { name: /^Split/ })).toBeNull();
+  });
+
+  it("Reset layout puts Verses and Review back side by side and closes the rest", async () => {
+    setSidePanel("source", { open: true });
+    versesOpen.set(false);
+    // 2026-11-16: Reset is the last row of the top bar's layout picker.
+    render(LayoutMenu);
+    await fireEvent.click(button("Layout"));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Reset to default" }));
+    expect(get(openTabs)).toEqual(["editor", "review"]);
+    expect(Object.keys(layout().groups)).toHaveLength(2);
+    expect([...get(visibleTabs)].sort()).toEqual(["editor", "review"]);
   });
 });

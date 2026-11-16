@@ -321,8 +321,10 @@ them two rounded boxes, the left rail and the work area.
   tab strip, showing one tab at a time. Dragging a tab to a group's edge splits it, onto a
   group moves it there, and the line between groups resizes them. Whether a pane is open
   stays in `versesOpen` / `sidePanels`; `editorTabs.ts` only places the open ones
-  (`tabLayout`, saved in localStorage, one layout for all projects) and is reconciled when
-  that set changes. A side panel dragged out of the window is its own window; closing that
+  (`tabLayout`, saved in localStorage, and since 2026-11-16 also per book with the book's
+  open alignment tabs: `projectWorkspace.ts` `BookSession`) and is reconciled when that set
+  changes. The top bar's layout picker (`EditorLayoutMenu.svelte`) splits the work area by a
+  preset; places with no tab are empty groups that fill from the rail or a dragged tab. A side panel dragged out of the window is its own window; closing that
   window makes it a tab again. The floating box inside the window, the per-column width
   drag, column order and folding for width are gone (`foldedPanels` is always empty).
 - **Side panels** are `source`, `reference`, `paratext` and `review` (`SidePanelId` in
@@ -352,7 +354,12 @@ webview. `alignmentWindow.ts` carries explicit project/reference, Follow editor 
 Pin verse, busy and saved-state events. Both views use the existing Rust-owned
 sidecar and instance-bound project guards. A project switch closes alignment;
 navigation waits while its mutation is busy. Window position uses the existing
-window-state plugin. `AlignmentWorkspace` / `AlignmentPane` provide movable,
+window-state plugin. Since 2026-11-16 both alignment tabs draw three panels (verse text,
+source words, target words) with `WordPanels` / `WordPanel` over `wordPanels.ts`: a saved
+split tree per tab, laid out as a CSS grid that fills the tab (`panelGrid`), panels moved
+by their title rows or a layout preset, dividers on both axes, a text size per panel.
+`AlignmentWorkspace` / `AlignmentPane`, described next, are no longer used by either tab
+and are kept only until a clean-up. They provided movable,
 resizable Read/Source/Target areas. A persisted binary split tree supports docking
 to any neighbor's left/right/top/bottom, mixed horizontal/vertical layouts and
 adjustable dividers. Areas can also float at a chosen position; keyboard-accessible

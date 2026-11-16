@@ -36,14 +36,13 @@
 
   const docking = getContext<EditorDockContext | undefined>("editor-docking");
   const native = getContext<{ dock: () => void; close: () => void } | undefined>("panel-window");
-  $: actions = native ? [{ id: "return", label: "Dock in Bridge" }] : [
+  $: actions = native ? [] : [
     { id: "detach", label: "Move to separate window", disabled: !("__TAURI_INTERNALS__" in window) },
     ...(docking ? (["left", "right", "top", "bottom"] as const).map(edge => ({ id: `edge-${edge}`, label: `Dock ${edge === "top" ? "above" : edge === "bottom" ? "below" : edge + " of"}`,
       submenu: ["editor", ...$sidePanelOrder.filter(other => other !== id)].map(target => ({ id: `dock:${target}:${edge}`, label: target === "editor" ? "Scripture editor" : target })) })) : []),
   ];
   function arrange(action: string) {
-    if (action === "return") native?.dock();
-    else if (action === "detach") setSidePanel(id, { detached: true, open: true });
+    if (action === "detach") setSidePanel(id, { detached: true, open: true });
     else if (action.startsWith("dock:")) { const [, target, edge] = action.split(":"); docking?.dock(id, target, edge as "left" | "right" | "top" | "bottom"); }
   }
 
@@ -60,11 +59,13 @@
   {#if $$slots.default}
     <div class="panel-actions"><slot /></div>
   {/if}
-  {#if layout || native}
+  <!-- In its own window (2026-11-14) the bar has no tools menu and no Close:
+       the window's title bar closes it, and it comes back as a tab. -->
+  {#if layout && !native}
     <OverflowMenu label={`${label} panel tools`} {actions} on:action={(event) => arrange(event.detail.id)} />
   {/if}
-  <button type="button" class="panel-close" on:click={close}
-    aria-label={`Close ${label}`} title="Close (its icon on the left opens it again)">✕</button>
+  {#if !native}<button type="button" class="panel-close" on:click={close}
+    aria-label={`Close ${label}`} title="Close (its icon on the left opens it again)">✕</button>{/if}
 </div>
 
 <style>

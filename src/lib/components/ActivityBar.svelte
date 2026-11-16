@@ -11,14 +11,18 @@
   import UiIcon from "./UiIcon.svelte";
   import { tooltip } from "../tooltip";
   import { setSidePanel, sidePanels, toggleSidePanel } from "../editorPrefs";
-  import { EDITOR_TABS, closeTab, openTabs, selectTab, showTab, visibleTabs, type EditorTabId } from "../editorTabs";
+  import { EDITOR_TABS, closeTab, openTabs, selectTab, showTab, visibleTabs } from "../editorTabs";
+  import type { SidePanelId } from "../editorPrefs";
 
-  const ORDER: readonly EditorTabId[] = ["editor", "source", "reference", "paratext", "review"];
+  // The rail's panes. The Alignment tab has no button here: it opens on a verse.
+  type RailId = "editor" | SidePanelId;
+
+  const ORDER: readonly RailId[] = ["editor", "source", "reference", "paratext", "review"];
 
   // Open at all: a tab, or (a side panel) in its own window.
-  $: isOpen = (id: EditorTabId): boolean => $openTabs.includes(id) || (id !== "editor" && $sidePanels[id].open);
+  $: isOpen = (id: RailId): boolean => $openTabs.includes(id) || (id !== "editor" && $sidePanels[id].open);
 
-  function choose(id: EditorTabId): void {
+  function choose(id: RailId): void {
     if ($visibleTabs.has(id)) closeTab(id);
     else if ($openTabs.includes(id)) selectTab(id);
     else if (id === "editor") showTab(id);
@@ -28,7 +32,7 @@
     else toggleSidePanel(id);
   }
 
-  $: hint = (id: EditorTabId): string => {
+  $: hint = (id: RailId): string => {
     const meta = EDITOR_TABS[id];
     if ($visibleTabs.has(id)) return `${meta.title}. Click to close it`;
     if ($openTabs.includes(id)) return `${meta.title}. Click to show it`;

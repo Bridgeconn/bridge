@@ -25572,3 +25572,90 @@ Check / Alignment / Bookmarks pop-outs from the rail, Malayalam search in the bo
 tab layout should be per project; `editorTree`, `foldedSidePanels`, `sidePanelOrder`
 moves and `PanelResizeHandle`'s side-panel use are now unused or half-used and want a
 clean-up pass; the panels' own header bars repeat the tab's name and close.
+
+## 2026-11-16 — UI pass: alignment tabs as three panels, layout pickers, Projects drop area, a book's tabs remembered
+
+Frontend only, on branch `uifixes-v25` (Joel's page-by-page pass). No engine, schema or
+Scripture-writing code changed. Two shell config files changed with the separate-window
+title bars (`tauri.conf.json` `decorations: false`, `capabilities/main-window-controls.json`).
+The PR description lists the changes page by page; this entry records the structure and
+the decisions a later reader needs.
+
+**Editor frame.**
+- Layout picker in the top bar (`EditorLayoutMenu.svelte` over the shared `LayoutMenu.svelte`):
+  nine presets (`LAYOUT_PRESETS` in `editorTabs.ts`, shapes in `layoutShapes.ts`) and
+  "Reset to default". `withLayoutPreset` keeps the groups that hold tabs, in reading order;
+  places left over are **empty groups** (`TabGroup.active` is now `EditorTabId | null`),
+  which fill from the rail (`reconcileTabs` prefers the focused empty group, then the first
+  empty one) or a dragged tab. A group whose last tab is closed or dragged away still goes.
+  Reset layout left the tab strips for the picker's last row.
+- Separate windows draw the app's own title bar (`WindowBar.svelte`, `WindowControls.svelte`).
+- Status bar: chapters approved before verses approved.
+
+**Alignment: two tabs.** Word alignment (`alignment`) and Cross-verse (`crossVerse`) are
+separate tabs (`AlignmentTabPane.svelte`); `AlignmentHost.svelte` decides the verse and now
+waits for a new chapter's verses before moving. Each reloads when the other saves
+(`watchAlignmentChanges`) and waits while the other saves (`holdAlignmentBusy`,
+`alignmentBusyElsewhere`). The one separate window holds one of the two
+(`alignmentDetachedMode`). `showAlignmentTab` brings an open tab forward: the rail's
+Alignment menu (now with Word alignment, reordered, with icons) and each tab's icon to
+the other use it and say "already open".
+
+**Alignment: three panels.** Both tabs draw Verse(s), Source words and Target words with
+`WordPanels.svelte` / `WordPanel.svelte` over `wordPanels.ts` (`createPanelLayout`: one
+saved tree and text sizes per tab, `wordPanelLayout` and `crossPanelLayout`). `panelGrid`
+turns the tree into a CSS grid that fills the tab: a split's ratio divides width or height,
+a row holding only the verse to read is `auto` on the Word tab, and each shared edge gets a
+divider. A panel with more words than room scrolls inside itself; a word box never does
+(`alignmentCards.css`). Text size is CSS `zoom` on the panel's content, not on its scroller
+(zoom on the scroller thickened its scrollbar). This replaces the 2026-11-14 fixed layout on
+the Word tab and `AlignmentWorkspace` / `AlignmentPane` on the Cross-verse tab; those two
+components and `AlignmentLayout.test.ts` are now unused and were left for a clean-up.
+
+**Word alignment.** Bar like the Verses bar (chapter, verse n of N with arrows that move the
+editor's selected verse, status, icons). Reset and backups are one menu
+(`AlignmentResetControls` has a `menu` form; reset is disabled when the status reports
+nothing to clear); backups read in local time and plain words (`alignmentBackups.ts`,
+newest 10 listed, none deleted). A cross-verse link is removable from either end here.
+Notes are a toast; card controls are one hover toolbar; every `title=` became `use:tooltip`.
+
+**Cross-verse.** Same treatment, plus: From / To as `GridPicker.svelte` (the chapter picker's
+grid), "Verses shown" as `GridToggle.svelte`, the verse-card row folded into a chip beside
+each verse number, AI actions in one bar menu, Undo / Reset and backups on the bar for the
+whole range. New behaviour matching the Word tab: several words of **one verse** picked
+together (a cross-verse drop makes one link per word, in turn), join and split of source
+words (refused, with the reason, when a word has a cross-verse link or neither column has a
+target), per-verse undo and backups, drag or arrows to reorder a cell. An aligned word
+cannot be dropped on another verse's source (a word has one home; the page says so; the
+engine's own answer was not checked). `verseRowSync.ts` now tests "side by side" on the
+panels and writes `min-height` in the row's own px (`currentCSSZoom`); the two columns'
+scrollers are linked while side by side (`linkScroll`), which is what keeps #495 true now
+that each panel scrolls on its own.
+
+**Projects page.** "Add a project" is one drop area (`data-import-drop`). `bridge.onFileDrop`
+passes the pointer in CSS px; `App.svelte` accepts a drop only on that box. Behaviour
+change: a drop elsewhere, including while a project is open, no longer starts an import.
+
+**A book's tabs are remembered.** `projectWorkspace.ts` saves, per book, whether the two
+alignment tabs were open and the tab layout (`BookSession`), and puts them back at the
+book's first reading place (`restoreBookSession`). Saving is off between binding a book and
+that restore (`settling`), because a book switch closes the leaving book's alignment tabs
+after the new book is bound. An alignment tab cannot open during a check run, so the
+restore retries for about 20 s.
+
+**Ran.** `npm run check` 0 errors 0 warnings; `npm run test` 138 files, 1343 tests;
+`npm run build`.
+
+**Not run.** `cargo check` and `cargo test`: the Bridge app was running and holds the
+sidecar binary (gotcha 13); they are owed for the shell config change. Engine pytest: no
+Python changed.
+
+**Not verified.** Everything jsdom cannot show: widths, heights, wrapping, scrolling,
+dragging, the drop position at 125% / 150% display scale, the two columns staying level
+while scrolled, text size with dragging. Joel checked several of these on the desktop app
+as the work went; no full 1366x768 and split-screen pass was recorded. Also believed, not
+watched: that `alignment.getRange` returns each verse's `history` (the Cross-verse Undo and
+backups list depend on it), and a real close and reopen restoring a book's tabs.
+
+**Adjacent, reported not fixed.** A stack trace prints from `SplashScreen.test.ts:45`
+during the Vitest run although every test passes.

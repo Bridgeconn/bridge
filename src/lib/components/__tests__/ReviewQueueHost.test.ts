@@ -34,7 +34,9 @@ describe("review queue desktop ownership", () => {
     paratextReviewQueueOpen.set(true);
   });
 
-  it("moves one queue out, closes it independently, and reopens in the same window mode", async () => {
+  // 2026-11-14 (Joel): closing the separate window also ends "separate
+  // window"; opened again, the queue is in the main window.
+  it("moves one queue out, closes it independently, and reopens in the main window", async () => {
     render(ReviewQueueHost, { onNavigate: vi.fn() });
     const detach = await screen.findByRole("button", { name: "Move to separate window" });
     await waitFor(() => expect(detach).not.toBeDisabled());
@@ -45,8 +47,10 @@ describe("review queue desktop ownership", () => {
     await waitFor(() => expect(mocks.context).toHaveBeenLastCalledWith(expect.objectContaining({ open: true, project: expect.objectContaining({ path: "book-a" }) })));
     mocks.receive!({ kind: "close", path: "book-a" });
     await waitFor(() => expect(get(paratextReviewQueueOpen)).toBe(false));
+    expect(localStorage.getItem("bridge.reviewQueue.detached")).toBe("false");
     paratextReviewQueueOpen.set(true);
-    await waitFor(() => expect(mocks.open).toHaveBeenCalledTimes(2));
+    await screen.findByRole("dialog");
+    expect(mocks.open).toHaveBeenCalledOnce();
   });
 
   it("ignores old-window events after a project switch and refreshes only the current editor", async () => {

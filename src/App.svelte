@@ -2,8 +2,7 @@
   import PanelWindowsHost from "./lib/components/PanelWindowsHost.svelte";
   import { setSidePanel } from "./lib/editorPrefs";
   import EditorWorkspace from "./lib/components/EditorWorkspace.svelte";
-  import OverflowMenu from "./lib/components/OverflowMenu.svelte";
-  import { bindWorkspace, savedWorkspace, savedBookWorkspace, rememberLocation, recordProjectOpen, releaseWorkspace, flushWorkspace, resetWorkspaceLayout } from "./lib/projectWorkspace";
+  import { bindWorkspace, savedWorkspace, savedBookWorkspace, rememberLocation, recordProjectOpen, releaseWorkspace, flushWorkspace } from "./lib/projectWorkspace";
   import { onDestroy, onMount } from "svelte";
   import { bridge } from "./lib/api/bridgeClient";
   import { workspaceRecoverySummary, type RecoverySummary } from "./lib/workspaceRecovery";
@@ -29,7 +28,7 @@
   import ParatextNotesPanel from "./lib/components/ParatextNotesPanel.svelte";
   import ReviewQueueHost from "./lib/components/ReviewQueueHost.svelte";
   import FindingContextMenu from "./lib/components/FindingContextMenu.svelte";
-  import { TEXT_SCALES, bumpTextScale, sidePanelOrder, sidePanels, textScale, toggleSidePanel } from "./lib/editorPrefs";
+  import { sidePanelOrder, sidePanels, toggleSidePanel } from "./lib/editorPrefs";
   import { verseMin, versesShown, workAreaEmpty } from "./lib/panelFit";
   import { showTab } from "./lib/editorTabs";
   import SidePanel from "./lib/components/SidePanel.svelte";
@@ -38,9 +37,10 @@
   } from "./lib/bookmarks";
   import AlignmentReview from "./lib/components/AlignmentReview.svelte";
   import AlignmentHost from "./lib/components/AlignmentHost.svelte";
+  import AlignmentTabPane from "./lib/components/AlignmentTabPane.svelte";
   import AutoAlignChapterButton from "./lib/components/AutoAlignChapterButton.svelte";
   import {
-    closeCrossVerse, crossVerseAnchor, crossVerseInitialVerses, crossVerseOpen, crossVerseRequest, openCrossVerse,
+    alignmentOpen, closeCrossVerse, crossVerseAnchor, crossVerseInitialVerses, crossVerseOpen, crossVerseRequest, openAlignment, openCrossVerse, showAlignmentTab,
   } from "./lib/alignmentUi";
   import { resetReviewState } from "./lib/reviewStores";
   import SettingsModal from "./lib/components/SettingsModal.svelte";
@@ -535,8 +535,8 @@
       }
       if (!unlistenFileDrop) {
         const stopListening = await bridge.onFileDrop(
-          (paths) => void handleDroppedPaths(paths),
-          (phase) => { draggingOver = phase === "over"; },
+          (paths, at) => void handleDroppedPaths(paths, onDropBox(at)),
+          (phase, at) => { draggingOver = phase === "over"; draggingOnBox = phase === "over" && onDropBox(at); },
         );
         if (appDisposed) stopListening();
         else unlistenFileDrop = stopListening;
@@ -611,9 +611,26 @@
     };
   });
 
-  async function handleDroppedPaths(paths: string[]) {
+  // 2026-11-16 (Joel): a file or folder is dropped on the Projects page's
+  // "Add a project" box, not anywhere in the window. A drop anywhere used to
+  // leave whatever was open, the editor included, and start an import.
+  let draggingOnBox = false;
+  function onDropBox(at: { x: number; y: number } | null): boolean {
+    const box = document.querySelector<HTMLElement>("[data-import-drop]");
+    if (!box || !at) return false;
+    const r = box.getBoundingClientRect();
+    return at.x >= r.left && at.x < r.right && at.y >= r.top && at.y < r.bottom;
+  }
+  async function handleDroppedPaths(paths: string[], onBox: boolean) {
     draggingOver = false;
+    draggingOnBox = false;
     dropError = "";
+    if (!onBox) {
+      dropError = document.querySelector("[data-import-drop]")
+        ? "Drop the file or folder inside the “Add a project” box."
+        : "To add a project, go to Projects and drop the file or folder on the “Add a project” box.";
+      return;
+    }
     if (paths.length !== 1) {
       dropError = "Drop exactly one project file or folder at a time.";
       return;
@@ -1512,7 +1529,7 @@
   }
 
   // #118: a finding may name verses of another chapter. Switch first (the
-  // page is chapter-scoped and closes itself on a chapter change), then open.
+  // page is chapter-scoped and follows the editor's chapter), then open.
   $: if ($crossVerseRequest && opened) void resolveCrossVerseRequest($crossVerseRequest);
   async function resolveCrossVerseRequest(request: { chapter: string; verses: string[] }) {
     crossVerseRequest.set(null);
@@ -1730,7 +1747,7 @@
   {/if}
 
   {#if screen === "home"}
-    <ImportScreen onOpened={handleOpened} {droppedPath} {dropSequence} />
+    <ImportScreen onOpened={handleOpened} {droppedPath} {dropSequence} dragging={draggingOver} dragOver={draggingOnBox} />
   {:else if screen === "dashboard"}
     <ProjectDashboard
       {projectName}
@@ -1808,9 +1825,16 @@
         use:tooltip={{ text: placesMenu ? "" : "Bookmarks and recent chapters", side: "right" }} on:click={openPlacesMenu}><UiIcon name="bookmark" /></button>
       <!-- "Align chapter with AI" is AutoAlignChapterButton's (mounted in
            the editor below): the entry reads its phase and key, and starts it. -->
+      <!-- 2026-11-16 (Joel): Word alignment is here too. A tab that is open
+           already is shown, not opened again; picked verses still open the
+           cross-verse page on them. -->
       <AlignmentMenu rail
+        onWordAlignment={() => { if ($alignmentOpen) showAlignmentTab("word"); else openAlignment($currentChapter, $selectedVerse ?? ""); }}
+        wordDisabled={!$selectedVerse}
+        wordOpen={$alignmentOpen}
+        crossOpen={$crossVerseOpen}
         onAlignmentReview={() => (showingAlignmentReview = true)}
-        onCrossVerse={() => openCrossVerse($selectedVerse ?? "", $selectedVerseSet)}
+        onCrossVerse={() => { if ($crossVerseOpen && $selectedVerseSet.length < 2) showAlignmentTab("cross"); else openCrossVerse($selectedVerse ?? "", $selectedVerseSet); }}
         crossVerseDisabled={!$selectedVerse}
         selectedCount={$selectedVerseSet.length}
         onAlignChapter={() => autoAlign?.ask()}
@@ -1823,7 +1847,7 @@
         alignChapterLabel={autoAlignPhase === "estimating" ? "Working out the cost…" : "Align chapter with AI"}
       />
       </ActivityBar>
-      <div class="work-col" style:--verse-scale={$textScale}>
+      <div class="work-col">
         {#if $projectRoles?.effectiveRole === "reporter"}
           <!-- #279: the engine refuses every change; say so before a click finds out. -->
           <p class="role-banner" role="status">You are a reporter on this project: you can read, report and export, and changes are refused.</p>
@@ -1860,18 +1884,7 @@
                panels shrink and then fold first (panelFit.ts; View brings one back). -->
           <div data-editor-pane="editor" id="editor-verses-pane" class="editor-col" hidden={!$versesShown} style={editorFrame || `min-width:${$verseMin}px`}>
             <!-- #489: book, chapter picker, Go to, Raw toggle and tools, above the scrolling verses. -->
-            <EditorHeader onChapterChange={switchChapter} onGoTo={goTo}>
-              <OverflowMenu label="Editor tools" actions={[
-                { id: "smaller", label: "Smaller text", disabled: $textScale === TEXT_SCALES[0] },
-                { id: "larger", label: "Larger text", disabled: $textScale === TEXT_SCALES[TEXT_SCALES.length - 1] },
-                { id: "reset", label: "Reset workspace layout" },
-              ]} on:action={(event) => {
-                const { id } = event.detail;
-                if (id === "smaller") bumpTextScale(-1);
-                else if (id === "larger") bumpTextScale(1);
-                else if (id === "reset") resetWorkspaceLayout();
-              }} />
-            </EditorHeader>
+            <EditorHeader onChapterChange={switchChapter} onGoTo={goTo} />
             <VerseList onSelect={selectVerse} onNavigate={navigateToReportRow} />
           </div>
           <!-- #389: the columns run in the reviewer's order (sidePanelOrder,
@@ -1900,6 +1913,8 @@
               {/if}
             {/if}
           {/each}
+          <!-- 2026-11-15: the alignment editor is a tab while it is open. -->
+          <AlignmentTabPane />
           </EditorWorkspace>
         </div>
       </div>
@@ -1912,12 +1927,12 @@
     <div class="statusbar">
       {#if $project}
         <span class="status-facts">
-          <span class="ui-chip" class:pass={versesDone}
-            use:tooltip={`Verses approved in chapter ${$currentChapter}: ${$approvedCount} of ${versesTotal}`}>
-            <b>{$approvedCount}/{versesTotal}</b> verses approved</span>
           <span class="ui-chip" class:pass={chaptersDone}
             use:tooltip={`Chapters approved in this book: ${bookSummary.approvedChapters} of ${bookSummary.totalChapters}`}>
             <b>{bookSummary.approvedChapters}/{bookSummary.totalChapters}</b> chapters approved</span>
+          <span class="ui-chip" class:pass={versesDone}
+            use:tooltip={`Verses approved in chapter ${$currentChapter}: ${$approvedCount} of ${versesTotal}`}>
+            <b>{$approvedCount}/{versesTotal}</b> verses approved</span>
           <span class="ui-chip" class:danger={alignmentChapterSummary.invalid > 0}
             use:tooltip={`Word alignment in chapter ${$currentChapter}: ${alignmentText}`}>
             Alignment <b>{alignmentText}</b></span>
@@ -1971,9 +1986,6 @@
     <ExportModal reviewComplete={allApproved} onClose={() => exportOpen.set(false)} />
   {/if}
 
-  {#if draggingOver}
-    <div class="global-drop" role="presentation">Drop to review this project source</div>
-  {/if}
   {#if dropError}
     <div class="drop-error">{dropError}<button on:click={() => (dropError = "")}>Dismiss</button></div>
   {/if}
@@ -2028,7 +2040,6 @@
   .statusbar > .grow { flex-shrink: 1; min-width: 0; }
   .engine-notice { color: var(--warning); font-weight: 600; }
   .statusbar > .engine-notice { flex-shrink: 1; min-width: 40px; overflow: hidden; text-overflow: ellipsis; }
-  .global-drop { position: absolute; inset: 12px; z-index: 100; display: grid; place-items: center; border: 3px dashed var(--accent); border-radius: 14px; background: color-mix(in srgb, var(--accent-bg) 92%, transparent); color: var(--accent); font-size: var(--fs-2xl); font-weight: 750; pointer-events: none; }
   .drop-error { position: absolute; z-index: 101; left: 50%; bottom: 42px; transform: translateX(-50%); display: flex; align-items: center; gap: 14px; border: 1px solid var(--danger); border-radius: 8px; background: var(--surface); color: var(--danger); padding: 9px 12px; font-size: var(--fs-xs); box-shadow: 0 8px 24px rgba(0,0,0,.14); }
   .drop-error button { border: 0; background: transparent; color: var(--accent); cursor: pointer; font-size: var(--fs-xs); }
 </style>

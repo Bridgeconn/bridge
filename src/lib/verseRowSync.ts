@@ -26,6 +26,9 @@ export function sideBySide(a: Box, b: Box): boolean {
   return apart && Math.abs(a.top - b.top) <= 4;
 }
 
+const frameOf = (col: HTMLElement): HTMLElement => col.closest<HTMLElement>("[data-word-panel]") ?? col;
+const zoomOf = (el: HTMLElement): number => (el as HTMLElement & { currentCSSZoom?: number }).currentCSSZoom || 1;
+
 /** One pass: clear what the last pass set, measure, and level each pair. */
 export function levelVerseRows(root: HTMLElement): void {
   const rows = Array.from(root.querySelectorAll<HTMLElement>(`[${ROW_ATTR}]`));
@@ -43,12 +46,17 @@ export function levelVerseRows(root: HTMLElement): void {
     const [first, second] = pair;
     const colA = first.closest<HTMLElement>(`[${COL_ATTR}]`), colB = second.closest<HTMLElement>(`[${COL_ATTR}]`);
     if (!colA || !colB || colA === colB) continue;
-    if (!sideBySide(colA.getBoundingClientRect(), colB.getBoundingClientRect())) continue;
+    // 2026-11-16: each column is inside a panel that scrolls on its own, so
+    // "side by side" is asked of the panels, which do not move, not of the
+    // columns, whose tops differ for a moment while one is scrolled.
+    if (!sideBySide(frameOf(colA).getBoundingClientRect(), frameOf(colB).getBoundingClientRect())) continue;
     const a = first.getBoundingClientRect().height, b = second.getBoundingClientRect().height;
     if (Math.abs(a - b) < 0.5) continue;
     heights.push([a < b ? first : second, Math.max(a, b)]);
   }
-  for (const [row, height] of heights) row.style.minHeight = `${Math.ceil(height * 100) / 100}px`;
+  // A panel may be drawn at its own text size (CSS zoom): the measured height
+  // is what is on screen, and min-height is written in the row's own px.
+  for (const [row, height] of heights) row.style.minHeight = `${Math.ceil(height / zoomOf(row) * 100) / 100}px`;
 }
 
 /** Svelte action: level the verse rows under `node` now and whenever a row

@@ -10,13 +10,17 @@
    *  window, a side panel opens in its own window.
    *  The line between two groups drags, or takes arrow keys, to resize. */
   import { setContext } from "svelte";
-  import { derived } from "svelte/store";
+  import { derived, get } from "svelte/store";
+  import { alignmentBusy, alignmentDesktop } from "../alignmentWindow";
+  import { detachAlignment } from "../alignmentUi";
   import { arrange, type Divider, type DockEdge, type Frame, type LayoutNode } from "../alignmentLayout";
   import type { EditorDockContext } from "../editorDocking";
   import type { SidePanelId } from "../editorPrefs";
   import {
-    TAB_STRIP_HEIGHT, groupOf, moveTab, paneStyle, resizeSplit, showTab, splitTab, tabLayout, type EditorTabId,
+    TAB_STRIP_HEIGHT, closeGroup, focusGroup, groupOf, moveTab, paneStyle, resizeSplit, showTab, splitTab, tabLayout, type EditorTabId,
   } from "../editorTabs";
+  import UiIcon from "./UiIcon.svelte";
+  import { tooltip } from "../tooltip";
   import EditorTabs from "./EditorTabs.svelte";
 
   export let onDetach: (id: SidePanelId) => void = () => {};
@@ -30,7 +34,7 @@
   const frames = derived(tabLayout, (layout) => {
     const byGroup = arrange(layout.tree).frames;
     const out: Partial<Record<string, Frame>> = {};
-    for (const gid of Object.keys(layout.groups)) out[layout.groups[gid].active] = byGroup[gid];
+    for (const gid of Object.keys(layout.groups)) { const active = layout.groups[gid].active; if (active) out[active] = byGroup[gid]; }
     return out;
   });
   $: editorFrame = paneStyle($frames.editor);
@@ -68,6 +72,8 @@
     const group = $tabLayout.groups[gid];
     if (!group) return null;
     const own = groupOf($tabLayout, moving.id) === gid;
+    // An empty group takes the tab whole, wherever it is dropped on it.
+    if (!group.tabs.length) { const r = frame.getBoundingClientRect(), b = node.getBoundingClientRect(); return { group: gid, edge: null, left: r.left - b.left, top: r.top - b.top, width: r.width, height: r.height }; }
     const r = frame.getBoundingClientRect(), b = node.getBoundingClientRect();
     const whole = { left: r.left - b.left, top: r.top - b.top, width: r.width, height: r.height };
     // Over the strip: into this group, before the tab under the pointer.
@@ -103,7 +109,10 @@
       else if (candidate) moveTab(id, candidate.group, candidate.index);
       // Released outside the Bridge window: its own window. Anywhere else
       // that is not a group (the rail, the bars): nothing, as in VS Code.
-      else if (id !== "editor" && (x <= 0 || x >= window.innerWidth || y <= 0 || y >= window.innerHeight)) onDetach(id);
+      else if (x <= 0 || x >= window.innerWidth || y <= 0 || y >= window.innerHeight) {
+        if (id === "alignment" || id === "crossVerse") { if (alignmentDesktop() && !get(alignmentBusy)) detachAlignment(id === "crossVerse" ? "cross" : "word"); }
+        else if (id !== "editor") onDetach(id);
+      }
     }
     moving = null; candidate = null; sizing = null; beforeResize = null;
   }
@@ -129,6 +138,17 @@
     <div class="group-frame" data-tab-group={gid} style={box(groupFrames[gid])}>
       <EditorTabs group={gid} />
     </div>
+    {#if !$tabLayout.groups[gid].tabs.length}
+      <!-- A layout preset's empty place (2026-11-16): a click makes it the
+           one the next panel opens in; a tab can be dropped on it. -->
+      <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+      <div class="empty-group" class:focused={$tabLayout.focused === gid} data-empty-group={gid} style={paneStyle(groupFrames[gid])} on:click={() => focusGroup(gid)}>
+        <p class="empty-title">Empty</p>
+        <p class="empty-text">Click a panel on the left to open it here, or drag a tab in.</p>
+        <button type="button" class="empty-close" aria-label="Remove this empty area" use:tooltip={"Remove this empty area"}
+          on:click|stopPropagation={() => closeGroup(gid)}><UiIcon name="close" /></button>
+      </div>
+    {/if}
   {/each}
   <slot {editorFrame} />
   {#each dividers as d (d.id)}
@@ -155,6 +175,14 @@
   .group-frame > :global(*) { pointer-events: auto; }
   /* A docked panel is a full tab: no line down its left side. */
   .editor-layout > :global(.side-panel) { border-left: 0; }
+  .empty-group { box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 16px; overflow: hidden;
+    text-align: center; background: var(--surface); border: 1px dashed transparent; cursor: pointer; }
+  .empty-group.focused { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 4%, var(--surface)); }
+  .empty-title { margin: 0; font-size: var(--fs-xs); font-weight: 700; color: var(--text-2); }
+  .empty-text { margin: 0; max-width: 240px; font-size: var(--fs-2xs); line-height: 1.4; color: var(--text-3); }
+  .empty-close { position: absolute; top: 6px; right: 6px; display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--text-3); cursor: pointer; }
+  .empty-close :global(svg) { width: 14px; height: 14px; }
+  .empty-close:hover, .empty-close:focus-visible { background: var(--danger-bg); color: var(--danger); }
   .divider { position: absolute; z-index: 6; background: transparent; cursor: row-resize; transform: translateY(-50%); touch-action: none; }
   .divider.vertical { cursor: col-resize; transform: translateX(-50%); }
   .divider::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: var(--border); pointer-events: none; transition: background .15s, height .15s, width .15s; }

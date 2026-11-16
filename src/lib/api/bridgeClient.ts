@@ -157,6 +157,8 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
 }
 
 export type FileDropPhase = "over" | "drop" | "leave";
+/** Where the pointer is during a file drag, in the page's CSS pixels. */
+export interface FileDropPoint { x: number; y: number }
 
 /**
  * Native OS drag-and-drop (dropping a file/folder from Explorer onto the window),
@@ -166,19 +168,26 @@ export type FileDropPhase = "over" | "drop" | "leave";
  * Returns an unlisten function the caller must invoke on unmount.
  */
 async function onFileDrop(
-  onDrop: (paths: string[]) => void,
-  onPhaseChange?: (phase: FileDropPhase) => void,
+  onDrop: (paths: string[], at: FileDropPoint | null) => void,
+  onPhaseChange?: (phase: FileDropPhase, at: FileDropPoint | null) => void,
 ): Promise<() => void> {
   const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+  // The shell reports the pointer in physical pixels; the page works in CSS
+  // pixels, which differ at a display scale other than 100%.
+  const point = (payload: unknown): FileDropPoint | null => {
+    const position = (payload as { position?: { x: number; y: number } }).position;
+    const scale = window.devicePixelRatio || 1;
+    return position && Number.isFinite(position.x) && Number.isFinite(position.y) ? { x: position.x / scale, y: position.y / scale } : null;
+  };
   return getCurrentWebview().onDragDropEvent((event) => {
     const payload = event.payload;
     if (payload.type === "drop") {
-      onPhaseChange?.("drop");
-      onDrop(payload.paths);
-    } else if (payload.type === "over") {
-      onPhaseChange?.("over");
+      onPhaseChange?.("drop", point(payload));
+      onDrop(payload.paths, point(payload));
+    } else if (payload.type === "over" || (payload as { type: string }).type === "enter") {
+      onPhaseChange?.("over", point(payload));
     } else if (payload.type === "leave") {
-      onPhaseChange?.("leave");
+      onPhaseChange?.("leave", null);
     }
   });
 }

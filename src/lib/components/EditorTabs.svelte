@@ -5,7 +5,9 @@
    *  group. A tab drags to another group or to a group's edge to split it
    *  (EditorWorkspace owns the drag). Left and Right arrows move between the
    *  group's tabs; a middle click closes one; the button at the strip's end
-   *  splits the chosen tab off to the right. In a narrow group the names
+   *  splits the chosen tab off to the right. The layout picker and Reset are
+   *  in the top bar (LayoutMenu.svelte, 2026-11-16): they act on the whole
+   *  work area, not on this group. In a narrow group the names
    *  shorten with an ellipsis. */
   import { getContext } from "svelte";
   import UiIcon from "./UiIcon.svelte";
@@ -36,13 +38,15 @@
   }
 </script>
 
-{#if tabs.length}
+<!-- An empty group (a layout preset's, 2026-11-16) has the strip too: a
+     place to drop a tab, level with its neighbours'. -->
+{#if $tabLayout.groups[group]}
   <div class="editor-tabs no-print" class:focused bind:this={strip}>
     <div class="tab-list" role="tablist" aria-label="Open panels">
       {#each tabs as id (id)}
         <div class="tab" class:current={current === id}>
           <button type="button" class="tab-main" role="tab" data-tab={id} aria-selected={current === id}
-            aria-controls={id === "editor" ? "editor-verses-pane" : `side-panel-${id}`} tabindex={current === id ? 0 : -1}
+            aria-controls={id === "editor" ? "editor-verses-pane" : id === "alignment" ? "editor-alignment-pane" : id === "crossVerse" ? "editor-cross-verse-pane" : `side-panel-${id}`} tabindex={current === id ? 0 : -1}
             title={`${EDITOR_TABS[id].title}. Drag to another group, or to an edge to split`}
             on:pointerdown={(event) => docking?.beginMove(id, event)}
             on:click={() => selectTab(id)} on:keydown={(event) => onKey(event, id)}
@@ -54,11 +58,13 @@
         </div>
       {/each}
     </div>
-    {#if tabs.length > 1 && current}
-      <button type="button" class="strip-tool" aria-label={`Split ${EDITOR_TABS[current].label} to the right`}
-        use:tooltip={`Split right: show ${EDITOR_TABS[current].label} beside the other tabs`}
-        on:click={() => current && splitTab(current, group, "right")}><UiIcon name="split" /></button>
-    {/if}
+    <div class="strip-tools">
+      {#if tabs.length > 1 && current}
+        <button type="button" class="strip-tool" aria-label={`Split ${EDITOR_TABS[current].label} to the right`}
+          use:tooltip={`Split right: show ${EDITOR_TABS[current].label} beside the other tabs`}
+          on:click={() => current && splitTab(current, group, "right")}><UiIcon name="split" /></button>
+      {/if}
+    </div>
   </div>
 {/if}
 
@@ -70,10 +76,13 @@
   .editor-tabs { display: flex; align-items: flex-end; min-width: 0; height: 36px; box-sizing: border-box; padding: 4px 6px 0; background: var(--bg); overflow: hidden; }
   .tab-list { flex: 1 1 auto; display: flex; align-items: flex-end; gap: 2px; min-width: 0; height: 32px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
   .tab-list::-webkit-scrollbar { display: none; }
-  .strip-tool { flex: none; align-self: center; display: grid; place-items: center; width: 24px; height: 24px; margin: 0 0 4px 4px; padding: 0; border: 0; border-radius: 6px;
-    background: transparent; color: var(--text-3); cursor: pointer; transition: color .15s, background .15s; }
+  /* The strip's tools, in the app's icon-button look: grey, accent on an accent tint when pointed at. */
+  .strip-tools { flex: none; align-self: center; display: flex; align-items: center; gap: 2px; margin: 0 0 4px 6px; }
+  .strip-tool { flex: none; display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px;
+    background: transparent; color: var(--text-2); cursor: pointer; transition: color .15s, background .15s; }
   .strip-tool :global(svg) { width: 15px; height: 15px; }
-  .strip-tool:hover, .strip-tool:focus-visible { background: var(--surface); color: var(--text); }
+  .strip-tool:hover, .strip-tool:focus-visible { background: var(--accent-bg); color: var(--accent); }
+  .strip-tool:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .tab { position: relative; flex: 0 1 auto; min-width: 44px; max-width: 200px; display: flex; align-items: center; height: 32px; box-sizing: border-box;
     border: 0; border-radius: 8px 8px 0 0; color: var(--text-2); transition: color .15s, background .15s; }
   .tab:hover { background: var(--surface-2); color: var(--text); }

@@ -5,39 +5,11 @@
   import BookPicker from "./BookPicker.svelte";
   import { tooltip } from "../tooltip";
   import { isTauri } from "@tauri-apps/api/core";
-  import { getCurrentWindow } from "@tauri-apps/api/window";
+  import WindowControls from "./WindowControls.svelte";
+  import EditorLayoutMenu from "./EditorLayoutMenu.svelte";
 
   let desktop = false;
-  let maximized = false;
-  onMount(() => {
-    desktop = isTauri();
-    if (!desktop) return;
-    const appWindow = getCurrentWindow();
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
-    const updateMaximized = async () => {
-      const value = await appWindow.isMaximized();
-      if (!disposed) maximized = value;
-    };
-    void updateMaximized().catch(console.error);
-    void appWindow.onResized(() => { void updateMaximized().catch(console.error); })
-      .then((stop) => { if (disposed) stop(); else unlisten = stop; })
-      .catch(console.error);
-    return () => { disposed = true; unlisten?.(); };
-  });
-
-  async function windowAction(action: "minimize" | "toggleMaximize" | "close") {
-    // Drop focus first: a window coming back from the taskbar gives focus
-    // back to the button, and its hint would show with no pointer on it.
-    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-    try {
-      const appWindow = getCurrentWindow();
-      await appWindow[action]();
-      if (action === "toggleMaximize") maximized = await appWindow.isMaximized();
-    } catch (error) {
-      console.error(`Window ${action} failed`, error);
-    }
-  }
+  onMount(() => { desktop = isTauri(); });
   import { bridge, type EngineInfo } from "../api/bridgeClient";
   import { navigationStatus, project } from "../stores";
   import { projectRoles, ROLE_NAMES } from "../projectRole";
@@ -141,6 +113,11 @@
        Review and validation. Home and the dashboard have none, so the
        indicator is not shown there; Settings > Connections stays reachable
        from every screen. -->
+  {#if screen === "editor"}
+    <!-- 2026-11-16 (Joel): one layout picker for the whole work area, here
+         and not on each tab strip, where it read as "split this panel". -->
+    <EditorLayoutMenu />
+  {/if}
   {#if screen === "editor" || screen === "review" || screen === "validation"}
   <button
     class="sync-status"
@@ -160,11 +137,7 @@
   <!-- On every screen, the editor included (2026-11-13). -->
   <button class="btn ghost settings-icon" aria-label="Settings" use:tooltip={"Settings"} on:click={onOpenSettings}><UiIcon name="settings" /></button>
   {#if desktop}
-    <div class="window-controls" role="group" aria-label="Window controls">
-      <button aria-label="Minimize window" use:tooltip={"Minimize"} on:click={() => windowAction("minimize")}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10"/></svg></button>
-      <button aria-label={maximized ? "Restore window" : "Maximize window"} use:tooltip={maximized ? "Restore" : "Maximize"} on:click={() => windowAction("toggleMaximize")}><svg viewBox="0 0 16 16" aria-hidden="true">{#if maximized}<path d="M5 5V3h8v8h-2M3 5h8v8H3z"/>{:else}<path d="M3 3h10v10H3z"/>{/if}</svg></button>
-      <button class="window-close" aria-label="Close window" use:tooltip={"Close"} on:click={() => windowAction("close")}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3 3 10 10M3 13 13 3"/></svg></button>
-    </div>
+    <WindowControls />
   {/if}
 </div>
 
@@ -224,17 +197,7 @@
   .desktop-bar { padding-right: 0; user-select: none; }
   .grow { align-self: stretch; min-width: 16px; }
   .home-bar .btn, .home-bar .sync-status { font-size: var(--fs-2xs); }
-  .window-controls { display: flex; align-self: stretch; margin-left: 2px; flex-shrink: 0; }
-  .window-controls button { display: grid; place-items: center; width: 34px; border: 0; padding: 0; background: transparent; color: var(--text); cursor: pointer; }
-  /* The hover is the Settings icon's: a 26 px rounded square in the accent
-     colours (danger for Close), drawn on the glyph. The button itself keeps
-     the bar's full height, so the window's top-right corner still closes. */
-  .window-controls svg { box-sizing: content-box; width: 13px; height: 13px; padding: 6.5px; border-radius: 6px; fill: none; stroke: currentColor; stroke-width: 1.2; transition: color .15s, background .15s; }
-  .window-controls button:hover svg, .window-controls button:focus-visible svg { color: var(--accent); background: var(--accent-bg); }
-  .window-controls .window-close:hover svg, .window-controls .window-close:focus-visible svg { color: var(--danger); background: var(--danger-bg); }
-  @media (prefers-reduced-motion: reduce) {
-    .window-controls svg { transition: none; }
-  }
+  /* The window buttons are WindowControls.svelte. */
   .topbar button:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
   /* A narrow or split-screen window: the bar stays one 40 px row. The version
      goes first, then the word "Bridge" (the mark stays), and the menus and
@@ -248,7 +211,5 @@
     .grow { min-width: 4px; }
     .editor-crumbs .crumb { padding-left: 4px; padding-right: 4px; }
     .project-role { display: none; }
-    .window-controls { margin-left: 0; }
-    .window-controls button { width: 32px; }
   }
 </style>

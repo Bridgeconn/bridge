@@ -1,12 +1,13 @@
 <script lang="ts">
   import type { AlignmentToken } from "../types/finding";
+  import { tooltip } from "../tooltip";
   export let token: AlignmentToken;
   export let disabled = false;
   export let onSeparate: (direction: "left" | "right") => void;
   let menu: HTMLDetailsElement;
 </script>
 <details bind:this={menu} class="word-actions">
-  <summary aria-label={`Separate ${token.word} (${token.occurrence}/${token.occurrences})`} title={`Separate this word from its group: ${token.word}`}>&#x2194;</summary>
+  <summary aria-label={`Separate ${token.word} (${token.occurrence}/${token.occurrences})`} use:tooltip={`Separate this word from its group: ${token.word}`}>&#x2194;</summary>
   <div class="choices">
     <button type="button" {disabled} aria-label={`Separate ${token.word} left`} on:click|stopPropagation={() => { menu.open = false; onSeparate("left"); }}>&#x2190; Separate left</button>
     <button type="button" {disabled} aria-label={`Separate ${token.word} right`} on:click|stopPropagation={() => { menu.open = false; onSeparate("right"); }}>Separate right &#x2192;</button>

@@ -618,8 +618,9 @@
         <button type="button" role="tab" aria-selected={tab === "review"} class:on={tab === "review"} on:click={() => openTab("review")}>Review</button>
         <button type="button" role="tab" aria-selected={tab === "reports"} class:on={tab === "reports"} on:click={() => openTab("reports")}>Reports / recovery{recoveryCount ? ` (${recoveryCount})` : ""}</button>
       </div>
-      {#if onDetach}<button type="button" class="small-btn" disabled={Boolean(busy) || loading} on:click={transfer}>{standalone ? "Return to main window" : "Move to separate window"}</button>{/if}
-      <button type="button" class="rq-close" disabled={Boolean(busy)} on:click={close} aria-label="Close the review queue">Close</button>
+      <!-- In its own window (2026-11-14) the title bar closes it; it opens in the main window next time. -->
+      {#if onDetach && !standalone}<button type="button" class="small-btn" disabled={Boolean(busy) || loading} on:click={transfer}>Move to separate window</button>{/if}
+      {#if !standalone}<button type="button" class="rq-close" disabled={Boolean(busy)} on:click={close} aria-label="Close the review queue">Close</button>{/if}
     </header>
     <div class="rq-toolbar">
       {#if data}
@@ -922,7 +923,7 @@
   /* #444: an app dialog on --z-dialog, so the confirmation it asks (Revert, Delete, Rename, New session;
      --z-dialog-over-dialog) renders above it. A literal 60 tied that layer and the queue, mounted later, won. */
   .rq-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: var(--z-dialog); display: flex; align-items: center; justify-content: center; padding: 12px; }
-  .rq-backdrop.standalone { padding: 0; background: var(--surface); }
+  .rq-backdrop.standalone { position: absolute; z-index: auto; padding: 0; background: var(--surface); }
   .standalone .rq-dialog { width: 100%; height: 100%; border: 0; border-radius: 0; box-shadow: none; }
   /* Fits a 1366x768 desktop: at most the window less the padding, never taller. */
   .rq-dialog { width: min(1180px, 100%); height: min(740px, 100%); display: flex; flex-direction: column; background: var(--surface); color: var(--text);
