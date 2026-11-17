@@ -28,6 +28,7 @@ from .usfm import strip_usfm
 from .semantic_mapping_bridge import prepare_semantic_mappings_for_review
 from .semantic_alignment_guard import cross_verse_alignment_exclusions, guard_alignment_response
 from .semantic_review_policy import apply_semantic_review_policy_all
+from .local_tw_pass import shadow_tw_decisions
 
 
 class AIError(RuntimeError):
@@ -1258,6 +1259,12 @@ class OpenAIResponsesClient:
         alignment. Nothing is written to translationCore alignmentData or checkData.
         """
         start_input_fingerprint = project.review_input_fingerprint(chapter, verse)
+        # #501, shadow mode: what a local rule would have decided for this
+        # verse's translationWords checks, from the stored alignment, worked
+        # out before any call. It is stored beside the review below and read
+        # by nothing: every check still goes to the model and nothing here is
+        # applied.
+        local_tw_shadow = shadow_tw_decisions(project, chapter, verse, alignment)
         # #476: the semantic mapping, the gap-fill alignment and the review
         # are all this verse's calls; the stored usage, the job's cost line
         # and the lifetime counter get their sum, not the review alone (on
@@ -1314,6 +1321,7 @@ class OpenAIResponsesClient:
             'checkReviews': [x.to_dict() for x in reviews],
             'qaIssues': [x.to_dict() for x in issues],
             'semanticMapping': semantic_mapping_pack,
+            'localTwShadow': local_tw_shadow,
         })
         meta['saved_to'] = str(saved)
         self.last_cost_usd = total_cost

@@ -50,6 +50,7 @@ from .cache_engine import dependency_snapshot
 from .models import AICheckReview, QAIssue, VerseAlignment
 from .plugins import PluginRegistry
 from .security import ai_payload_manifest
+from .local_tw_pass import shadow_tw_decisions
 from .semantic_mapping_bridge import prepare_semantic_mappings_for_review
 from .usfm import strip_usfm
 
@@ -275,6 +276,8 @@ class PreparedVerse:
     # passage hold the same rows, so a request lists them once for the window.
     mapping_states: list[Any] = field(default_factory=list)
     mapping_unresolved: list[Any] = field(default_factory=list)
+    # #501: the shadow record, stored beside the review and used for nothing.
+    local_tw_shadow: dict[str, Any] = field(default_factory=dict)
     usage: AIUsage = field(default_factory=AIUsage)
     cost: float = 0.0
     usage_recorded: bool = False
@@ -532,6 +535,7 @@ class WindowReviewSession:
         try:
             if progress: progress(5, 'Preparing verse review')
             alignment = project.load_verse_alignment(chapter, verse)
+            local_tw_shadow = shadow_tw_decisions(project, chapter, verse, alignment)
             if progress: progress(7, 'Mapping source meanings across target passage')
             mapping = prepare_semantic_mappings_for_review(
                 project=project, client=client, chapter=chapter, verse=verse,
@@ -578,7 +582,7 @@ class WindowReviewSession:
             resource_provenance=pack.get('resource_provenance', {}), evidence_catalog=full,
             sent_catalog=sent, check_inputs=checks, block=block,
             block_chars=len(json.dumps(block, ensure_ascii=False)), usage=usage, cost=cost,
-            mapping_states=states, mapping_unresolved=unresolved,
+            mapping_states=states, mapping_unresolved=unresolved, local_tw_shadow=local_tw_shadow,
         )
 
     # -- window formation ----------------------------------------------------
@@ -756,6 +760,7 @@ class WindowReviewSession:
             'checkReviews': [x.to_dict() for x in reviews],
             'qaIssues': [x.to_dict() for x in issues],
             'semanticMapping': p.semantic_mapping_pack,
+            'localTwShadow': p.local_tw_shadow,
             'batch': batch,
         })
         return {

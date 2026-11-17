@@ -122,6 +122,14 @@ def test_review_request_carries_each_fact_once_and_bridge_stores_what_it_did(imp
     evidence = stored["checkReviews"][0]["evidence_used"]
     assert evidence and {"kind", "title", "content"} <= set(evidence[0])
     assert snapshot["latestResult"]["result"]["appliedSelections"], "a grounded pass is still applied"
+    # #501: the local rule's shadow record sits beside the review. It is in no
+    # request, and every check of the verse still went to the model.
+    shadow = stored["localTwShadow"]
+    assert shadow["mode"] == "shadow" and "error" not in shadow
+    assert shadow["twChecks"] == sum(1 for c in checks if c["tool"] == "translationWords")
+    assert len(stored["checkReviews"]) == len(checks)
+    for request in requests:
+        assert "localTwShadow" not in request["input"] and "wouldPass" not in request["input"]
 
     # The mapping request describes the verse, not the bundled resources.
     for mapping in _by_schema(requests, "bridge_semantic_mapping_v04"):

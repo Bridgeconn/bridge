@@ -25667,3 +25667,126 @@ verse; half-size retry then verse by verse; a bad verse failing alone and retrie
 alone; a verse edited mid-flight discarded alone; the chapter context block
 identical across requests; whole chapter). Vitest: 3 new SettingsModal tests and
 `aiReviewUi.test.ts`.
+
+
+## 2026-11-17 — AI review cost: a local translationWords rule, in shadow mode only (#501)
+
+**Why.** For some translationWords checks the answer may be readable without a
+model: the word aligned to the source term in this verse is already a rendering the
+project uses for that term. Taking those checks away from the AI changes who decides
+a check, which is a change to the auto-apply behaviour and needs a decision. This
+entry is the shadow step only: the rule says what it would have decided, beside the
+AI review, and nothing reads what it says.
+
+**What was built.** `tc_ai_bridge/local_tw_pass.py`, `shadow_tw_decisions(project,
+chapter, verse, alignment)`. A check would pass only when all of these hold:
+
+1. It is a translationWords check and not invalidated.
+2. Every word of its source quote is among the verse's aligned source words, by
+   word and occurrence. A phrase containing a word that repeats in the verse does
+   not qualify (the check's occurrence counts the phrase, not the word).
+3. Each of those source words is in an alignment group that has target words and
+   holds no other source word (no partial match).
+4. The target words of those groups are, as a set of words, exactly the selection
+   of another check of the same term in the project that is not a Nothing-to-Select
+   and not invalidated. The check's own stored selection never counts.
+
+The alignment is the verse's stored one, read before any AI call: a rule that ran
+instead of the AI would have nothing else.
+
+Stored as `localTwShadow` on the AI review, in the single-verse run
+(`prepare_verse_review`) and the window run: `{mode: "shadow", ruleVersion: 1,
+twChecks, wouldPass, checks: [{checkId, groupId, sourceQuote, wouldPass, reason,
+alignedTargetWords, matchedRendering, matchingRenderings, matchingReferences,
+renderingsConsidered}]}`. A failure inside the rule is stored as `error` and never
+costs a verse its review.
+
+**What it cannot do.** `MODE` is the string `shadow` and there is no other. The
+module calls no writer; a test snapshots every file of a project before and after
+and finds them identical, with no `checkData` folder created. The record is in no
+request (tested on both runs), every check of the verse is still sent (the number of
+stored check reviews equals the number of checks), and
+`test_shadow_is_the_only_mode_and_the_record_is_read_by_nothing` fails if any engine
+module other than the two that store it mentions the record or the function. No
+workbench schema change: the review payload is JSON.
+
+**Comparison, GEN 1** (`scripts/compare_local_tw_shadow.py`, on copies; the stored
+AI reviews are read, nothing is re-run). 121 of the chapter's 281 checks are
+translationWords.
+
+| | terra run (`hin_hindi-irv-2_gen`) | gpt-5.6 run (`hin_bible_gen`) |
+|---|---|---|
+| tW checks the AI passed | 65 | 62 |
+| Rule would pass, counting only earlier verses' selections ("first run") | 53 | 62 |
+| … of those, AI passed with the same words | 32 | 36 |
+| … of those, AI passed with other words | 0 | 0 |
+| … of those, AI left for review | 21 | 26 |
+| Rule would pass, counting every other selection ("now") | 63 | 71 |
+| … of those, AI passed with the same words / other words / review | 38 / 0 / 25 | 41 / 1 / 29 |
+| Rule's first-run passes that are in the translator's sheet, judged | 4, all "none wrong" | 4, all "none wrong" |
+
+Why the rule did not take the rest (terra, first run): no other rendering of the
+term yet 22, aligned words not a rendering in use 25, partial match 17, quote not
+among the aligned source words 2, not aligned 2.
+
+How to read it:
+
+- Where both the rule and the AI gave an answer, they gave the same words (one
+  exception in the "now" view on the gpt-5.6 copy: 1:4 `good`, where the alignment
+  has अच्छा and the AI selected अच्छा है). The rule never passed a check
+  the AI called a problem; the AI called no tW check of GEN 1 a problem.
+- Every one of the checks the rule would pass and the AI left for review (21 and
+  26) was left because of the Stage 3 mapping state, not a judgement on the word:
+  `needs_extended_passage_review` on all 21 of the terra run, and that or
+  `mapping_error` on the gpt-5.6 run. In each the AI selected nothing. So the rule
+  would have passed checks that today wait for a human only because Stage 3 did not
+  locate the term. Whether that is the rule being right or the rule ignoring a
+  cross-verse question is the substance of the decision this issue leaves open.
+- The translator's sheet covers only the 37 checks where the three paid runs
+  differed, so it can speak for 4 of the rule's 53. A judged sample of the rule's
+  own passes does not exist yet.
+- The alignment the rule read was written by the AI gap-fill during those same
+  runs. On a fresh import with no alignment the rule takes nothing until the verse
+  is aligned, so "53 of 121" is what it would take on a chapter that is already
+  aligned, not on a first AI pass over an unaligned book.
+- In the "now" view most renderings were applied from the same AI run, so agreement
+  there is partly the run agreeing with itself; the first-run view is the fair one.
+
+**Not done, needing a decision first** (`docs/DECISIONS.md`): skipping the AI for a
+check the rule would pass, or recording a local pass as a check result.
+
+**Found on the way, not fixed here.**
+- On the terra run 54 of the 56 tW checks left for review in GEN 1 were left by the
+  Stage 3 state `needs_extended_passage_review` (2 by an unresolved source anchor),
+  including 21 where the verse's own alignment has the term on the project's usual
+  rendering. That is 45% of the chapter's tW checks waiting on a human for a
+  location question. Relevant to #109.
+- `_run_ai_review_for_project` counts a verse twice in the lifetime usage counter
+  when it fails or is cancelled after its review was stored: the usage is recorded
+  once when the review comes back and again by the failure handler. Pre-existing;
+  the window run records it once.
+
+**Tests.** `tests/ai/test_local_tw_pass.py` (9: the rule's conditions one by one, the
+own-selection exclusion, the no-write snapshot, failure recorded and not raised, the
+only-mode and read-by-nothing check) and assertions in the two service tests that the
+record is stored and is in no request.
+
+**Gates for the #500 / #502 / #501 batch, run once on the three commits together
+(2026-11-17, Windows, Python 3.12.10).**
+- Engine: `pytest -n auto`, 5,953 passed, 1 failed, 3 xfailed.
+  The failure is `tests/project_io/test_tc_project_chapter_cache.py::
+  test_a_change_inside_one_timestamp_tick_is_still_read`, which none of this work
+  touches. It passed four times run alone (three with these changes, once with
+  them stashed): it relies on finishing inside the chapter cache's
+  recently-written window and lost it under the parallel run. Reported, not fixed.
+- Frontend: `npm run check` 0 errors 0 warnings; `npm run test` 1,263 passed in 131
+  files; `npm run build` ok.
+- Frozen: `scripts/build-sidecars.ps1`, then `scripts/smoke_sidecars.py
+  engine/dist/bridge-engine.exe` passed. The smoke test starts the frozen engine and
+  exercises import, checks, alignment, the packs and the hub; it does not send an AI
+  review request, so the frozen pair is proven to load the new modules, not to run a
+  window review.
+- Not run: `cargo check` / `cargo test` (no Rust file changed), the desktop app, and
+  any request to a provider.
+- After the last change the default capture of GEN 1 was taken again and is
+  byte-identical to the one taken after #500 on all 109 requests.

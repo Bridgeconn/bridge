@@ -196,12 +196,15 @@ def test_a_window_is_one_request_and_one_stored_review_per_verse(titus_five):
         assert verse in batch["verses"] and batch["attempt"] == 0 and batch["chapterContext"] is False
         assert batch["windowUsage"]["inputTokens"] == 1000
         window_ids.add(batch["windowId"])
+        # #501: the shadow record is stored for a window verse too, and is in no request.
+        assert stored["localTwShadow"]["mode"] == "shadow" and "error" not in stored["localTwShadow"]
         # The verse's own usage: its mapping and gap-fill calls, and its share of the window call.
         assert stored["usage"]["calls"] >= 2 and stored["usage"]["inputTokens"] > 0
         assert stored["summary"] == f"Grounded tit 1:{verse}."
         selections = stored["checkReviews"][0]["proposed_selections"]
         assert selections and selections[0]["text"] in ("Paul", "In", "He", "To", "For")
     assert len(window_ids) == 2
+    assert all("localTwShadow" not in r["input"] and "wouldPass" not in r["input"] for r in requests)
     fingerprints = {engine.project.load_ai_review_result("1", v)["inputFingerprint"] for v in VERSES}
     assert len(fingerprints) == 5
     # A window's shares add up to the window.

@@ -9,6 +9,14 @@ fail rather than connect.
 
     python scripts/capture_ai_requests.py <project folder> --chapter 1 --out <folder>
 
+With no other option it captures the default run: one verse per request,
+through the same `prepare_verse_review` call the job makes. The options switch
+on what Bridge keeps off by default, so each can be measured before it is paid
+for: `--lean-evidence` and `--count-in-input` (#500), `--verses-per-request N`,
+`--whole-chapter` and `--chapter-context` (#502, through the same
+`WindowReviewSession` the job uses). `--window-max-checks` / `--window-max-chars`
+lift the window caps for a measurement; they change nothing in the app.
+
 The project folder is never opened. It is copied, with the `resources` folder
 two levels above it, into a scratch folder laid out like Bridge's data folder
 (`<work>/Bridge/data/projects/<name>`, `<work>/Bridge/data/resources`), and
