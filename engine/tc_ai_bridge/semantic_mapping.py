@@ -626,7 +626,10 @@ class SemanticMappingEngine:
                 "authority": "UHB/UGNT source tokens are canonical; ULT/help wording is supporting evidence only.",
                 "search_boundary_rule": "The supplied target passage is a computational search window, not a claim that meaning outside it is absent.",
             },
-            "resource_provenance": self.source_repo.metadata().get("resource_manifest", {}),
+            # #500: the bundled-resource manifest (a coverage row for each of
+            # the 66 books, 16,475 characters, 86% of this input) is not sent.
+            # The task never used it. It still identifies the resources in
+            # `_fingerprint`, which is what keys the stored mapping.
             "source_units": unit_rows,
             "source_context": source_context,
             "target_passage": {

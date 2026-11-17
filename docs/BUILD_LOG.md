@@ -25381,3 +25381,148 @@ pinned the exact stored settings; it now expects the marker as well.
 
 **Not done.** No workspace schema change (the marker is a `settings_kv` value). The
 approved model name is duplicated in the dialog rather than read from the engine.
+
+
+## 2026-11-17 — AI review cost: an offline request capture, and duplicated and unused context removed from the three requests (#500)
+
+**Why.** Rina asked for three cost items to be tried (#500, #501, #502). A captured
+sample of one verse (GEN 1:3) showed more duplication than #500 listed, most of it
+outside the review call. The figures in the issue were one small verse; this entry
+has the whole chapter.
+
+**Measurement tool: `scripts/capture_ai_requests.py`.** Copies a project and the
+`resources` folder beside `projects` into a scratch folder laid out like the data
+folder, points `LOCALAPPDATA` at it before any engine import, replaces
+`ai_http.urlopen` with a function that raises, and runs each verse through
+`prepare_verse_review` with a transport that records the POST body and answers it
+locally. The real project is read by `copytree` and never opened. It reports
+characters per request and per input field, the evidence catalog by kind, the check
+rows by field, and how many leading characters one review request shares with the
+next. The answers are stand-ins (the review answer is one `review` row per check);
+the mapping answer is the mapping the copy already stores, so the review request
+carries the mapping a real run produced, while the mapping request itself is issued
+cold, once per set of source units, as a first run would.
+
+Checked against the sample (`bridge-ai-sample-GEN-1-3.zip`): the mapping request
+(19,136 input, 24,926 body) and the alignment request (5,881 / 9,599) match to the
+character; the review input is 26,433 against 26,163, and the 270 are the scratch
+folder's longer path inside `resource_provenance` and `source_path`. So the before
+figures below are under 1% high for the review call, and the after figures carry no
+path at all.
+
+Two project copies were measured, both Hindi IRV Genesis as imported on 2026-11-05
+for #469: `hin_bible_gen` (holds the gpt-5.6 results; the sample was made from it)
+and `hin_hindi-irv-2_gen` (holds the gpt-5.6-terra results). The folder names do
+not say which run they held; the stored reviews' `model` does.
+
+**Before, GEN 1 (31 verses, 281 checks), characters.**
+
+| Call | Requests | Instructions | Schema | Input | Body |
+|---|---|---|---|---|---|
+| Mapping | 47 | 63,450 | 101,332 | 999,056 | 1,278,418 |
+| Alignment gap-fill | 31 | 62,930 | 20,522 | 366,469 | 511,248 |
+| Review | 31 | 246,941 | 52,571 | 2,067,141 | 2,545,602 |
+| Total | 109 | 373,321 | 174,425 | 3,432,666 | 4,335,268 |
+
+109 requests against the 111 the provider billed on the terra run (110 on the terra
+copy), so the capture is close to what a paid run sends. Largest fields: mapping
+`resource_provenance` 774,325; review `evidence_catalog` 1,019,673,
+`translationCore_checks` 276,707 (of which `approved_project_renderings` 148,496),
+`semantic_mapping_check_states` 228,252, `semantic_passage_mappings` 162,923,
+`current_alignment_groups` 96,994, `semantic_mapping_unresolved` 93,001.
+
+**What changed** (`tc_ai_bridge/ai_review_payload.py`, `ai_client.py`,
+`semantic_mapping.py`, `security.py`). Always on:
+
+- Review: `resource_provenance` is not sent; the stored `resourceProvenance` is
+  taken from the evidence pack as before. Evidence items are sent as `kind`,
+  `title`, `content`; the full item (path, version, provider, sha256) is still what
+  `evidence_used` stores. The `originalQuote` and `translationNote` items, which
+  restate `source_quote` and `occurrenceNote` on the check row, are left out unless
+  a check would then have nothing to cite (a review citing no evidence is never
+  applied automatically). `approved_project_renderings` is one row per distinct
+  rendering with a `count` and up to three source forms, most used first, at most
+  ten, over the same 120 records as before. `current_alignment_groups` is
+  `source_ids` / `target_ids`; a word carries `occurrence` / `occurrences` only
+  when it repeats. `language_context` is the two language names and
+  `qa_categories`. `target_verse` is the plain verse (`strip_usfm`).
+  `semantic_passage_mappings` is not sent; its two facts that the check states did
+  not have, the mapper's `confidence` and `evidence.explanation`, are carried onto
+  the sent check state. A `semantic_mapping_unresolved` row that is a check state
+  verbatim (an unresolved source anchor is in both lists) is not sent twice. The
+  stored `semanticMapping` pack is untouched.
+- Instructions: `semantic_passage_mappings` is no longer named; three sentences
+  describe the compact shapes. The static block is 725 characters longer.
+- Mapping: `resource_provenance` (the bundled-resource manifest) is not sent. It
+  still identifies the resources in `_fingerprint`, so stored mappings stay valid.
+- Alignment gap-fill: the `hebrew_topWords` / `tamil_bottomWords` alias lists are
+  gone. `ai_payload_manifest` reads `source_tokens_to_consider` for
+  `containsOriginalLanguage`.
+
+Off by default, `settings.set {"aiReview": {...}}` (admin only, like the model;
+the dialog controls come with #502's settings):
+
+- `leanEvidence`: a translationWords article without Bible References, Examples
+  from the Bible stories and Word Data; no TWL occurrence list; a Translation
+  Academy article without its example sections. These change what the model reads.
+- `countInInput`: the check count as `expected_check_reviews` in the input, not in
+  the instructions' last sentence or the schema's `minItems` / `maxItems`. With it
+  on the provider no longer enforces the row count; the parser's duplicate and
+  missing-row handling is unchanged.
+
+**After, GEN 1, same copy, characters of input.**
+
+| | Mapping | Alignment | Review | Total input | Total body |
+|---|---|---|---|---|---|
+| Before | 999,056 | 366,469 | 2,067,141 | 3,432,666 | 4,335,268 |
+| After (default) | 223,556 | 252,895 | 1,414,499 | 1,890,950 (−45%) | 2,628,116 (−39%) |
+| After, `leanEvidence` | 223,556 | 252,895 | 929,127 | 1,405,578 (−59%) | 2,129,158 (−51%) |
+
+GEN 1:3: mapping 19,136 → 2,636, alignment 5,881 → 4,386, review 26,433 → 16,197
+(9,706 with `leanEvidence`). The terra copy gives the same picture: 3,463,357 →
+1,885,357. The engine's rough token estimate for the request bodies goes from
+1,496,928 to 962,429 (704,175 lean); that estimate is not the provider's count.
+
+**Cache hypothesis, as far as it goes offline.** Before, two consecutive review
+requests had identical instructions on 2 of 30 pairs (the two with the same check
+count) and shared 7,920 leading characters of them; the answer schema differed on
+the same 28 pairs. That is consistent with the provider caching about the size of
+the instructions (1,762 tokens) and nothing after. With `countInInput` the
+instructions and the schema are identical on 30 of 30 pairs. What follows them is
+the input, and after this change two inputs share only their first 210 characters
+(`language_context` and an empty decisions list) before the verse reference. So the
+count move by itself can add at most the schema and those 210 characters to a
+cached prefix. A shared block worth caching has to be put there, which is #502's
+chapter context. Whether the provider caches across the instructions/schema/input
+boundary, and in what order it lays them out, needs a paid run.
+
+**Not done, and why.**
+- #500's first item, filtering `project_reviewer_decisions` to the verse's groups:
+  both copies have no reviewer decisions (62 characters over the chapter), so there
+  is nothing to measure on this benchmark. The last-100 list is as it was.
+- `translationCore_checks` in the gap-fill request (84,247 characters): #500 says
+  to test whether gap-fill needs the notes, not assume. Left in.
+
+**Found on the way, not fixed here.**
+1. Every verse of a reviewed chapter still sends a gap-fill request (31 of 31, 30
+   of 31 on the terra copy). `needs_alignment` is true while any source word has no
+   target, and some never will, so a re-review asks again each time.
+2. `evidence_pack_for_verse(max_chars=42000)` stops adding evidence when the budget
+   runs out: 6 checks in GEN 1 (in 1:22, 1:27, 1:28) are reviewed with no evidence
+   at all and 5 articles are cut mid-text. A check with no evidence can never be
+   applied automatically. The budget counts the restated quote and note too.
+3. `semantic_mapping_check_states` lists every check of the verse's passage, not
+   only the verse's own: 401 of 681 rows over the chapter (153,277 of 258,933
+   characters after this change) are for checks the request does not ask about.
+4. The same article is catalogued once per check: 97,432 characters of the review
+   catalog are repeats inside one verse, and the chapter's 162 distinct items would
+   be 220,049 characters if each went once against 847,260 now. #502 addresses this.
+
+**Verified.** Ran: the capture before and after on both copies; `pytest tests/ai
+tests/alignment/test_ai_review_auto_align.py
+tests/alignment/test_ai_review_stale_after_apply.py
+tests/service/test_ai_task_settings.py tests/service/test_ai_review_request_shape.py
+tests/semantic/test_semantic_mapping_stage3.py
+tests/alignment/test_ai_alignment_propose.py`. The full gates are run once for the
+#500/#502/#501 batch and recorded in the #501 entry. Not verified: any verdict. No
+request was sent to a provider.

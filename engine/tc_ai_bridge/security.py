@@ -32,6 +32,8 @@ def scan_tree_for_secrets(root:Path)->list[str]:
 _REVIEWER_RECORD_KEYS = frozenset({
     'reference', 'tool', 'groupId', 'checkId', 'decision', 'selectionText',
     'source_quote', 'selections', 'nothingToSelect', 'invalidated',
+    # #500: a term's renderings are grouped (`ai_review_payload.RENDERING_GROUP_FIELDS`).
+    'count', 'source_quotes',
 })
 
 
@@ -62,7 +64,7 @@ def ai_payload_manifest(reference:str,fields:dict[str,Any])->dict[str,Any]:
         'reference': reference,
         'sentFields': sorted(fields.keys()),
         'containsScripture': bool(fields.get('tamil_verse') or fields.get('target_verse') or fields.get('currentTarget') or fields.get('targetPassageContext')),
-        'containsOriginalLanguage': bool(fields.get('hebrew_topWords') or fields.get('source_topWords') or fields.get('hebrew') or fields.get('sourceSemanticUnits')),
+        'containsOriginalLanguage': bool(fields.get('hebrew_topWords') or fields.get('source_topWords') or fields.get('source_tokens_to_consider') or fields.get('hebrew') or fields.get('sourceSemanticUnits')),
         'containsTranslationHelps': bool(fields.get('translationCore_checks') or fields.get('evidence_catalog') or fields.get('resourceEvidence')),
         'containsReviewerIdentity': contains_reviewer_identity(fields),
         'unrelatedProjectFilesSent': False,

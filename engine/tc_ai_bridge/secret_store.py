@@ -384,6 +384,39 @@ class AppSettings:
         row = config['tasks'][task]
         return (str(row.get('model') or '').strip() or self.model), str(row.get('reasoningEffort') or 'medium')
 
+    # -- #500: what the tN/tW review request carries -------------------------
+
+    # Every key defaults to today's request. `leanEvidence` leaves out three
+    # sections of a translationWords article, the term's occurrence list and
+    # the example sections of a Translation Academy article; `countInInput`
+    # moves the verse's check count out of the instructions and the answer
+    # schema (the prompt-cache experiment). Both are experiments to be
+    # compared against a translator-judged run before either becomes default.
+    _AI_REVIEW_FLAGS = ('leanEvidence', 'countInInput')
+
+    @property
+    def ai_review(self) -> dict:
+        """The review-request options, complete, with the defaults filled in."""
+        raw = self.data.get('ai_review')
+        raw = raw if isinstance(raw, dict) else {}
+        return {flag: raw.get(flag) is True for flag in self._AI_REVIEW_FLAGS}
+
+    @ai_review.setter
+    def ai_review(self, value: Any) -> None:
+        """Validate and merge: a partial object keeps what it does not name."""
+        if not isinstance(value, dict):
+            raise ValueError('aiReview must be an object')
+        merged = dict(self.data.get('ai_review')) if isinstance(self.data.get('ai_review'), dict) else {}
+        for key, item in value.items():
+            if key in self._AI_REVIEW_FLAGS:
+                if not isinstance(item, bool):
+                    raise ValueError(f'aiReview.{key} must be true or false')
+                merged[key] = item
+            else:
+                raise ValueError(f'unknown aiReview setting {key!r}')
+        self.data['ai_review'] = merged
+        self.save_sanitized()
+
     @property
     def provider(self) -> str:
         """Free-text provider label (e.g. 'openai', 'anthropic', 'azure',

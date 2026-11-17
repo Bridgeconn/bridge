@@ -114,6 +114,7 @@ from tc_ai_bridge.alignment_reliability import (
     alignment_fingerprint, compile_link_proposal, structural_issues, target_token_fingerprint,
 )
 from tc_ai_bridge.ai_client import AIError, OpenAIResponsesClient, Transport
+from tc_ai_bridge.ai_review_payload import ReviewPayloadOptions
 from tc_ai_bridge.correction_wording import (
     ConfiguredCorrectionSuggestionProvider,
     CorrectionWordingService,
@@ -4826,10 +4827,13 @@ class BridgeEngine:
         if self._ai_transport is not None:
             kwargs["transport"] = self._ai_transport
         model, reasoning_effort = self.settings.ai_task_choice(task)
-        return OpenAIResponsesClient(
+        client = OpenAIResponsesClient(
             api_key, model=model, base_url=self.settings.api_base_url,
             reasoning_effort=reasoning_effort, **kwargs
         )
+        # #500: the review request's experiments, all off unless set.
+        client.review_options = ReviewPayloadOptions.from_settings(self.settings.ai_review)
+        return client
 
     def propose_ai_alignment(self, chapter: str, verse: str, mode: str = "gap_fill") -> dict[str, Any]:
         """Ask AI for individual token links, then compile them deterministically into
@@ -9265,6 +9269,9 @@ class BridgeEngine:
             # filled in), with `useOneModel` true meaning every task runs on
             # `model` at medium reasoning.
             "aiTasks": self.settings.ai_tasks,
+            # #500: experiments on what the review request carries; every
+            # flag false is the default request.
+            "aiReview": self.settings.ai_review,
             # #492: the model the one-time upgrade switch replaced, or "".
             "reviewModelSwitchedFrom": self.settings.review_model_switched_from,
             "reviewerName": self.settings.reviewer_name,
@@ -9314,6 +9321,13 @@ class BridgeEngine:
                     return True
                 if "reasoningEffort" in row and str(row.get("reasoningEffort") or "").strip().lower() != stored["reasoningEffort"]:
                     return True
+        # #500: what the review request carries decides its cost and what the
+        # model reads, so it is an admin's choice like the model itself.
+        review = kwargs.get("aiReview")
+        if isinstance(review, dict):
+            current_review = self.settings.ai_review
+            if any(key not in current_review or item != current_review[key] for key, item in review.items()):
+                return True
         return False
 
     def set_settings(self, **kwargs) -> dict[str, Any]:
@@ -9323,7 +9337,8 @@ class BridgeEngine:
             role = str(self.local_user().get("role") or Role.PROJECT_ADMIN.value)
             if role != Role.PROJECT_ADMIN.value:
                 raise AuthorizationError(
-                    "Only a project admin can change the AI model. Ask an admin, or leave the model as it is."
+                    "Only a project admin can change the AI model or the AI review options. "
+                    "Ask an admin, or leave them as they are."
                 )
         if "automaticUpdates" in kwargs:
             self.settings.automatic_updates = kwargs["automaticUpdates"]
@@ -9340,6 +9355,8 @@ class BridgeEngine:
             # raises ValueError, which the dispatcher reports as a failure
             # like an invalid reviewerMode.
             self.settings.ai_tasks = kwargs["aiTasks"]
+        if "aiReview" in kwargs:
+            self.settings.ai_review = kwargs["aiReview"]
         if kwargs.get("resetAiUsage") is True:
             # #477: Settings > AI provider's Reset for the lifetime counter.
             self.settings.reset_ai_usage()
