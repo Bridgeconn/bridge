@@ -983,7 +983,13 @@
       const list = pickable(v);
       const from = list.indexOf(anchor), to = list.indexOf(tokenKey);
       if (from >= 0 && to >= 0) {
-        const run = list.slice(Math.min(from, to), Math.max(from, to) + 1);
+        // Only words in the same place as the one clicked: a run between two
+        // unaligned words skips the aligned ones between them, and the other
+        // way round (2026-11-17, Joel; see AlignmentModal).
+        const context = contexts[v];
+        const placed = (key: string): boolean => Boolean(context && groupForTarget(context, splitVerseId(key).id));
+        const want = placed(tokenKey);
+        const run = list.slice(Math.min(from, to), Math.max(from, to) + 1).filter((key) => key === anchor || placed(key) === want);
         const kept = sameVerse ? picked : [];
         picked = [...kept, ...run.filter((key) => !kept.includes(key))];
         return;

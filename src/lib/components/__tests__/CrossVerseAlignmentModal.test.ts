@@ -963,6 +963,22 @@ describe("CrossVerseAlignmentModal, the page as three panels", () => {
     expect(block.lastElementChild).toBe(bank);
   });
 
+  // 2026-11-17 (Joel): the same on this page.
+  it("skips an aligned word between two unaligned ones on a Shift-click run", async () => {
+    const three = context("2", ["α", "β"], ["one", "two", "three"], 0);
+    const middle: AlignmentContext = { ...three, groups: [{ id: "G001", topIds: ["H001"], bottomIds: ["T002"] }, { id: "G002", topIds: ["H002"], bottomIds: [] }] };
+    getAlignmentRange.mockImplementation(async (_chapter: string, verses: string[]) => rangeFor(verses, { "1": V1, "2": middle, "3-4": V34 }));
+    realignWords.mockResolvedValue(middle);
+    await renderPage("2");
+    const bank = screen.getByLabelText("Word bank of verse 2");
+    await fireEvent.click(within(bank).getByRole("button", { name: "one" }));
+    await fireEvent.click(within(bank).getByRole("button", { name: "three" }), { shiftKey: true });
+    expect(screen.getByText("2 picked")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Pick up two from α" })).toHaveAttribute("aria-pressed", "false");
+    await fireEvent.click(screen.getByLabelText("Align 2 picked-up words to β in verse 2"));
+    await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "2", ["H002"], ["T001", "T003"], middle.alignment));
+  });
+
   it("links several picked words to a source word of another verse, one link each", async () => {
     crossVerseLink.mockResolvedValue({ link: LINK, source: V2, target: V34 });
     await renderPage("2");

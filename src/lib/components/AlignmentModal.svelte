@@ -473,7 +473,15 @@
       const from = pickable.indexOf(anchor);
       const to = pickable.indexOf(id);
       if (from >= 0 && to >= 0) {
-        const run = pickable.slice(Math.min(from, to), Math.max(from, to) + 1);
+        // 2026-11-17 (Joel): the run takes only words in the same place as the
+        // one clicked. From one unaligned word to another it skips the words
+        // between them that are already aligned (they sit in a column, and
+        // were being picked up and moved with the rest); between two aligned
+        // words it skips the unaligned ones. A box drawn over the same words
+        // has always done this.
+        const placed = (p: string): boolean => Boolean(context && groupForTarget(context, p));
+        const want = placed(id);
+        const run = pickable.slice(Math.min(from, to), Math.max(from, to) + 1).filter((p) => p === anchor || placed(p) === want);
         picked = [...picked, ...run.filter((p) => !picked.includes(p))];
         return;
       }

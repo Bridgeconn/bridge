@@ -369,6 +369,25 @@ describe("AlignmentModal", () => {
     expect(unalignWords).not.toHaveBeenCalled();
   });
 
+  // 2026-11-17 (Joel): Shift-click from one unaligned word to another must not
+  // take the aligned word between them with it.
+  it("skips an aligned word between two unaligned ones on a Shift-click run", async () => {
+    const tokens = [token("T001", "आदि"), token("T002", "में"), token("T003", "सृष्टि")];
+    const ctx = context({
+      bottomTokens: tokens,
+      groups: [{ id: "G001", topIds: ["H001"], bottomIds: ["T002"] }, { id: "G002", topIds: ["H002"], bottomIds: [] }],
+    });
+    realignWords.mockResolvedValue(ctx);
+    await open(ctx);
+    await fireEvent.click(screen.getByRole("button", { name: "आदि" }));
+    await fireEvent.click(screen.getByRole("button", { name: "सृष्टि" }), { shiftKey: true });
+    expect(screen.getByText("2 picked")).toBeInTheDocument();
+    // The aligned word, in its column, is not picked.
+    expect(screen.getByRole("button", { name: "Pick up में from בְּרֵאשִׁית" })).toHaveAttribute("aria-pressed", "false");
+    await fireEvent.click(screen.getByLabelText("Align 2 picked-up words to בָּרָא"));
+    await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "1", ["H002"], ["T001", "T003"], ctx.alignment));
+  });
+
   it("gives an aligned word small remove and order controls with instant hints", async () => {
     const ctx = context({ groups: [{ id: "G001", topIds: ["H001"], bottomIds: ["T001", "T002"] }, { id: "G002", topIds: ["H002"], bottomIds: [] }] });
     await open(ctx);

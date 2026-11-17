@@ -25659,3 +25659,26 @@ backups list depend on it), and a real close and reopen restoring a book's tabs.
 
 **Adjacent, reported not fixed.** A stack trace prints from `SplashScreen.test.ts:45`
 during the Vitest run although every test passes.
+
+## 2026-11-17 — Alignment: a Shift-click run skips words in the other place (#497)
+
+Found by Joel on the desktop app. On both alignment tabs, Shift-click from one unaligned
+target word to another took every word between them in verse order, including a word
+already aligned to a source word: it was picked up in its column and moved with the rest.
+The drag box never did this, because it only looks at the word bank.
+
+The run now takes only words in the same place as the one clicked (`handleWordClick` in
+`AlignmentModal.svelte` and `CrossVerseAlignmentModal.svelte`): between two unaligned words
+it skips aligned ones, between two aligned words it skips unaligned ones. Ctrl-click still
+adds any one word on purpose. On the Word tab this was the #285 behaviour; on the
+Cross-verse tab it came with the multi-select added on 2026-11-16, written the same way.
+
+**Ran.** `npm run check` 0 errors 0 warnings; `npm run test` 138 files, 1345 tests (one new
+test per page for this case); `npm run build`.
+
+**Not run.** `cargo check` / `cargo test` (no shell file changed); engine pytest (no Python
+changed).
+
+**Verified on the desktop app.** Joel confirmed the fix on both tabs before this was
+committed.
+
