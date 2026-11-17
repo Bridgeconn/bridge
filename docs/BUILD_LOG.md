@@ -25526,3 +25526,144 @@ tests/semantic/test_semantic_mapping_stage3.py
 tests/alignment/test_ai_alignment_propose.py`. The full gates are run once for the
 #500/#502/#501 batch and recorded in the #501 entry. Not verified: any verdict. No
 request was sent to a provider.
+
+
+## 2026-11-17 — AI review cost: several verses per request, a chapter-shared context and a whole-chapter option, all off by default (#502)
+
+**Why.** #474 designed sending a window of verses with one shared evidence catalog
+and was closed as a design note. #502 asked for it to be built, with a context block
+shared by a chapter and a whole-chapter option, and measured offline before any paid
+run.
+
+**Default.** `aiReview.versesPerRequest` is 1 and both options are off. Then
+`_start_ai_review_spec` passes no `run_chapter`, the job is the per-verse loop it
+was, and nothing in `ai_review_windows.py` runs. Checked two ways: the capture of
+GEN 1 with the defaults is byte-identical, request for request (109 of 109), to the
+capture taken before any of this was written; and
+`test_one_verse_per_request_is_the_default_and_is_the_single_verse_review`.
+
+**What was built** (`tc_ai_bridge/ai_review_windows.py`, with `ai_client.py`,
+`ai_review_jobs.py`, `bridge_service.py`, `secret_store.py`).
+
+- Shared with the single-verse review, by extraction and not by copy:
+  `build_verse_evidence`, `review_check_schema` / `review_issue_schema`,
+  `review_project_tail`, `frozen_reviewer_decisions` and
+  `OpenAIResponsesClient.parse_review_rows` (the selection gate, missing rows,
+  identity checks, `gate_check_reviews`, the semantic policy). `_post_structured`
+  takes a per-call `timeout`. In the service, `_begin_ai_review_verse` and
+  `_finish_ai_review_verse` are the two ends of `_run_ai_review_for_project`, used
+  by both runs, so a verse is finished (usage counter, gap-fill alignment saved,
+  safe selections, issue lifecycle) by one body of code.
+- `WindowReviewSession`: each verse makes its own calls first, as
+  `prepare_verse_review` does (fingerprint, semantic mapping, gap-fill), and its
+  block is built; verses join the current window until `window_accepts` says no;
+  the window is sent as `tc_window_review`. Windows are formed as the job goes,
+  because a verse's size is known only once its own calls have returned.
+- A window: contiguous verses in the job's order, at most `versesPerRequest` (6 at
+  most), never across a section heading (`<chapter>.headings.json`), closed early
+  at 24 checks or 60,000 characters (#474's caps, as constants). A verse over a cap
+  alone is a window of one. Whole chapter: no verse limit, caps of 100 checks and
+  240,000 characters, and a heading closes a window that is already half full, so
+  a chapter too large for one request is cut at its headings where it has them.
+  The two whole-chapter caps are provisional; nothing has tested a provider's
+  output limit.
+- The request: `language_context`, `project_reviewer_decisions`,
+  `evidence_catalog`, `verses[]`, then the window's
+  `semantic_mapping_check_states` / `_unresolved` once (verses of one passage hold
+  the same rows). Evidence ids are content ids (`tw:god`, `ta:figs-metaphor`,
+  `twl:god`, verse-scoped ids for a verse's own items); an article whose text
+  differs under the same id (cut by the per-verse 42,000 budget) gets the id with a
+  content hash. Token ids are `<verse>|<id>`.
+- The answer: `summaries[]`, `check_reviews[]` and `qa_issues[]`, every row with
+  its verse `reference`; the schema pins the window's total row count. Rows are
+  grouped by verse and each verse goes through `parse_review_rows`. A verse with no
+  rows gets today's missing-row `review` rows. A verse with an unknown token or
+  evidence id, a duplicated or foreign check fails alone and the others are
+  stored. A row naming a verse outside the window makes the whole answer unusable.
+- Whole-window failure (transport, timeout, HTTP error, not JSON, not
+  attributable): retried once at half size, then verse by verse; a one-verse
+  window that fails is a failed verse.
+- Stored per verse exactly as before, plus `batch: {windowId, verses, attempt,
+  chapterContext, share, windowUsage, windowEstimatedCostUSD}`. The fingerprint is
+  the verse's own, taken before its first call; a verse whose fingerprint changed
+  while its window was in flight is discarded alone with today's stale error. Usage
+  per verse is its own calls plus its share (by block size) of every review request
+  it took part in, failed attempts included; shares sum to the request's tokens
+  exactly, and the request's own usage is on `batch`.
+- Timeout per window: 90 s + 40 s a verse, capped at 300 s (900 s whole chapter),
+  never below the client's 240 s.
+- Chapter context: every article the job's verses cite, each once, and the reviewer
+  decisions as they stood when the job started, serialised identically at the front
+  of every request. It forces the count out of the instructions and schema
+  (`countInInput`), because a number ahead of the shared block would end the shared
+  prefix.
+- Job: `currentWindow` on the snapshot; a verse with no outcome after a chapter's
+  window run is reported failed rather than left out.
+
+**UI.** Settings > AI provider > Review request: Verses per request (1–6), Whole
+chapter in one request, Share one context block across a chapter, and #500's two
+switches, all locked for a non-admin. The AI tab shows "Verses 1:4–7 are being
+reviewed together in one request" under the progress bar while a window of more
+than one verse is in flight.
+
+**Measured offline, GEN 1, review request input in characters** (the mapping and
+gap-fill requests are per verse and the same in every row: 223,556 + 252,895):
+
+| Setting | Review requests | Review input | Of it, repeats the previous request's start | All requests, input |
+|---|---|---|---|---|
+| 1 verse (default, after #500) | 31 | 1,414,499 | 6,319 | 1,890,950 |
+| 4 verses, caps as designed | 26 | 1,289,750 | 19,980 | 1,766,201 |
+| 4 verses, caps lifted (80 checks, 400,000) | 10 | 990,502 | 1,938 | 1,466,953 |
+| 6 verses, caps lifted | 8 | 976,766 | 1,509 | 1,453,217 |
+| Whole chapter | 6 | 939,058 | 1,087 | 1,415,509 |
+| Chapter context, 1 verse | 31 | 7,525,135 | 6,733,129 | 8,001,586 |
+| Chapter context, 4 verses, caps lifted | 10 | 2,703,396 | 2,019,937 | 3,179,847 |
+| Chapter context, whole chapter | 4 | 1,352,508 | 673,312 | 1,828,959 |
+| 4 verses, caps lifted, `leanEvidence` | 10 | 697,327 | 1,938 | 1,173,778 |
+
+What these say:
+
+- With #474's caps a setting of 4 barely batches GEN 1: windows of one or two
+  verses, 26 requests for 31 verses. A GEN 1 verse averages 9 checks and 45,000
+  characters of review input, so 24 checks and 60,000 characters are reached at
+  once. The caps were written against smaller verses. Raising them is a decision
+  for the paid run, because it is exactly the "more checks in one answer" risk.
+- With the caps lifted, windows follow the section headings ([2, 3, 3, 4, 1, 4, 2,
+  4, 4, 4] verses) and the review input falls 30% (1,414,499 → 990,502). Going to 6
+  or to the whole chapter adds little on input; the rest of batching's saving, one
+  reasoning run and one envelope per window, is on the output side and cannot be
+  measured offline.
+- The chapter's shared catalog is 224,437 characters. Sent with every request it
+  multiplies the input (7.5M characters at one verse per request). If the provider
+  served every repeat from its cache at a tenth, the review input would count as
+  about 1,465,000 at one verse (worse than no context), 885,000 at 4 lifted and
+  747,000 whole-chapter, against 990,502 and 939,058 without it. So it helps only
+  with large windows and only if the cache really hits; if it misses, it costs
+  1.4 to 5 times more. The cache has a minimum prefix and a short lifetime, and a
+  window takes minutes. This needs the paid run before anyone turns it on.
+
+**Known differences from the single-verse run** (why the default stays 1): a verse
+does not see a rendering applied from an earlier verse of the same window; with
+chapter context it does not see a reviewer decision made after the job started;
+per-verse usage is an estimate, the window's is exact.
+
+**Deviations from #474 as written.** The setting's default is 1, not 4 (the
+instruction for this work). The mapping is still called per verse rather than once
+per window: `checks_for_seed_passage` already maps a whole structural passage in
+one request and later verses of it are cache hits, so the request count is the same
+and the single-verse result is reproduced exactly. `summary` is `summaries[]`.
+
+**Not verified.** No request reached a provider, so nothing is known about verdict
+quality per check in a window, whether a long answer is cut off, timeouts, or what
+the provider caches. The desktop app was not run: the dialog controls and the AI
+tab line are covered by Vitest only.
+
+**Tests.** `tests/ai/test_ai_review_windows.py` (13: defaults, timeout, headings,
+window formation and caps, whole chapter, content ids, the answer split, usage
+shares, schema, instructions, manifest) and
+`tests/service/test_ai_review_window_jobs.py` (7, on a five-verse Titus with real
+helps: the default run; windows cut at the heading with one stored review per
+verse; half-size retry then verse by verse; a bad verse failing alone and retried
+alone; a verse edited mid-flight discarded alone; the chapter context block
+identical across requests; whole chapter). Vitest: 3 new SettingsModal tests and
+`aiReviewUi.test.ts`.

@@ -55,6 +55,9 @@ class _AIReviewJob:
         self.current_verse: Optional[str] = None
         self.current_stage = "Queued"
         self.current_verse_percent = 0
+        # #502: the verses of the request in flight when several verses go in
+        # one request; empty in the single-verse run.
+        self.current_window: list[str] = []
         self.results: dict[str, dict[str, Any]] = {}
         self.latest_result_key: Optional[str] = None
         self.latest_result: Optional[dict[str, Any]] = None
@@ -105,6 +108,7 @@ class _AIReviewJob:
                 "currentChapter": self.current_chapter,
                 "currentVerse": self.current_verse,
                 "currentStage": self.current_stage,
+                "currentWindow": list(self.current_window),
                 "results": compact_results,
                 # Only one full evidence bundle crosses the polling boundary.
                 # Older full results live in the per-verse companion cache.
@@ -120,6 +124,63 @@ class _AIReviewJob:
 
 Progress = Callable[[int, str], None]
 RunVerse = Callable[[str, str, str, Progress, threading.Event], dict[str, Any]]
+# #502: one chapter's verses reviewed in windows. The callable reports every
+# verse's outcome through the `_JobReport` it is handed and returns when the
+# chapter is done or the job is cancelled.
+RunChapter = Callable[[str, list[str], str, "_JobReport", threading.Event], None]
+
+
+def _verse_result(chapter: str, verse: str, payload: Optional[dict[str, Any]], error: Optional[str]) -> dict[str, Any]:
+    """One verse's entry in a job's results, succeeded or failed: the shape
+    the single-verse loop has always stored."""
+    result: dict[str, Any] = {
+        "summary": "", "checkReviews": [], "qaIssues": [],
+        "alignmentProposal": None, "alignmentWasAIProposed": False,
+        "appliedSelections": [], "skippedSelections": [], "usage": {},
+    }
+    if error is None:
+        result.update(copy.deepcopy(payload or {}))
+        result.update({"chapter": chapter, "verse": verse, "status": "succeeded", "error": None})
+    else:
+        result.update({"chapter": chapter, "verse": verse, "status": "failed", "error": str(error)})
+    return result
+
+
+class _JobReport:
+    """What a window run tells its job (#502). Nothing here raises."""
+
+    def __init__(self, job: "_AIReviewJob", chapter: str) -> None:
+        self._job = job
+        self._chapter = chapter
+
+    def stage(self, verse: str, percent: int, stage: str) -> None:
+        with self._job.lock:
+            self._job.current_chapter = self._chapter
+            self._job.current_verse = str(verse)
+            self._job.current_verse_percent = max(0, min(100, int(percent)))
+            self._job.current_stage = str(stage)
+
+    def window(self, verses: list[str]) -> None:
+        with self._job.lock:
+            self._job.current_chapter = self._chapter
+            self._job.current_window = [str(v) for v in verses]
+            if verses:
+                self._job.current_verse = str(verses[0])
+                self._job.current_verse_percent = 64
+                self._job.current_stage = "AI reviewing Notes, Words and whole verse"
+
+    def result(self, verse: str, payload: Optional[dict[str, Any]] = None, error: Optional[str] = None) -> None:
+        # A result that arrives after cancellation is not retained, as in the
+        # single-verse loop.
+        if self._job.cancel_event.is_set():
+            return
+        key = f"{self._chapter}:{verse}"
+        result = _verse_result(self._chapter, str(verse), payload, error)
+        with self._job.lock:
+            self._job.results[key] = result
+            self._job.latest_result_key = key
+            self._job.latest_result = result
+            self._job.current_verse_percent = 0
 
 
 class AIReviewJobManager:
@@ -130,7 +191,11 @@ class AIReviewJobManager:
         self._active_job_id: Optional[str] = None
         self._lock = threading.RLock()
 
-    def start(self, spec: AIReviewJobSpec, *, run_verse: RunVerse) -> dict[str, Any]:
+    def start(
+        self, spec: AIReviewJobSpec, *, run_verse: RunVerse, run_chapter: Optional[RunChapter] = None,
+    ) -> dict[str, Any]:
+        """`run_chapter`, when given, replaces the per-verse loop for each
+        chapter (#502); without it the job is the single-verse run."""
         if spec.mode not in {"basic", "advanced"}:
             raise AIReviewJobError("AI reviewer mode must be basic or advanced.")
         if spec.scope not in {"verse", "chapter", "book"}:
@@ -144,7 +209,7 @@ class AIReviewJobManager:
             self._active_job_id = job.id
         threading.Thread(
             target=self._run,
-            args=(job, run_verse),
+            args=(job, run_verse, run_chapter),
             name=f"bridge-ai-review-{job.id[:8]}",
             daemon=True,
         ).start()
@@ -198,11 +263,34 @@ class AIReviewJobManager:
                 resume_of=job.id,
             )
 
-    def _run(self, job: _AIReviewJob, run_verse: RunVerse) -> None:
+    def _run(self, job: _AIReviewJob, run_verse: RunVerse, run_chapter: Optional[RunChapter] = None) -> None:
         with job.lock:
             job.state = "running"
         try:
             for chapter in job.spec.chapters:
+                if run_chapter is not None:
+                    verses = list(job.spec.chapter_verses.get(chapter, []))
+                    if not verses:
+                        continue
+                    if self._cancelled(job):
+                        return
+                    with job.lock:
+                        job.current_chapter = chapter
+                        job.current_verse = verses[0]
+                        job.current_verse_percent = 0
+                        job.current_stage = "Preparing AI review"
+                    report = _JobReport(job, chapter)
+                    run_chapter(chapter, verses, job.spec.mode, report, job.cancel_event)
+                    if self._cancelled(job):
+                        return
+                    with job.lock:
+                        job.current_window = []
+                    # Every verse of the chapter has an outcome, whatever the
+                    # window run reported.
+                    for verse in verses:
+                        if f"{chapter}:{verse}" not in job.results:
+                            report.result(verse, error="AI review returned no result for this verse.")
+                    continue
                 for verse in job.spec.chapter_verses.get(chapter, []):
                     if self._cancelled(job):
                         return
@@ -275,6 +363,7 @@ class AIReviewJobManager:
             job.current_stage = "Cancelled"
             job.current_chapter = None
             job.current_verse = None
+            job.current_window = []
             job.current_verse_percent = 0
             job.finished_at = _now()
         return True

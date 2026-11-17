@@ -143,7 +143,9 @@ def test_review_options_are_off_by_default_and_change_only_what_they_name(import
     engine = BridgeEngine(settings=settings, ai_transport=_recording_transport(requests))
     call(engine, "project.open", {"path": project_path})
 
-    assert call(engine, "settings.get")["result"]["aiReview"] == {"leanEvidence": False, "countInInput": False}
+    defaults = {"leanEvidence": False, "countInInput": False, "wholeChapter": False,
+                "chapterContext": False, "versesPerRequest": 1}
+    assert call(engine, "settings.get")["result"]["aiReview"] == defaults
     _review(engine)
     [default_request] = _by_schema(requests, "tc_full_review")
     default_input = json.loads(default_request["input"])
@@ -152,7 +154,7 @@ def test_review_options_are_off_by_default_and_change_only_what_they_name(import
     assert refused["success"] is False
     assert call(engine, "settings.set", {"aiReview": {"unknown": True}})["success"] is False
     changed = call(engine, "settings.set", {"aiReview": {"leanEvidence": True, "countInInput": True}})
-    assert changed["result"]["aiReview"] == {"leanEvidence": True, "countInInput": True}
+    assert changed["result"]["aiReview"] == {**defaults, "leanEvidence": True, "countInInput": True}
 
     requests.clear()
     _review(engine)

@@ -63,6 +63,8 @@ SCHEMA_KINDS = {
     "bridge_semantic_mapping_v04": "mapping",
     "tc_alignment_proposal": "alignment",
     "tc_full_review": "review",
+    # #502: several verses in one review request.
+    "tc_window_review": "review",
 }
 
 
@@ -135,14 +137,26 @@ class Recorder:
             "inputFields": {key: _chars(value) for key, value in input_obj.items()},
         }
         if kind == "review":
-            entry["checks"] = len(input_obj.get("translationCore_checks") or [])
+            # A window request (#502) nests each verse under `verses`; a
+            # single-verse request is its own one verse.
+            blocks = input_obj.get("verses") if isinstance(input_obj.get("verses"), list) else [input_obj]
+            checks = [c for block in blocks for c in (block.get("translationCore_checks") or [])]
+            entry["checks"] = len(checks)
+            entry["verses"] = [str(block.get("reference") or "") for block in blocks]
+            if "verses" in input_obj:
+                entry["reference"] = f"{entry['verses'][0]} .. {entry['verses'][-1]}" if len(blocks) > 1 else entry["verses"][0]
+                verse_fields: dict[str, int] = {}
+                for block in blocks:
+                    for key, value in block.items():
+                        verse_fields[key] = verse_fields.get(key, 0) + _chars(value)
+                entry["verseFields"] = verse_fields
             by_kind: dict[str, int] = {}
             for item in (input_obj.get("evidence_catalog") or {}).values():
                 name = str(item.get("kind") or "?") if isinstance(item, dict) else "?"
                 by_kind[name] = by_kind.get(name, 0) + _chars(item)
             entry["evidenceByKind"] = by_kind
             check_fields: dict[str, int] = {}
-            for check in input_obj.get("translationCore_checks") or []:
+            for check in checks:
                 for key, value in check.items():
                     check_fields[key] = check_fields.get(key, 0) + _chars(value)
             entry["checkFields"] = check_fields
@@ -177,6 +191,25 @@ class Recorder:
                     "passage_assessment": "MAPPED" if not unresolved else "NEEDS_REVIEW"}
         if kind == "alignment":
             return {"links": [], "implicit_top_ids": [], "target_only_ids": [], "review_notes": []}
+        if kind == "review" and isinstance(input_obj.get("verses"), list):
+            return {
+                "summaries": [
+                    {"reference": str(block.get("reference") or ""), "summary": "Offline capture stand-in."}
+                    for block in input_obj["verses"]
+                ],
+                "check_reviews": [
+                    {
+                        "reference": str(block.get("reference") or ""),
+                        "tool": str(c.get("tool") or ""), "group_id": str(c.get("groupId") or ""),
+                        "check_id": str(c.get("checkId") or ""), "source_quote": str(c.get("source_quote") or ""),
+                        "selection_ids": [], "nothing_to_select": False, "verdict": "review",
+                        "severity": "info", "rationale": "Offline capture stand-in; not a model verdict.",
+                        "suggested_correction": "", "confidence": 0.0, "evidence_ids": [],
+                    }
+                    for block in input_obj["verses"] for c in (block.get("translationCore_checks") or [])
+                ],
+                "qa_issues": [],
+            }
         if kind == "review":
             return {
                 "summary": "Offline capture stand-in.",
@@ -290,6 +323,43 @@ def run_chapter(project: Any, client: Any, recorder: Recorder, chapter: str, ver
     return outcomes
 
 
+def run_chapter_windows(
+    project: Any, client: Any, recorder: Recorder, chapter: str, verses: list[str], window_settings: Any,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """The window run (#502): the same `WindowReviewSession` the job uses, with
+    a reporter that only keeps score. Returns the per-verse outcomes and the
+    windows that were sent."""
+    import threading
+
+    from tc_ai_bridge.ai_review_windows import WindowReviewSession
+
+    book = str(project.book_id).upper()
+    outcomes: dict[str, dict[str, Any]] = {v: {"verse": v, "requests": 0, "seconds": 0.0, "error": ""} for v in verses}
+
+    class Reporter:
+        def begin(self, verse: str) -> None:
+            recorder.current_reference = f"{book} {chapter}:{verse}"
+
+        def stage(self, verse: str, percent: int, text: str) -> None:
+            pass
+
+        def window(self, window_verses: list[str]) -> None:
+            recorder.current_reference = f"{book} {chapter}:{window_verses[0]}"
+
+        def done(self, verse: str, prepared: Any, reviews: Any, issues: Any, summary: str, meta: Any) -> None:
+            pass
+
+        def failed(self, verse: str, error: Exception, usage: Any, cost: float) -> None:
+            outcomes[verse]["error"] = f"{type(error).__name__}: {error}"
+
+        def cancelled(self, verse: str) -> None:
+            outcomes[verse]["error"] = "cancelled"
+
+    session = WindowReviewSession(client, project, chapter, verses, window_settings)
+    session.run(Reporter(), threading.Event())
+    return list(outcomes.values()), session.windows_sent
+
+
 def summarise(recorder: Recorder, outcomes: list[dict[str, Any]], label: str, meta: dict[str, Any]) -> dict[str, Any]:
     by_kind: dict[str, dict[str, Any]] = {}
     for req in recorder.requests:
@@ -323,8 +393,16 @@ def summarise(recorder: Recorder, outcomes: list[dict[str, Any]], label: str, me
         1 for a, b in zip(review, review[1:]) if a["_instructions"] == b["_instructions"]
     )
     same_schema = sum(1 for a, b in zip(review, review[1:]) if a["_schema"] == b["_schema"])
+    # Input characters that follow what a request shares with the one before
+    # it: the part a prefix cache could not serve even if it served all of the
+    # shared part. The first request shares nothing.
+    beyond_shared = (len(review[0]["_input"]) if review else 0) + sum(
+        len(b["_input"]) - shared for b, shared in zip(review[1:], prefix_input)
+    )
     prefix = {
         "pairs": len(prefix_instructions),
+        "inputBeyondShared": beyond_shared,
+        "inputShared": sum(prefix_input),
         "instructionsSharedMin": min(prefix_instructions, default=0),
         "instructionsSharedMean": round(sum(prefix_instructions) / len(prefix_instructions)) if prefix_instructions else 0,
         "instructionsIdenticalPairs": whole_instructions,
@@ -379,7 +457,12 @@ def print_summary(summary: dict[str, Any]) -> None:
     print(f"\nreview request to the next ({prefix['pairs']} pairs): instructions identical on "
           f"{prefix['instructionsIdenticalPairs']}, schema identical on {prefix['schemaIdenticalPairs']}; "
           f"input shares {prefix['inputSharedMin']:,} leading characters at least, "
-          f"{prefix['inputSharedMean']:,} on average")
+          f"{prefix['inputSharedMean']:,} on average; "
+          f"{prefix['inputShared']:,} review input characters repeat the previous request's start, "
+          f"{prefix['inputBeyondShared']:,} do not")
+    if summary.get("windows"):
+        sizes = [len(w["verses"]) for w in summary["windows"]]
+        print(f"windows sent: {len(sizes)} (verses per window: {sizes})")
     failed = [v for v in summary["verses"] if v["error"]]
     for verse in failed:
         print(f"  verse {verse['verse']} failed: {verse['error']}")
@@ -399,6 +482,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--lean-evidence", action="store_true",
                         help="#500 switch (off by default in Bridge): leave out the tW cross-reference sections, "
                              "the TWL occurrence list and the tA example sections.")
+    parser.add_argument("--verses-per-request", type=int, default=1,
+                        help="#502: verses per review request, 1 to 6. 1 is the single-verse run.")
+    parser.add_argument("--whole-chapter", action="store_true",
+                        help="#502: no verse limit; a request closes at the whole-chapter caps.")
+    parser.add_argument("--chapter-context", action="store_true",
+                        help="#502: one shared block (decisions and every article of the chapter) first in every request.")
+    parser.add_argument("--window-max-checks", type=int, default=0,
+                        help="Measurement only: replace the 24-check cap of a fixed-size window.")
+    parser.add_argument("--window-max-chars", type=int, default=0,
+                        help="Measurement only: replace the 60,000-character cap of a fixed-size window.")
     parser.add_argument("--count-in-input", action="store_true",
                         help="#500 cache experiment: the check count in the input, not in the instructions or schema.")
     args = parser.parse_args(argv)
@@ -434,8 +527,25 @@ def main(argv: list[str] | None = None) -> int:
     verses = [v.strip() for v in args.verses.split(",") if v.strip()] or [
         v for v in project.verses(chapter) if v != "front"
     ]
+    from tc_ai_bridge import ai_review_windows
+    from tc_ai_bridge.ai_review_windows import WindowSettings
+    # The caps are constants in Bridge. Lifting them here shows what a window
+    # size would send if they were different; it changes nothing in the app.
+    if args.window_max_checks:
+        ai_review_windows.WINDOW_MAX_CHECKS = args.window_max_checks
+    if args.window_max_chars:
+        ai_review_windows.WINDOW_MAX_INPUT_CHARS = args.window_max_chars
+    window_settings = WindowSettings.from_settings({
+        "versesPerRequest": args.verses_per_request, "wholeChapter": args.whole_chapter,
+        "chapterContext": args.chapter_context,
+    })
+    windows: list[dict[str, Any]] = []
     try:
-        outcomes = run_chapter(project, client, recorder, chapter, verses)
+        if window_settings.windowed:
+            outcomes, windows = run_chapter_windows(project, client, recorder, chapter, verses, window_settings)
+        else:
+            # The defaults: exactly the call the job makes for each verse.
+            outcomes = run_chapter(project, client, recorder, chapter, verses)
     finally:
         close = getattr(project, "close", None)
         if callable(close):
@@ -443,7 +553,14 @@ def main(argv: list[str] | None = None) -> int:
     summary = summarise(recorder, outcomes, args.label, {
         "book": str(project.book_id).upper(), "chapter": chapter,
         "project": source.name, "model": client.model,
-        "options": {"leanEvidence": args.lean_evidence, "countInInput": args.count_in_input},
+        "options": {
+            "leanEvidence": args.lean_evidence, "countInInput": args.count_in_input,
+            "versesPerRequest": window_settings.verses_per_request, "wholeChapter": window_settings.whole_chapter,
+            "chapterContext": window_settings.chapter_context,
+            "windowMaxChecks": ai_review_windows.WINDOW_MAX_CHECKS,
+            "windowMaxChars": ai_review_windows.WINDOW_MAX_INPUT_CHARS,
+        },
+        "windows": windows,
     })
     print_summary(summary)
     if args.out:

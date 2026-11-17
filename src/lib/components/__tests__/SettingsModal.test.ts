@@ -1095,6 +1095,48 @@ describe("SettingsModal review model guard (#492)", () => {
     expect(screen.getByText("Only a project admin can change the AI model.")).toBeInTheDocument();
   });
 
+  it("shows one verse per request and every experiment off when nothing is stored, and saves them back (#502)", async () => {
+    getSettings.mockResolvedValue(settings({ localUserRole: "project_admin" }));
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+    const size = await screen.findByLabelText("Verses per request");
+    expect(size).toHaveValue("1");
+    for (const name of [/Whole chapter in one request/, /Share one context block across a chapter/,
+      /Send shorter reference articles/, /Keep the check count out of the instructions/]) {
+      expect(screen.getByRole("checkbox", { name })).not.toBeChecked();
+    }
+    await fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
+    await waitFor(() => expect(setSettings).toHaveBeenCalledWith(expect.objectContaining({
+      aiReview: { versesPerRequest: 1, wholeChapter: false, chapterContext: false, leanEvidence: false, countInInput: false },
+    })));
+  });
+
+  it("saves a chosen window size as a number, and whole chapter greys the size out (#502)", async () => {
+    getSettings.mockResolvedValue(settings({
+      localUserRole: "project_admin",
+      aiReview: { versesPerRequest: 2, wholeChapter: false, chapterContext: false, leanEvidence: true, countInInput: false },
+    }));
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+    const size = await screen.findByLabelText("Verses per request");
+    expect(size).toHaveValue("2");
+    expect(screen.getByRole("checkbox", { name: /Send shorter reference articles/ })).toBeChecked();
+    await fireEvent.change(size, { target: { value: "4" } });
+    await fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
+    await waitFor(() => expect(setSettings).toHaveBeenCalledWith(expect.objectContaining({
+      aiReview: { versesPerRequest: 4, wholeChapter: false, chapterContext: false, leanEvidence: true, countInInput: false },
+    })));
+    await fireEvent.click(screen.getByRole("checkbox", { name: /Whole chapter in one request/ }));
+    expect(screen.getByLabelText("Verses per request")).toBeDisabled();
+  });
+
+  it("locks the review-request options for someone who is not a project admin (#502)", async () => {
+    getSettings.mockResolvedValue(settings({ localUserRole: "editor" }));
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+    expect(await screen.findByLabelText("Verses per request")).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: /Whole chapter in one request/ })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: /Send shorter reference articles/ })).toBeDisabled();
+    expect(screen.getByText("Only a project admin can change these.")).toBeInTheDocument();
+  });
+
   it("says when the update changed a stored gpt-5.6", async () => {
     getSettings.mockResolvedValue(settings({ reviewModelSwitchedFrom: "gpt-5.6" }));
     render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });

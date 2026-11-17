@@ -115,6 +115,7 @@ from tc_ai_bridge.alignment_reliability import (
 )
 from tc_ai_bridge.ai_client import AIError, OpenAIResponsesClient, Transport
 from tc_ai_bridge.ai_review_payload import ReviewPayloadOptions
+from tc_ai_bridge.ai_review_windows import WindowReviewSession, WindowSettings
 from tc_ai_bridge.correction_wording import (
     ConfiguredCorrectionSuggestionProvider,
     CorrectionWordingService,
@@ -4997,14 +4998,7 @@ class BridgeEngine:
         progress_callback: Callable[[int, str], None],
         cancel_event: threading.Event,
     ) -> dict[str, Any]:
-        if cancel_event.is_set():
-            project.mark_issue_resolutions_recheck(
-                chapter, verse, "cancelled", reason="AI review was cancelled before this verse started.",
-            )
-            raise AIError("AI review cancelled before the verse started.")
-        project.mark_issue_resolutions_recheck(
-            chapter, verse, "running", reason="Automatic AI recheck started.",
-        )
+        self._begin_ai_review_verse(project, chapter, verse, cancel_event)
         client: OpenAIResponsesClient | None = None
         usage_mark = 0
         try:
@@ -5016,75 +5010,10 @@ class BridgeEngine:
             proposal, review_alignment, reviews, issues, summary, meta = client.prepare_verse_review(
                 project, chapter, verse, alignment, progress_callback=progress_callback,
             )
-            # #476: the sum of the verse's calls (mapping, gap-fill, review).
-            total_tokens = int(meta.get("total_tokens_for_prepare", 0) or 0)
-            cost = float(meta.get("estimated_cost_usd", 0.0) or 0.0)
-            self.settings.record_ai_usage(total_tokens, cost)
-            if cancel_event.is_set():
-                project.mark_ai_review_incomplete(chapter, verse, "cancelled")
-                project.mark_issue_resolutions_recheck(
-                    chapter, verse, "cancelled",
-                    reason="AI review was cancelled; no lifecycle conclusion was accepted.",
-                )
-                raise AIError("AI review cancelled; the completed model result was not automatically applied.")
-            if proposal is not None and review_alignment.to_dict() != alignment.to_dict():
-                progress_callback(90, "Saving AI-filled alignment gaps")
-                try:
-                    with self._checker_lock:
-                        self._save_alignment(
-                            chapter, verse, review_alignment, alignment.to_dict(), "ai_review_auto_align",
-                        )
-                        # The verse alignment is part of review_input_fingerprint,
-                        # and prepare_verse_review already stamped the stored review
-                        # with the fingerprint from BEFORE this write. Without the
-                        # rebase the review invalidates itself: the UI showed
-                        # "Verse changed - the previous AI review is stale" the
-                        # instant the review finished. Only _apply_safe_ai_selections
-                        # rebased, and only when it applied something, so Manual mode
-                        # (which applies nothing) always went stale.
-                        project.rebase_ai_review_fingerprint(chapter, verse)
-                except Exception:
-                    # A concurrent edit or a validation edge case here must not sink the
-                    # tN/tW review this verse otherwise completed; the verse simply stays
-                    # unaligned and is picked up by the alignment-popup/verse-list flag.
-                    pass
-            # Safe, evidence-grounded selections are applied for every review.
-            # `mode` (allow-manual-override) decides whether the reviewer may
-            # then hand-edit the result, not whether the AI is allowed to fill
-            # it in -- gating the write on the mode meant turning override on
-            # silently stopped tN/tW words being selected at all.
-            progress_callback(94, "Applying safe evidence-grounded selections")
-            applied, skipped = self._apply_safe_ai_selections(
-                project, chapter, verse, reviews, model=str(meta.get("model") or client.model),
-                qa_issues=issues,
+            return self._finish_ai_review_verse(
+                project, chapter, verse, client, alignment, proposal, review_alignment,
+                reviews, issues, summary, meta, progress_callback, cancel_event,
             )
-            review_dicts = [item.to_dict() for item in reviews]
-            lifecycle = project.reconcile_issue_resolutions_after_ai_review(
-                chapter, verse, review_dicts,
-                model=str(meta.get("model") or client.model), summary=summary,
-            )
-            progress_callback(100, "Verse AI review complete")
-            return {
-                "summary": summary,
-                "checkReviews": review_dicts,
-                "qaIssues": [item.to_dict() for item in issues],
-                "alignmentProposal": proposal,
-                "alignmentWasAIProposed": bool(proposal is not None),
-                "appliedSelections": applied,
-                "skippedSelections": skipped,
-                "resolutionLifecycle": lifecycle,
-                # #472: `cachedInputTokens` is what the provider served from
-                # its prefix cache; the AI tab shows it beside the total.
-                "usage": {
-                    "totalTokens": total_tokens,
-                    "cachedInputTokens": int((meta.get("usage") or {}).get("cachedInputTokens", 0) or 0),
-                    "estimatedCostUSD": round(cost, 6),
-                    # #476: how many requests the verse made, and how many
-                    # went unanswered (their input estimated, output unknown).
-                    "calls": int((meta.get("usage") or {}).get("calls", 0) or 0),
-                    "unansweredCalls": int((meta.get("usage") or {}).get("unansweredCalls", 0) or 0),
-                },
-            }
         except Exception as exc:
             # #476: what the failed verse already spent -- a mapping or gap-fill
             # call that was answered, or a call that was sent and never
@@ -5102,16 +5031,196 @@ class BridgeEngine:
                 )
             raise
 
+    def _begin_ai_review_verse(
+        self, project: TranslationCoreProject, chapter: str, verse: str, cancel_event: threading.Event,
+    ) -> None:
+        """What happens before a verse's first AI call, in either run."""
+        if cancel_event.is_set():
+            project.mark_issue_resolutions_recheck(
+                chapter, verse, "cancelled", reason="AI review was cancelled before this verse started.",
+            )
+            raise AIError("AI review cancelled before the verse started.")
+        project.mark_issue_resolutions_recheck(
+            chapter, verse, "running", reason="Automatic AI recheck started.",
+        )
+
+    def _finish_ai_review_verse(
+        self,
+        project: TranslationCoreProject,
+        chapter: str,
+        verse: str,
+        client: OpenAIResponsesClient,
+        alignment: Any,
+        proposal: dict[str, Any] | None,
+        review_alignment: Any,
+        reviews: list[Any],
+        issues: list[Any],
+        summary: str,
+        meta: dict[str, Any],
+        progress_callback: Callable[[int, str], None],
+        cancel_event: threading.Event,
+    ) -> dict[str, Any]:
+        """Everything after a verse's review is stored: the usage counter, the
+        gap-fill alignment, the safe selections and the issue lifecycle. One
+        body for the single-verse run and the window run (#502), so a verse
+        is finished the same way whichever request reviewed it."""
+        # #476: the sum of the verse's calls (mapping, gap-fill, review).
+        total_tokens = int(meta.get("total_tokens_for_prepare", 0) or 0)
+        cost = float(meta.get("estimated_cost_usd", 0.0) or 0.0)
+        self.settings.record_ai_usage(total_tokens, cost)
+        if cancel_event.is_set():
+            project.mark_ai_review_incomplete(chapter, verse, "cancelled")
+            project.mark_issue_resolutions_recheck(
+                chapter, verse, "cancelled",
+                reason="AI review was cancelled; no lifecycle conclusion was accepted.",
+            )
+            raise AIError("AI review cancelled; the completed model result was not automatically applied.")
+        if proposal is not None and review_alignment.to_dict() != alignment.to_dict():
+            progress_callback(90, "Saving AI-filled alignment gaps")
+            try:
+                with self._checker_lock:
+                    self._save_alignment(
+                        chapter, verse, review_alignment, alignment.to_dict(), "ai_review_auto_align",
+                    )
+                    # The verse alignment is part of review_input_fingerprint,
+                    # and prepare_verse_review already stamped the stored review
+                    # with the fingerprint from BEFORE this write. Without the
+                    # rebase the review invalidates itself: the UI showed
+                    # "Verse changed - the previous AI review is stale" the
+                    # instant the review finished. Only _apply_safe_ai_selections
+                    # rebased, and only when it applied something, so Manual mode
+                    # (which applies nothing) always went stale.
+                    project.rebase_ai_review_fingerprint(chapter, verse)
+            except Exception:
+                # A concurrent edit or a validation edge case here must not sink the
+                # tN/tW review this verse otherwise completed; the verse simply stays
+                # unaligned and is picked up by the alignment-popup/verse-list flag.
+                pass
+        # Safe, evidence-grounded selections are applied for every review.
+        # `mode` (allow-manual-override) decides whether the reviewer may
+        # then hand-edit the result, not whether the AI is allowed to fill
+        # it in -- gating the write on the mode meant turning override on
+        # silently stopped tN/tW words being selected at all.
+        progress_callback(94, "Applying safe evidence-grounded selections")
+        applied, skipped = self._apply_safe_ai_selections(
+            project, chapter, verse, reviews, model=str(meta.get("model") or client.model),
+            qa_issues=issues,
+        )
+        review_dicts = [item.to_dict() for item in reviews]
+        lifecycle = project.reconcile_issue_resolutions_after_ai_review(
+            chapter, verse, review_dicts,
+            model=str(meta.get("model") or client.model), summary=summary,
+        )
+        progress_callback(100, "Verse AI review complete")
+        return {
+            "summary": summary,
+            "checkReviews": review_dicts,
+            "qaIssues": [item.to_dict() for item in issues],
+            "alignmentProposal": proposal,
+            "alignmentWasAIProposed": bool(proposal is not None),
+            "appliedSelections": applied,
+            "skippedSelections": skipped,
+            "resolutionLifecycle": lifecycle,
+            # #472: `cachedInputTokens` is what the provider served from
+            # its prefix cache; the AI tab shows it beside the total.
+            "usage": {
+                "totalTokens": total_tokens,
+                "cachedInputTokens": int((meta.get("usage") or {}).get("cachedInputTokens", 0) or 0),
+                "estimatedCostUSD": round(cost, 6),
+                # #476: how many requests the verse made, and how many
+                # went unanswered (their input estimated, output unknown).
+                "calls": int((meta.get("usage") or {}).get("calls", 0) or 0),
+                "unansweredCalls": int((meta.get("usage") or {}).get("unansweredCalls", 0) or 0),
+            },
+        }
+
+    def _run_ai_review_windows(
+        self,
+        project: TranslationCoreProject,
+        chapter: str,
+        verses: list[str],
+        mode: str,
+        report: Any,
+        cancel_event: threading.Event,
+    ) -> None:
+        """One chapter's verses reviewed several to a request (#502). Each
+        verse is begun and finished by the same two methods as the
+        single-verse run; `WindowReviewSession` does what lies between."""
+        engine = self
+        with self._checker_lock:
+            self._ensure_resource_indexes(project)
+        client = self._ai_client()
+        window_settings = WindowSettings.from_settings(self.settings.ai_review)
+
+        class Reporter:
+            def begin(self, verse: str) -> None:
+                engine._begin_ai_review_verse(project, chapter, verse, cancel_event)
+
+            def stage(self, verse: str, percent: int, text: str) -> None:
+                report.stage(verse, percent, text)
+
+            def window(self, window_verses: list[str]) -> None:
+                report.window(window_verses)
+
+            def done(self, verse: str, prepared: Any, reviews: list[Any], issues: list[Any],
+                     summary: str, meta: dict[str, Any]) -> None:
+                try:
+                    payload = engine._finish_ai_review_verse(
+                        project, chapter, verse, client, prepared.alignment, prepared.proposal,
+                        prepared.review_alignment, reviews, issues, summary, meta,
+                        lambda percent, text: report.stage(verse, percent, text), cancel_event,
+                    )
+                except Exception as exc:
+                    # The verse's usage reached the lifetime counter at the
+                    # top of `_finish_ai_review_verse`; it is not counted again.
+                    if not cancel_event.is_set():
+                        project.mark_issue_resolutions_recheck(
+                            chapter, verse, "failed",
+                            reason="Automatic AI recheck failed.", error=str(exc),
+                        )
+                    report.result(verse, error=str(exc))
+                    return
+                payload["batch"] = meta.get("batch")
+                report.result(verse, payload)
+
+            def failed(self, verse: str, error: Exception, usage: Any, cost: float) -> None:
+                # #476: what a failed verse spent is billed all the same.
+                if getattr(usage, "calls", 0):
+                    engine.settings.record_ai_usage(usage.total_tokens, cost)
+                if not cancel_event.is_set():
+                    project.mark_issue_resolutions_recheck(
+                        chapter, verse, "failed",
+                        reason="Automatic AI recheck failed.", error=str(error),
+                    )
+                report.result(verse, error=str(error))
+
+            def cancelled(self, verse: str) -> None:
+                project.mark_issue_resolutions_recheck(
+                    chapter, verse, "cancelled",
+                    reason="AI review was cancelled before this verse was sent.",
+                )
+
+        WindowReviewSession(client, project, chapter, verses, window_settings).run(Reporter(), cancel_event)
+
     def _start_ai_review_spec(
         self, project: TranslationCoreProject, spec: AIReviewJobSpec,
     ) -> dict[str, Any]:
         # Fail immediately with the familiar settings error instead of starting a
         # background job whose first verse can only fail for a missing API key.
         self._ai_client()
+        # #502: with "verses per request" at 1 and neither option on (the
+        # defaults) there is no `run_chapter`, and the job is the single-verse
+        # loop it has always been.
+        windowed = WindowSettings.from_settings(self.settings.ai_review).windowed
         return self._ai_review_jobs.start(
             spec,
             run_verse=lambda ch, vs, reviewer_mode, progress, cancel: self._run_ai_review_for_project(
                 project, ch, vs, reviewer_mode, progress, cancel,
+            ),
+            run_chapter=(
+                (lambda ch, verses, reviewer_mode, report, cancel: self._run_ai_review_windows(
+                    project, ch, verses, reviewer_mode, report, cancel,
+                )) if windowed else None
             ),
         )
 
