@@ -25381,3 +25381,44 @@ pinned the exact stored settings; it now expects the marker as well.
 
 **Not done.** No workspace schema change (the marker is a `settings_kv` value). The
 approved model name is duplicated in the dialog rather than read from the engine.
+
+## 2026-11-17 — Alignment: a moved target word no longer reorders the source words (#498)
+
+Found by Joel on the desktop app (Numbers 1:8). On the Word alignment and Cross-verse
+tabs, moving an already aligned target word to a source word further along the verse
+pulled that source word forward to the column the target word had left. The Source text
+panel showed the verse in the changed order too, because every view reads the source word
+order from the order of the tC groups (`make_inventory`).
+
+**Cause.** `alignment_engine.realign` inserted the rebuilt group at the position of the
+first group it touched, and a group that only lost a target word counted as touched. A
+word dropped from the word bank, or moved to an earlier source word, touched the
+destination first and so showed nothing. The code is from 2026-08-21.
+
+**Fix.** The rebuilt group goes where its own source words were; where a target word
+came from has no say. When a joined group keeps a source word that stands before the
+first one taken out of it, the rebuilt group goes after what is kept (the pages do not
+ask for that today; #449 would). Nothing about which word is aligned to which changed.
+
+**Tests.** Five in `tests/alignment/test_alignment_engine.py`: a move to a later column
+(the reported case), to an earlier one, words from the bank and two columns at once, a
+join, and a split both ways.
+
+**Ran.** `tests/alignment` and the service files that drive `alignment.realign`
+(`test_bridge_service`, `test_alignment_one_home`, `test_alignment_workspace`,
+`test_aligned_export_segments`, `test_alignment_drop_chapter_reads`,
+`test_alignment_null_rpc`): 215 passed, 4 failed. The 4 are
+`tests/alignment/test_ai_review_stale_after_apply.py` (the review job ends `failed`);
+they fail the same way with this change stashed and in the main checkout, so they are
+not from this change. Reported to Joel, not looked into here.
+
+**Not run.** The full pytest suite (two Python files changed); the frontend gates and
+cargo (no such file changed); `scripts/smoke_sidecars.py` (the frozen sidecars were not
+rebuilt). **Not verified on the desktop app:** the app runs the frozen sidecar, so the
+fix shows there only after `scripts/build-sidecars.ps1`.
+
+**Not done.** A verse already saved in the wrong order is not repaired: that needs a
+canonical source order from the original-language text, #382 step 1. Reported, not
+changed: `apply_proposal` (the AI apply path) appends every source word the proposal
+left out after the proposed groups, which can reorder source words in the same way.
+

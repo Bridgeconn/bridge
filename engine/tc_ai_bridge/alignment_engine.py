@@ -68,14 +68,21 @@ def realign(verse: VerseAlignment, selected_top: list[TokenRef], selected_bottom
 
     # Detach selected tokens. Preserve every nonselected token. Groups that lose one side
     # remain valid because tC itself uses empty bottomWords for unaligned source tokens.
+    #
+    # #498: the rebuilt group goes where its own SOURCE words were, and nowhere
+    # else. The order of the groups is the source word order every view shows
+    # (make_inventory), so the place a target word came from must have no say:
+    # it used to, and moving an aligned target word to a later source word
+    # pulled that source word forward to the column the target word left.
     for group in result.alignments:
-        affected = any(x.signature in top_sigs for x in group.top_words) or any(
-            x.signature in bottom_sigs for x in group.bottom_words
-        )
-        if affected and insertion_index is None:
-            insertion_index = len(new_groups)
+        selected_here = [i for i, x in enumerate(group.top_words) if x.signature in top_sigs]
         keep_top = [x for x in group.top_words if x.signature not in top_sigs]
         keep_bottom = [x for x in group.bottom_words if x.signature not in bottom_sigs]
+        if selected_here and insertion_index is None:
+            # A group that keeps a source word standing before the first one
+            # taken out of it stays ahead of the rebuilt group.
+            kept_first = bool(keep_top) and selected_here[0] > 0
+            insertion_index = len(new_groups) + (1 if kept_first else 0)
         if keep_top:
             new_groups.append(AlignmentGroup(keep_top, keep_bottom))
         else:
