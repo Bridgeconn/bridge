@@ -358,16 +358,13 @@ window-state plugin. Since 2026-11-16 both alignment tabs draw three panels (ver
 source words, target words) with `WordPanels` / `WordPanel` over `wordPanels.ts`: a saved
 split tree per tab, laid out as a CSS grid that fills the tab (`panelGrid`), panels moved
 by their title rows or a layout preset, dividers on both axes, a text size per panel.
-`AlignmentWorkspace` / `AlignmentPane`, described next, are no longer used by either tab
-and are kept only until a clean-up. They provided movable,
-resizable Read/Source/Target areas. A persisted binary split tree supports docking
-to any neighbor's left/right/top/bottom, mixed horizontal/vertical layouts and
-adjustable dividers. Areas can also float at a chosen position; keyboard-accessible
-Arrange controls mirror dragging. Reset layout restores the tree without remounting
-the content. Compact shared card geometry preserves script-specific fonts and bidi
+`AlignmentWorkspace` / `AlignmentPane`, the movable Read/Source/Target areas they replaced,
+were deleted on 2026-11-18; the split-tree helpers they used live on in `alignmentLayout.ts`,
+which the editor's tab groups and `wordPanels.ts` share. Compact shared card geometry preserves script-specific fonts and bidi
 isolation for Greek, Hebrew/Aramaic and target text. Glosses are clamped with an
-ellipsis; hover includes the full definition and renderings. Every joined source
-card has its own separation menu, including interior group members.
+ellipsis; hover includes the full definition and renderings. Source words are
+merged with the button on a card and split with the button on the seam between two
+merged words (2026-11-18); neither changes the source order.
 
 `alignment_reset.py` records an operator recovery intent in existing workbench
 `project_state` before clearing native groups, whole cross-verse groups and null

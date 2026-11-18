@@ -25842,3 +25842,31 @@ source words that are not next to each other still pulls its later word forward 
 first: tC stores a group's words together. Both are #382. The Source text panel still
 takes its word order from the saved alignment, not from the original-language text, so
 it is protected by these fixes, not independent of them (#382 step 1).
+
+## 2026-11-18 — Clean-up: the unused alignment components deleted
+
+Joel's yes, 2026-11-18. Deleted: `SourceWordActions.svelte` (the per-word Separate
+menu, unused since the seam split), `AlignmentWorkspace.svelte` and
+`AlignmentPane.svelte` (unused by either tab since the three-panel layout of
+2026-11-16), and their test fixture `AlignmentLayoutFixture.svelte`. Also removed:
+`canSeparateSource` in `alignmentGroups.ts`, which only the deleted menu and the old
+picker called, and the four component tests in `AlignmentLayout.test.ts`; that file
+keeps its `gridFor` and `edgeScrollStep` tests. `docs/ARCHITECTURE.md` no longer
+describes the deleted components.
+
+**Before deleting.** Each basename was searched across the repo: no importer was left
+outside the deleted files and that one test file. `alignmentLayout.ts` stays: the
+editor's tab groups, `wordPanels.ts` and both alignment tabs import it.
+
+**Ran (a deleting batch runs every gate).** `npm run check` 0 errors 0 warnings;
+`npm run test` 138 files, 1346 tests passed; `npm run build` passed; `cargo check`
+passed and `cargo test` 21 passed (run with the app closed); `tests/alignment` and
+the alignment service tests 152 passed with the 4 known failures in
+`test_ai_review_stale_after_apply.py`; `scripts/smoke_sidecars.py` passed. The full
+`pytest` suite was run earlier the same day (entry above) and no engine file is in
+this change. These runs were on a working tree that also held the uncommitted
+merge-with-no-target change.
+
+**Left.** `gridFor`, `gridAreasText`, `defaultLayout`, `validLayout`, `paneIds` and
+`AlignmentLayoutContext` in `alignmentLayout.ts` are now used only by tests. Not
+removed here.
