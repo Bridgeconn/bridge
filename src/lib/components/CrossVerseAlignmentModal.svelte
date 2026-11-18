@@ -1189,8 +1189,13 @@
                   <div class="row" class:joined={src.members.length > 1}>
                     <div class="source-words" class:joined={src.members.length > 1}>
                     {#each src.members as member, place (member.id)}
-                      {#if place > 0 && !gapFilterVerse}
-                        <span class="seam"><button type="button" class="seam-split" on:click|stopPropagation={() => splitAt(v, src.members.map((m) => m.id), place)} disabled={busy || !ownGroup}
+                      <!-- The split button only on a cell that is one alignment group.
+                           A cell can also be drawn merged because its words share a
+                           cross-verse link (sourceRows); a realign cannot take that
+                           apart, so a button there would save nothing and say it had.
+                           That cell is parted by removing its link (2026-11-18). -->
+                      {#if place > 0 && !gapFilterVerse && ownGroup && ownGroup.topIds.length > 1}
+                        <span class="seam"><button type="button" class="seam-split" on:click|stopPropagation={() => splitAt(v, src.members.map((m) => m.id), place)} disabled={busy}
                           aria-label={`Split ${src.members.map((m) => m.word).join(" ")} before ${member.word} in verse ${v}`}
                           use:tooltip={"Split here"}><UiIcon name="unmerge" /></button></span>
                       {/if}

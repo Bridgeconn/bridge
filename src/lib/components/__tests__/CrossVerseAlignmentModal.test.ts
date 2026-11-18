@@ -1014,6 +1014,24 @@ describe("CrossVerseAlignmentModal, the page as three panels", () => {
     await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "2", ["H001", "H002"], [], empty.alignment));
   });
 
+  // Two source words that share a cross-verse link are drawn as one cell too,
+  // but they are not one alignment group: a realign cannot part them, so the
+  // cell has no split button. Its link is removed with the x on its card.
+  it("shows no split button on a cell merged only by a cross-verse link", async () => {
+    const group = {
+      groupId: "cv-1", state: "active" as const, relation: "many-to-one" as never,
+      sourceChapter: "1", sourceVerse: "2", targetChapter: "1", targetVerse: "3-4",
+      sources: [{ word: "λόγος", topId: "H001" }, { word: "ἦν", topId: "H002" }],
+      targets: [{ word: "light", bottomId: "T001" }],
+      sourceTopIds: ["H001", "H002"], targetBottomIds: ["T001"], linkIds: ["link-a", "link-b"],
+    };
+    const linkedCell = { ...V2, groups: [], crossVerseGroups: [group] } as unknown as AlignmentContext;
+    getAlignmentRange.mockImplementation(async (_chapter: string, verses: string[]) => rangeFor(verses, { "1": V1, "2": linkedCell, "3-4": V34 }));
+    await renderPage("2");
+    expect(document.querySelector(".source-words.joined")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: /^Split .* in verse 2$/ })).toBeNull();
+  });
+
   it("splits a joined cell at its seam; the first word keeps the target", async () => {
     const joined: AlignmentContext = { ...V2, groups: [{ id: "G001", topIds: ["H001", "H002"], bottomIds: ["T001"] }] };
     getAlignmentRange.mockImplementation(async (_chapter: string, verses: string[]) => rangeFor(verses, { "1": V1, "2": joined, "3-4": V34 }));

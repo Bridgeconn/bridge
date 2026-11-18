@@ -25921,3 +25921,33 @@ briefly:** 12 in `test_semantic_mapping_stage3.py` need
 git-ignored and absent here; 2 hit `[WinError 206]` (path too long) under the pytest
 temp folder; 9 AI review tests end with `[WinError 3] The system cannot find the path
 specified`, cause not found.
+
+## 2026-11-18 — Cross-verse tab: no split button on a cell merged only by a cross-verse link
+
+**Found** while answering Joel's question about cross-verse linked groups. `sourceRows`
+draws two kinds of merged source cell: one alignment group with several source words,
+and several source words that share an active cross-verse link group. The seam split
+button of 2026-11-17 showed on both. On the second kind a `realign` parts nothing (each
+word is its own alignment group), so the click saved an unchanged verse and the page
+said "Source words split." The button it replaced had been limited to real groups.
+
+**Fix.** The seam button shows only when the cell is one alignment group
+(`ownGroup.topIds.length > 1`). A link-merged cell is parted by removing its link.
+
+**How such a cell arises.** Not by hand: a target word that already has a cross-verse
+link is a locked card in the word bank and cannot be linked to a second source word.
+The automatic window alignment and an accepted AI link suggestion can extend a link
+group to several source words. Taking one word out of such a group and keeping the
+rest linked, which the old Separate did, has no control now; Joel's call, 2026-11-18,
+is to leave that until the team misses it.
+
+**Test.** One in `CrossVerseAlignmentModal.test.ts`: a cell merged by a link group is
+drawn joined and has no split button. Not run against the code before the fix.
+
+**Ran.** `npm run check` 0 errors 0 warnings; `npm run test` 138 files, 1347 passed;
+`npm run build` passed. No engine or Rust file changed. **Not verified on the desktop
+app:** it needs an AI run to produce the cell.
+
+**Also today.** #504 filed: a backup or transaction copy fails on Windows when its path
+passes 260 characters (11 of the 23 engine tests that fail on this machine; the other
+12 need the git-ignored Stage 3 semantic database). Not fixed.
