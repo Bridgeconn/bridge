@@ -610,14 +610,18 @@ describe("AlignmentModal joined columns (#207) and Undo (#122)", () => {
     await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "1", ["H001", "H002"], ["T001"], ctx.alignment));
   });
 
-  it("Join is disabled while neither column has a target word, because the engine needs one", async () => {
+  // 2026-11-18 (the team): no target word has to be placed first.
+  it("Join works while neither column has a target word", async () => {
     const ctx = context({
       alignment: { alignments: [], wordBank: context().bottomTokens },
       groups: [],
     });
+    realignWords.mockResolvedValue(ctx);
     await open(ctx);
-    expect(screen.getByRole("button", { name: "Join בָּרָא with the previous source word" })).toBeDisabled();
-    expect(realignWords).not.toHaveBeenCalled();
+    const join = screen.getByRole("button", { name: "Join בָּרָא with the previous source word" });
+    expect(join).not.toBeDisabled();
+    await fireEvent.click(join);
+    await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "1", ["H001", "H002"], [], ctx.alignment));
   });
 
   it("Split cuts a joined column at its seam; the first word keeps the target", async () => {

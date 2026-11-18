@@ -146,19 +146,44 @@ def test_a_split_with_no_target_named_leaves_the_target_words_with_the_rest():
     assert [t.word for t in changed.alignments[1].bottom_words] == ["t1", "t2"]
 
 
-def test_only_a_split_is_allowed_with_no_target_word():
+# 2026-11-18 (the team, through Joel): two source words with nothing under
+# them merge without a target word having to be placed first.
+def test_two_source_words_with_no_target_word_merge_in_place():
+    (h1, h2, h3, h4), (t1, t2, t3, t4) = _four()
+    verse = VerseAlignment([
+        AlignmentGroup([h1], [t1]),
+        AlignmentGroup([h2], []),
+        AlignmentGroup([h3], []),
+        AlignmentGroup([h4], [t4]),
+    ], [t2, t3])
+
+    changed = realign(verse, [h2, h3], [])
+
+    assert _order(changed) == [["h1"], ["h2", "h3"], ["h4"]]
+    assert [[t.word for t in g.bottom_words] for g in changed.alignments] == [["t1"], [], ["t4"]]
+    assert [t.word for t in changed.word_bank] == ["t2", "t3"]
+    # A third word joins the merged pair the same way.
+    again = realign(changed, [h2, h3, h4], [t4])
+    assert _order(again) == [["h1"], ["h2", "h3", "h4"]]
+
+
+def test_a_realign_with_no_target_word_never_sends_a_target_word_to_the_bank():
     (h1, h2, h3, h4), (t1, t2, t3, t4) = _four()
     verse = VerseAlignment([
         AlignmentGroup([h1], []),
-        AlignmentGroup([h2], []),
+        AlignmentGroup([h2], [t2]),
         AlignmentGroup([h3, h4], [t3]),
-    ], [t1, t2, t4])
+    ], [t1, t4])
 
-    # Joining two columns, emptying a whole group, and a selection that
-    # reaches into two groups are all still refused.
-    for selection in ([h1, h2], [h3, h4], [h2, h3], [h1]):
+    # Each of these names every source word of a group that has a target
+    # word: with no target word named, that word would lose its home.
+    for selection in ([h1, h2], [h2], [h3, h4], [h2, h3, h4]):
         with pytest.raises(AlignmentError):
             realign(verse, selection, [])
+    # Part of a group may leave it: the target word stays with the rest.
+    changed = realign(verse, [h1, h3], [])
+    assert [t.word for g in changed.alignments for t in g.bottom_words] == ["t2", "t3"]
+    assert [t.word for t in changed.word_bank] == ["t1", "t4"]
 
 
 # #503: applying an AI alignment saved the groups in the order the proposal

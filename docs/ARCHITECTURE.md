@@ -364,7 +364,7 @@ which the editor's tab groups and `wordPanels.ts` share. Compact shared card geo
 isolation for Greek, Hebrew/Aramaic and target text. Glosses are clamped with an
 ellipsis; hover includes the full definition and renderings. Source words are
 merged with the button on a card and split with the button on the seam between two
-merged words (2026-11-18); neither changes the source order.
+merged words (2026-11-18); neither needs a target word, and neither changes the source order.
 
 `alignment_reset.py` records an operator recovery intent in existing workbench
 `project_state` before clearing native groups, whole cross-verse groups and null

@@ -1002,6 +1002,18 @@ describe("CrossVerseAlignmentModal, the page as three panels", () => {
     expect(screen.queryByRole("button", { name: /with the previous source word in verse 3-4/ })).toBeNull();
   });
 
+  // 2026-11-18 (the team): no target word has to be placed first.
+  it("joins two source words that have no target word", async () => {
+    const empty: AlignmentContext = { ...V2, groups: [] };
+    getAlignmentRange.mockImplementation(async (_chapter: string, verses: string[]) => rangeFor(verses, { "1": V1, "2": empty, "3-4": V34 }));
+    realignWords.mockResolvedValue(empty);
+    await renderPage("2");
+    const join = screen.getByRole("button", { name: "Join ἦν with the previous source word in verse 2" });
+    expect(join).not.toBeDisabled();
+    await fireEvent.click(join);
+    await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "2", ["H001", "H002"], [], empty.alignment));
+  });
+
   it("splits a joined cell at its seam; the first word keeps the target", async () => {
     const joined: AlignmentContext = { ...V2, groups: [{ id: "G001", topIds: ["H001", "H002"], bottomIds: ["T001"] }] };
     getAlignmentRange.mockImplementation(async (_chapter: string, verses: string[]) => rangeFor(verses, { "1": V1, "2": joined, "3-4": V34 }));

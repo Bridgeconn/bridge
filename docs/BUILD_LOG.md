@@ -25870,3 +25870,54 @@ merge-with-no-target change.
 **Left.** `gridFor`, `gridAreasText`, `defaultLayout`, `validLayout`, `paneIds` and
 `AlignmentLayoutContext` in `alignmentLayout.ts` are now used only by tests. Not
 removed here.
+
+## 2026-11-18 — Alignment: two source words merge with no target word
+
+The team's ask, through Joel: merging two source words needed a target word on one of
+them first, and nobody knew why. Joel tested the change on the desktop app on both
+tabs the same day ("everything working as expected").
+
+**Why the check was there.** No decision stands behind it. `realign` was written on
+2026-08-19 as "link these source words to these target words" and refused a call with
+no target word; #207 (2026-10-14) disabled the Join button for two empty columns only
+because the engine would refuse the click.
+
+**Engine.** The rule for a `realign` with no target word is now one sentence: it may
+regroup source words, and it may never send a target word back to the word bank
+(`_keeps_every_target_word_aligned`, which replaces the split-only
+`_is_split_of_one_group` of the entry two above). So it is refused only when it names
+ALL the source words of a group that has target words. A split of a merged group and a
+merge of words with nothing under them both pass.
+
+**Pages.** On both tabs the merge button is enabled whenever the page is not busy. On
+the Cross-verse tab a word with a cross-verse link is still refused, with the reason
+in the hint.
+
+**What it does not change.** No new kind of data: the same group (several source
+words, no target word) could already be reached by merging with a target word and then
+removing it. Merge joins neighbours only, in place, so the source order is untouched.
+The AI paths do not protect a group with no target word
+(`_existing_protected_groups` skips it), so an AI run may align its words separately
+and undo the merge; that was already so. The aligned USFM export skips a group with no
+target word, as it does a single unaligned source word.
+
+**Tests.** Engine: a merge of two empty neighbours and a third word joining them; the
+refusals, and a part of a group leaving it. Frontend: "Join works while neither column
+has a target word" on the Word alignment tab (it asserted the opposite before) and the
+same on the Cross-verse tab.
+
+**Ran.** `npm run check` 0 errors 0 warnings; `npm run test` 138 files, 1346 passed;
+`npm run build` passed; `cargo check` passed, `cargo test` 21 passed;
+`tests/alignment` and the alignment service tests 152 passed, with the 4 known
+failures in `test_ai_review_stale_after_apply.py`; `scripts/build-sidecars.ps1`, then
+`scripts/smoke_sidecars.py` passed.
+
+**Not run.** The full `pytest` suite after this change (two Python files; it ran in
+full earlier the same day, entry three above).
+
+**The 23 engine tests that fail on this machine (from that full run), looked at
+briefly:** 12 in `test_semantic_mapping_stage3.py` need
+`engine/resources/semantic_mapping/bridge_semantic_source_v0.3.sqlite`, which is
+git-ignored and absent here; 2 hit `[WinError 206]` (path too long) under the pytest
+temp folder; 9 AI review tests end with `[WinError 3] The system cannot find the path
+specified`, cause not found.

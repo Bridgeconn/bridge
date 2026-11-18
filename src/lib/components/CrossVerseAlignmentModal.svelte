@@ -750,14 +750,13 @@
 
   // The Word alignment tab's join and split (#207), for one verse of the
   // range: "Join" folds a column into the one before it, "Split" takes the
-  // last source word out again. A join needs a target word, and a source
-  // word with a cross-verse link has its home in another verse, so a join is
-  // refused before the click, with the reason in the hint. A split needs no
-  // target word (2026-11-18, Joel).
+  // last source word out again. A source word with a cross-verse link has
+  // its home in another verse, so a join of one is refused before the click,
+  // with the reason in the hint. Neither a join nor a split needs a target
+  // word (2026-11-18, Joel and the team).
   type SourceRow = AlignmentToken & { members: AlignmentToken[] };
   function joinProblem(context: AlignmentContext, previous: SourceRow, current: SourceRow): string {
     if ([...previous.members, ...current.members].some((member) => linksForSource(context, member.id).length > 0)) return "Remove the cross-verse link first, then join";
-    if (alignedTargetsFor(context, previous.id).length + alignedTargetsFor(context, current.id).length === 0) return "Drop a target word on one of the two columns first, then join";
     return "";
   }
   function joinWithPrevious(v: string, index: number) {

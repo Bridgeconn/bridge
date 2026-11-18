@@ -415,10 +415,9 @@
   // realign has always accepted that; the surface could not ask for it.
   // "Join" folds a column into the one before it (split source words sit
   // side by side); "Split" takes the last source word out again, which the
-  // engine keeps as its own empty group. A join needs at least one target
-  // word, so a join of two empty columns is disabled rather than refused
-  // after the click. A split does not (2026-11-18, Joel): a merged column
-  // whose target word was taken away still splits.
+  // engine keeps as its own empty group. Neither needs a target word
+  // (2026-11-18, Joel and the team): two columns with nothing under them
+  // merge, and a merged column whose target word was taken away splits.
   $: columns = context ? sourceColumns(context) : [];
   function columnBottomIds(ids: string[]): string[] {
     return context ? (alignedTargetsFor(context, ids[0]).map((t) => t.id)) : [];
@@ -428,7 +427,6 @@
     const previous = columns[index - 1];
     const current = columns[index];
     const bottomIds = [...columnBottomIds(previous.ids), ...columnBottomIds(current.ids)];
-    if (bottomIds.length === 0) return;
     void mutate(
       () => bridge.realignWords(chapter, verse, [...previous.ids, ...current.ids], bottomIds, context!.alignment),
       "Source words joined.",
@@ -670,7 +668,6 @@
           {#each columns as column, index (column.ids.join("+"))}
             {@const src = column.tokens[0]}
             {@const label = column.tokens.map((t) => t.word).join(" ")}
-            {@const joinable = columnBottomIds(columns[Math.max(0, index - 1)].ids).length + columnBottomIds(column.ids).length > 0}
             <div class="column" class:joined={column.ids.length > 1}>
               <div class="source-words" class:joined={column.ids.length > 1}>
                 {#each column.tokens as token, place (token.id)}
@@ -682,9 +679,9 @@
                   <div class="source-card">
                   {#if place === 0 && index > 0}
                     <span class="card-tools source-tools">
-                      <button type="button" class="card-btn merge" on:click|stopPropagation={() => joinWithPrevious(index)} disabled={busy || !joinable}
+                      <button type="button" class="card-btn merge" on:click|stopPropagation={() => joinWithPrevious(index)} disabled={busy}
                         aria-label={`Join ${label} with the previous source word`}
-                        use:tooltip={joinable ? "Merge with the previous word: one target word for both" : "Place a target word on one of the two first, then merge"}><UiIcon name="merge" /></button>
+                        use:tooltip={"Merge with the previous word: one target word for both"}><UiIcon name="merge" /></button>
                     </span>
                   {/if}
                   <button class="token source" dir={context.sourceDirection} on:click={() => (lexiconToken = token)} disabled={busy}
