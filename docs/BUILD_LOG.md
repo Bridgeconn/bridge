@@ -26359,3 +26359,26 @@ record is stored and is in no request.
   any request to a provider.
 - After the last change the default capture of GEN 1 was taken again and is
   byte-identical to the one taken after #500 on all 109 requests.
+
+## 2026-11-18 — Release 0.26.0: PR #496 merged, version bumped, tag pushed
+
+**Merge.** `main` (#500, #501, #502) was merged into `uifixes-v25` first (one conflict,
+this file, both sides kept), and PR #496 was merged into `main` as 92ffedc on Joel's
+instruction, after CI run 44272685402 was green on every job (frontend, rust, engine).
+The merge commit's tree is identical to the PR head CI tested.
+
+**Local gates on the merged tree.** `npm run check` 0 errors 0 warnings; `npm run test`
+139 files, 1352 passed; `npm run build` passed; `pytest -n auto` 5925 passed, 37
+failed. Of the 37, 12 need the git-ignored Stage 3 semantic database (absent on this
+machine) and 25 pass when rerun with a short `--basetemp`: the Windows 260-character
+path limit under pytest's default temp folder (#504, recorded there).
+
+**Version.** 0.25.3 to 0.26.0 in the same nine files as the 0.25.3 release commit
+(17550f4). Joel chose the number. `tests/service/test_version_consistency.py` and
+`npm run check` were run on the bump; the tag `v0.26.0` starts `release.yml`, which
+drafts the release. Publishing the draft is left to Joel or Revant.
+
+**Not verified before this release.** The #503 fix against a live AI provider (no key
+at hand; Joel will check on the installed build). The QA matrix's manual desktop rows
+for the new editor layout and alignment tabs beyond what Joel tested by hand during
+the pass.

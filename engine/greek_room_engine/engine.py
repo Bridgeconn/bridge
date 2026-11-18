@@ -16,7 +16,7 @@ from .models.finding import QaFinding
 from .protocol import EngineRequest, EngineResponse, Methods
 
 # Kept in step with package.json by tests/service/test_version_consistency.py.
-ENGINE_VERSION = "0.25.3"
+ENGINE_VERSION = "0.26.0"
 
 
 class GreekRoomEngine:
