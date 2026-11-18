@@ -25806,3 +25806,39 @@ could be produced by hand).
 Separate also did, has no control on the page now (Joel: "we can build later").
 Merging only joins neighbours (#382). `SourceWordActions.svelte` and
 `canSeparateSource` are unused by the pages.
+
+## 2026-11-18 — Alignment: applying an AI alignment no longer reorders the source words (#503)
+
+**Report.** Raised while fixing #498 and confirmed in the code: both AI paths that
+write tC groups could change the order of a verse's source words. Joel asked for the
+fix on 2026-11-18.
+
+**Cause.** `apply_proposal` in `engine/tc_ai_bridge/alignment_engine.py` built the verse
+from `proposal["groups"]` in list order and appended every source word the proposal
+left out, as its own empty group, after them. The order of the groups is the source
+word order every view shows (`make_inventory`). Both callers were affected:
+`apply_ai_alignment_proposal` (`alignment.aiApplyProposal`, the reviewer's apply of a
+"Suggest with AI" proposal) and the same-verse step of the automatic window alignment
+(`ai_auto_align`, #219).
+
+**Fix.** Each group keeps its source words in the verse's own order, and the groups
+stand in the order of their first source word, the omitted words among them. Which
+words are grouped, what is applied and the two-pass agreement gate are unchanged;
+only the saved order is. The target words of a group keep the order the proposal gave.
+
+**Tests.** Three in `tests/alignment/test_alignment_engine.py`: groups listed out of
+order, source words left out, a group naming its words backwards.
+
+**Ran.** The same runs as the entry above (one working tree): full `pytest -n auto`
+5892 passed, 29 failed, none from this change (23 fail identically with HEAD's
+`apply_proposal` and `realign` swapped in, 6 pass when rerun alone);
+`scripts/build-sidecars.ps1` and `scripts/smoke_sidecars.py` passed.
+
+**Not verified on the desktop app.** "Suggest with AI" and "Align automatically" were
+not run there: they use the reviewer's AI key.
+
+**Not done.** A verse already saved in the wrong order is not repaired, and a group of
+source words that are not next to each other still pulls its later word forward to the
+first: tC stores a group's words together. Both are #382. The Source text panel still
+takes its word order from the saved alignment, not from the original-language text, so
+it is protected by these fixes, not independent of them (#382 step 1).

@@ -213,17 +213,27 @@ def apply_proposal(verse: VerseAlignment, proposal: dict[str, Any]) -> VerseAlig
     inv = make_inventory(verse)
     result = VerseAlignment([], [])
     used_h: set[str] = set(); used_t: set[str] = set()
+    # #503: the order of the groups is the source word order every view shows
+    # (make_inventory), so a proposal must not get to choose it. The groups
+    # used to be saved in the order the proposal listed them, with every
+    # source word it left out moved to the end of the verse. Each group now
+    # keeps its source words in the verse's own order, and the groups stand
+    # in the order of their first source word, the omitted words among them.
+    place = {hid: index for index, hid in enumerate(inv.top_ids)}
+    placed: list[tuple[int, AlignmentGroup]] = []
     for g in groups:
-        result.alignments.append(AlignmentGroup(
-            [inv.top_ids[x] for x in g['top_ids']],
+        top_ids = sorted(g['top_ids'], key=place.__getitem__)
+        placed.append((place[top_ids[0]], AlignmentGroup(
+            [inv.top_ids[x] for x in top_ids],
             [inv.bottom_ids[x] for x in g['bottom_ids']],
-        ))
+        )))
         used_h.update(g['top_ids']); used_t.update(g['bottom_ids'])
     # Never discard model-omitted tokens: keep Hebrew as explicit unaligned groups and
     # Tamil in wordBank.
     for hid, tok in inv.top_ids.items():
         if hid not in used_h:
-            result.alignments.append(AlignmentGroup([tok], []))
+            placed.append((place[hid], AlignmentGroup([tok], [])))
+    result.alignments = [group for _, group in sorted(placed, key=lambda item: item[0])]
     result.word_bank = [tok for tid, tok in inv.bottom_ids.items() if tid not in used_t]
     normalize_verse(result)
     return result

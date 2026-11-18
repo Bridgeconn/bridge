@@ -1,6 +1,6 @@
 import pytest
 
-from tc_ai_bridge.alignment_engine import AlignmentError, realign
+from tc_ai_bridge.alignment_engine import AlignmentError, apply_proposal, realign
 from tc_ai_bridge.models import AlignmentGroup, TokenRef, VerseAlignment
 
 
@@ -159,6 +159,47 @@ def test_only_a_split_is_allowed_with_no_target_word():
     for selection in ([h1, h2], [h3, h4], [h2, h3], [h1]):
         with pytest.raises(AlignmentError):
             realign(verse, selection, [])
+
+
+# #503: applying an AI alignment saved the groups in the order the proposal
+# listed them and moved every source word it left out to the end of the verse.
+def _unaligned_four():
+    source, target = _four()
+    return VerseAlignment([AlignmentGroup([h], []) for h in source], list(target))
+
+
+def test_an_ai_proposal_listing_groups_out_of_order_keeps_source_order():
+    changed = apply_proposal(_unaligned_four(), {"groups": [
+        {"top_ids": ["H003"], "bottom_ids": ["T001"]},
+        {"top_ids": ["H001"], "bottom_ids": ["T002"]},
+        {"top_ids": ["H004"], "bottom_ids": ["T003"]},
+        {"top_ids": ["H002"], "bottom_ids": ["T004"]},
+    ]})
+
+    assert _order(changed) == [["h1"], ["h2"], ["h3"], ["h4"]]
+    assert [[t.word for t in g.bottom_words] for g in changed.alignments] == [["t2"], ["t4"], ["t1"], ["t3"]]
+
+
+def test_source_words_an_ai_proposal_leaves_out_stay_where_they_stand():
+    changed = apply_proposal(_unaligned_four(), {"groups": [
+        {"top_ids": ["H004"], "bottom_ids": ["T001"]},
+        {"top_ids": ["H002"], "bottom_ids": ["T002"]},
+    ]})
+
+    assert _order(changed) == [["h1"], ["h2"], ["h3"], ["h4"]]
+    assert [[t.word for t in g.bottom_words] for g in changed.alignments] == [[], ["t2"], [], ["t1"]]
+    assert [t.word for t in changed.word_bank] == ["t3", "t4"]
+
+
+def test_an_ai_group_naming_its_source_words_backwards_keeps_source_order():
+    changed = apply_proposal(_unaligned_four(), {"groups": [
+        {"top_ids": ["H004"], "bottom_ids": []},
+        {"top_ids": ["H003", "H002"], "bottom_ids": ["T002", "T001"]},
+    ]})
+
+    assert _order(changed) == [["h1"], ["h2", "h3"], ["h4"]]
+    # The target words of a group keep the order the proposal gave them.
+    assert [t.word for t in changed.alignments[1].bottom_words] == ["t2", "t1"]
 
 
 @pytest.mark.parametrize("source_count,target_count", [(1, 1), (1, 2), (2, 1), (2, 2)])
