@@ -552,19 +552,38 @@ describe("AlignmentModal joined columns (#207) and Undo (#122)", () => {
     });
   }
 
-  it.each(["left", "right"] as const)("separates the middle word directly from its card to the %s", async direction => {
+  // 2026-11-17 (Joel): no "Separate left / right". A merged column has a
+  // split button on each seam; the words before the seam keep the targets.
+  it.each([["Beta", ["H001"]], ["Gamma", ["H001", "H002"]]] as const)("splits a three-word column at the seam before %s, with no side to choose", async (word, kept) => {
     const base = context(), topTokens = [token("H001", "Alpha"), token("H002", "Beta"), token("H003", "Gamma")];
     const ctx = context({ topTokens, sourceDirection: "ltr",
       alignment: { alignments: [{ topWords: topTokens, bottomWords: [base.bottomTokens[0]] }], wordBank: base.bottomTokens.slice(1) },
       groups: [{ id: "joined", topIds: topTokens.map(t => t.id), bottomIds: [base.bottomTokens[0].id] }] });
+    realignWords.mockResolvedValue(ctx);
+    await open(ctx);
+    expect(screen.queryByText(/Separate/)).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: `Split Alpha Beta Gamma before ${word}` }));
+    await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "1", [...kept], [base.bottomTokens[0].id], ctx.alignment));
+    expect(splitAlignmentSource).not.toHaveBeenCalled();
+  });
+
+  // The engine makes every other alignment edit wait for an interrupted
+  // separation, so the page must still offer to finish one.
+  it("offers to resume an interrupted source separation, for the word the engine names", async () => {
+    const base = context();
+    const ctx = context({ sourceLayout: { pending: { signature: `${base.topTokens[1].word}\u241f1\u241f1`, direction: "right" } } });
     splitAlignmentSource.mockResolvedValue({ contexts: [base] });
     await open(ctx);
-    await fireEvent.click(screen.getByLabelText("Separate Beta (1/1)"));
-    await fireEvent.click(screen.getByRole("button", { name: `Separate Beta ${direction}` }));
-    expect(get(confirmRequest)?.confirmLabel).toBe(`Separate ${direction}`);
+    await fireEvent.click(screen.getByRole("button", { name: "Resume separation" }));
+    expect(get(confirmRequest)?.confirmLabel).toBe("Resume separation");
     expect(splitAlignmentSource).not.toHaveBeenCalled();
     answerConfirmation(true);
-    await waitFor(() => expect(splitAlignmentSource).toHaveBeenCalledWith("1", "1", "H002", direction, ctx.alignment, false));
+    await waitFor(() => expect(splitAlignmentSource).toHaveBeenCalledWith("1", "1", "H002", "right", ctx.alignment, false));
+  });
+
+  it("shows no separation row when nothing is interrupted or undoable", async () => {
+    await open(joined());
+    expect(screen.queryByRole("button", { name: /separation/i })).toBeNull();
   });
 
   it("draws a group with two source words as one column, not two columns with the same targets", async () => {
@@ -601,12 +620,27 @@ describe("AlignmentModal joined columns (#207) and Undo (#122)", () => {
     expect(realignWords).not.toHaveBeenCalled();
   });
 
-  it("Split takes the last source word out of a joined column", async () => {
+  it("Split cuts a joined column at its seam; the first word keeps the target", async () => {
     const ctx = joined();
     realignWords.mockResolvedValue(ctx);
     await open(ctx);
-    await fireEvent.click(screen.getByRole("button", { name: "Split בָּרָא out of this column" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Split בְּרֵאשִׁית בָּרָא before בָּרָא" }));
     await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "1", ["H001"], ["T001"], ctx.alignment));
+  });
+
+  // 2026-11-18 (Joel): merged, then the target word taken away: it still splits.
+  it("Split works on a joined column that has no target word", async () => {
+    const base = context();
+    const ctx = joined({
+      alignment: { alignments: [{ topWords: base.topTokens, bottomWords: [] }], wordBank: base.bottomTokens },
+      groups: [{ id: "G001", topIds: ["H001", "H002"], bottomIds: [] }],
+    });
+    realignWords.mockResolvedValue(ctx);
+    await open(ctx);
+    const split = screen.getByRole("button", { name: "Split בְּרֵאשִׁית בָּרָא before בָּרָא" });
+    expect(split).not.toBeDisabled();
+    await fireEvent.click(split);
+    await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "1", ["H001"], [], ctx.alignment));
   });
 
   it("Undo walks back through the edits instead of toggling the newest backup", async () => {

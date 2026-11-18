@@ -229,18 +229,19 @@ async function pickUp(word: string, verse: string) {
 }
 
 describe("CrossVerseAlignmentModal", () => {
-  it.each(["left", "right"] as const)("separates the middle grouped source card to the %s", async direction => {
+  // 2026-11-17 (Joel): no "Separate left / right". A merged cell has a split
+  // button on each seam; the words before the seam keep the targets.
+  it.each([["Beta", ["H001"]], ["Gamma", ["H001", "H002"]]] as const)("splits a three-word cell at the seam before %s, with no side to choose", async (word, kept) => {
     const ctx = context("2", ["Alpha", "Beta", "Gamma"], ["target"], 1);
     ctx.groups = [{ id: "joined", topIds: ctx.topTokens.map(t => t.id), bottomIds: [ctx.bottomTokens[0].id] }];
     ctx.alignment = { alignments: [{ topWords: ctx.topTokens, bottomWords: ctx.bottomTokens }], wordBank: [] };
     getAlignmentRange.mockImplementation(async (_chapter: string, verses: string[]) => rangeFor(verses, { "1": V1, "2": ctx, "3-4": V34 }));
-    splitAlignmentSource.mockResolvedValue({ contexts: [ctx] });
+    realignWords.mockResolvedValue(ctx);
     await renderPage();
-    await fireEvent.click(screen.getByLabelText("Separate Beta (1/1)"));
-    await fireEvent.click(screen.getByRole("button", { name: `Separate Beta ${direction}` }));
-    expect(get(confirmRequest)?.confirmLabel).toBe(`Separate ${direction}`);
-    answerConfirmation(true);
-    await waitFor(() => expect(splitAlignmentSource).toHaveBeenCalledWith("1", "2", "H002", direction, ctx.alignment, false));
+    expect(screen.queryByText(/Separate/)).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: `Split Alpha Beta Gamma before ${word} in verse 2` }));
+    await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "2", [...kept], [ctx.bottomTokens[0].id], ctx.alignment));
+    expect(splitAlignmentSource).not.toHaveBeenCalled();
   });
   it("opens on the selected verse ±1 and shows every verse in both columns plus the verdict strip", async () => {
     await renderPage("2");
@@ -1001,13 +1002,25 @@ describe("CrossVerseAlignmentModal, the page as three panels", () => {
     expect(screen.queryByRole("button", { name: /with the previous source word in verse 3-4/ })).toBeNull();
   });
 
-  it("splits the last source word out of a joined column", async () => {
+  it("splits a joined cell at its seam; the first word keeps the target", async () => {
     const joined: AlignmentContext = { ...V2, groups: [{ id: "G001", topIds: ["H001", "H002"], bottomIds: ["T001"] }] };
     getAlignmentRange.mockImplementation(async (_chapter: string, verses: string[]) => rangeFor(verses, { "1": V1, "2": joined, "3-4": V34 }));
     realignWords.mockResolvedValue(joined);
     await renderPage("2");
-    await fireEvent.click(screen.getByRole("button", { name: "Split ἦν out of this column in verse 2" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Split λόγος ἦν before ἦν in verse 2" }));
     await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "2", ["H001"], ["T001"], joined.alignment));
+  });
+
+  // 2026-11-18 (Joel): merged, then the target word taken away: it still splits.
+  it("splits a joined cell that has no target word", async () => {
+    const joined: AlignmentContext = { ...V2, groups: [{ id: "G001", topIds: ["H001", "H002"], bottomIds: [] }] };
+    getAlignmentRange.mockImplementation(async (_chapter: string, verses: string[]) => rangeFor(verses, { "1": V1, "2": joined, "3-4": V34 }));
+    realignWords.mockResolvedValue(joined);
+    await renderPage("2");
+    const split = screen.getByRole("button", { name: "Split λόγος ἦν before ἦν in verse 2" });
+    expect(split).not.toBeDisabled();
+    await fireEvent.click(split);
+    await waitFor(() => expect(realignWords).toHaveBeenCalledWith("1", "2", ["H001"], [], joined.alignment));
   });
 
   it("lets an aligned word be picked up and moved, and marks each card as a place to drop", async () => {

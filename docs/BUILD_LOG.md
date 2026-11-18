@@ -25722,3 +25722,87 @@ canonical source order from the original-language text, #382 step 1. Reported, n
 changed: `apply_proposal` (the AI apply path) appends every source word the proposal
 left out after the proposed groups, which can reorder source words in the same way.
 
+
+## 2026-11-18 — Alignment tabs: merge button, split on the seam, the Separate row gone; a merged group splits with no target word
+
+Joel's one-by-one pass over the Source words panel of the Word alignment and
+Cross-verse tabs (branch `uifixes-v25`, PR #496). Every change is on both tabs.
+
+**What changed on the pages.**
+- The ⟵ / ⟶ arrows between source cards are gone. A source card shows a small merge
+  button on its top edge while it is pointed at or focused; it joins the word with the
+  one before it. Joining still needs a target word on one of the two.
+- A merged group is one segmented card: the cards touch, share one border, and a soft
+  ring in the source colour marks the group. On each seam sits a round split button,
+  always shown. One click cuts the group there; the words before the seam keep the
+  target words, the rest become their own column in place. There is no left or right
+  to choose, and the source order does not change.
+- The "Separate source word" picker with Separate left / Separate right is gone, and
+  so is the per-word menu (`SourceWordActions.svelte`, now used by nothing; left in
+  the tree for Joel to decide). `SourceSplitControls.svelte` shows only when there is
+  something to finish: "Resume separation" for an interrupted one, "Undo separation"
+  for the last one, or an error.
+- A source card fills its column, so the empty drop box under it is the same width;
+  target words placed in it widen both.
+- 13px above the first row, so the merge button of a top-row card is not cut off, and
+  3px of room on each side of a merged group, so its ring stands as far from its
+  neighbours as two single cards do.
+
+**Engine.** `realign` refused any call with no target word. It now allows exactly one
+such call: some, not all, of the source words of ONE group (`_is_split_of_one_group`).
+Those words become their own group with nothing under them, in place; the rest keep
+what the group had. Joining groups, or emptying a whole group, with no target word is
+still refused. This is what lets a merged group whose target word was taken away be
+split again.
+
+**Why the old Separate changed the source order.** `alignment_source_split.split`
+saved the separated word as its own group AFTER the rest of its group, wherever the
+word stood, and a display-only layout row put it back on the chosen side. The Source
+text panel reads the saved group order (`context.topTokens`), so separating the first
+word of a pair showed the pair swapped there. The engine function is untouched; the
+page no longer starts it.
+
+**Found in review, fixed here.** Removing the picker also removed the only way to
+finish an interrupted separation (`sourceLayout.pending`), and the dispatcher makes
+every other `alignment.*` write in the book wait for one ("Resume source separation
+at c:v first"). The row now offers "Resume separation" for the word the engine names.
+
+**Dev-server finding worth keeping.** Under `npm run tauri dev` Svelte emits a
+component's scoped rules with the hash class repeated (`button.s-x.s-x.s-x`), so a
+component's own `button {}` or `.source-words {}` rule outranks a rule in the shared
+`alignmentCards.css`. A rule that must beat a component's general rules belongs in
+that component's scoped `<style>`; that is why the merged-group and seam rules are in
+both components and not in the shared sheet.
+
+**Tests.** Engine: three in `tests/alignment/test_alignment_engine.py` (a split with no
+target word at either seam, the targets staying with the rest, and what is still
+refused). Frontend: the two "Separate left/right" tests in each of
+`AlignmentModal.test.ts` and `CrossVerseAlignmentModal.test.ts` became seam-split
+tests on a three-word group; a split with no target word on each tab; "Resume
+separation"; no row when nothing is pending.
+
+**Ran.** `npm run check` 0 errors 0 warnings; `npm run test` 138 files, 1349 tests
+passed; `npm run build` passed. Full `pytest -n auto`: 5892 passed, 29 failed. The 29
+were rerun alone twice, once with this code and once with HEAD's `realign` and
+`apply_proposal` swapped in: the same 23 fail both ways (9 AI review jobs ending
+`failed` in `tests/ai/test_ai_review_protocol.py` and
+`tests/alignment/test_ai_review_stale_after_apply.py`, 12 in
+`tests/semantic/test_semantic_mapping_stage3.py`, 2 in
+`tests/correction/test_correction_acceptance_queue_visibility.py` on
+`[WinError 206] The filename or extension is too long`), and the other 6 pass, so
+they failed under load only. None comes from this change; none was looked into.
+`scripts/build-sidecars.ps1`, then `scripts/smoke_sidecars.py`: passed.
+
+**Not run.** `cargo check` / `cargo test`: no Rust file changed.
+
+**Not verified here (jsdom cannot show layout); for Joel on the desktop app, both
+tabs, 1366x768 and a larger panel text size:** the split button centred on the seam
+as a full circle; no white strip inside a merged group; the merge button whole on the
+top row; the gap beside a merged group equal to the gap between single cards; a
+right-to-left (Hebrew) verse; "Resume separation" and "Undo separation" (neither
+could be produced by hand).
+
+**Not done.** Taking one word out of a cross-verse linked group, which the old
+Separate also did, has no control on the page now (Joel: "we can build later").
+Merging only joins neighbours (#382). `SourceWordActions.svelte` and
+`canSeparateSource` are unused by the pages.

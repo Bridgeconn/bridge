@@ -4,7 +4,6 @@
   import "../alignmentCards.css";
   import { edgeScrollStep } from "../alignmentLayout";
   import SourceSplitControls from "./SourceSplitControls.svelte";
-  import SourceWordActions from "./SourceWordActions.svelte";
   import AlignmentResetControls from "./AlignmentResetControls.svelte";
   import { onMount } from "svelte";
   import { bridge as apiBridge } from "../api/bridgeClient";
@@ -31,7 +30,7 @@
   import { alignmentBusyElsewhere, crossVerseOpen, holdAlignmentBusy, openCrossVerse, showAlignmentTab, watchAlignmentChanges } from "../alignmentUi";
   import {
     alignedTargetsFor, bottomIdsAfterDrop, bottomIdsAfterStep, groupForSource, groupForTarget, occurrenceLabel as occurrence,
-    sourceColumns, topIdsFor, unaccountedTargets, undoTargetId, canSeparateSource, type DropSlot,
+    sourceColumns, topIdsFor, unaccountedTargets, undoTargetId, type DropSlot,
   } from "../alignmentGroups";
   import { SourceGlossCache } from "../lexiconGloss";
   import LexiconPopup from "./LexiconPopup.svelte";
@@ -60,7 +59,6 @@
   onDestroy(() => holdAlignmentBusy(busyHolder, false));
 
   let context: AlignmentContext | null = null;
-  let splitControls: SourceSplitControls;
   // #409: the verse as continuous text, with its punctuation, to read while
   // aligning (translationCore's "Step 1. Read", target language only). It is
   // the verse's `display.plain` -- the engine's one USFM reader, never a
@@ -417,9 +415,10 @@
   // realign has always accepted that; the surface could not ask for it.
   // "Join" folds a column into the one before it (split source words sit
   // side by side); "Split" takes the last source word out again, which the
-  // engine keeps as its own empty group. realign needs at least one target
-  // word, so a join of two empty columns and a split of a joined column with
-  // no target are disabled rather than refused after the click.
+  // engine keeps as its own empty group. A join needs at least one target
+  // word, so a join of two empty columns is disabled rather than refused
+  // after the click. A split does not (2026-11-18, Joel): a merged column
+  // whose target word was taken away still splits.
   $: columns = context ? sourceColumns(context) : [];
   function columnBottomIds(ids: string[]): string[] {
     return context ? (alignedTargetsFor(context, ids[0]).map((t) => t.id)) : [];
@@ -435,14 +434,18 @@
       "Source words joined.",
     );
   }
-  function splitLast(index: number) {
+  // 2026-11-17 (Joel): a merged column splits at the seam that was clicked,
+  // with no left or right to choose. The words before the seam keep the
+  // target words; the ones after it become their own column, in place, so
+  // the source order never changes.
+  function splitAt(index: number, place: number) {
     if (!context) return;
     const column = columns[index];
     const bottomIds = columnBottomIds(column.ids);
-    if (column.ids.length < 2 || bottomIds.length === 0) return;
+    if (place <= 0 || place >= column.ids.length) return;
     void mutate(
-      () => bridge.realignWords(chapter, verse, column.ids.slice(0, -1), bottomIds, context!.alignment),
-      "Source word split out.",
+      () => bridge.realignWords(chapter, verse, column.ids.slice(0, place), bottomIds, context!.alignment),
+      "Source words split.",
     );
   }
 
@@ -662,34 +665,35 @@
             <button type="button" class="hint" aria-label="Source words help"
               use:tooltip={"Click a word for its lexicon entry. Its target words sit in a row beneath it. Drag a target word along its row, or use its arrows, to change their order."}><UiIcon name="info" /></button>
           </svelte:fragment>
-          <SourceSplitControls bind:this={splitControls} {context} {busy} onBusy={(value) => busy = value} onChanged={(values) => { context = values.find((v) => v.chapter === chapter && v.verse === verse) || context; }} />
+          <SourceSplitControls {context} {busy} onBusy={(value) => busy = value} onChanged={(values) => { context = values.find((v) => v.chapter === chapter && v.verse === verse) || context; }} />
           <div class="interlinear" dir={context.sourceDirection}>
           {#each columns as column, index (column.ids.join("+"))}
             {@const src = column.tokens[0]}
             {@const label = column.tokens.map((t) => t.word).join(" ")}
             {@const joinable = columnBottomIds(columns[Math.max(0, index - 1)].ids).length + columnBottomIds(column.ids).length > 0}
             <div class="column" class:joined={column.ids.length > 1}>
-              <div class="source-words">
-                {#if index > 0}
-                  <button type="button" class="join-x" on:click|stopPropagation={() => joinWithPrevious(index)} disabled={busy || !joinable}
-                    aria-label={`Join ${label} with the previous source word`}
-                    use:tooltip={joinable ? "Join with the previous source word: one target word for both" : "Drop a target word on one of the two columns first, then join"}>⟵</button>
-                {/if}
-                {#each column.tokens as token (token.id)}
+              <div class="source-words" class:joined={column.ids.length > 1}>
+                {#each column.tokens as token, place (token.id)}
+                  {#if place > 0}
+                    <span class="seam"><button type="button" class="seam-split" on:click|stopPropagation={() => splitAt(index, place)} disabled={busy}
+                      aria-label={`Split ${label} before ${token.word}`}
+                      use:tooltip={"Split here"}><UiIcon name="unmerge" /></button></span>
+                  {/if}
                   <div class="source-card">
+                  {#if place === 0 && index > 0}
+                    <span class="card-tools source-tools">
+                      <button type="button" class="card-btn merge" on:click|stopPropagation={() => joinWithPrevious(index)} disabled={busy || !joinable}
+                        aria-label={`Join ${label} with the previous source word`}
+                        use:tooltip={joinable ? "Merge with the previous word: one target word for both" : "Place a target word on one of the two first, then merge"}><UiIcon name="merge" /></button>
+                    </span>
+                  {/if}
                   <button class="token source" dir={context.sourceDirection} on:click={() => (lexiconToken = token)} disabled={busy}
                     use:tooltip={sourceHint(token, glossVersion)}>
                     <span class="word">{token.word}{#if token.occurrences > 1}<span class="occ">{occurrence(token)}</span>{/if}</span>
                     {#if sourceGloss(token, glossVersion)}<small class="gloss">{sourceGloss(token, glossVersion)}</small>{/if}
                   </button>
-                  {#if canSeparateSource(context, token.id)}<SourceWordActions {token} disabled={busy} onSeparate={(direction) => { void splitControls.separateWord(token.id, direction); }} />{/if}
                   </div>
                 {/each}
-                {#if column.ids.length > 1}
-                  <button type="button" class="join-x" on:click|stopPropagation={() => splitLast(index)} disabled={busy || columnBottomIds(column.ids).length === 0}
-                    aria-label={`Split ${column.tokens[column.tokens.length - 1].word} out of this column`}
-                    use:tooltip={"Split the last source word out of this column"}>⟶</button>
-                {/if}
               </div>
               <div
                 class="target-cell"
@@ -972,7 +976,9 @@
   .interlinear {
     display: flex; flex-wrap: wrap; align-content: flex-start; gap: 10px 8px;
     overflow-x: clip;
-    padding: 2px 6px 4px;
+    /* 13px on top: the merge button of a card in the first row sits 11px
+       above it and was cut off by the panel's edge (2026-11-18, Joel). */
+    padding: 13px 6px 4px;
   }
   /* The source column is Hebrew for an OT book and Greek for an NT one, so
      the face keys off the `dir` the markup already sets from
@@ -981,7 +987,15 @@
   .interlinear[dir="ltr"] { font-family: var(--font-greek); }
   /* max-width so a column can never be wider than the box and be silently
      clipped by the overflow-x above on a narrow window. */
-  .column { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 64px; max-width: 100%; flex-shrink: 0; }
+  /* No minimum of its own (2026-11-17, Joel): a column is as wide as its
+     source card, so its empty box is too; target words placed in it widen
+     it. */
+  .column { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 0; max-width: 100%; flex-shrink: 0; }
+  /* A merged group's ring is drawn 3px outside its cards, which ate into the
+     space to the next column. The column makes that room itself, so the ring
+     stands as far from its neighbours as two single cards do from each other
+     (2026-11-18, Joel). */
+  .column.joined { box-sizing: border-box; padding-inline: 3px; }
   /* #493: the target words of a column sit in a row and wrap, in the target
      language's direction (the cell's `dir`). The cell is the drop target, so
      an empty one shows a dashed box to drop on. */
@@ -1061,11 +1075,48 @@
   /* #207: a joined column shows every source word of its group side by side;
      the arrow buttons join a column with the one before it or split the last
      word out again. */
-  .source-words { display: flex; align-items: stretch; gap: 3px; width: 100%; }
-  .column.joined .source-words .token.source { flex: none; }
-  .join-x { border: 0; background: transparent; color: var(--text-3); border-radius: 4px; font-size: var(--fs-xs); padding: 0 3px; cursor: pointer; line-height: 1; }
-  .join-x:hover:not(:disabled) { color: var(--accent); background: var(--bg); }
-  .join-x:disabled { opacity: 0.35; cursor: default; }
+  .source-words { display: flex; align-items: stretch; justify-content: center; gap: 3px; width: 100%; }
+  /* Each word fills its own card, in a merged group too, so no bare strip
+     shows between a short word and the seam (2026-11-18, Joel). */
+  .source-words .source-card > .token.source { flex: 1 1 auto; }
+  /* 2026-11-17 (Joel): joining and splitting source words is a small toolbar
+     on the column's first source card, shown while the card is pointed at or
+     focused, like a target card's. It sits on the side of the word before
+     it. The arrows between the cards are gone: they read as direction, not
+     as "join". */
+  /* 2026-11-17 (Joel): merged source words are one segmented card, not cards
+     in a blue box: the cards touch, share one border with square inner
+     corners, and a soft ring in the source colour marks the group. Logical
+     properties, so it reads the same in a right-to-left verse. These rules
+     live here, not in alignmentCards.css: they must outrank this component's
+     own `button` and `.source-words` rules, and only a rule scoped the same
+     way does so in both the dev server and a build. */
+  .source-words.joined { flex-wrap: nowrap; gap: 0; border-radius: 8px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--term) 16%, transparent); }
+  .source-words.joined .token.source { border-color: color-mix(in srgb, var(--term) 50%, var(--border)); }
+  .source-words.joined .seam + .source-card { margin-inline-start: -1px; }
+  .source-words.joined .source-card:hover, .source-words.joined .source-card:focus-within { z-index: 1; }
+  .source-words.joined .source-card:not(:last-child) > .token.source { border-start-end-radius: 0; border-end-end-radius: 0; }
+  .source-words.joined .source-card:not(:first-child) > .token.source { border-start-start-radius: 0; border-end-start-radius: 0; }
+  /* The seam between two merged words is the split button: always shown, one
+     click splits the group there and the words keep their order. The seam is
+     its own zero-width item between the two cards and the button is centred
+     on it both ways, so it sits exactly on the line whatever the card widths,
+     the text size or the reading direction. */
+  .source-words .seam { position: relative; z-index: 3; flex: none; width: 0; align-self: stretch; }
+  .source-words .seam .seam-split {
+    position: absolute; top: 50%; left: 0; transform: translate(-50%, -50%);
+    display: grid; place-items: center; width: 18px; height: 18px; min-width: 0; min-height: 0; box-sizing: border-box; padding: 0; margin: 0; line-height: 0; border-radius: 50%;
+    border: 1px solid color-mix(in srgb, var(--term) 50%, var(--border)); background: var(--surface); color: var(--text-2); cursor: pointer;
+    box-shadow: 0 1px 3px rgba(0,0,0,.12);
+  }
+  .source-words .seam .seam-split :global(svg) { display: block; width: 12px; height: 12px; stroke-width: 2; }
+  .source-words .seam .seam-split:hover:not(:disabled), .source-words .seam .seam-split:focus-visible { color: var(--accent); border-color: var(--accent); background: var(--accent-bg); }
+  .source-words .seam .seam-split:disabled { opacity: .45; cursor: default; }
+  .source-tools { inset-inline-end: auto; inset-inline-start: -5px; direction: ltr; }
+  .source-card:hover > .source-tools, .source-card:focus-within > .source-tools { display: inline-flex; }
+  .card-tools .card-btn.merge { width: 18px; height: 18px; }
+  .card-tools .card-btn.merge :global(svg) { width: 12px; height: 12px; stroke-width: 2.4; }
+  .card-tools .card-btn.merge:hover:not(:disabled), .card-tools .card-btn.merge:focus-visible { color: var(--accent); background: var(--accent-bg); }
   /* The target words fill their panel: the whole body takes a drop, starts
      a selection box and clears the selection on a click. No height limit and
      no scrolling inside (#485). */

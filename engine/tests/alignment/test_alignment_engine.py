@@ -1,6 +1,6 @@
 import pytest
 
-from tc_ai_bridge.alignment_engine import realign
+from tc_ai_bridge.alignment_engine import AlignmentError, realign
 from tc_ai_bridge.models import AlignmentGroup, TokenRef, VerseAlignment
 
 
@@ -113,6 +113,52 @@ def test_splitting_a_joined_column_keeps_source_order_either_way():
     assert _order(realign(verse, [h3], [t2])) == [["h1"], ["h2"], ["h3"], ["h4"]]
     # With a target word from an earlier column.
     assert _order(realign(verse, [h3], [t1])) == [["h1"], ["h2"], ["h3"], ["h4"]]
+
+
+# 2026-11-18 (Joel): two source words merged, the target word then taken
+# away, could not be split again, because realign refused an empty target
+# selection outright.
+def test_a_merged_group_with_no_target_word_splits_in_place():
+    (h1, h2, h3, h4), (t1, t2, t3, t4) = _four()
+    verse = VerseAlignment([
+        AlignmentGroup([h1], [t1]),
+        AlignmentGroup([h2, h3, h4], []),
+    ], [t2, t3, t4])
+
+    changed = realign(verse, [h2], [])
+
+    assert _order(changed) == [["h1"], ["h2"], ["h3", "h4"]]
+    assert all(not group.bottom_words for group in changed.alignments[1:])
+    assert [t.word for t in changed.word_bank] == ["t2", "t3", "t4"]
+    # At the second seam, and with the later words named instead.
+    assert _order(realign(verse, [h2, h3], [])) == [["h1"], ["h2", "h3"], ["h4"]]
+    assert _order(realign(verse, [h4], [])) == [["h1"], ["h2", "h3"], ["h4"]]
+
+
+def test_a_split_with_no_target_named_leaves_the_target_words_with_the_rest():
+    (h1, h2, h3, h4), (t1, t2, t3, t4) = _four()
+    verse = VerseAlignment([AlignmentGroup([h1, h2], [t1, t2]), AlignmentGroup([h3], []), AlignmentGroup([h4], [])], [t3, t4])
+
+    changed = realign(verse, [h1], [])
+
+    assert _order(changed) == [["h1"], ["h2"], ["h3"], ["h4"]]
+    assert [t.word for t in changed.alignments[0].bottom_words] == []
+    assert [t.word for t in changed.alignments[1].bottom_words] == ["t1", "t2"]
+
+
+def test_only_a_split_is_allowed_with_no_target_word():
+    (h1, h2, h3, h4), (t1, t2, t3, t4) = _four()
+    verse = VerseAlignment([
+        AlignmentGroup([h1], []),
+        AlignmentGroup([h2], []),
+        AlignmentGroup([h3, h4], [t3]),
+    ], [t1, t2, t4])
+
+    # Joining two columns, emptying a whole group, and a selection that
+    # reaches into two groups are all still refused.
+    for selection in ([h1, h2], [h3, h4], [h2, h3], [h1]):
+        with pytest.raises(AlignmentError):
+            realign(verse, selection, [])
 
 
 @pytest.mark.parametrize("source_count,target_count", [(1, 1), (1, 2), (2, 1), (2, 2)])

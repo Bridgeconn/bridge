@@ -50,8 +50,6 @@
 :is(.modal, .page).alignment-cards .source-card:has(details[open]) { z-index: 10; }
 :is(.modal, .page).alignment-cards .occ { direction: ltr; unicode-bidi: isolate; display: inline-block; }
 :is(.modal, .page).alignment-cards .source-words { align-items: flex-start; flex-wrap: wrap; }
-:is(.modal, .page).alignment-cards .column.joined { border: 1px solid var(--accent); border-radius: 8px; padding: 4px; }
-:is(.modal, .page).alignment-cards .join-x { flex: none; align-self: center; min-width: 24px; min-height: 28px; }
 :is(.modal, .page).alignment-cards .token.target {
   box-sizing: border-box;
   width: 7rem;
@@ -88,3 +86,8 @@
   justify-content: center;
 }
 :is(.modal, .page).alignment-cards .token.target .word { line-height: 1.6; font-size: var(--fs-sm); }
+/* 2026-11-17 (Joel): a source card fills its column, so the card and the
+   empty box under it are always the same width; in a merged column the
+   cards share that width. */
+:is(.modal, .page).alignment-cards .source-words .source-card { flex: 1 1 auto; display: flex; }
+:is(.modal, .page).alignment-cards .source-words .source-card > .token.source { flex: 1 1 auto; }

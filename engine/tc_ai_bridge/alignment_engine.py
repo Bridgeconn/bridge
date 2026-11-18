@@ -54,12 +54,30 @@ def token_label(token: TokenRef, include_morph: bool = False) -> str:
     return label
 
 
+def _is_split_of_one_group(verse: VerseAlignment, top_sigs: set[str]) -> bool:
+    """True when `top_sigs` are some, not all, of the source words of ONE group.
+
+    2026-11-18 (Joel): that is the one realign allowed with no target word. A
+    reviewer who merged two source words and then took the target word away
+    could not split them again. Taking part of a group out needs no target
+    word: the words taken become their own group with nothing under them,
+    which tC already stores for an unaligned source word, and the words left
+    keep whatever the group had. Joining groups, or emptying a whole group,
+    with no target word is still refused.
+    """
+    holding = [g for g in verse.alignments if any(x.signature in top_sigs for x in g.top_words)]
+    if len(holding) != 1:
+        return False
+    in_group = {x.signature for x in holding[0].top_words}
+    return top_sigs <= in_group and top_sigs != in_group
+
+
 def realign(verse: VerseAlignment, selected_top: list[TokenRef], selected_bottom: list[TokenRef]) -> VerseAlignment:
     if not selected_top:
         raise AlignmentError('Select at least one source-language topWord.')
-    if not selected_bottom:
-        raise AlignmentError('Select at least one target-language bottomWord.')
     top_sigs = {x.signature for x in selected_top}
+    if not selected_bottom and not _is_split_of_one_group(verse, top_sigs):
+        raise AlignmentError('Select at least one target-language bottomWord.')
     bottom_sigs = {x.signature for x in selected_bottom}
     result = copy.deepcopy(verse)
     new_groups: list[AlignmentGroup] = []
