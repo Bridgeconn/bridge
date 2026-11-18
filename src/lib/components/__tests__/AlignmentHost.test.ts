@@ -37,6 +37,17 @@ describe("alignment window ownership and navigation", () => {
     mocks.receive!({ kind: "pin", path: "book-a" });
     await waitFor(() => expect(mocks.context).toHaveBeenLastCalledWith(expect.objectContaining({ verse: "3-4", pinned: false })));
   });
+  it("follows a chapter change once the new chapter's verses are read, with cross-verse still open", async () => {
+    alignmentOpen.set(false); crossVerseOpen.set(true); selectedVerse.set("3-4");
+    render(AlignmentHost);
+    await waitFor(() => expect(mocks.context).toHaveBeenLastCalledWith(expect.objectContaining({ chapter: "1", verse: "3-4" })));
+    currentChapter.set("2");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mocks.context).toHaveBeenLastCalledWith(expect.objectContaining({ chapter: "1", verse: "3-4" }));
+    chapterVerseNums.set({ "1": ["1", "2", "3-4"], "2": ["1", "2"] }); selectedVerse.set("1");
+    await waitFor(() => expect(mocks.context).toHaveBeenLastCalledWith(expect.objectContaining({ chapter: "2", verse: "1" })));
+    expect(get(crossVerseOpen)).toBe(true);
+  });
   it("defers following during a mutation and ignores messages from another project", async () => {
     render(AlignmentHost);
     await waitFor(() => expect(mocks.window).toHaveBeenCalledWith("open"));

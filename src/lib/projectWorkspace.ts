@@ -1,14 +1,21 @@
 import { editorTree, validEditorTree } from "./editorDocking";
 import type { LayoutNode } from "./alignmentLayout";
 import { get } from "svelte/store";
-import { localUserId } from "./stores";
-import { RETIRED_PANEL_IDS, sidePanels, sidePanelOrder, resetPanelLayout, validPanelSnapshot, withoutRetiredPanels, type SidePanels, type SidePanelId } from "./editorPrefs";
+import { currentChapter, localUserId, project as openProject, selectedVerse } from "./stores";
+import { RETIRED_PANEL_IDS, versesOpen, sidePanels, sidePanelOrder, resetPanelLayout, validPanelSnapshot, withoutRetiredPanels, type SidePanels, type SidePanelId } from "./editorPrefs";
 import { without } from "./alignmentLayout";
+import { openTabs, reconcileTabs, resetTabLayout, tabLayout, validTabLayout, type TabLayout } from "./editorTabs";
+import { alignmentOpen, crossVerseOpen, openAlignment, openCrossVerse } from "./alignmentUi";
 import type { ProjectInfo, RegisteredProject } from "./types/finding";
 
+/** What a book was left with (2026-11-16, Joel): whether the two alignment
+ *  tabs were open, and how the work area's tabs were arranged. Kept per book
+ *  beside its reading place, so coming back to the book (the next day, after
+ *  another book or project) opens the same tabs in the same layout. */
+export interface BookSession { alignment?: { word: boolean; cross: boolean }; tabs?: TabLayout }
 export interface WorkspaceSnapshot {
   version: 1; book: string; chapter: string; verse: string; view: "editor" | "review";
-  books?: Record<string, { chapter: string; verse: string; scroll: number; view: "editor" | "review" }>;
+  books?: Record<string, { chapter: string; verse: string; scroll: number; view: "editor" | "review" } & BookSession>;
   scroll: number; tree?: LayoutNode | null; panels: SidePanels; order: SidePanelId[];
 }
 const identity = (p: { collectionId?: string; projectId?: string; path: string }) => p.collectionId || p.projectId || p.path;
@@ -37,9 +44,21 @@ const initialPanels = structuredClone(get(sidePanels));
 const initialOrder = [...get(sidePanelOrder)];
 let active: { project: ProjectInfo; key: string; snapshot: WorkspaceSnapshot } | null = null;
 let restoring = false;
+// True from the moment a book is bound until its tabs are back
+// (restoreBookSession): what happens in between is the app tidying up and
+// putting things back, not the reviewer's doing, and must not be saved. A
+// book switch, for one, closes the alignment tabs of the book being left
+// after the new book is already bound.
+let settling = false;
+let restoreSeq = 0;
+// The bound book's tabs are still to be put back: done at its first reading place.
+let sessionDue = false;
 export function bindWorkspace(p: ProjectInfo) {
   flushWorkspace();
   const saved = savedWorkspace(p);
+  settling = true;
+  sessionDue = true;
+  restoreSeq += 1;
   restoring = true;
   active = { project: p, key: key("workspace", identity(p)), snapshot: saved ?? { version: 1, book: p.bookId, chapter: "", verse: "", view: "editor", scroll: 0,
     panels: structuredClone(initialPanels), order: [...initialOrder] } };
@@ -58,18 +77,79 @@ function layoutChanged() {
 editorTree.subscribe(layoutChanged); sidePanels.subscribe(layoutChanged); sidePanelOrder.subscribe(layoutChanged);
 export function rememberLocation(p: ProjectInfo, chapter: string, verse: string | null, view: "editor" | "review") {
   if (!active || active.project.path !== p.path || !p.chapters.includes(chapter) || !verse) return;
+  // The book's first reading place since it was opened: the editor is on a
+  // verse, whichever way it got there, so the book's tabs go back now.
+  const restore = sessionDue;
+  sessionDue = false;
   const same = active.snapshot.book === p.bookId && active.snapshot.chapter === chapter;
   const scroll = same ? active.snapshot.scroll : active.snapshot.books?.[p.bookId.toLowerCase()]?.chapter === chapter ? active.snapshot.books[p.bookId.toLowerCase()].scroll : 0;
   active.snapshot = { ...active.snapshot, book: p.bookId, chapter, verse, view, scroll,
-    books: { ...active.snapshot.books, [p.bookId.toLowerCase()]: { chapter, verse, view, scroll } } };
+    books: { ...active.snapshot.books, [p.bookId.toLowerCase()]: { ...active.snapshot.books?.[p.bookId.toLowerCase()], chapter, verse, view, scroll } } };
   flushWorkspace();
+  if (restore) restoreBookSession(p);
 }
 export function rememberScroll(path: string, chapter: string, scroll: number) {
   if (!active || active.project.path !== path || active.snapshot.chapter !== chapter) return;
   active.snapshot.scroll = Math.max(0, scroll);
   if (active.snapshot.books?.[active.snapshot.book.toLowerCase()]) active.snapshot.books[active.snapshot.book.toLowerCase()].scroll = active.snapshot.scroll; // flushed on navigation, layout, pagehide or bounded scroll timer
 }
-export function resetWorkspaceLayout() { editorTree.set(null); resetPanelLayout(); }
+/** Note the open book's alignment tabs and tab layout, once it has settled. */
+function recordSession(): void {
+  if (!active || restoring || settling) return;
+  const book = active.project.bookId.toLowerCase();
+  const entry = active.snapshot.books?.[book];
+  if (!entry) return; // no reading place yet: nothing to come back to
+  active.snapshot = { ...active.snapshot, books: { ...active.snapshot.books,
+    [book]: { ...entry, alignment: { word: get(alignmentOpen), cross: get(crossVerseOpen) }, tabs: get(tabLayout) } } };
+  flushWorkspace();
+}
+alignmentOpen.subscribe(recordSession); crossVerseOpen.subscribe(recordSession); tabLayout.subscribe(recordSession);
+
+/** What `p` was left with, or null. */
+export function savedBookSession(p: ProjectInfo): BookSession | null {
+  const entry = savedWorkspace(p)?.books?.[p.bookId.toLowerCase()];
+  if (!entry) return null;
+  const alignment = entry.alignment && typeof entry.alignment === "object"
+    ? { word: Boolean(entry.alignment.word), cross: Boolean(entry.alignment.cross) } : undefined;
+  return { alignment, tabs: validTabLayout(entry.tabs) ? entry.tabs : undefined };
+}
+
+/**
+ * Put the open book's tabs back as it was left (2026-11-16, Joel): the tab
+ * layout, and the Word alignment and Cross-verse tabs on the verse the editor
+ * landed on. Runs at the book's first reading place (rememberLocation). An
+ * alignment tab cannot open while a check run is going, so that is waited
+ * for, a short while; saving starts again when this is done.
+ */
+export function restoreBookSession(p: ProjectInfo, options: { retryMs?: number; tries?: number } = {}): void {
+  const token = ++restoreSeq;
+  const session = savedBookSession(p);
+  const wanted = session?.alignment;
+  const applyTabs = (): void => { if (session?.tabs) tabLayout.set(reconcileTabs(session.tabs, get(openTabs))); };
+  const done = (): void => { if (token === restoreSeq) { settling = false; recordSession(); } };
+  applyTabs();
+  if (!wanted?.word && !wanted?.cross) { done(); return; }
+  const retryMs = options.retryMs ?? 500, limit = options.tries ?? 40;
+  let tries = 0;
+  const attempt = (): void => {
+    if (token !== restoreSeq || get(openProject)?.path !== p.path) return; // another book since
+    const chapter = get(currentChapter), verse = get(selectedVerse);
+    let waiting = !verse;
+    if (verse) {
+      if (wanted.word && !get(alignmentOpen)) waiting = !openAlignment(chapter, verse) || waiting;
+      if (wanted.cross && !get(crossVerseOpen)) waiting = !openCrossVerse(verse) || waiting;
+    }
+    if (waiting && (tries += 1) < limit) { setTimeout(attempt, retryMs); return; }
+    // The tabs are open: now the saved layout has somewhere to put them.
+    applyTabs();
+    done();
+  };
+  attempt();
+}
+
+/** Reset layout (the last row of the top bar's layout picker): Verses and Review open, side by
+ * side, every other panel closed and back in the Bridge window. */
+export function resetWorkspaceLayout() { editorTree.set(null); resetPanelLayout(); versesOpen.set(true); resetTabLayout(); }
 export function recordProjectOpen(p: ProjectInfo) {
   const name = key("recentProjects");
   const rows = read<Record<string, { at: number; book: string }>>(name) || {};

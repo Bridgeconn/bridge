@@ -97,7 +97,7 @@
           <UiIcon name={snapshot?.paused ? "play" : "pause"} />{snapshot?.paused ? "Resume" : "Pause after this book"}</button>
         <button class="ui-btn danger" on:click={() => act(cancelCollectionQa)} disabled={busy || snapshot?.state === "cancelling"}><UiIcon name="close" />Cancel</button>
       {:else}
-        <button class="ui-btn primary check-all" aria-haspopup="dialog" disabled={busy}
+        <button class="ui-btn quiet check-all" aria-haspopup="dialog" disabled={busy}
           use:tooltip={`Choose the checks and start a run on all ${bookCount} ${bookCount === 1 ? "book" : "books"} (now: ${checkListLabel($selectedCollectionChecks)})`}
           on:click={() => (dialogOpen = true)}>
           <UiIcon name="runQa" />Check</button>
@@ -132,6 +132,9 @@
   .status { min-width: 0; color: var(--text-2); font-size: var(--fs-3xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .active .status { color: var(--accent); font-weight: 600; }
   .actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }
+  /* The book-list icon style (no border, the icon's colour) with its label. */
+  .ui-btn.quiet.check-all { color: var(--success); }
+  .ui-btn.quiet.check-all:hover:not(:disabled) { border-color: transparent; background: var(--success-bg); color: var(--success); }
   .track { height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
   .fill { height: 100%; background: var(--accent); transition: width .3s linear; }
   .error { margin: 0; color: var(--danger); font-size: var(--fs-3xs); }

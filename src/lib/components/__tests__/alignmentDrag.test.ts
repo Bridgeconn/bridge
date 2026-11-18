@@ -65,9 +65,14 @@ describe("createPointerDrag", () => {
     column.appendChild(card);
     const drag = createPointerDrag({ onDrop, hitTest: () => card });
     drag.start(pointer(0, 0), "T001");
-    drag.move(pointer(40, 110)); // upper half
+    drag.move(pointer(20, 120)); // left half
     expect(get(drag.state)).toMatchObject({ overColumn: "H001", overSlot: { value: "T002", after: false } });
-    drag.move(pointer(40, 130)); // lower half
+    // #493: in a right-to-left row the left half is the later one.
+    column.setAttribute("dir", "rtl");
+    drag.move(pointer(20, 120));
+    expect(get(drag.state).overSlot).toEqual({ value: "T002", after: true });
+    column.removeAttribute("dir");
+    drag.move(pointer(60, 120)); // right half
     expect(get(drag.state).overSlot).toEqual({ value: "T002", after: true });
     drag.up();
     expect(onDrop).toHaveBeenCalledWith({ tokenId: "T001", column: "H001", bank: null, slot: { value: "T002", after: true } });

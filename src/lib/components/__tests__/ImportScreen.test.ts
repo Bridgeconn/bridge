@@ -93,7 +93,7 @@ describe("ImportScreen drops (#301)", () => {
     first.unmount();
     // Back to Projects after the import: App passes the same path and sequence.
     render(ImportScreen, { props: { onOpened: vi.fn(), droppedPath: SOURCE, dropSequence: 1 } });
-    await screen.findByText("Import a file");
+    await screen.findByRole("button", { name: "Import a file" });
     expect(inspectImport).toHaveBeenCalledTimes(1);
     expect(screen.queryByText("Confirm project details")).toBeNull();
   });

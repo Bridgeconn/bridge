@@ -1,7 +1,13 @@
 let nextTooltipId = 0;
 
-/** Immediate hover/focus hints, rendered outside scroll containers. */
-export function tooltip(node: HTMLElement, text: string) {
+export type TooltipInput = string | { text: string; side?: "below" | "right" };
+
+/** Immediate hover/focus hints, rendered outside scroll containers. A hint
+ *  sits below its control (above when there is no room); `side: "right"` is
+ *  for a column of icons, where a hint below would cover the next one. */
+export function tooltip(node: HTMLElement, input: TooltipInput) {
+  let text = typeof input === "string" ? input : input.text;
+  let side = typeof input === "string" ? "below" : input.side ?? "below";
   let hint: HTMLDivElement | undefined;
   const id = `bridge-tooltip-${++nextTooltipId}`;
   const hide = () => {
@@ -25,6 +31,11 @@ export function tooltip(node: HTMLElement, text: string) {
     node.setAttribute("aria-describedby", [node.getAttribute("aria-describedby"), id].filter(Boolean).join(" "));
     const anchor = node.getBoundingClientRect();
     const box = hint.getBoundingClientRect();
+    if (side === "right" && anchor.right + 8 + box.width + 8 < window.innerWidth) {
+      hint.style.left = `${anchor.right + 8}px`;
+      hint.style.top = `${Math.max(8, Math.min(anchor.top + (anchor.height - box.height) / 2, window.innerHeight - box.height - 8))}px`;
+      return;
+    }
     hint.style.left = `${Math.max(8, Math.min(anchor.left + (anchor.width - box.width) / 2, window.innerWidth - box.width - 8))}px`;
     hint.style.top = `${anchor.bottom + box.height + 8 < window.innerHeight ? anchor.bottom + 6 : Math.max(8, anchor.top - box.height - 6)}px`;
   };
@@ -38,7 +49,11 @@ export function tooltip(node: HTMLElement, text: string) {
   window.addEventListener("resize", hide);
   window.addEventListener("scroll", hide, true);
   return {
-    update(value: string) { text = value; if (hint) show(); },
+    update(value: TooltipInput) {
+      text = typeof value === "string" ? value : value.text;
+      side = typeof value === "string" ? "below" : value.side ?? "below";
+      if (hint) show();
+    },
     destroy() {
       hide();
       node.removeEventListener("mouseenter", show);

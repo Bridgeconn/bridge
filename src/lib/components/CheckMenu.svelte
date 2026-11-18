@@ -6,10 +6,14 @@
    *  chapter entry, after an edit, Run chapter and Run whole book. Greek Room
    *  is off by default and always runs last. */
   import { onDestroy } from "svelte";
+  import UiIcon from "./UiIcon.svelte";
+  import { tooltip } from "../tooltip";
   import { editorChecks } from "../editorPrefs";
   import { CHECK_BOXES, selectedEditorChecks, toggleCheck, type CheckBoxId } from "../checkSelection";
 
   export let disabled = false;
+  /** On the editor's left rail: an icon button, the panel opening to its right. */
+  export let rail = false;
   /** "1:3" when a verse is selected, else "". */
   export let verse = "";
   export let chapter = "";
@@ -28,9 +32,13 @@
     if (open && event.key === "Escape") { open = false; trigger?.focus(); }
   }
   document.addEventListener("mousedown", onDocumentPointer);
+  // The top bar is a window-drag region: the shell takes a mousedown there
+  // before the page sees it, so a click on the bar is caught as a pointerdown.
+  document.addEventListener("pointerdown", onDocumentPointer, true);
   document.addEventListener("keydown", onKey);
   onDestroy(() => {
     document.removeEventListener("mousedown", onDocumentPointer);
+    document.removeEventListener("pointerdown", onDocumentPointer, true);
     document.removeEventListener("keydown", onKey);
   });
 
@@ -43,9 +51,15 @@
   }
 </script>
 
-<span class="check-menu" bind:this={root}>
+<span class="check-menu" class:rail bind:this={root}>
+  {#if rail}
+    <button type="button" class="rail-btn" bind:this={trigger} aria-label="Check" aria-haspopup="true" aria-expanded={open}
+      use:tooltip={{ text: open ? "" : "Check: run the whole book, choose the checks, run Greek Room", side: "right" }}
+      on:click={() => (open = !open)}><UiIcon name="runQa" /></button>
+  {:else}
   <button type="button" class="menu-btn" bind:this={trigger} aria-haspopup="true" aria-expanded={open}
     title="Check the whole book; choose the checks a run includes; run Greek Room" on:click={() => (open = !open)}>Check ▾</button>
+  {/if}
   {#if open}
     <div class="panel" role="group" aria-label="Check">
       <div class="actions">
@@ -83,6 +97,7 @@
   .menu-btn { height: var(--control-h); box-sizing: border-box; display: inline-flex; align-items: center; font: inherit; font-size: var(--fs-sm); font-weight: 600; line-height: 1; padding: 0 8px; border-radius: 6px; border: 1px solid transparent; background: transparent; color: var(--text-2); cursor: pointer; white-space: nowrap; }
   .menu-btn:hover, .menu-btn[aria-expanded="true"] { background: var(--surface-2); color: var(--text); border-color: var(--border); }
   .panel { position: absolute; top: calc(100% + 4px); left: 0; z-index: var(--z-dropdown); min-width: 250px; padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); box-shadow: 0 8px 24px rgba(0,0,0,.14); display: flex; flex-direction: column; gap: 4px; }
+  .rail .panel { top: 0; left: calc(100% + 10px); }
   .heading { margin: 4px 0 2px; font-size: var(--fs-2xs); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-2); }
   .box { display: flex; align-items: center; gap: 8px; font-size: var(--fs-xs); color: var(--text); cursor: pointer; }
   .hint { margin: 2px 0 4px; font-size: var(--fs-2xs); color: var(--text-2); }

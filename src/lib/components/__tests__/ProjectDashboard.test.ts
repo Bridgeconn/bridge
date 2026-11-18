@@ -107,8 +107,14 @@ describe("ProjectDashboard", () => {
       report: null, reportLoading: false, reportError: "", onRunBookQa,
     } });
     expect(screen.queryByRole("button", { name: "View QA report" })).toBeNull();
+    // Run QA opens the check dialog, named for the book; Start runs it.
     await fireEvent.click(screen.getByRole("button", { name: "Run QA" }));
+    expect(onRunBookQa).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "Check Ruth" })).toBeInTheDocument();
+    expect(screen.queryByLabelText(/re-check books unchanged/)).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Start" }));
     expect(onRunBookQa).toHaveBeenCalledWith("/projects/rut");
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("disables Run QA while a job runs", () => {
@@ -129,8 +135,13 @@ describe("ProjectDashboard", () => {
     expect(screen.getByText("Not yet opened")).toBeInTheDocument();
     expect(screen.getByText("Genesis has not been checked yet.")).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Run QA on Genesis" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Start" }));
     expect(onRunBookQa).toHaveBeenCalledWith("/projects/gen");
     await fireEvent.click(screen.getByRole("button", { name: "Run QA" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onRunBookQa).toHaveBeenCalledTimes(1);
+    await fireEvent.click(screen.getByRole("button", { name: "Run QA" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Start" }));
     expect(onRunBookQa).toHaveBeenCalledTimes(2);
   });
 
@@ -175,6 +186,7 @@ describe("ProjectDashboard", () => {
       } });
       expect(screen.getByText("sidecar died")).toBeInTheDocument();
       await fireEvent.click(screen.getByRole("button", { name: "Run QA again" }));
+      await fireEvent.click(screen.getByRole("button", { name: "Start" }));
       expect(onRunBookQa).toHaveBeenCalledWith("/projects/rut");
     } finally {
       checkingProgress.set({ running: false, percent: 0, label: "", jobId: "", state: "idle", error: "", scope: "chapter" });
@@ -195,6 +207,7 @@ describe("ProjectDashboard", () => {
     await fireEvent.click(rebuild);
     expect(onLoadReport).toHaveBeenCalledTimes(1);
     await fireEvent.click(screen.getByRole("button", { name: "Run QA again" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Start" }));
     expect(onRunBookQa).toHaveBeenCalledWith("/projects/rut");
   });
 

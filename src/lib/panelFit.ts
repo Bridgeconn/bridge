@@ -1,7 +1,8 @@
 import { derived, readable, type Readable } from "svelte/store";
 
-import { SIDE_PANEL_LIMITS, SIDE_PANEL_ORDER, sidePanelRecency, sidePanels, textScale } from "./editorPrefs";
+import { SIDE_PANEL_LIMITS, SIDE_PANEL_ORDER, textScale } from "./editorPrefs";
 import type { SidePanelId, SidePanels } from "./editorPrefs";
+import { tabLayout, visibleTabs } from "./editorTabs";
 
 /**
  * Which side panels fit beside the verse list at the current window width
@@ -74,7 +75,15 @@ export const windowWidth: Readable<number> = readable(
 
 export const verseMin: Readable<number> = derived(textScale, (scale) => verseMinWidth(scale));
 
-export const foldedPanels: Readable<ReadonlySet<SidePanelId>> = derived(
-  [windowWidth, sidePanels, sidePanelRecency, verseMin],
-  ([width, panels, recency, min]) => new Set(foldedSidePanels(width, panels, recency, min)),
-);
+/** The panels folded for width. Nothing folds since the work area became
+ * tab groups (2026-11-14, editorTabs.ts): a group shares the area by its own
+ * divider, and a tab behind another takes no room. `foldedSidePanels` above
+ * is the old rule, kept with its tests; this store stays for its readers. */
+export const foldedPanels: Readable<ReadonlySet<SidePanelId>> = readable(new Set<SidePanelId>());
+
+/** The verse list is on screen: its tab is the one showing in its group. */
+export const versesShown: Readable<boolean> = derived(visibleTabs, (tabs) => tabs.has("editor"));
+
+/** Nothing is in the work area: no tab is open. The editor then shows a
+ * short message with a way back. */
+export const workAreaEmpty: Readable<boolean> = derived(tabLayout, (layout) => Object.keys(layout.groups).length === 0);

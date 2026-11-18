@@ -3,6 +3,7 @@
   import type { CollectionQaBook } from "../types/collectionQa";
   import ParatextLinkStatus from "./ParatextLinkStatus.svelte";
   import CollectionQaPanel from "./CollectionQaPanel.svelte";
+  import CollectionCheckDialog from "./CollectionCheckDialog.svelte";
   import UiIcon from "./UiIcon.svelte";
   import { tooltip } from "../tooltip";
   import { collectionQa } from "../collectionQa";
@@ -61,6 +62,18 @@
   export let onRunBookQa: (path: string) => void = () => {};
   export let qaBusy = false;
   export let qaRunningPath = "";
+  // A book's Run QA opens the same check dialog as the header's Check: the
+  // reviewer ticks the checks, and Start runs that book with them.
+  let qaDialogPath = "";
+  function askRunBookQa(path: string): void {
+    if (path) qaDialogPath = path;
+  }
+  function startBookQa(): void {
+    const path = qaDialogPath;
+    qaDialogPath = "";
+    onRunBookQa(path);
+  }
+  $: qaDialogBook = qaDialogPath ? books.find((book) => book.path === qaDialogPath) : undefined;
   export let onCancelQa: () => void = () => {};
   /** The book a row icon is opening in the engine, and the prepare detail
    *  ("preparing chapter 3 of 50") while a never-opened one is prepared. */
@@ -341,9 +354,8 @@
           <ParatextLinkStatus projectKey={`${projectName}:${openBookName}`} />
         </div>
       </div>
-      <button type="button" class="project-report-btn" use:tooltip={"Generate the QA report for the whole project"} on:click={onGenerateReport}>
-        <span class="report-badge" aria-hidden="true"><UiIcon name="report" /></span>
-        <span class="report-text">Project report</span>
+      <button type="button" class="ui-btn quiet project-report" use:tooltip={"Generate the QA report for the whole project"} on:click={onGenerateReport}>
+        <UiIcon name="report" />Project report
       </button>
     </div>
     {#if isCollection}
@@ -439,7 +451,7 @@
                       disabled={qaBusy} on:click={() => onPreviewBook(book.path)}><UiIcon name="viewReport" /></button>
                   {:else if !book.missing}
                     <button class="ui-icon-btn success" aria-label="Run QA" use:tooltip={qaBusy ? "A check is already running" : `Run QA on ${bookLabel(book)}: every chapter, with the Collection QA checks, then show its report`}
-                      disabled={qaBusy} on:click={() => onRunBookQa(book.path)}><UiIcon name="runQa" /></button>
+                      disabled={qaBusy} on:click={() => askRunBookQa(book.path)}><UiIcon name="runQa" /></button>
                   {/if}
                   {#if canAssign && !book.missing}
                     <button class="ui-icon-btn assign" aria-label="Assign…" use:tooltip={`Assign ${bookLabel(book)}`} on:click={() => onAssign(book.path)}><UiIcon name="assign" /></button>
@@ -475,7 +487,7 @@
             <div class="report-actions">
               <button type="button" class="ui-icon-btn success" aria-label="Run QA again" disabled={qaBusy || reportLoading}
                 use:tooltip={qaBusy ? "A check is already running" : `Run QA again on ${openBook?.bookName || report.bookId?.toUpperCase()}, then show the fresh report`}
-                on:click={() => onRunBookQa(openBook?.path ?? openBookPath)}><UiIcon name="runQa" /></button>
+                on:click={() => askRunBookQa(openBook?.path ?? openBookPath)}><UiIcon name="runQa" /></button>
               <button type="button" class="ui-icon-btn rebuild" aria-label="Rebuild" disabled={reportLoading}
                 use:tooltip={"Rebuild this report from the findings on disk, without running checks"}
                 on:click={onLoadReport}><UiIcon name="rebuild" /></button>
@@ -513,7 +525,7 @@
         <div class="report-state">
           <p class="state-title danger">{job.error || (job.state === "cancelled" ? "Checking was cancelled." : "Checking failed.")}</p>
           <div class="state-actions">
-            <button type="button" class="ui-btn" disabled={qaBusy} on:click={() => onRunBookQa(qaRunningPath)}><UiIcon name="runQa" />Run QA again</button>
+            <button type="button" class="ui-btn" disabled={qaBusy} on:click={() => askRunBookQa(qaRunningPath)}><UiIcon name="runQa" />Run QA again</button>
           </div>
         </div>
       {:else if reportLoading}
@@ -704,13 +716,12 @@
           <span class="state-icon" aria-hidden="true"><UiIcon name="runQa" /></span>
           <p class="state-title">{openBookName} has not been checked yet.</p>
           <p class="state-hint">Nothing has been checked in it, so there is no report. Run QA on it to check every chapter and build its report.</p>
-          <button type="button" class="ui-btn primary" disabled={qaBusy} on:click={() => onRunBookQa(openBookRow?.path ?? openBookPath)}>
+          <button type="button" class="ui-btn primary" disabled={qaBusy} on:click={() => askRunBookQa(openBookRow?.path ?? openBookPath)}>
             <UiIcon name="runQa" />Run QA on {openBookName}
           </button>
         </div>
       {:else}
         <div class="report-state">
-          <span class="state-icon" aria-hidden="true"><UiIcon name="report" /></span>
           <p class="state-title">Pick a book on the left to see its QA report.</p>
           <ul class="legend" aria-label="What the book icons do">
             <li><span class="legend-icon success"><UiIcon name="runQa" /></span><span><strong>Run QA</strong> checks the book, then builds its report.</span></li>
@@ -726,6 +737,11 @@
   </div>
 </div>
 
+{#if qaDialogPath}
+  <CollectionCheckDialog bookName={qaDialogBook?.bookName || qaDialogBook?.bookId?.toUpperCase() || openBookName || "this book"}
+    checkRunning={qaBusy} onStart={startBookQa} onClose={() => (qaDialogPath = "")} />
+{/if}
+
 <style>
   /* The header card and the two content cards are the only scroll owners'
      parents: each card body scrolls on its own, the screen never does. */
@@ -735,13 +751,9 @@
   .identity { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; min-width: 0; }
   h1 { margin: 0; font-size: var(--fs-2xl); line-height: 1.25; color: var(--text); overflow-wrap: anywhere; }
   .facts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
-  .project-report-btn { display: inline-flex; align-items: center; gap: 10px; height: 36px; padding: 0 18px 0 6px; flex-shrink: 0; border: 0; border-radius: 999px; background: linear-gradient(135deg, #3B82F6 0%, var(--accent) 55%, #2458C7 100%); color: #fff; font: inherit; font-size: var(--fs-sm); font-weight: 600; letter-spacing: .01em; line-height: 1; cursor: pointer; box-shadow: 0 1px 2px rgba(15, 23, 42, .12), 0 4px 12px rgba(47, 111, 237, .28), inset 0 1px 0 rgba(255, 255, 255, .18); transition: transform .15s ease, box-shadow .15s ease, filter .15s ease; }
-  .report-badge { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: rgba(255, 255, 255, .18); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .22); }
-  .report-badge :global(svg) { width: 15px; height: 15px; }
-  .report-text { padding-top: 1px; }
-  .project-report-btn:hover, .project-report-btn:focus-visible { transform: translateY(-1px); filter: brightness(1.05); box-shadow: 0 2px 4px rgba(15, 23, 42, .12), 0 8px 18px rgba(47, 111, 237, .34), inset 0 1px 0 rgba(255, 255, 255, .22); }
-  .project-report-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .project-report-btn:active { transform: translateY(0); filter: brightness(.97); box-shadow: 0 1px 2px rgba(15, 23, 42, .14), 0 2px 6px rgba(47, 111, 237, .25); }
+  /* The book-list icon style (no border, the icon's colour) with its label. */
+  .ui-btn.quiet.project-report { flex-shrink: 0; color: var(--accent); }
+  .ui-btn.quiet.project-report:hover:not(:disabled) { border-color: transparent; }
   .qa-bar { padding-top: 12px; border-top: 1px solid var(--border); }
 
   .panels { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(360px, 5fr) minmax(0, 7fr); gap: 14px; }
@@ -921,7 +933,10 @@
   }
   @media (max-width: 900px) {
     .screen { overflow-y: auto; }
-    .panels { grid-template-columns: minmax(0, 1fr); }
+    /* flex: none: stacked, the two cards take their content's height and the
+       screen scrolls. Sharing the leftover height (flex: 1) squeezed the
+       report card and its content drew outside the card. */
+    .panels { flex: none; grid-template-columns: minmax(0, 1fr); }
     .books-card, .report-card { overflow: visible; }
     .card-body { overflow: visible; }
     .books-card .card-body { max-height: 50vh; overflow-y: auto; }
@@ -942,8 +957,6 @@
     h1 { font-size: var(--fs-xl); }
   }
   @media (prefers-reduced-motion: reduce) {
-    .project-report-btn { transition: none; }
-    .project-report-btn:hover, .project-report-btn:focus-visible, .project-report-btn:active { transform: none; }
     .book-row, .chevron { transition: none; }
     .spin { animation: none; }
     .job-fill { transition: none; animation: none; width: 100%; }

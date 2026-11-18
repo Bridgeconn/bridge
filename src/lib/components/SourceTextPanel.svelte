@@ -133,8 +133,9 @@
   li button:hover { background: var(--surface-2); }
   li.current button { background: var(--accent-bg); box-shadow: inset 3px 0 0 var(--accent); }
   .num { flex-shrink: 0; font-size: var(--fs-2xs); font-weight: 700; color: var(--text-3); min-width: 20px; padding-top: 2px; }
-  /* The source face and size follow the verse text's A−/A+ (--verse-scale);
-     the words wrap, never overflow, at any width or Windows scaling. */
+  /* --verse-scale is unset here since 2026-11-15 (the Verses panel's A−/A+
+     sizes only the verse list), so this is 1 until the panel gets its own
+     size control. The words wrap, never overflow, at any width or Windows scaling. */
   .text { flex: 1; min-width: 0; font-family: var(--font-greek); font-size: calc(var(--fs-md) * var(--verse-scale, 1));
     line-height: 1.8; text-align: start; overflow-wrap: anywhere; unicode-bidi: isolate; }
   .text.rtl { font-family: var(--font-hebrew); font-size: calc(var(--fs-md) * 1.15 * var(--verse-scale, 1)); line-height: 2; }

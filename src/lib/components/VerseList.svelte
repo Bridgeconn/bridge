@@ -1,4 +1,6 @@
 <script lang="ts">
+  import UiIcon from "./UiIcon.svelte";
+  import { tooltip } from "../tooltip";
   import { savedBookWorkspace, rememberScroll, flushWorkspace } from "../projectWorkspace";
   import { onDestroy, tick } from "svelte";
   import { verseNums, verseTexts, verseDisplay, headingsByVerse, findingsByVerse, checkStatusByVerse, alignmentStatusByVerse, selectedVerse, selectedVerseSet, currentChapter, verseKey, nativeChecksByVerse, aiCheckReviewsByVerse, checkingProgress, languageQaFindingsByVerse, project, flagsByVerse, historyCountByVerse, paratextNoteCountsByVerse, focusedFindingId, checkGroupsByVerse, targetLang, targetDir, reviewTabRequest } from "../stores";
@@ -15,7 +17,7 @@
   import FlagDialog from "./FlagDialog.svelte";
   import FlagPopover from "./FlagPopover.svelte";
   import VerseHistoryPopover from "./VerseHistoryPopover.svelte";
-  import { rawView, revealSidePanel } from "../editorPrefs";
+  import { rawView, revealSidePanel, textScale } from "../editorPrefs";
   import { openIssueSummary } from "../verseIssues";
   import { loadParatextNoteCounts, noteCountFor, requestParatextNote } from "../paratextNotes";
   import type { FlagInput, LanguageQaFlag } from "../types/languageQa";
@@ -453,6 +455,16 @@
    *  mousedown in a verse's text and ends at the mouseup that leaves a word
    *  under the pointer or a selection inside the verse -- the point at which
    *  the browser has drawn the selection. A mouseup on nothing drops it. */
+  /** A double-click selects the word under the pointer (the browser's own
+   *  behaviour, so Ctrl+C copies it). On Windows the browser also takes the
+   *  space after the word; this hands that space back. */
+  function trimSelectedWord(): void {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return;
+    const extra = selection.toString().length - selection.toString().replace(/\s+$/u, "").length;
+    for (let step = 0; step < extra; step += 1) selection.modify?.("extend", "backward", "character");
+  }
+
   function beginWordSelect(verse: string): void {
     perfBegin("word.select", verse);
   }
@@ -1004,6 +1016,8 @@
   }
 
   let scrollContainer: HTMLDivElement;
+  /** Digits of the chapter's longest verse label ("12", "3-4" counts 3). */
+  $: numberDigits = Math.max(2, ...$verseNums.map((label) => String(label).length));
   let lastScrolledKey = "";
   let restoredPosition = "";
   let scrollSave: ReturnType<typeof setTimeout> | undefined;
@@ -1038,8 +1052,15 @@
     }
     const containerRect = scrollContainer.getBoundingClientRect();
     const targetRect = target.getBoundingClientRect();
+    // The section heading above this verse sticks to the top of the list:
+    // stop the verse below it, not under it.
+    let heading: HTMLElement | null = null;
+    for (const item of scrollContainer.querySelectorAll<HTMLElement>(".section-heading")) {
+      if (item.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING) heading = item;
+      else break;
+    }
     scrollContainer.scrollTo({
-      top: Math.max(0, scrollContainer.scrollTop + targetRect.top - containerRect.top - 8),
+      top: Math.max(0, scrollContainer.scrollTop + targetRect.top - containerRect.top - 8 - (heading?.offsetHeight ?? 0)),
       behavior: "smooth",
     });
     lastScrolledKey = key;
@@ -1174,7 +1195,8 @@
 <!-- `lang` is the project's language (#286): index.css puts that script's face
      first in --font-target under it, so a full stop or danda is drawn from the
      same font as the letters beside it. -->
-<div class="editor-scroll" bind:this={scrollContainer} lang={$targetLang} on:scroll={saveReadingPosition}>
+<div class="editor-scroll" bind:this={scrollContainer} lang={$targetLang} on:scroll={saveReadingPosition}
+  style:--verse-scale={$textScale} style:--num-ch={numberDigits}>
 
 
   {#each $verseNums as v}
@@ -1217,12 +1239,14 @@
       aria-haspopup="menu"
       aria-keyshortcuts="Shift+F10"
       on:click={(event) => selectFromRow(v, event)}
-      on:dblclick={() => beginEditFromList(v, findings, langFindings)}
       on:keydown={(e) => onVerseKeydown(e, v, key, menuFindingIds, findings, langFindings)}
       on:contextmenu={(e) => openVerseMenu(e, v)}
     >
-      <div class="vnum" title={clearTitle}>
-        <span class="vnum-text">{v}{#if clear}&nbsp;✓{:else if checkStatus === "failed" || checkStatus === "cancelled"}&nbsp;⚠{/if}</span>
+      <!-- 2026-11-15 (Joel): the number, then what is raised beside it like an
+           exponent: ✓ or ⚠, and the open-issue count as a coloured number
+           (no chip). Hints are instant (use:tooltip), not native titles. -->
+      <div class="vnum">
+        <span class="vnum-main" use:tooltip={clearTitle}><span class="vnum-text">{v}</span>{#if clear}<span class="vnum-mark">✓</span>{:else if checkStatus === "failed" || checkStatus === "cancelled"}<span class="vnum-mark">⚠</span>{/if}</span>
         {#if openCount}
           <!-- #383: the open-issue count, coloured by the worst open severity;
                absent when the verse is clear so ✓ stands alone. A click selects
@@ -1232,7 +1256,7 @@
             type="button"
             class="issue-pill sev-{issues.worst}"
             data-testid="open-issue-pill"
-            title={issues.title}
+            use:tooltip={`${issues.title}. Click to review`}
             aria-label={`Verse ${v}: ${issues.title}. Show them`}
             on:dblclick|stopPropagation
             on:click|stopPropagation={() => { onSelect(v); reviewTabRequest.set(issues.tab); revealSidePanel("review"); }}
@@ -1269,7 +1293,8 @@
         <!-- svelte-ignore a11y-no-static-element-interactions -->
         <div class="vtext" class:raw={$rawView} dir={$targetDir}
           on:mousedown={() => beginWordSelect(v)}
-          on:mouseup={(event) => endWordSelect(event, v)}>
+          on:mouseup={(event) => endWordSelect(event, v)}
+          on:dblclick={trimSelectedWord}>
           <span class="vbody" dir={$targetDir} lang={$targetLang}>
           {#each withNoteMarkers(segments, notesForLayout(display), flagMarkers($flagsByVerse[key] ?? [], display)) as piece}
             {#if piece.kind === "flag"}<button
@@ -1329,26 +1354,26 @@
         <div class="row-actions">
           <button
             type="button"
-            class="edit-pencil"
+            class="ui-icon-btn row-btn edit-pencil"
             disabled={$checkingProgress.running || $editSaving || Boolean($recheckingKey)}
-            title={$checkingProgress.running || $editSaving || $recheckingKey
+            use:tooltip={$checkingProgress.running || $editSaving || $recheckingKey
               ? "Wait for background checking to finish before editing"
               : "Edit verse"}
             aria-label={`Edit verse ${v}`}
             on:click|stopPropagation={() => beginEditFromList(v)}
             on:dblclick|stopPropagation
-          >✎︎</button>
+          ><UiIcon name="rename" /></button>
           <button
             type="button"
-            class="alignment-state {alignmentStatus}"
+            class="ui-icon-btn row-btn alignment-state {alignmentStatus}"
             disabled={$checkingProgress.running || $editSaving || Boolean($recheckingKey)}
-            title={$checkingProgress.running || $editSaving || $recheckingKey
+            use:tooltip={$checkingProgress.running || $editSaving || $recheckingKey
               ? "Wait for background checking to finish before aligning"
-              : `Alignment: ${alignmentStatusLabel(alignmentStatus)} — click to open Align Words`}
+              : `Alignment: ${alignmentStatusLabel(alignmentStatus)}. Click to open Align Words`}
             aria-label={`Alignment ${alignmentStatusLabel(alignmentStatus)} for verse ${v}. Open Align Words.`}
             on:click|stopPropagation={() => openAlignmentFromList(v)}
             on:dblclick|stopPropagation
-          >⇄</button>
+          ><UiIcon name="align" /></button>
         </div>
       {/if}
     </div>
@@ -1463,7 +1488,16 @@
 {/if}
 
 <style>
-  .editor-scroll { flex: 1; overflow-y: auto; padding: 22px 32px; background: var(--surface); }
+  /* 2026-11-15: closer rows with a hairline between them, one tidy column
+     for the verse number and its issue count, and the row's two actions as
+     the app's icon buttons. A size container: a narrow group gets less
+     padding so the text keeps the width. */
+  /* The same room left and right of a row: 12 + the row's 8 on the left;
+     the row's 8 + 4 + the 8 px scrollbar on the right, whose gutter is kept
+     whether or not the chapter scrolls. No top padding: a heading sticks
+     flush under the header. */
+  .editor-scroll { flex: 1; overflow-y: auto; scrollbar-gutter: stable; padding: 0 4px 18px 12px; background: var(--surface); container-type: inline-size; }
+  .editor-scroll > :first-child { margin-top: 8px; }
 
   /* A heading is the team's text, so it uses --font-target like the verses, but
      it is editorial rather than Scripture: no hover, no selection, no findings.
@@ -1474,20 +1508,41 @@
     font-size: var(--fs-lg);
     font-weight: 700;
     color: var(--text-2, var(--text-3));
-    margin: 20px 0 8px;
-    padding: 0 10px;
+    margin: 12px 0 4px;
+    padding: 2px 8px;
     line-height: 1.6;
+    /* 2026-11-15 (Joel): the heading of the section being read stays at the
+       top of the list. Every heading sticks at the same place and a later one
+       is drawn over an earlier one, so the next heading replaces it scrolling
+       down and the previous one returns scrolling up. */
+    position: sticky; top: 0; z-index: 1;
+    background: var(--surface);
+    box-shadow: 0 1px 0 color-mix(in srgb, var(--border) 55%, transparent);
   }
-  .section-heading:first-child { margin-top: 0; }
   .section-heading.major { font-size: var(--fs-xl); text-align: center; }
-  .verse { display: flex; gap: 10px; padding: 9px 10px; border-radius: 7px; margin-bottom: 2px; cursor: pointer; border: 1px solid transparent; }
+  /* --row-line is the height of the text's first line: the number, the
+     issue count and the two actions are centred on it. */
+  .verse { --row-line: calc(var(--fs-xl) * var(--verse-scale, 1) * 1.85); position: relative; display: flex; gap: 10px; padding: 3px 8px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; }
+  .verse + .verse::before { content: ""; position: absolute; left: 8px; right: 8px; top: -1px; height: 1px; background: var(--border); opacity: .55; pointer-events: none; }
   .verse:hover { background: var(--surface-2); }
   .verse.active { background: var(--accent-bg); border-color: #C7D9FB; }
-  .vnum { position: relative; font-size: var(--fs-xs); font-weight: 700; color: var(--text-3); width: 30px; flex-shrink: 0; padding-top: 10px; text-align: right; }
-  .vnum-text { white-space: nowrap; }
-  .issue-pill { position: absolute; top: -4px; left: -5px; min-width: 18px; height: 16px; padding: 0 3px; box-sizing: border-box; border-radius: 999px; border: 1px solid var(--danger);
-    background: var(--danger-bg); color: var(--danger); font: inherit; font-family: var(--font-ui); font-size: var(--fs-3xs); font-weight: 700; line-height: 14px; text-align: center; cursor: pointer; }
-  .issue-pill:hover, .issue-pill:focus-visible { border-color: var(--accent); color: var(--accent); outline: none; }
+  .verse.active::before, .verse.active + .verse::before, .verse:hover::before, .verse:hover + .verse::before { opacity: 0; }
+  /* The number, right-aligned in its own slot, then the issue count in a
+     fixed slot, so numbers and counts each line up down the list. */
+  /* --num-ch is the digits of the chapter's longest verse number, so the
+     number slot is only as wide as this chapter needs; then a fixed slot for
+     what is raised beside it, so the text starts at one x down the list. */
+  .vnum { display: flex; align-items: center; gap: 1px; height: var(--row-line); min-width: calc(var(--num-ch, 2) * 1ch + 20px); flex-shrink: 0; font-size: var(--fs-xs); font-weight: 700; color: var(--text-3); font-variant-numeric: tabular-nums; }
+  .vnum-main { display: inline-flex; align-items: center; gap: 1px; }
+  .vnum-text { min-width: calc(var(--num-ch, 2) * 1ch); text-align: right; white-space: nowrap; }
+  /* Raised like an exponent: ✓ / ⚠ and the open-issue count. The count is a
+     plain coloured number, red / amber / grey by the worst open severity. */
+  .vnum-mark, .issue-pill { position: relative; top: -.5em; font-size: var(--fs-3xs); line-height: 1; }
+  .issue-pill { flex: none; padding: 1px 2px; border: 0; border-radius: 4px; background: transparent; color: var(--danger);
+    font-family: var(--font-ui); font-weight: 700; cursor: pointer; transition: color .15s, background .15s; }
+  .issue-pill.sev-medium { color: var(--warning); }
+  .issue-pill.sev-low, .issue-pill.sev-info { color: var(--text-2); }
+  .issue-pill:hover, .issue-pill:focus-visible { background: var(--accent-bg); color: var(--accent); outline: none; }
   .verse.approved .vnum { color: var(--success); }
   .verse.check-failed .vnum { color: var(--danger, #ef4444); }
   /* --font-target rather than plain inheritance so the leading below can be
@@ -1548,29 +1603,29 @@
      leaving it. The column carries the margin-left:auto that used to sit on
      the glyph itself. */
   .row-actions {
-    margin-left: auto; flex-shrink: 0; align-self: flex-start; margin-top: 3px;
-    display: flex; flex-direction: column; align-items: center; gap: 1px;
+    margin-left: auto; flex-shrink: 0; align-self: flex-start; height: var(--row-line);
+    display: flex; align-items: center; gap: 2px;
   }
-  /* U+270E is emoji-presentation-capable, so Windows resolves it through Segoe
-     UI Emoji and renders a filled colour glyph next to the arrow's thin
-     monochrome one -- they read as two different weights. The U+FE0E variation
-     selector on the character asks for text presentation; `font-variant-emoji`
-     says the same thing for renderers that honour it. Both are harmless where
-     unsupported. */
-  .alignment-state, .edit-pencil {
-    font: inherit; font-size: var(--fs-md); line-height: 1; color: var(--text-3);
-    font-variant-emoji: text;
-    background: transparent; border: 1px solid transparent; border-radius: 5px;
-    padding: 1px 4px; cursor: pointer;
+  /* The app's icon button (index.css .ui-icon-btn) at the row's size. Faint
+     at rest so the text leads; clear on the row that is pointed at, selected
+     or holds the keyboard. The alignment button keeps its status colour at
+     full strength on every row: the colour is the information. */
+  .row-btn { width: 28px; height: 28px; min-height: 28px; border-radius: 7px; opacity: .4; transition: opacity .15s, color .15s, background .15s; }
+  .row-btn :global(svg) { width: 16px; height: 16px; }
+  .verse:hover .row-btn, .verse.active .row-btn, .verse:focus-within .row-btn, .row-btn:focus-visible { opacity: 1; }
+  .row-btn:disabled { opacity: .3; }
+  .alignment-state.complete, .alignment-state.complete_cross_verse, .alignment-state.partial, .alignment-state.invalid { opacity: 1; }
+  .alignment-state.complete, .alignment-state.complete:hover:not(:disabled) { color: var(--success); background: var(--success-bg); }
+  .alignment-state.complete_cross_verse, .alignment-state.complete_cross_verse:hover:not(:disabled) { color: var(--success); background: var(--success-bg); box-shadow: inset 0 0 0 1px var(--success); }
+  .alignment-state.partial, .alignment-state.partial:hover:not(:disabled) { color: var(--warning); background: var(--warning-bg, #fff4dc); }
+  .alignment-state.invalid, .alignment-state.invalid:hover:not(:disabled) { color: var(--danger); background: var(--danger-bg); }
+  @container (max-width: 520px) {
+    .editor-scroll { padding: 0 0 12px 6px; }
+    .verse { gap: 4px; padding: 3px 4px; }
+    .vnum { min-width: calc(var(--num-ch, 2) * 1ch + 16px); }
+    .row-btn { width: 24px; height: 24px; min-height: 24px; }
   }
-  .alignment-state:hover, .alignment-state:focus-visible,
-  .edit-pencil:hover, .edit-pencil:focus-visible { background: var(--surface-2); border-color: var(--border-strong); outline: none; }
-  .alignment-state:disabled, .edit-pencil:disabled { opacity: .55; cursor: not-allowed; }
-  .edit-pencil:hover:not(:disabled), .edit-pencil:focus-visible { color: var(--accent); }
-  .alignment-state.complete { color: var(--success); background: var(--success-bg); }
-  .alignment-state.complete_cross_verse { color: var(--success); background: var(--success-bg); box-shadow: inset 0 0 0 1px var(--success); }
-  .alignment-state.partial { color: var(--warning); background: var(--warning-bg, #fff4dc); }
-  .alignment-state.invalid { color: var(--danger); background: var(--danger-bg); font-weight: 800; }
+  @media (prefers-reduced-motion: reduce) { .row-btn, .issue-pill { transition: none; } }
   .verse.multi { box-shadow: inset 3px 0 0 var(--accent); background: var(--accent-bg); }
   .empty { color: var(--text-3); font-size: var(--fs-md); }
   .context-notice {

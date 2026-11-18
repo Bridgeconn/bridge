@@ -54,12 +54,34 @@ def token_label(token: TokenRef, include_morph: bool = False) -> str:
     return label
 
 
+def _keeps_every_target_word_aligned(verse: VerseAlignment, top_sigs: set[str]) -> bool:
+    """True when taking `top_sigs` out of their groups leaves no target word
+    without a source word.
+
+    That is the one kind of realign allowed with no target word named: it only
+    regroups source words. 2026-11-18 (Joel): a merged group whose target word
+    was taken away could not be split again, and (the team's ask) two source
+    words with nothing under them could not be merged until a target word was
+    placed on one. Neither needs a target word: the words named become one
+    group with nothing under it, which tC already stores for an unaligned
+    source word, and every other group keeps what it had.
+
+    Still refused: naming ALL the source words of a group that has target
+    words. With no target word named, those target words would silently go
+    back to the word bank.
+    """
+    for group in verse.alignments:
+        if group.bottom_words and group.top_words and all(x.signature in top_sigs for x in group.top_words):
+            return False
+    return True
+
+
 def realign(verse: VerseAlignment, selected_top: list[TokenRef], selected_bottom: list[TokenRef]) -> VerseAlignment:
     if not selected_top:
         raise AlignmentError('Select at least one source-language topWord.')
-    if not selected_bottom:
-        raise AlignmentError('Select at least one target-language bottomWord.')
     top_sigs = {x.signature for x in selected_top}
+    if not selected_bottom and not _keeps_every_target_word_aligned(verse, top_sigs):
+        raise AlignmentError('Select at least one target-language bottomWord.')
     bottom_sigs = {x.signature for x in selected_bottom}
     result = copy.deepcopy(verse)
     new_groups: list[AlignmentGroup] = []
@@ -68,14 +90,21 @@ def realign(verse: VerseAlignment, selected_top: list[TokenRef], selected_bottom
 
     # Detach selected tokens. Preserve every nonselected token. Groups that lose one side
     # remain valid because tC itself uses empty bottomWords for unaligned source tokens.
+    #
+    # #498: the rebuilt group goes where its own SOURCE words were, and nowhere
+    # else. The order of the groups is the source word order every view shows
+    # (make_inventory), so the place a target word came from must have no say:
+    # it used to, and moving an aligned target word to a later source word
+    # pulled that source word forward to the column the target word left.
     for group in result.alignments:
-        affected = any(x.signature in top_sigs for x in group.top_words) or any(
-            x.signature in bottom_sigs for x in group.bottom_words
-        )
-        if affected and insertion_index is None:
-            insertion_index = len(new_groups)
+        selected_here = [i for i, x in enumerate(group.top_words) if x.signature in top_sigs]
         keep_top = [x for x in group.top_words if x.signature not in top_sigs]
         keep_bottom = [x for x in group.bottom_words if x.signature not in bottom_sigs]
+        if selected_here and insertion_index is None:
+            # A group that keeps a source word standing before the first one
+            # taken out of it stays ahead of the rebuilt group.
+            kept_first = bool(keep_top) and selected_here[0] > 0
+            insertion_index = len(new_groups) + (1 if kept_first else 0)
         if keep_top:
             new_groups.append(AlignmentGroup(keep_top, keep_bottom))
         else:
@@ -188,17 +217,27 @@ def apply_proposal(verse: VerseAlignment, proposal: dict[str, Any]) -> VerseAlig
     inv = make_inventory(verse)
     result = VerseAlignment([], [])
     used_h: set[str] = set(); used_t: set[str] = set()
+    # #503: the order of the groups is the source word order every view shows
+    # (make_inventory), so a proposal must not get to choose it. The groups
+    # used to be saved in the order the proposal listed them, with every
+    # source word it left out moved to the end of the verse. Each group now
+    # keeps its source words in the verse's own order, and the groups stand
+    # in the order of their first source word, the omitted words among them.
+    place = {hid: index for index, hid in enumerate(inv.top_ids)}
+    placed: list[tuple[int, AlignmentGroup]] = []
     for g in groups:
-        result.alignments.append(AlignmentGroup(
-            [inv.top_ids[x] for x in g['top_ids']],
+        top_ids = sorted(g['top_ids'], key=place.__getitem__)
+        placed.append((place[top_ids[0]], AlignmentGroup(
+            [inv.top_ids[x] for x in top_ids],
             [inv.bottom_ids[x] for x in g['bottom_ids']],
-        ))
+        )))
         used_h.update(g['top_ids']); used_t.update(g['bottom_ids'])
     # Never discard model-omitted tokens: keep Hebrew as explicit unaligned groups and
     # Tamil in wordBank.
     for hid, tok in inv.top_ids.items():
         if hid not in used_h:
-            result.alignments.append(AlignmentGroup([tok], []))
+            placed.append((place[hid], AlignmentGroup([tok], [])))
+    result.alignments = [group for _, group in sorted(placed, key=lambda item: item[0])]
     result.word_bank = [tok for tid, tok in inv.bottom_ids.items() if tid not in used_t]
     normalize_verse(result)
     return result

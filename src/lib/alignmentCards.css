@@ -50,8 +50,6 @@
 :is(.modal, .page).alignment-cards .source-card:has(details[open]) { z-index: 10; }
 :is(.modal, .page).alignment-cards .occ { direction: ltr; unicode-bidi: isolate; display: inline-block; }
 :is(.modal, .page).alignment-cards .source-words { align-items: flex-start; flex-wrap: wrap; }
-:is(.modal, .page).alignment-cards .column.joined { border: 1px solid var(--accent); border-radius: 8px; padding: 4px; }
-:is(.modal, .page).alignment-cards .join-x { flex: none; align-self: center; min-width: 24px; min-height: 28px; }
 :is(.modal, .page).alignment-cards .token.target {
   box-sizing: border-box;
   width: 7rem;
@@ -64,3 +62,32 @@
   overflow-wrap: anywhere;
 }
 :is(.modal, .page).alignment-cards .token.target .word { line-height: 1.8; unicode-bidi: isolate; }
+/* Both alignment pages (the Word alignment editor since 2026-11-14, the
+   cross-verse page since 2026-11-16): smaller source cards, and a word box is
+   as wide as its word -- not a fixed box that scrolls inside. */
+:is(.modal, .page).alignment-cards {
+  --alignment-card-width: 6.75rem;
+  --alignment-card-height: 3.9rem;
+}
+:is(.modal, .page).alignment-cards .token.source > .word { min-height: 1.5rem; line-height: 1.5; font-size: var(--fs-md); overflow: visible; }
+/* 2026-11-16 (Joel): a source card is at least the shared size and grows
+   with a long word: no word scrolls inside its box. The gloss keeps the
+   shared width and its two lines, so it never widens the card. */
+:is(.modal, .page).alignment-cards .source-card { width: auto; min-width: var(--alignment-card-width); height: auto; min-height: var(--alignment-card-height); }
+:is(.modal, .page).alignment-cards .token.source { width: auto; min-width: var(--alignment-card-width); height: auto; min-height: var(--alignment-card-height); }
+:is(.modal, .page).alignment-cards .token.source .gloss { align-self: center; max-width: calc(var(--alignment-card-width) - .8rem); }
+:is(.modal, .page).alignment-cards .token.target {
+  width: auto;
+  min-width: 2.75rem;
+  height: auto;
+  min-height: 2rem;
+  overflow: visible;
+  padding: .1rem .55rem;
+  justify-content: center;
+}
+:is(.modal, .page).alignment-cards .token.target .word { line-height: 1.6; font-size: var(--fs-sm); }
+/* 2026-11-17 (Joel): a source card fills its column, so the card and the
+   empty box under it are always the same width; in a merged column the
+   cards share that width. */
+:is(.modal, .page).alignment-cards .source-words .source-card { flex: 1 1 auto; display: flex; }
+:is(.modal, .page).alignment-cards .source-words .source-card > .token.source { flex: 1 1 auto; }

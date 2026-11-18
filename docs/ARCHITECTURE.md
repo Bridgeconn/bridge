@@ -305,24 +305,36 @@ security panes; Diagnostics, the engine log, is `DiagnosticsPanel` embedded unde
 `ExportModal`, `LexiconPopup`, `VerseNotesPopup`, `FindingContextMenu`. State lives in `stores.ts` (chapter/verse-keyed
 maps, `verseKey()`), `reviewStores.ts` (Stage 9A queue), `alignmentUi.ts`, `verseEditor.ts`.
 
-**Editor chrome (2026-11-11, #486 to #490).** One top bar, no second bar and no side rail.
+**Editor chrome (2026-11-14, branch `uifixes-v25`; before it 2026-11-11, #486 to #490).**
+After VS Code: a 32 px top bar and a status bar on the window's background, and between
+them two rounded boxes, the left rail and the work area.
 
-- **Top bar menus** (editor screen only, right of the name): `FileMenu` holds Close editor
-  (the project page), Close project (the project list), Export project, Settings and Exit;
-  `ViewMenu` shows and hides the four side panels and is the only place that does; `CheckMenu` runs the whole book, the
-  chapter, or Greek Room on demand; Bookmarks opens bookmarks and recent chapters;
-  `AlignmentMenu` holds Alignment Review, Cross-verse alignment and Align chapter with AI.
-  After the menus the bar shows the project's name, which opens the project page. In the
-  editor, Export and Settings are File menu entries only; the other screens keep the gear.
+- **Top bar** (`TopBar.svelte`): the name, then on the editor screen the breadcrumb
+  Projects › project › book, whose last crumb is the book switcher (`BookPicker.svelte`, a
+  searchable list; plain text for a single book) and a button that closes the editor; then
+  Sync, Export project and Settings. There are no menus: `FileMenu` and `ViewMenu` are deleted.
+- **Left rail** (`ActivityBar.svelte`): one icon per pane (Verses, Source, Reference,
+  Paratext, Review), then Check (`CheckMenu rail`), Bookmarks and Alignment
+  (`AlignmentMenu rail`), each opening to its right.
+- **Work area: tab groups** (`editorTabs.ts`, `EditorWorkspace.svelte`, `EditorTabs.svelte`).
+  The verse list and every open side panel is a tab; tabs sit in groups, each with its own
+  tab strip, showing one tab at a time. Dragging a tab to a group's edge splits it, onto a
+  group moves it there, and the line between groups resizes them. Whether a pane is open
+  stays in `versesOpen` / `sidePanels`; `editorTabs.ts` only places the open ones
+  (`tabLayout`, saved in localStorage, and since 2026-11-16 also per book with the book's
+  open alignment tabs: `projectWorkspace.ts` `BookSession`) and is reconciled when that set
+  changes. The top bar's layout picker (`EditorLayoutMenu.svelte`) splits the work area by a
+  preset; places with no tab are empty groups that fill from the rail or a dragged tab. A side panel dragged out of the window is its own window; closing that
+  window makes it a tab again. The floating box inside the window, the per-column width
+  drag, column order and folding for width are gone (`foldedPanels` is always empty).
 - **Side panels** are `source`, `reference`, `paratext` and `review` (`SidePanelId` in
-  `editorPrefs.ts`). A panel folded because the window is too narrow (`panelFit.ts`) is
-  marked in the View menu and on its button, and choosing it brings it back.
+  `editorPrefs.ts`).
 - **Language QA is a tab of the Review panel, not a panel.** It has no View entry, no saved
   open flag and no separate window; the status bar's Language QA button opens the Review
   panel on that tab. Layouts saved while it was a panel are read with the retired id taken
   out (`withoutRetiredPanels` in `editorPrefs.ts`, used by `projectWorkspace.ts`).
-- **Editor header** (`EditorHeader.svelte`), above the scrolling verses: the book (the book
-  switcher in a collection), the chapter picker with its steppers and "of N", the Go to box,
+- **Editor header** (`EditorHeader.svelte`), above the scrolling verses: the chapter picker
+  with its steppers and "of N", the Go to box,
   then Raw USFM (an icon) and the overflow menu. It has no breadcrumb. Go to is checked
   before the editor moves (`goTo.ts`): an entry that is not a chapter or verse, a chapter
   the book does not have and a verse the chapter does not have each show a sentence under
@@ -342,15 +354,17 @@ webview. `alignmentWindow.ts` carries explicit project/reference, Follow editor 
 Pin verse, busy and saved-state events. Both views use the existing Rust-owned
 sidecar and instance-bound project guards. A project switch closes alignment;
 navigation waits while its mutation is busy. Window position uses the existing
-window-state plugin. `AlignmentWorkspace` / `AlignmentPane` provide movable,
-resizable Read/Source/Target areas. A persisted binary split tree supports docking
-to any neighbor's left/right/top/bottom, mixed horizontal/vertical layouts and
-adjustable dividers. Areas can also float at a chosen position; keyboard-accessible
-Arrange controls mirror dragging. Reset layout restores the tree without remounting
-the content. Compact shared card geometry preserves script-specific fonts and bidi
+window-state plugin. Since 2026-11-16 both alignment tabs draw three panels (verse text,
+source words, target words) with `WordPanels` / `WordPanel` over `wordPanels.ts`: a saved
+split tree per tab, laid out as a CSS grid that fills the tab (`panelGrid`), panels moved
+by their title rows or a layout preset, dividers on both axes, a text size per panel.
+`AlignmentWorkspace` / `AlignmentPane`, the movable Read/Source/Target areas they replaced,
+were deleted on 2026-11-18; the split-tree helpers they used live on in `alignmentLayout.ts`,
+which the editor's tab groups and `wordPanels.ts` share. Compact shared card geometry preserves script-specific fonts and bidi
 isolation for Greek, Hebrew/Aramaic and target text. Glosses are clamped with an
-ellipsis; hover includes the full definition and renderings. Every joined source
-card has its own separation menu, including interior group members.
+ellipsis; hover includes the full definition and renderings. Source words are
+merged with the button on a card and split with the button on the seam between two
+merged words (2026-11-18); neither needs a target word, and neither changes the source order.
 
 `alignment_reset.py` records an operator recovery intent in existing workbench
 `project_state` before clearing native groups, whole cross-verse groups and null

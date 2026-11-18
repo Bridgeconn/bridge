@@ -20,11 +20,13 @@
   import ParatextNotesPanel from "./ParatextNotesPanel.svelte";
   import ReviewPanel from "./ReviewPanel.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
+  import WindowBar from "./WindowBar.svelte";
   import type { ProjectInfo } from "../types/finding";
   const requested = new URLSearchParams(window.location.search).get("panel") as SidePanelId;
   const id = SIDE_PANEL_ORDER.includes(requested) ? requested : null;
   let open = false, path = "", error = "";
   let receiving = false;
+  const NAMES: Record<SidePanelId, string> = { source: "Source text", reference: "Reference", paratext: "Paratext notes", review: "Review" };
   const message = (kind: "dock" | "close" | "settings" | "changed") => { if (id) void sendPanelMessage({ kind, id, path }); };
   function navigate(book: string, chapter: string, verse: string) { if (id) return sendPanelMessage({ kind: "navigate", id, path, book, chapter, verse }); }
   setContext("panel-window", { dock: () => message("dock"), close: () => message("close") });
@@ -76,8 +78,10 @@
     return () => { observePanelMutations(null); disposed = true; stops.forEach(stop => stop()); answerConfirmation(false); };
   });
 </script>
-{#if error}<p role="alert">{error}</p>{/if}
 <main class="panel-window">
+  <!-- 2026-11-14 (Joel): the app's own title bar, the one Close this window has. -->
+  <WindowBar title={id ? NAMES[id] : "Bridge"} onClose={() => message("close")} />
+  {#if error}<p role="alert">{error}</p>{/if}
   {#if open && $project}
     {#key path}
       {#if id === "source"}<SourceTextPanel onSelectVerse={verse => { void navigate(($project?.bookId || ""), $currentChapter, verse); }} />

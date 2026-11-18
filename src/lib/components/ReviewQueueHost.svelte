@@ -53,7 +53,9 @@
       if (message.kind === "saved") await refreshParatextReviewEditor(message.path, message.decision);
       else if (message.kind === "navigate") await onNavigate(message.book, message.chapter, message.verse);
       else if (message.kind === "dock") remember(false);
-      else if (message.kind === "close") paratextReviewQueueOpen.set(false);
+      // Closing its own window also ends "separate window": opened again, the
+      // queue is in the main window (Joel, 2026-11-14).
+      else if (message.kind === "close") { paratextReviewQueueOpen.set(false); remember(false); }
     } catch (cause) {
       await reviewWindowError(`The review action finished, but the editor could not refresh or navigate: ${String(cause)}`);
     }

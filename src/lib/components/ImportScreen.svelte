@@ -16,8 +16,7 @@
 
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
-  import { recentProjects } from "../projectWorkspace";
-  import { localUserId } from "../stores";
+  import { relativeTime } from "../utils/relativeTime";
   import UiIcon from "./UiIcon.svelte";
   import DuplicateImportDialog, { type RelatedImportProject } from "./DuplicateImportDialog.svelte";
   import AddBooksDialog from "./AddBooksDialog.svelte";
@@ -36,6 +35,10 @@
 
   export let onOpened: () => void | Promise<void>;
   export let droppedPath = "";
+  /** A file or folder is being dragged over the window, and over the "Add a
+   *  project" box itself (2026-11-16): the box is where it is dropped. */
+  export let dragging = false;
+  export let dragOver = false;
   export let dropSequence = 0;
 
   let projects: RegisteredProject[] = [];
@@ -83,8 +86,12 @@
     projectName: "", bibleName: "",
   };
 
-  onMount(() => { void loadProjects(); });
-  onDestroy(() => { importGeneration += 1; clearTimeout(importPollTimer); clearTimeout(errorHideTimer); });
+  // The "5 min ago" on each project card is worked out against this clock,
+  // which ticks so a list left open does not go stale.
+  let now = Date.now();
+  let nowTimer: ReturnType<typeof setInterval> | undefined;
+  onMount(() => { void loadProjects(); nowTimer = setInterval(() => (now = Date.now()), 15000); });
+  onDestroy(() => { importGeneration += 1; clearTimeout(importPollTimer); clearTimeout(errorHideTimer); clearInterval(nowTimer); });
 
   $: importing = importJob !== null && !IMPORT_TERMINAL.has(importJob.state);
 
@@ -123,9 +130,18 @@
   let projectSearch = "";
   let renamingId = "";
   let renameDraft = "";
-  $: recent = recentProjects(projects, 5, $localUserId);
-  $: activeProjects = projects.filter((item) => !item.archivedAt);
-  $: archivedProjects = projects.filter((item) => Boolean(item.archivedAt));
+  // The one project opened last carries the Recent chip; it replaces the
+  // separate Recent projects strip. Archived, missing and conflicting rows
+  // never carry it.
+  $: recentProjectId = projects
+    .filter((item) => !item.archivedAt && !item.missing && !item.conflict && Number.isFinite(Date.parse(item.lastOpenedAt ?? "")))
+    .reduce<RegisteredProject | null>((latest, item) =>
+      !latest || Date.parse(item.lastOpenedAt ?? "") > Date.parse(latest.lastOpenedAt ?? "") ? item : latest, null)?.projectId ?? "";
+  // Last opened first; a project never opened keeps the registry's order,
+  // after the opened ones (Array.sort is stable).
+  $: byLastOpened = [...projects].sort((a, b) => openedMs(b) - openedMs(a));
+  $: activeProjects = byLastOpened.filter((item) => !item.archivedAt);
+  $: archivedProjects = byLastOpened.filter((item) => Boolean(item.archivedAt));
   $: visibleProjects = showArchived ? [...activeProjects, ...archivedProjects] : activeProjects;
   $: projectSearchTerms = projectSearch.trim().normalize("NFKC").toLocaleLowerCase().split(/\s+/).filter(Boolean);
   $: filteredProjects = visibleProjects.filter((item) => {
@@ -171,6 +187,17 @@
     } finally {
       loading = false;
     }
+  }
+
+  function openedMs(item: RegisteredProject): number {
+    const at = Date.parse(item.lastOpenedAt ?? "");
+    return Number.isFinite(at) ? at : 0;
+  }
+
+  /** The exact time behind a card's "5 min ago", for its tooltip. */
+  function openedAt(item: RegisteredProject): string {
+    const when = new Date(item.lastOpenedAt ?? "");
+    return Number.isNaN(when.getTime()) ? "" : `Last opened ${when.toLocaleString()}`;
   }
 
   function lastOpened(item: RegisteredProject): string {
@@ -531,27 +558,40 @@
     </div>
   {/if}
   {#if preview === null}
-    <div class="header">
-      <div class="page-title"><h1>Projects</h1><span class="ui-chip accent project-count" aria-label={`${activeProjects.length} projects`}>{activeProjects.length}</span></div>
-    </div>
-
+    <!-- 2026-11-16 (Joel): one box for adding a project, in place of a page
+         title, a heading, two cards, a hint and a link, each on its own row.
+         The box is the drop target (App reads `data-import-drop`); the count
+         of projects is on the list's own bar. -->
     <div class="footer">
-      <div class="section-heading"><h2>Add a project</h2></div>
-      <div class="choice-grid">
-        <button class="choice" use:tooltip={"Import a file: USFM, SFM, TXT, TCORE, TSTUDIO or ZIP"} on:click={chooseFile} disabled={loading}>
-          <span class="choice-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5M12 17v-6m-3 3 3-3 3 3"/></svg></span>
-          <span class="choice-copy"><span class="choice-title">Import a file</span><span>USFM, SFM, TXT, TCORE, TSTUDIO or ZIP</span></span>
-          <span class="choice-arrow" aria-hidden="true">→</span>
-        </button>
-        <button class="choice" use:tooltip={"Import a folder: multi-book USFM, Paratext or translationCore"} on:click={chooseFolder} disabled={loading}>
-          <span class="choice-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 7V5a1 1 0 0 1 1-1h5l2 3h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z"/><path d="M3 10h18"/></svg></span>
-          <span class="choice-copy"><span class="choice-title">Import a folder</span><span>Multi-book USFM, Paratext or translationCore</span></span>
-          <span class="choice-arrow" aria-hidden="true">→</span>
-        </button>
-      </div>
-
-      <p class="drop-hint">Or drop a file or folder anywhere in this window.</p>
-      <button class="link-button" on:click={openExisting} disabled={loading} use:tooltip={"Open a Bridge or translationCore project in its current location, without copying it"}>Open an existing project</button>
+      <h1 class="sr-only">Projects</h1>
+      <!-- A drop area, not a card: tinted, dashed, taller than a project
+           row, with a plain drawing on the left (nothing there to click) and
+           three icon tiles on the right, each with an instant hint. -->
+      <section class="add-box" class:dragging class:over={dragOver} data-import-drop aria-label="Add a project">
+        <div class="add-lead">
+          <svg class="add-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M24 30V10m0 0-7 7m7-7 7 7"/><path d="M8 28v8a4 4 0 0 0 4 4h24a4 4 0 0 0 4-4v-8"/>
+          </svg>
+          <div class="add-copy">
+            <h2>{dragOver ? "Drop to add this project" : dragging ? "Drop it here" : "Add a project"}</h2>
+            <p>Drag a file or folder into this area, or pick a way to add one.</p>
+          </div>
+        </div>
+        <div class="add-actions" role="group" aria-label="Ways to add a project">
+          <button class="add-tile" aria-label="Import a file" use:tooltip={"Import a file: USFM, SFM, TXT, TCORE, TSTUDIO or ZIP"} on:click={chooseFile} disabled={loading}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5M12 17v-6m-3 3 3-3 3 3"/></svg>
+            <span>File</span>
+          </button>
+          <button class="add-tile" aria-label="Import a folder" use:tooltip={"Import a folder: multi-book USFM, Paratext or translationCore"} on:click={chooseFolder} disabled={loading}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5a1 1 0 0 1 1-1h5l2 3h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z"/><path d="M12 16v-5m-2.5 2.5L12 11l2.5 2.5"/></svg>
+            <span>Folder</span>
+          </button>
+          <button class="add-tile" aria-label="Open an existing project" use:tooltip={"Open an existing project: a Bridge or translationCore project in its current location, without copying it"} on:click={openExisting} disabled={loading}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9V6a1 1 0 0 1 1-1h5l2 3h8a1 1 0 0 1 1 1v1"/><path d="M5.6 11h15a1 1 0 0 1 1 1.2l-1.3 6a1 1 0 0 1-1 .8H3.9a1 1 0 0 1-1-1.2l1.7-6a1 1 0 0 1 1-.8Z"/></svg>
+            <span>Existing</span>
+          </button>
+        </div>
+      </section>
       {#if loading}<p class="working">Reading, validating, or opening the selected project…</p>{/if}
       {#if importNotice}<p class="working">{importNotice}</p>{/if}
       {#if error && !duplicateDialogOpen}
@@ -563,17 +603,6 @@
     </div>
 
     <div class="list-area">
-      {#if !projectsLoading}
-        <section class="recent-projects" aria-label="Recent projects">
-          <h2>Recent projects</h2>
-          {#if recent.length === 0}<p class="drop-hint">Projects you successfully open on this device appear here.</p>{/if}
-          {#each recent as item (item.collectionId || item.projectId)}
-            <button type="button" class="recent-project" disabled={loading} on:click={() => openPath(item.path, item.projectId)}>
-              <UiIcon name="open" /><span><b>{displayName(item)}</b><small>{item.targetLanguage || item.targetLanguageId} · {item.bibleName || item.bookName}</small></span>
-            </button>
-          {/each}
-        </section>
-      {/if}
       {#if projects.length > 0}
       <div class="project-toolbar">
         <div class="project-search">
@@ -618,10 +647,10 @@
               <!-- #309: a managed folder whose identity the registry refused. It
                    has no projectId of its own, so it offers no actions. -->
               <article class="project-row conflict">
-                <div class="book-badge">{item.bookId?.toUpperCase() || "?"}</div>
+                <div class="book-badge" aria-hidden="true"><UiIcon name="open" /></div>
                 <div class="project-copy">
                   <strong>{displayName(item)}</strong>
-                  <span>{(item.bookCount ?? 1) > 1 ? `${item.bookCount} books` : item.bookName}{item.bibleName ? ` · ${item.bibleName}` : ""}</span>
+                  <span>{item.bookCount ?? 1}-book collection{item.bibleName ? ` · ${item.bibleName}` : ""}</span>
                   <span class="conflict-message" role="alert">{item.conflict.message}</span>
                   {#if item.conflict.registeredPath}<small title={item.conflict.registeredPath}>Registered copy: {item.conflict.registeredPath}</small>{/if}
                   <small title={item.path}>This copy: {item.path}</small>
@@ -632,16 +661,25 @@
               {#if !item.missing && confirmingId !== item.projectId}
                 <button class="open-project" aria-label={`Open ${displayName(item)}`} on:click={() => openPath(item.path, item.projectId)} disabled={loading}></button>
               {/if}
-              <div class="book-badge">{item.bookId?.toUpperCase() || "?"}</div>
+              <div class="book-badge" aria-hidden="true"><UiIcon name="open" /></div>
               <div class="project-copy">
                 {#if renamingId === item.projectId}
                   <input class="rename-input" aria-label="Project name" bind:value={renameDraft}
                     on:keydown={(event) => { if (event.key === "Enter") void commitRename(item); if (event.key === "Escape") renamingId = ""; }}
                     on:blur={() => void commitRename(item)} />
                 {:else}
-                  <strong>{displayName(item)}{item.archivedAt ? " (archived)" : ""}</strong>
+                  <div class="title-line">
+                    <strong title={displayName(item)}>{displayName(item)}{item.archivedAt ? " (archived)" : ""}</strong>
+                    {#if !item.missing && relativeTime(item.lastOpenedAt, now)}
+                      <span class="opened-meta" title={openedAt(item)}>
+                        {#if item.projectId === recentProjectId}<span class="ui-chip pass recent-chip">Recent</span>{/if}
+                        <span class="opened-dot" aria-hidden="true">•</span>
+                        <span class="opened-ago">{relativeTime(item.lastOpenedAt, now)}</span>
+                      </span>
+                    {/if}
+                  </div>
                 {/if}
-                <span>{item.collectionId ? `${item.bookCount ?? 1}-book collection` : item.bookName}{item.bibleName ? ` · ${item.bibleName}` : ""}{item.targetLanguage ? ` · ${item.targetLanguage}` : ""}</span>
+                <span>{item.bookCount ?? 1}-book collection{item.bibleName ? ` · ${item.bibleName}` : ""}{item.targetLanguage ? ` · ${item.targetLanguage}` : ""}</span>
                 {#if item.missing}<small class="missing-label">Project folder is missing</small>{/if}
               </div>
               <div class="project-actions" role="group" aria-label={`Actions for ${displayName(item)}`}>
@@ -800,12 +838,17 @@
 {/if}
 
 <style>
-  .recent-projects { margin-bottom: 20px; }
-  .recent-projects h2 { font-size: var(--fs-sm); }
-  .recent-project { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; margin: 0 8px 8px 0; padding: 10px 14px; text-align: left; border: 1px solid var(--border); border-radius: 8px; color: var(--text); background: var(--surface); cursor: pointer; }
-  .recent-project span { min-width: 0; }
-  .recent-project b, .recent-project small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .recent-project small { color: var(--text-3); }
+  /* The project's name, then, after a clear gap, when it was last opened: a
+     Recent chip on the one opened last, and a quiet "5 min ago" on every
+     card. It wraps under the name on a narrow window instead of squeezing it. */
+  .title-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 28px; min-width: 0; }
+  /* A long name ends in an ellipsis (the full name is its tooltip) so the
+     action icons keep their place on the card's first row at any width. */
+  .project-home .project-copy .title-line strong { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
+  .project-home .project-copy .opened-meta { display: inline-flex; align-items: center; gap: 6px; flex: none; overflow: visible; white-space: nowrap; line-height: 1.3; }
+  /* Green, not the accent blue the badge, hover and count already use. */
+  .project-home .project-copy .opened-meta .recent-chip { color: var(--pass); font-size: var(--fs-3xs); line-height: 1.3; white-space: nowrap; overflow: visible; }
+  .project-home .project-copy .opened-meta .opened-dot, .project-home .project-copy .opened-meta .opened-ago { color: var(--text-2); font-size: var(--fs-2xs); font-weight: 600; line-height: 1.3; white-space: nowrap; overflow: visible; }
 
   .screen { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; overflow: auto; background: var(--surface); }
   .import-banner { flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 10px 40px; border-bottom: 1px solid var(--border); background: var(--surface-2, var(--surface)); max-width: 900px; width: 100%; margin: 0 auto; box-sizing: border-box; }
@@ -841,12 +884,8 @@
   .small-button.icon-action.danger:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
   .confirm-copy { color: var(--danger); font-size: var(--fs-2xs); font-weight: 650; flex-shrink: 0; }
   .empty { background: var(--surface-2); color: var(--text-2); border-radius: 8px; padding: 14px; font-size: var(--fs-xs); margin: 0 0 18px; }
-  .choice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   button { font: inherit; }
-  .choice { min-height: 82px; text-align: left; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text-2); border-radius: 10px; padding: 14px; cursor: pointer; font-size: var(--fs-xs); line-height: 1.45; }
-  .choice:hover { border-color: var(--accent); background: var(--accent-bg); }
-  .choice-title { display: block; color: var(--text); font-size: var(--fs-md); font-weight: 700; margin-bottom: 5px; }
-  .link-button, .back { display: block; border: 0; background: none; color: var(--accent); cursor: pointer; font-size: var(--fs-xs); margin: 15px auto 0; }
+  .back { display: block; border: 0; background: none; color: var(--accent); cursor: pointer; font-size: var(--fs-xs); margin: 15px auto 0; }
   .header-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding-bottom: 18px; border-bottom: 1px solid var(--border); }
   .source { color: var(--text-2); font-size: var(--fs-2xs); margin: 7px 0 0; max-width: 650px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .paratext-link { color: var(--text-2); font-size: var(--fs-2xs); margin: 4px 0 0; max-width: 650px; overflow-wrap: anywhere; }
@@ -884,14 +923,6 @@
   .error-dismiss { display: grid; place-items: center; width: 24px; height: 24px; flex-shrink: 0; margin-top: -2px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--danger); font-size: var(--fs-2xs); line-height: 1; cursor: pointer; }
   .error-dismiss:hover, .error-dismiss:focus-visible { background: rgba(220, 38, 38, .12); }
   .project-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-  .section-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 14px; }
-  .section-heading h2 { margin: 0; font-size: var(--fs-lg); }
-  .choice-icon { display: grid; place-items: center; flex: 0 0 40px; height: 40px; border-radius: 10px; background: var(--accent-bg); color: var(--accent); }
-  .choice-icon svg { width: 22px; height: 22px; }
-  .choice-copy { flex: 1; min-width: 0; }
-  .choice-arrow { color: var(--text-2); font-size: 20px; }
-  .page-title { display: flex; align-items: center; gap: 10px; }
-  .project-count { min-width: 30px; height: 28px; padding: 0 10px; box-sizing: border-box; justify-content: center; font-size: var(--fs-sm); font-weight: 700; line-height: 1; }
   .project-details { grid-column: 2 / -1; min-width: 0; color: var(--text-2); font-size: var(--fs-2xs); }
   .project-details summary { width: fit-content; cursor: pointer; padding: 4px 0; border-radius: 4px; user-select: none; }
   .project-details summary:hover { color: var(--accent); }
@@ -900,19 +931,40 @@
   .details-body > div { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 12px; line-height: 1.4; overflow-wrap: anywhere; }
   .detail-label { font-weight: 600; color: var(--text); }
   .project-copy .missing-label { color: var(--danger); }
-  .drop-hint { color: var(--text-2); font-size: var(--fs-2xs); text-align: center; line-height: 1.5; margin: 16px 0 0; }
   button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
   .small-button:hover:not(:disabled) { background: var(--accent-bg); border-color: var(--accent); }
   .archived-filter input { width: 18px; height: 18px; accent-color: var(--accent); }
   .project-home { background: var(--bg); overflow: hidden; padding-bottom: 0; }
   .project-home .header, .project-home .list-area, .project-home .footer { max-width: 1200px; padding-left: 32px; padding-right: 32px; }
-  .project-home .header { padding-top: 20px; padding-bottom: 12px; border: 0; }
+  .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  /* The "Add a project" box: one row, and where a file or folder is dropped.
+     Its dashed edge says so; it turns to the accent colour while something
+     is dragged over the window, and fills while it is over the box. */
+  .add-box { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px 24px; min-height: 124px; box-sizing: border-box; padding: 20px 28px;
+    border: 1.5px dashed color-mix(in srgb, var(--accent) 45%, var(--border-strong)); border-radius: 16px;
+    background: color-mix(in srgb, var(--accent-bg) 55%, var(--bg)); transition: border-color .15s, background .15s, box-shadow .15s; }
+  .add-box.dragging { border-color: var(--accent); background: var(--accent-bg); }
+  .add-box.over { border-style: solid; border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--surface)); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent); }
+  .add-lead { flex: 1 1 280px; min-width: 0; display: flex; align-items: center; gap: 18px; }
+  /* A drawing, not a control: no tile behind it, nothing that reads as a button. */
+  .add-art { flex: none; width: 44px; height: 44px; color: var(--accent); opacity: .8; }
+  .add-copy { min-width: 0; }
+  .add-copy h2 { margin: 0 0 4px; font-size: var(--fs-lg); font-weight: 700; color: var(--text); }
+  .add-copy p { margin: 0; font-size: var(--fs-xs); color: var(--text-2); line-height: 1.45; }
+  .add-actions { flex: none; display: flex; flex-wrap: wrap; align-items: stretch; gap: 10px; }
+  /* An icon tile: the icon is the button, its one word names it, its hint says the rest. */
+  .add-tile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; width: 88px; min-height: 76px; padding: 10px 8px; box-sizing: border-box;
+    border: 1px solid var(--border); border-radius: 14px; background: var(--surface); color: var(--text-2); font-size: var(--fs-2xs); font-weight: 600; line-height: 1.2; cursor: pointer;
+    box-shadow: 0 1px 2px rgba(0,0,0,.05); transition: color .15s, border-color .15s, box-shadow .15s, transform .15s; }
+  .add-tile svg { width: 26px; height: 26px; flex: none; color: var(--accent); }
+  .add-tile:hover:not(:disabled), .add-tile:focus-visible { border-color: var(--accent); color: var(--accent); box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 18%, transparent); transform: translateY(-1px); }
+  .add-tile:disabled { opacity: .55; cursor: not-allowed; }
+  @media (max-height: 700px) { .add-box { min-height: 104px; padding-top: 14px; padding-bottom: 14px; } }
+  @media (prefers-reduced-motion: reduce) { .add-box, .add-tile { transition: none; } .add-tile:hover:not(:disabled), .add-tile:focus-visible { transform: none; } }
   .project-home .list-area { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; padding-top: 0; padding-bottom: 0; }
   .project-results { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; scrollbar-gutter: stable; padding: 3px 4px 20px 3px; }
   .project-results:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 10px; }
-  .project-home .section-heading { margin-bottom: 10px; }
-  .project-home .drop-hint { margin-top: 10px; }
-  .project-home .footer { border: 0; background: transparent; padding-top: 0; padding-bottom: 16px; }
+  .project-home .footer { border: 0; background: transparent; padding-top: 16px; padding-bottom: 16px; }
   .project-toolbar { flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; margin-bottom: 16px; }
   .project-search { display: flex; align-items: center; gap: 8px; flex: 1 1 320px; min-width: 0; padding: 0 12px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface); }
   .project-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-bg); }
@@ -930,12 +982,18 @@
     .project-search input { font-size: var(--fs-2xs); }
   }
   .project-home .projects { display: grid; gap: 12px; border: 0; }
-  .project-home .project-row { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; column-gap: 14px; row-gap: 6px; padding: 16px 18px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); box-shadow: 0 2px 4px rgb(0 0 0 / 2%); }
+  .project-home .project-row { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; column-gap: 14px; row-gap: 2px; padding: 14px 18px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); box-shadow: 0 2px 4px rgb(0 0 0 / 2%); }
   .project-home .project-row.missing { background: #fff9ed; }
-  .project-home .book-badge { width: 40px; height: 40px; border-radius: 10px; }
-  .project-home .project-copy { gap: 6px; }
+  /* The icon is centred on the card's three lines (name, collection line,
+     Project details toggle): it spans both grid rows. With the details open
+     the second row is tall, so it stays near the top where those lines are. */
+  .project-home .book-badge { width: 40px; height: 40px; border-radius: 10px; grid-row: 1 / span 2; align-self: center; }
+  .project-home .project-row:has(.project-details[open]) .book-badge { align-self: start; margin-top: .7rem; }
+  .project-home .project-row.conflict .book-badge { grid-row: auto; }
+  .project-home .project-copy { gap: 1px; }
+  .project-home .project-details summary { padding: 1px 0; }
   .project-home .project-copy strong { font-size: var(--fs-md); overflow-wrap: anywhere; }
-  .project-home .project-copy span { white-space: normal; overflow-wrap: anywhere; line-height: 1.6; }
+  .project-home .project-copy span { white-space: normal; overflow-wrap: anywhere; line-height: 1.4; }
   .project-home .project-copy small { white-space: normal; overflow-wrap: anywhere; line-height: 1.5; }
   .project-home .project-actions { max-width: 300px; }
   /* The whole card opens the project (team request, 2026-11-02): an invisible
@@ -952,13 +1010,6 @@
   .project-home .project-row:has(.open-project:hover:not(:disabled)) .project-copy strong { color: var(--accent); }
   .project-home .project-row:has(.open-project:focus-visible) { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-bg); }
   .project-home .small-button { min-height: 32px; padding: 5px 10px; font-weight: 600; }
-  .project-home .choice-grid { gap: 16px; }
-  .project-home .choice { display: flex; align-items: center; gap: 14px; min-width: 0; min-height: 76px; padding: 12px 16px; border-radius: 12px; border-color: var(--border); transition: background .15s, border-color .15s; }
-  .project-home .choice-title { font-size: var(--fs-sm); margin-bottom: 3px; }
-  .project-home .choice-copy > span:last-child { font-size: var(--fs-2xs); }
-  .project-home .choice:hover:not(:disabled) { border-color: var(--accent); }
-  .project-home .choice:hover:not(:disabled) .choice-arrow { color: var(--accent); }
-  .project-home .link-button { min-height: 28px; padding: 4px 10px; margin-top: 2px; line-height: 1.5; text-decoration: underline; text-underline-offset: 3px; }
   .action-icon { display: grid; place-items: center; width: 34px; height: 34px; min-height: 34px; padding: 0; flex-shrink: 0; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); color: var(--text-2); cursor: pointer; }
   .project-home .action-icon.danger { color: var(--danger); }
   .import-review { background: var(--bg); }
@@ -1030,15 +1081,11 @@
   .project-home .project-actions .action-icon.danger { color: var(--danger); }
   .project-home .project-actions .action-icon:hover:not(:disabled), .project-home .project-actions .action-icon:focus-visible { background: var(--accent-bg); color: var(--accent); filter: none; }
   .project-home .project-actions .action-icon.danger:hover:not(:disabled), .project-home .project-actions .action-icon.danger:focus-visible { background: var(--danger-bg); color: var(--danger); }
-  @media (max-width: 1024px) {
-    .project-home .project-row { grid-template-columns: 40px minmax(0, 1fr); }
-    .project-home .project-actions { grid-column: 2; max-width: none; }
-  }
   @media (max-width: 640px) {
     .project-home .header, .project-home .list-area, .project-home .footer { padding-left: 20px; padding-right: 20px; }
     .project-home .header { padding-top: 24px; }
-    .project-home .project-row { padding: 16px; gap: 12px; }
-    .project-home .project-actions, .project-details { grid-column: 1 / -1; }
+    .project-home .project-row { padding: 14px 16px; column-gap: 12px; }
+    .project-home .project-actions { gap: 2px; }
     .details-body > div { grid-template-columns: 1fr; gap: 2px; }
     .project-home .project-actions button { min-height: 36px; }
     .header-row { flex-wrap: wrap; gap: 12px; }
@@ -1053,7 +1100,6 @@
   }
   @media (max-width: 760px) {
     .content-grid { grid-template-columns: 1fr; }
-    .choice-grid { grid-template-columns: 1fr; }
     .header, .list-area, .footer { padding-left: 20px; padding-right: 20px; }
     .book-row { grid-template-columns: 42px 1fr; }
     .book-meta { grid-column: 2; text-align: left; padding-bottom: 8px; }
@@ -1061,17 +1107,7 @@
   @media (max-height: 700px) {
     .project-home .header { padding-top: 12px; padding-bottom: 12px; }
     .project-home .footer { padding-bottom: 12px; }
-    .project-home .section-heading { margin-bottom: 8px; }
-    .project-home .choice { min-height: 66px; padding: 10px 12px; }
-    .project-home .drop-hint { margin-top: 8px; }
     .project-toolbar { margin-bottom: 10px; }
-  }
-  @media (max-width: 640px) and (max-height: 640px) {
-    .project-home .choice-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-    .project-home .choice { gap: 8px; }
-    .project-home .choice-copy > span:last-child, .project-home .choice-arrow { display: none; }
-    .project-home .choice-title { margin: 0; font-size: var(--fs-2xs); }
-    .project-home .choice-icon { flex-basis: 30px; height: 30px; }
   }
   @media (prefers-reduced-motion: reduce) {
     .project-home .project-actions .action-icon, .import-review .header-row .action-icon { transition: none; }

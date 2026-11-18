@@ -9,6 +9,10 @@
   import { collectionChecks } from "../editorPrefs";
 
   export let bookCount = 0;
+  /** Set for one book's Run QA on the dashboard: the dialog names the book,
+   *  drops the re-check option (one book is always checked) and Start runs
+   *  that book. The ticks are the same saved selection either way. */
+  export let bookName = "";
   /** Another check is running (a single book's job, a book being opened): no Start. */
   export let checkRunning = false;
   export let recheckUnchanged = false;
@@ -49,7 +53,7 @@
 
 <div class="overlay">
   <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="collection-check-title" bind:this={dialog}>
-    <h2 id="collection-check-title">Check {bookCount === 1 ? "this book" : `all ${bookCount} books`}</h2>
+    <h2 id="collection-check-title">Check {bookName ? bookName : bookCount === 1 ? "this book" : `all ${bookCount} books`}</h2>
     <div class="boxes" role="group" aria-label="Checks to run">
       {#each CHECK_BOXES as box}
         <label title={box.title}>
@@ -58,11 +62,15 @@
         </label>
       {/each}
     </div>
-    <label class="recheck">
-      <input type="checkbox" bind:checked={recheck} />
-      Also re-check books unchanged since their last run
-    </label>
-    <p class="note">A run checks every book in turn and is meant to be left alone: editing, switching books and Greek Room pause until it ends.</p>
+    {#if bookName}
+      <p class="note">Every chapter of the book is checked in turn, then its QA report is built. Editing waits until it ends.</p>
+    {:else}
+      <label class="recheck">
+        <input type="checkbox" bind:checked={recheck} />
+        Also re-check books unchanged since their last run
+      </label>
+      <p class="note">A run checks every book in turn and is meant to be left alone: editing, switching books and Greek Room pause until it ends.</p>
+    {/if}
     <div class="buttons">
       {#if blocked}<span class="blocked" role="status">{blocked}</span>{/if}
       <button type="button" class="ui-btn" on:click={onClose}>Cancel</button>

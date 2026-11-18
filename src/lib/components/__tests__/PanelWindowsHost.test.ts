@@ -22,8 +22,9 @@ it("settles after startup instead of scheduling itself indefinitely, and closes/
   expect(mocks.emit).toHaveBeenCalledWith("panel-source", "panel-context-source", expect.objectContaining({ open: false }));
   mocks.receive!({ kind: "close", id: "paratext", path: "A" });
   await waitFor(() => expect(mocks.window).toHaveBeenCalledWith("paratext", "hide"));
-  expect(get(sidePanels).paratext.detached).toBe(true);
-  setSidePanel("paratext", { open: true });
+  // Closed from its own window: no longer "separate", so it opens as a tab next time.
+  expect(get(sidePanels).paratext).toMatchObject({ open: false, detached: false });
+  setSidePanel("paratext", { open: true, detached: true });
   mocks.receive!({ kind: "dock", id: "paratext", path: "A" });
   expect(get(sidePanels).paratext.detached).toBe(false);
 });

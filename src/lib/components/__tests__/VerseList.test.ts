@@ -1,4 +1,8 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
+// @ts-expect-error The app tsconfig has no node types; vitest runs under node.
+import { readFileSync } from "node:fs";
+// @ts-expect-error As above.
+import { resolve } from "node:path";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { get } from "svelte/store";
 import { tick } from "svelte";
@@ -48,7 +52,7 @@ import {
   focusedFindingId,
   resetBookState, reviewTabRequest
 } from "../../stores";
-import { editorChecks, rawView, setSidePanel, sidePanels } from "../../editorPrefs";
+import { editorChecks, rawView, setSidePanel, sidePanels, tabRequest } from "../../editorPrefs";
 import { alignmentOpen, alignmentKey } from "../../alignmentUi";
 import { cancelVerseEdit, editingChapter, editingVerse, editSaving, recheckingKey } from "../../verseEditor";
 import { revealFinding } from "../../findingFocus";
@@ -656,26 +660,26 @@ describe("VerseList alignment glyph (issue #70)", () => {
   it("always renders the ⇄ arrow, colored by completion status", () => {
     alignmentStatusByVerse.set({ [verseKey("1", "6")]: "complete" });
     render(VerseList, { props: { onSelect: vi.fn() } });
-    expect(glyph()).toHaveTextContent("⇄");
+    expect(glyph().querySelector("svg")).not.toBeNull();
     expect(glyph()).toHaveClass("complete");
   });
 
   it("colors the arrow for partial, invalid and untouched alignment too", () => {
     alignmentStatusByVerse.set({ [verseKey("1", "6")]: "partial" });
     const { unmount } = render(VerseList, { props: { onSelect: vi.fn() } });
-    expect(glyph()).toHaveTextContent("⇄");
+    expect(glyph().querySelector("svg")).not.toBeNull();
     expect(glyph()).toHaveClass("partial");
     unmount();
 
     alignmentStatusByVerse.set({ [verseKey("1", "6")]: "invalid" });
     const rendered2 = render(VerseList, { props: { onSelect: vi.fn() } });
-    expect(glyph()).toHaveTextContent("⇄");
+    expect(glyph().querySelector("svg")).not.toBeNull();
     expect(glyph()).toHaveClass("invalid");
     rendered2.unmount();
 
     alignmentStatusByVerse.set({});
     render(VerseList, { props: { onSelect: vi.fn() } });
-    expect(glyph()).toHaveTextContent("⇄");
+    expect(glyph().querySelector("svg")).not.toBeNull();
     expect(glyph()).toHaveClass("untouched");
   });
 
@@ -688,20 +692,21 @@ describe("VerseList alignment glyph (issue #70)", () => {
     expect(get(alignmentKey)).toBe(verseKey("1", "6"));
   });
 
-  it("opens the Review side panel the modal is mounted in when it is closed (#306)", async () => {
+  // 2026-11-15 (Joel): the alignment editor is the work area's Alignment
+  // tab, not a dialog mounted in the Review panel, so opening it no longer
+  // opens Review (#306 did; closing the dialog then left Review open).
+  it("opens the Alignment tab and leaves the Review panel as it was", async () => {
     setSidePanel("review", { open: false });
     setSidePanel("paratext", { open: true });
     render(VerseList, { props: { onSelect: vi.fn() } });
     await fireEvent.click(glyph());
     expect(get(alignmentOpen)).toBe(true);
-    expect(get(sidePanels).review.open).toBe(true);
-    // The other panels are left as they were.
+    expect(get(sidePanels).review.open).toBe(false);
     expect(get(sidePanels).paratext.open).toBe(true);
-    // Opening again with Review already open never toggles it shut.
+    expect(get(tabRequest).id).toBe("alignment");
     alignmentOpen.set(false);
-    await fireEvent.click(glyph());
-    expect(get(sidePanels).review.open).toBe(true);
     setSidePanel("paratext", { open: false });
+    setSidePanel("review", { open: true });
   });
 
   it("leaves the Review panel closed when the guard refuses to open (#306)", async () => {
@@ -772,15 +777,17 @@ describe("VerseList edit pencil (issue #73)", () => {
     return screen.getByLabelText("Edit verse 6") as HTMLElement;
   }
 
-  it("renders a pencil above the alignment arrow, in the same action column", () => {
+  it("renders a pencil before the alignment arrow, in the same action group, both as icon buttons", () => {
     render(VerseList, { props: { onSelect: vi.fn() } });
     const arrow = screen.getByLabelText(/Open Align Words/);
     const column = pencil().parentElement!;
 
-    expect(pencil()).toHaveTextContent("✎");
+    expect(pencil().querySelector("svg")).not.toBeNull();
+    expect(pencil()).toHaveClass("ui-icon-btn");
+    expect(arrow).toHaveClass("ui-icon-btn");
     expect(column).toHaveClass("row-actions");
     expect(arrow.parentElement).toBe(column);
-    // "Above" is the ask: the pencil precedes the arrow in a column layout.
+    // The pencil precedes the arrow (side by side since 2026-11-15).
     expect(Array.from(column.children).indexOf(pencil())).toBeLessThan(
       Array.from(column.children).indexOf(arrow),
     );
@@ -830,23 +837,21 @@ describe("VerseList edit pencil (issue #73)", () => {
     recheckingKey.set("");
   });
 
-  it("leaves the selection alone when a double-click's edit is refused", async () => {
-    // Pre-existing, found while adding the pencil: beginEditFromList selected
-    // the verse before asking startVerseEdit whether it could open, so a
-    // double-click during background checking moved the reader's selection for
-    // an edit that never appeared. Double-click has no disabled attribute to
-    // hide it behind, unlike the pencil.
-    checkingProgress.set({
-      running: true, percent: 40, label: "Checking…", jobId: "j1",
-      state: "running", error: "", scope: "chapter",
-    });
+  // 2026-11-15 (Joel): a double-click no longer opens the verse for editing;
+  // the pencil does. It is left to the browser, which selects the word under
+  // the pointer, so Ctrl+C copies it.
+  it("a double-click on a verse does not open it for editing", async () => {
     const onSelect = vi.fn();
     const { container } = render(VerseList, { props: { onSelect } });
     const row = container.querySelector(`[data-verse-key="${verseKey("1", "6")}"]`)!;
 
     await fireEvent.dblClick(row);
     expect(get(editingVerse)).toBe("");
-    expect(onSelect).not.toHaveBeenCalled();
+    expect(container.querySelector("textarea")).toBeNull();
+    const source: string = readFileSync(resolve("src/lib/components/VerseList.svelte"), "utf8");
+    expect(source).not.toMatch(/on:dblclick=\{\(\) => beginEditFromList/);
+    // Nothing stops the text being selected.
+    expect(source).not.toMatch(/user-select:\s*none/);
   });
 
   it("gives way to the edit form once that verse is being edited", () => {
@@ -1186,33 +1191,16 @@ describe("landing on a finding's span (#402)", () => {
     expect(area.value.slice(area.selectionStart, area.selectionEnd)).toBe("beta");
   });
 
-  it("a double-click on the ringed mark opens the verse with the caret on it; elsewhere on the row, plain", async () => {
+  it("a double-click on the ringed mark keeps the ring and opens no editor", async () => {
     seed("alpha beta", twoFindings());
     render(VerseList, { props: { onSelect: (verse: string) => selectedVerse.set(verse) } });
     const mark = document.querySelector('[data-finding-ids~="f2"]') as HTMLElement;
     await fireEvent.click(mark);
     expect(get(focusedFindingId)).toBe("f2");
     await fireEvent.dblClick(mark);
-    const area = await waitFor(() => {
-      expect(textarea()).not.toBeNull();
-      return textarea();
-    });
-    await waitFor(() => expect(area.selectionStart).toBe(6));
-    expect(area.selectionEnd).toBe(10);
-
-    cancelVerseEdit();
     await tick();
-    focusedFindingId.set("f2");
-    const row = verseRow();
-    await fireEvent.click(row);
-    expect(get(focusedFindingId)).toBeNull();
-    await fireEvent.dblClick(row);
-    const plain = await waitFor(() => {
-      expect(textarea()).not.toBeNull();
-      return textarea();
-    });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(plain.selectionStart === 6 && plain.selectionEnd === 10).toBe(false);
+    expect(textarea()).toBeNull();
+    expect(get(focusedFindingId)).toBe("f2");
   });
 });
 
@@ -1449,6 +1437,13 @@ describe("VerseList open-issue pill (#383)", () => {
   beforeEach(() => languageQaFindingsByVerse.set({}));
   afterEach(() => { languageQaFindingsByVerse.set({}); reviewTabRequest.set(null); });
   const pill = () => screen.queryByTestId("open-issue-pill");
+  // 2026-11-15: an instant hint (use:tooltip), not a native title.
+  const hintOf = async (el: HTMLElement): Promise<string | null> => {
+    await fireEvent.mouseEnter(el);
+    const text = screen.getByRole("tooltip").textContent;
+    await fireEvent.mouseLeave(el);
+    return text;
+  };
   const gr = (id: string, severity: QaFinding["severity"] = "low") =>
     finding({ id, engine: "wildebeest", check_type: "wildebeest.script.mixed", category: "unicode", severity });
 
@@ -1458,7 +1453,12 @@ describe("VerseList open-issue pill (#383)", () => {
     render(VerseList, { props: { onSelect: vi.fn() } });
     const badge = pill() as HTMLElement;
     expect(badge).toHaveTextContent("3");
-    expect(badge.getAttribute("title")).toBe("3 open findings · 1 Greek Room, 1 alignment, 1 Language QA");
+    expect(badge).not.toHaveAttribute("title");
+    expect(await hintOf(badge)).toBe("3 open findings · 1 Greek Room, 1 alignment, 1 Language QA. Click to review");
+    // A raised, coloured number beside the verse number, not a chip.
+    const css: string = readFileSync(resolve("src/lib/components/VerseList.svelte"), "utf8");
+    expect(css).toMatch(/\.issue-pill \{[^}]*background: transparent; color: var\(--danger\)/);
+    expect(css).toMatch(/\.vnum-mark, \.issue-pill \{ position: relative; top: -\.5em;/);
     expect(badge).toHaveClass("sev-high");
     expect(verseRow().querySelector(".vnum")?.textContent).not.toContain("✓");
   });
@@ -1519,12 +1519,21 @@ describe("VerseList ✓ and alignment glyph (Benz, 2026-10-09)", () => {
     alignmentStatusByVerse.set({ [verseKey("1", "6")]: alignment });
   }
   const number = () => verseRow().querySelector(".vnum") as HTMLElement;
+  // 2026-11-15: an instant hint on the number (use:tooltip), not a native title.
+  const numberHint = async (): Promise<string | null> => {
+    const main = number().querySelector(".vnum-main") as HTMLElement;
+    expect(number()).not.toHaveAttribute("title");
+    await fireEvent.mouseEnter(main);
+    const text = screen.getByRole("tooltip").textContent;
+    await fireEvent.mouseLeave(main);
+    return text;
+  };
 
   it("ticks a verse only when it is checked, has nothing open and its alignment is complete", async () => {
     clearVerse("complete");
     render(VerseList, { props: { onSelect: vi.fn() } });
     expect(number().textContent).toContain("✓");
-    expect(number().getAttribute("title")).toBe("Checked: no open findings, alignment complete");
+    expect(await numberHint()).toBe("Checked: no open findings, alignment complete");
     expect(verseRow().classList.contains("approved")).toBe(true);
   });
 
@@ -1532,11 +1541,13 @@ describe("VerseList ✓ and alignment glyph (Benz, 2026-10-09)", () => {
     clearVerse("complete_cross_verse");
     render(VerseList, { props: { onSelect: vi.fn() } });
     expect(number().textContent).toContain("✓");
-    expect(number().getAttribute("title")).toBe("Checked: no open findings, alignment complete (cross-verse)");
+    expect(await numberHint()).toBe("Checked: no open findings, alignment complete (cross-verse)");
     expect(verseRow().classList.contains("approved")).toBe(true);
     const glyph = screen.getByLabelText(/Open Align Words/) as HTMLElement;
     expect(glyph).toHaveClass("complete_cross_verse");
-    expect(glyph.getAttribute("title")).toContain("Alignment: complete (cross-verse)");
+    await fireEvent.mouseEnter(glyph);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Alignment: complete (cross-verse)");
+    await fireEvent.mouseLeave(glyph);
   });
 
   it.each([
@@ -1547,14 +1558,14 @@ describe("VerseList ✓ and alignment glyph (Benz, 2026-10-09)", () => {
     clearVerse(alignment);
     render(VerseList, { props: { onSelect: vi.fn() } });
     expect(number().textContent).not.toContain("✓");
-    expect(number().getAttribute("title")).toBe(title);
+    expect(await numberHint()).toBe(title);
   });
 
   it("does not tick a verse with an open finding, even when aligned", async () => {
     clearVerse("complete", [finding({ start_offset: 0, end_offset: 5, original_text: "alpha" })]);
     render(VerseList, { props: { onSelect: vi.fn() } });
     expect(number().textContent).not.toContain("✓");
-    expect(number().getAttribute("title")).toBe("Not clear: 1 open finding");
+    expect(await numberHint()).toBe("Not clear: 1 open finding");
   });
 
   it("colours the ⇄ by alignment state", async () => {

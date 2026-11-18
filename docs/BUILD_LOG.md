@@ -25382,6 +25382,575 @@ pinned the exact stored settings; it now expects the marker as well.
 **Not done.** No workspace schema change (the marker is a `settings_kv` value). The
 approved model name is duplicated in the dialog rather than read from the engine.
 
+## 2026-11-13 — Alignment: a column's target words sit in a row, not one below another (#493)
+
+Benz's request (branch `uifixes-v25`, not merged to `main`). Target words placed
+under a source word each took a line of their own, so a column holding six words
+was six cards tall.
+
+**Single-verse panel (`AlignmentModal.svelte`).** `.target-cell` is a wrapping flex
+row. It reads in the cell's `dir`, which is `context.targetDirection`, so the row
+runs right-to-left for a right-to-left target language. A column is as wide as its
+row needs, up to the box, and wraps from there. The reorder buttons are ◀ ▶
+("Move … earlier" / "Move … later", glyphs swapped for right-to-left) in place of
+▲ ▼, and the insert bar is drawn on the side of the card, not above or below it.
+
+**Drag (`alignmentDrag.ts`).** `slotUnder` decides before/after from the pointer's
+x against the card's horizontal middle, reversed when the nearest `dir` ancestor
+is `rtl`. It used the vertical middle.
+
+**Cross-verse page (`CrossVerseAlignmentModal.svelte`).** `.rows` was an auto-fill
+grid with a fixed one-card track, which is what stacked the cards. It is a wrapping
+flex row: a cell is at least one card wide and grows with its own row of words. A
+joined source group now also lays its source cards side by side there.
+
+**Tests changed.** The reorder and drop-slot tests in `AlignmentModal.test.ts` and
+`alignmentDrag.test.ts` used the old button names and the vertical halves; they now
+use earlier/later and the horizontal halves, plus one right-to-left case.
+
+**Ran.** The three affected Vitest files pass; the full frontend gate is recorded
+in the #495 entry below (one gate for the batch).
+
+**Not verified (needs the desktop app).** Everything visual: that the row wraps
+inside the box at 1366x768 and in a half-width window, that a long joined group
+does not get clipped, the look of the ◀ ▶ buttons and the side insert bar, and a
+right-to-left target project. Open question for Benz: the row follows the *target*
+language's direction; if the source direction was meant, it is the `dir` on the cell.
+
+## 2026-11-13 — Main window can be as narrow as 640 px, so it fits beside the Alignment window (#494)
+
+Benz's request (branch `uifixes-v25`). `tauri.conf.json`: the main window's
+`minWidth` goes from 960 to 640, the minimum the Alignment and Review notes windows
+already have. At 960 the main window could not take half of a 1366 px screen
+(683 px), so the two windows always overlapped. `minHeight` is unchanged.
+
+**Believed, not watched.** The cause is read from the config; it was not reproduced
+on the desktop app. The main layout already has narrow-width rules (`TopBar.svelte`
+at 900/640/480 px, side panels folding in `panelFit.ts`), but none of it was looked
+at below 960 px on a real window.
+
+**Not verified (needs the desktop app).** Snap the main window and the Alignment
+window half and half at 1366x768; check the top bar menus, the verse list and the
+status bar at 640-700 px wide; drag the edge between the two freely.
+
+## 2026-11-13 — Cross-verse page: the same verse sits level on both sides (#495)
+
+Benz's request (branch `uifixes-v25`). Source and Target are two separate panes, each
+a stack of verse blocks of different heights, so by mid-chapter verse 1:7 on the left
+sat beside 1:15 on the right.
+
+**What changed.** New `src/lib/verseRowSync.ts`, a Svelte action on the page. Each
+verse block (and each column title) carries `data-verse-row`; the action pairs the
+elements that share a key, and when their columns stand side by side it gives both
+the taller one's height as `min-height`. When the panes are stacked or one is
+floating it clears the heights. It re-runs from a `ResizeObserver` and a
+`MutationObserver`, once per animation frame. The panes stay rearrangeable (#448);
+no markup moved between them.
+
+**Tests.** `verseRowSync.test.ts` covers the pairing, the side-by-side test and the
+clearing with stubbed rectangles. jsdom has no layout, so this proves the logic only.
+
+**Ran (whole batch #493-#495).** `npm run check` 0 errors 0 warnings, `npm run test`
+131 files / 1261 tests pass, `npm run build` builds, `cargo check` clean, `cargo test`
+21 pass. The engine pytest suite was not run: no Python file changed.
+
+**Not verified (needs the desktop app).** That verse N really starts level on both
+sides down a 22-verse range, after a drop changes a block's height, after resizing
+the window, after dragging the divider, and that stacking the panes removes the
+extra space. Sticky verse heads were not re-checked.
+
+## 2026-11-13 — Projects page: Recent chip and time on each card, last opened first, one layout at every width
+
+First step of Joel's page-by-page UI pass on branch `uifixes-v25` (not merged to
+`main`). No issue yet by Joel's choice: one issue will be filed for the whole pass
+once the pages are done. Everything is in `ImportScreen.svelte` plus one helper.
+
+**What changed.**
+- The Recent projects strip above the search box is removed. The project opened
+  last carries a green "Recent" chip; every opened project shows a bullet and
+  "5 min ago" after its name (`src/lib/utils/relativeTime.ts`: sec, min, hr, days,
+  weeks, months, years; exact time in the tooltip; the page's clock ticks every 15 s).
+- The list is sorted last opened first, on the page (`byLastOpened`); never-opened
+  projects keep the registry order after the opened ones. No engine change.
+- Every card reads "N-book collection", a single book included; the book-code badge
+  (LEV, NUM) is one open-book icon for all. Search still matches book name and code.
+- The action icons stay on the card's first row at every width (the 1024 px rule
+  that moved them under the text is gone); a long name ends in an ellipsis with the
+  full name as its tooltip. The three lines of a card are closer together, the
+  icon is centred on them, and the details sit under the text column at every width.
+
+**Left in place.** `recentProjects` in `projectWorkspace.ts` and its test: the app
+no longer calls it (the time now comes from the registry's `lastOpenedAt`), but
+`recordProjectOpen` still writes the list it reads. Removing both is a separate step.
+
+**Ran.** `npm run check` 0 errors 0 warnings; `npm run test` 132 files / 1263 tests
+pass (new `relativeTime.test.ts`); `npm run build` builds. Cargo and pytest not run:
+no Rust or Python file changed.
+
+**Seen on the desktop app by Joel** (full width and split screen, 2026-11-13): the
+chip, bullet and time, the order, the icon, the row of action icons and the spacing;
+approved. **Not checked by anyone:** the "Delete permanently? Confirm Cancel" row and
+a missing-folder row on a narrow window, and a right-to-left project name.
+
+## 2026-11-13 — Project dashboard: Run QA on a book opens the check dialog, quiet header buttons, report card on a narrow window
+
+Second step of Joel's page-by-page UI pass on branch `uifixes-v25` (not merged to
+`main`; one issue for the whole pass is filed when it is done).
+
+**What changed.**
+- **Run QA on one book asks first.** The row's Run QA, "Run QA again" in the report
+  header and after a failed run, and "Run QA on <book>" all open
+  `CollectionCheckDialog` (new `bookName` prop: titled "Check <book>", no
+  "re-check unchanged books" option, a one-book note). Start saves the ticks to
+  `collectionChecks`, the same selection as the header's Check, and calls
+  `onRunBookQa`; `App.svelte` already ran the book with `$selectedCollectionChecks`,
+  so no engine or App change. Cancel runs nothing.
+- **Header buttons.** "Project report" (was a gradient pill with its own CSS) and
+  "Check" (was `ui-btn primary`) are both `ui-btn quiet`: no border at rest or on
+  hover, the book-list icon colours (accent, success) and a label. Joel tried
+  icon-only first and found it too easy to miss.
+- **QA Report card.** The icon above "Pick a book on the left" is gone. At 900 px and
+  below `.panels` is `flex: none`, so the stacked cards take their content's height
+  and the screen scrolls; with `flex: 1` the report card was squeezed and its last
+  lines drew outside the card.
+
+**Tests changed.** `ProjectDashboard.test.ts`: the four Run QA tests now click Start
+in the dialog (one also checks Cancel runs nothing and the dialog's title).
+
+**Ran.** `npm run check` 0 errors 0 warnings; `npm run test` 132 files / 1263 tests
+pass; `npm run build` builds. Cargo and pytest not run: no Rust or Python file changed.
+
+**Seen on the desktop app by Joel** (2026-11-13): the two header buttons and their
+hover, approved. **Not confirmed by anyone:** that a one-book run with a check
+unticked really skips it; the narrow-window fix (it was made from the code, without a
+split-screen screenshot of this page); the dialog on a single-book project.
+
+## 2026-11-14 — Editor: VS Code layout (top bar, left rail, tab groups, status chips)
+
+Third step of Joel's page-by-page UI pass on branch `uifixes-v25` (not merged to
+`main`; one issue for the whole pass is filed when it is done). Committed at Joel's
+request as work in progress: he is still reviewing the editor and will continue.
+
+**What changed.**
+- **Top bar** 32 px on every screen (was 52/48), window buttons with instant hints and
+  the Settings hover. In the editor: no version, the breadcrumb Projects › project › book
+  with a close button, Export project and Settings on the bar, the bar on the window's
+  background with no line. The book is `BookPicker.svelte` (searchable by name or code);
+  the `<select>` left `EditorHeader`. A non-Latin crumb is set two steps smaller.
+- **Left rail** (`ActivityBar.svelte`) replaces the File, View, Check, Bookmarks and
+  Alignment menus; `FileMenu`, `ViewMenu`, their tests and `TopBarMenusFixture` are deleted
+  (basenames grepped across `src` first). `tooltip` takes `{ text, side: "right" }`.
+  Menus on the rail and the book list also close on a pointerdown, because the top bar's
+  drag region swallows mousedown.
+- **Verses is a pane** (`versesOpen`), with an empty-state message when nothing is open.
+- **Tab groups** (`editorTabs.ts`, `EditorWorkspace.svelte`, `EditorTabs.svelte`): see
+  ARCHITECTURE "Editor chrome". Default is verses left, Review right. The old
+  pane-docking tree (`editorTree`) is no longer read by the layout; it is still saved
+  per project and unused.
+- **Removed behaviours:** the floating box inside the window (a saved one is cleared),
+  resizing a column by its left edge, "Move panel left/right", folding for width. Closing
+  a panel's separate window makes it a tab next time.
+- **Status bar:** chips at one size; "Project" and "Chapter" dropped as repeats; the
+  engine is a dot.
+
+**Tests.** Deleted with their features: FileMenu and ViewMenu tests, the SidePanel
+edge-resize pair, the two fold-in-the-editor tests, the three floating-box tests and
+the floating Escape test. New: `ActivityBar.test.ts` (rail, tab groups, EditorTabs),
+drag and dock tests in `EditorWorkspace.test.ts`, BookPicker and editor-bar tests in
+`TopBar.test.ts`.
+
+**Ran.** `npm run check` 0 errors 0 warnings; `npm run test` 131 files / 1260 tests
+pass; `npm run build` builds. Cargo and pytest not run: no Rust or Python file changed.
+
+**Seen on the desktop app by Joel:** top bar, breadcrumb, book picker, rail, status
+chips, frame, tab look (approved in turn). **Not confirmed by anyone:** tab dragging
+after the hit-test fix (Joel reported it broken before the fix), divider resize, a
+panel in a small group, split screen at 640 px, the separate-window close rule, the
+Check / Alignment / Bookmarks pop-outs from the rail, Malayalam search in the book list.
+
+**Open, for when Joel returns.** His deferred suggestions on #493 to #495; whether the
+tab layout should be per project; `editorTree`, `foldedSidePanels`, `sidePanelOrder`
+moves and `PanelResizeHandle`'s side-panel use are now unused or half-used and want a
+clean-up pass; the panels' own header bars repeat the tab's name and close.
+
+## 2026-11-16 — UI pass: alignment tabs as three panels, layout pickers, Projects drop area, a book's tabs remembered
+
+Frontend only, on branch `uifixes-v25` (Joel's page-by-page pass). No engine, schema or
+Scripture-writing code changed. Two shell config files changed with the separate-window
+title bars (`tauri.conf.json` `decorations: false`, `capabilities/main-window-controls.json`).
+The PR description lists the changes page by page; this entry records the structure and
+the decisions a later reader needs.
+
+**Editor frame.**
+- Layout picker in the top bar (`EditorLayoutMenu.svelte` over the shared `LayoutMenu.svelte`):
+  nine presets (`LAYOUT_PRESETS` in `editorTabs.ts`, shapes in `layoutShapes.ts`) and
+  "Reset to default". `withLayoutPreset` keeps the groups that hold tabs, in reading order;
+  places left over are **empty groups** (`TabGroup.active` is now `EditorTabId | null`),
+  which fill from the rail (`reconcileTabs` prefers the focused empty group, then the first
+  empty one) or a dragged tab. A group whose last tab is closed or dragged away still goes.
+  Reset layout left the tab strips for the picker's last row.
+- Separate windows draw the app's own title bar (`WindowBar.svelte`, `WindowControls.svelte`).
+- Status bar: chapters approved before verses approved.
+
+**Alignment: two tabs.** Word alignment (`alignment`) and Cross-verse (`crossVerse`) are
+separate tabs (`AlignmentTabPane.svelte`); `AlignmentHost.svelte` decides the verse and now
+waits for a new chapter's verses before moving. Each reloads when the other saves
+(`watchAlignmentChanges`) and waits while the other saves (`holdAlignmentBusy`,
+`alignmentBusyElsewhere`). The one separate window holds one of the two
+(`alignmentDetachedMode`). `showAlignmentTab` brings an open tab forward: the rail's
+Alignment menu (now with Word alignment, reordered, with icons) and each tab's icon to
+the other use it and say "already open".
+
+**Alignment: three panels.** Both tabs draw Verse(s), Source words and Target words with
+`WordPanels.svelte` / `WordPanel.svelte` over `wordPanels.ts` (`createPanelLayout`: one
+saved tree and text sizes per tab, `wordPanelLayout` and `crossPanelLayout`). `panelGrid`
+turns the tree into a CSS grid that fills the tab: a split's ratio divides width or height,
+a row holding only the verse to read is `auto` on the Word tab, and each shared edge gets a
+divider. A panel with more words than room scrolls inside itself; a word box never does
+(`alignmentCards.css`). Text size is CSS `zoom` on the panel's content, not on its scroller
+(zoom on the scroller thickened its scrollbar). This replaces the 2026-11-14 fixed layout on
+the Word tab and `AlignmentWorkspace` / `AlignmentPane` on the Cross-verse tab; those two
+components and `AlignmentLayout.test.ts` are now unused and were left for a clean-up.
+
+**Word alignment.** Bar like the Verses bar (chapter, verse n of N with arrows that move the
+editor's selected verse, status, icons). Reset and backups are one menu
+(`AlignmentResetControls` has a `menu` form; reset is disabled when the status reports
+nothing to clear); backups read in local time and plain words (`alignmentBackups.ts`,
+newest 10 listed, none deleted). A cross-verse link is removable from either end here.
+Notes are a toast; card controls are one hover toolbar; every `title=` became `use:tooltip`.
+
+**Cross-verse.** Same treatment, plus: From / To as `GridPicker.svelte` (the chapter picker's
+grid), "Verses shown" as `GridToggle.svelte`, the verse-card row folded into a chip beside
+each verse number, AI actions in one bar menu, Undo / Reset and backups on the bar for the
+whole range. New behaviour matching the Word tab: several words of **one verse** picked
+together (a cross-verse drop makes one link per word, in turn), join and split of source
+words (refused, with the reason, when a word has a cross-verse link or neither column has a
+target), per-verse undo and backups, drag or arrows to reorder a cell. An aligned word
+cannot be dropped on another verse's source (a word has one home; the page says so; the
+engine's own answer was not checked). `verseRowSync.ts` now tests "side by side" on the
+panels and writes `min-height` in the row's own px (`currentCSSZoom`); the two columns'
+scrollers are linked while side by side (`linkScroll`), which is what keeps #495 true now
+that each panel scrolls on its own.
+
+**Projects page.** "Add a project" is one drop area (`data-import-drop`). `bridge.onFileDrop`
+passes the pointer in CSS px; `App.svelte` accepts a drop only on that box. Behaviour
+change: a drop elsewhere, including while a project is open, no longer starts an import.
+
+**A book's tabs are remembered.** `projectWorkspace.ts` saves, per book, whether the two
+alignment tabs were open and the tab layout (`BookSession`), and puts them back at the
+book's first reading place (`restoreBookSession`). Saving is off between binding a book and
+that restore (`settling`), because a book switch closes the leaving book's alignment tabs
+after the new book is bound. An alignment tab cannot open during a check run, so the
+restore retries for about 20 s.
+
+**Ran.** `npm run check` 0 errors 0 warnings; `npm run test` 138 files, 1343 tests;
+`npm run build`.
+
+**Not run.** `cargo check` and `cargo test`: the Bridge app was running and holds the
+sidecar binary (gotcha 13); they are owed for the shell config change. Engine pytest: no
+Python changed.
+
+**Not verified.** Everything jsdom cannot show: widths, heights, wrapping, scrolling,
+dragging, the drop position at 125% / 150% display scale, the two columns staying level
+while scrolled, text size with dragging. Joel checked several of these on the desktop app
+as the work went; no full 1366x768 and split-screen pass was recorded. Also believed, not
+watched: that `alignment.getRange` returns each verse's `history` (the Cross-verse Undo and
+backups list depend on it), and a real close and reopen restoring a book's tabs.
+
+**Adjacent, reported not fixed.** A stack trace prints from `SplashScreen.test.ts:45`
+during the Vitest run although every test passes.
+
+## 2026-11-17 — Alignment: a Shift-click run skips words in the other place (#497)
+
+Found by Joel on the desktop app. On both alignment tabs, Shift-click from one unaligned
+target word to another took every word between them in verse order, including a word
+already aligned to a source word: it was picked up in its column and moved with the rest.
+The drag box never did this, because it only looks at the word bank.
+
+The run now takes only words in the same place as the one clicked (`handleWordClick` in
+`AlignmentModal.svelte` and `CrossVerseAlignmentModal.svelte`): between two unaligned words
+it skips aligned ones, between two aligned words it skips unaligned ones. Ctrl-click still
+adds any one word on purpose. On the Word tab this was the #285 behaviour; on the
+Cross-verse tab it came with the multi-select added on 2026-11-16, written the same way.
+
+**Ran.** `npm run check` 0 errors 0 warnings; `npm run test` 138 files, 1345 tests (one new
+test per page for this case); `npm run build`.
+
+**Not run.** `cargo check` / `cargo test` (no shell file changed); engine pytest (no Python
+changed).
+
+**Verified on the desktop app.** Joel confirmed the fix on both tabs before this was
+committed.
+
+## 2026-11-17 — Alignment: a moved target word no longer reorders the source words (#498)
+
+Found by Joel on the desktop app (Numbers 1:8). On the Word alignment and Cross-verse
+tabs, moving an already aligned target word to a source word further along the verse
+pulled that source word forward to the column the target word had left. The Source text
+panel showed the verse in the changed order too, because every view reads the source word
+order from the order of the tC groups (`make_inventory`).
+
+**Cause.** `alignment_engine.realign` inserted the rebuilt group at the position of the
+first group it touched, and a group that only lost a target word counted as touched. A
+word dropped from the word bank, or moved to an earlier source word, touched the
+destination first and so showed nothing. The code is from 2026-08-21.
+
+**Fix.** The rebuilt group goes where its own source words were; where a target word
+came from has no say. When a joined group keeps a source word that stands before the
+first one taken out of it, the rebuilt group goes after what is kept (the pages do not
+ask for that today; #449 would). Nothing about which word is aligned to which changed.
+
+**Tests.** Five in `tests/alignment/test_alignment_engine.py`: a move to a later column
+(the reported case), to an earlier one, words from the bank and two columns at once, a
+join, and a split both ways.
+
+**Ran.** `tests/alignment` and the service files that drive `alignment.realign`
+(`test_bridge_service`, `test_alignment_one_home`, `test_alignment_workspace`,
+`test_aligned_export_segments`, `test_alignment_drop_chapter_reads`,
+`test_alignment_null_rpc`): 215 passed, 4 failed. The 4 are
+`tests/alignment/test_ai_review_stale_after_apply.py` (the review job ends `failed`);
+they fail the same way with this change stashed and in the main checkout, so they are
+not from this change. Reported to Joel, not looked into here.
+
+**Not run.** The full pytest suite (two Python files changed); the frontend gates and
+cargo (no such file changed); `scripts/smoke_sidecars.py` (the frozen sidecars were not
+rebuilt). **Not verified on the desktop app:** the app runs the frozen sidecar, so the
+fix shows there only after `scripts/build-sidecars.ps1`.
+
+**Not done.** A verse already saved in the wrong order is not repaired: that needs a
+canonical source order from the original-language text, #382 step 1. Reported, not
+changed: `apply_proposal` (the AI apply path) appends every source word the proposal
+left out after the proposed groups, which can reorder source words in the same way.
+
+
+## 2026-11-18 — Alignment tabs: merge button, split on the seam, the Separate row gone; a merged group splits with no target word
+
+Joel's one-by-one pass over the Source words panel of the Word alignment and
+Cross-verse tabs (branch `uifixes-v25`, PR #496). Every change is on both tabs.
+
+**What changed on the pages.**
+- The ⟵ / ⟶ arrows between source cards are gone. A source card shows a small merge
+  button on its top edge while it is pointed at or focused; it joins the word with the
+  one before it. Joining still needs a target word on one of the two.
+- A merged group is one segmented card: the cards touch, share one border, and a soft
+  ring in the source colour marks the group. On each seam sits a round split button,
+  always shown. One click cuts the group there; the words before the seam keep the
+  target words, the rest become their own column in place. There is no left or right
+  to choose, and the source order does not change.
+- The "Separate source word" picker with Separate left / Separate right is gone, and
+  so is the per-word menu (`SourceWordActions.svelte`, now used by nothing; left in
+  the tree for Joel to decide). `SourceSplitControls.svelte` shows only when there is
+  something to finish: "Resume separation" for an interrupted one, "Undo separation"
+  for the last one, or an error.
+- A source card fills its column, so the empty drop box under it is the same width;
+  target words placed in it widen both.
+- 13px above the first row, so the merge button of a top-row card is not cut off, and
+  3px of room on each side of a merged group, so its ring stands as far from its
+  neighbours as two single cards do.
+
+**Engine.** `realign` refused any call with no target word. It now allows exactly one
+such call: some, not all, of the source words of ONE group (`_is_split_of_one_group`).
+Those words become their own group with nothing under them, in place; the rest keep
+what the group had. Joining groups, or emptying a whole group, with no target word is
+still refused. This is what lets a merged group whose target word was taken away be
+split again.
+
+**Why the old Separate changed the source order.** `alignment_source_split.split`
+saved the separated word as its own group AFTER the rest of its group, wherever the
+word stood, and a display-only layout row put it back on the chosen side. The Source
+text panel reads the saved group order (`context.topTokens`), so separating the first
+word of a pair showed the pair swapped there. The engine function is untouched; the
+page no longer starts it.
+
+**Found in review, fixed here.** Removing the picker also removed the only way to
+finish an interrupted separation (`sourceLayout.pending`), and the dispatcher makes
+every other `alignment.*` write in the book wait for one ("Resume source separation
+at c:v first"). The row now offers "Resume separation" for the word the engine names.
+
+**Dev-server finding worth keeping.** Under `npm run tauri dev` Svelte emits a
+component's scoped rules with the hash class repeated (`button.s-x.s-x.s-x`), so a
+component's own `button {}` or `.source-words {}` rule outranks a rule in the shared
+`alignmentCards.css`. A rule that must beat a component's general rules belongs in
+that component's scoped `<style>`; that is why the merged-group and seam rules are in
+both components and not in the shared sheet.
+
+**Tests.** Engine: three in `tests/alignment/test_alignment_engine.py` (a split with no
+target word at either seam, the targets staying with the rest, and what is still
+refused). Frontend: the two "Separate left/right" tests in each of
+`AlignmentModal.test.ts` and `CrossVerseAlignmentModal.test.ts` became seam-split
+tests on a three-word group; a split with no target word on each tab; "Resume
+separation"; no row when nothing is pending.
+
+**Ran.** `npm run check` 0 errors 0 warnings; `npm run test` 138 files, 1349 tests
+passed; `npm run build` passed. Full `pytest -n auto`: 5892 passed, 29 failed. The 29
+were rerun alone twice, once with this code and once with HEAD's `realign` and
+`apply_proposal` swapped in: the same 23 fail both ways (9 AI review jobs ending
+`failed` in `tests/ai/test_ai_review_protocol.py` and
+`tests/alignment/test_ai_review_stale_after_apply.py`, 12 in
+`tests/semantic/test_semantic_mapping_stage3.py`, 2 in
+`tests/correction/test_correction_acceptance_queue_visibility.py` on
+`[WinError 206] The filename or extension is too long`), and the other 6 pass, so
+they failed under load only. None comes from this change; none was looked into.
+`scripts/build-sidecars.ps1`, then `scripts/smoke_sidecars.py`: passed.
+
+**Not run.** `cargo check` / `cargo test`: no Rust file changed.
+
+**Not verified here (jsdom cannot show layout); for Joel on the desktop app, both
+tabs, 1366x768 and a larger panel text size:** the split button centred on the seam
+as a full circle; no white strip inside a merged group; the merge button whole on the
+top row; the gap beside a merged group equal to the gap between single cards; a
+right-to-left (Hebrew) verse; "Resume separation" and "Undo separation" (neither
+could be produced by hand).
+
+**Not done.** Taking one word out of a cross-verse linked group, which the old
+Separate also did, has no control on the page now (Joel: "we can build later").
+Merging only joins neighbours (#382). `SourceWordActions.svelte` and
+`canSeparateSource` are unused by the pages.
+
+## 2026-11-18 — Alignment: applying an AI alignment no longer reorders the source words (#503)
+
+**Report.** Raised while fixing #498 and confirmed in the code: both AI paths that
+write tC groups could change the order of a verse's source words. Joel asked for the
+fix on 2026-11-18.
+
+**Cause.** `apply_proposal` in `engine/tc_ai_bridge/alignment_engine.py` built the verse
+from `proposal["groups"]` in list order and appended every source word the proposal
+left out, as its own empty group, after them. The order of the groups is the source
+word order every view shows (`make_inventory`). Both callers were affected:
+`apply_ai_alignment_proposal` (`alignment.aiApplyProposal`, the reviewer's apply of a
+"Suggest with AI" proposal) and the same-verse step of the automatic window alignment
+(`ai_auto_align`, #219).
+
+**Fix.** Each group keeps its source words in the verse's own order, and the groups
+stand in the order of their first source word, the omitted words among them. Which
+words are grouped, what is applied and the two-pass agreement gate are unchanged;
+only the saved order is. The target words of a group keep the order the proposal gave.
+
+**Tests.** Three in `tests/alignment/test_alignment_engine.py`: groups listed out of
+order, source words left out, a group naming its words backwards.
+
+**Ran.** The same runs as the entry above (one working tree): full `pytest -n auto`
+5892 passed, 29 failed, none from this change (23 fail identically with HEAD's
+`apply_proposal` and `realign` swapped in, 6 pass when rerun alone);
+`scripts/build-sidecars.ps1` and `scripts/smoke_sidecars.py` passed.
+
+**Not verified on the desktop app.** "Suggest with AI" and "Align automatically" were
+not run there: they use the reviewer's AI key.
+
+**Not done.** A verse already saved in the wrong order is not repaired, and a group of
+source words that are not next to each other still pulls its later word forward to the
+first: tC stores a group's words together. Both are #382. The Source text panel still
+takes its word order from the saved alignment, not from the original-language text, so
+it is protected by these fixes, not independent of them (#382 step 1).
+
+## 2026-11-18 — Clean-up: the unused alignment components deleted
+
+Joel's yes, 2026-11-18. Deleted: `SourceWordActions.svelte` (the per-word Separate
+menu, unused since the seam split), `AlignmentWorkspace.svelte` and
+`AlignmentPane.svelte` (unused by either tab since the three-panel layout of
+2026-11-16), and their test fixture `AlignmentLayoutFixture.svelte`. Also removed:
+`canSeparateSource` in `alignmentGroups.ts`, which only the deleted menu and the old
+picker called, and the four component tests in `AlignmentLayout.test.ts`; that file
+keeps its `gridFor` and `edgeScrollStep` tests. `docs/ARCHITECTURE.md` no longer
+describes the deleted components.
+
+**Before deleting.** Each basename was searched across the repo: no importer was left
+outside the deleted files and that one test file. `alignmentLayout.ts` stays: the
+editor's tab groups, `wordPanels.ts` and both alignment tabs import it.
+
+**Ran (a deleting batch runs every gate).** `npm run check` 0 errors 0 warnings;
+`npm run test` 138 files, 1346 tests passed; `npm run build` passed; `cargo check`
+passed and `cargo test` 21 passed (run with the app closed); `tests/alignment` and
+the alignment service tests 152 passed with the 4 known failures in
+`test_ai_review_stale_after_apply.py`; `scripts/smoke_sidecars.py` passed. The full
+`pytest` suite was run earlier the same day (entry above) and no engine file is in
+this change. These runs were on a working tree that also held the uncommitted
+merge-with-no-target change.
+
+**Left.** `gridFor`, `gridAreasText`, `defaultLayout`, `validLayout`, `paneIds` and
+`AlignmentLayoutContext` in `alignmentLayout.ts` are now used only by tests. Not
+removed here.
+
+## 2026-11-18 — Alignment: two source words merge with no target word
+
+The team's ask, through Joel: merging two source words needed a target word on one of
+them first, and nobody knew why. Joel tested the change on the desktop app on both
+tabs the same day ("everything working as expected").
+
+**Why the check was there.** No decision stands behind it. `realign` was written on
+2026-08-19 as "link these source words to these target words" and refused a call with
+no target word; #207 (2026-10-14) disabled the Join button for two empty columns only
+because the engine would refuse the click.
+
+**Engine.** The rule for a `realign` with no target word is now one sentence: it may
+regroup source words, and it may never send a target word back to the word bank
+(`_keeps_every_target_word_aligned`, which replaces the split-only
+`_is_split_of_one_group` of the entry two above). So it is refused only when it names
+ALL the source words of a group that has target words. A split of a merged group and a
+merge of words with nothing under them both pass.
+
+**Pages.** On both tabs the merge button is enabled whenever the page is not busy. On
+the Cross-verse tab a word with a cross-verse link is still refused, with the reason
+in the hint.
+
+**What it does not change.** No new kind of data: the same group (several source
+words, no target word) could already be reached by merging with a target word and then
+removing it. Merge joins neighbours only, in place, so the source order is untouched.
+The AI paths do not protect a group with no target word
+(`_existing_protected_groups` skips it), so an AI run may align its words separately
+and undo the merge; that was already so. The aligned USFM export skips a group with no
+target word, as it does a single unaligned source word.
+
+**Tests.** Engine: a merge of two empty neighbours and a third word joining them; the
+refusals, and a part of a group leaving it. Frontend: "Join works while neither column
+has a target word" on the Word alignment tab (it asserted the opposite before) and the
+same on the Cross-verse tab.
+
+**Ran.** `npm run check` 0 errors 0 warnings; `npm run test` 138 files, 1346 passed;
+`npm run build` passed; `cargo check` passed, `cargo test` 21 passed;
+`tests/alignment` and the alignment service tests 152 passed, with the 4 known
+failures in `test_ai_review_stale_after_apply.py`; `scripts/build-sidecars.ps1`, then
+`scripts/smoke_sidecars.py` passed.
+
+**Not run.** The full `pytest` suite after this change (two Python files; it ran in
+full earlier the same day, entry three above).
+
+**The 23 engine tests that fail on this machine (from that full run), looked at
+briefly:** 12 in `test_semantic_mapping_stage3.py` need
+`engine/resources/semantic_mapping/bridge_semantic_source_v0.3.sqlite`, which is
+git-ignored and absent here; 2 hit `[WinError 206]` (path too long) under the pytest
+temp folder; 9 AI review tests end with `[WinError 3] The system cannot find the path
+specified`, cause not found.
+
+## 2026-11-18 — Cross-verse tab: no split button on a cell merged only by a cross-verse link
+
+**Found** while answering Joel's question about cross-verse linked groups. `sourceRows`
+draws two kinds of merged source cell: one alignment group with several source words,
+and several source words that share an active cross-verse link group. The seam split
+button of 2026-11-17 showed on both. On the second kind a `realign` parts nothing (each
+word is its own alignment group), so the click saved an unchanged verse and the page
+said "Source words split." The button it replaced had been limited to real groups.
+
+**Fix.** The seam button shows only when the cell is one alignment group
+(`ownGroup.topIds.length > 1`). A link-merged cell is parted by removing its link.
+
+**How such a cell arises.** Not by hand: a target word that already has a cross-verse
+link is a locked card in the word bank and cannot be linked to a second source word.
+The automatic window alignment and an accepted AI link suggestion can extend a link
+group to several source words. Taking one word out of such a group and keeping the
+rest linked, which the old Separate did, has no control now; Joel's call, 2026-11-18,
+is to leave that until the team misses it.
+
+**Test.** One in `CrossVerseAlignmentModal.test.ts`: a cell merged by a link group is
+drawn joined and has no split button. Not run against the code before the fix.
+
+**Ran.** `npm run check` 0 errors 0 warnings; `npm run test` 138 files, 1347 passed;
+`npm run build` passed. No engine or Rust file changed. **Not verified on the desktop
+app:** it needs an AI run to produce the cell.
+
+**Also today.** #504 filed: a backup or transaction copy fails on Windows when its path
+passes 260 characters (11 of the 23 engine tests that fail on this machine; the other
+12 need the git-ignored Stage 3 semantic database). Not fixed.
 
 ## 2026-11-17 — AI review cost: an offline request capture, and duplicated and unused context removed from the three requests (#500)
 

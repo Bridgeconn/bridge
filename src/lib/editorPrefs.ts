@@ -166,17 +166,34 @@ sidePanels.update((all) => {
  */
 export const sidePanelRecency = writable<SidePanelId[]>([]);
 
+/** "Show this panel's tab": set whenever a panel is opened or asked for, and
+ * read by editorTabs.ts, which owns where tabs sit (it imports this module,
+ * so the request travels as a store). `seq` makes a repeat a new request. */
+export const tabRequest = writable<{ id: string; seq: number }>({ id: "", seq: 0 });
+
 function markOpened(id: SidePanelId): void {
   sidePanelRecency.update((order) => [...order.filter((other) => other !== id), id]);
+  // Opened or asked for, by any route: it is the tab to show (editorTabs.ts).
+  tabRequest.update((request) => ({ id, seq: request.seq + 1 }));
 }
 
 export function setSidePanel(id: SidePanelId, patch: Partial<SidePanelState>): void {
   if (patch.open) markOpened(id);
   sidePanels.update((all) => ({
     ...all,
-    [id]: { ...all[id], ...patch, ...(patch.width === undefined ? {} : { width: clampPanelWidth(id, patch.width) }) },
+    [id]: { ...all[id], ...patch, float: null, ...(patch.width === undefined ? {} : { width: clampPanelWidth(id, patch.width) }) },
   }));
 }
+
+// The floating box inside the window (#389 step 3) is gone (Joel,
+// 2026-11-14): a panel is a tab or its own window. `float` stays in the saved
+// shape so an older save still reads, and is cleared wherever it turns up
+// (this store, and a project's saved workspace as it is restored into it).
+sidePanels.subscribe((all) => {
+  if (SIDE_PANEL_ORDER.some((id) => all[id]?.float)) {
+    sidePanels.set(Object.fromEntries(SIDE_PANEL_ORDER.map((id) => [id, { ...all[id], float: null }])) as SidePanels);
+  }
+});
 
 /**
  * The columns' order, left to right (#389 step 2): the reviewer's, saved on
@@ -218,36 +235,6 @@ export function movePanel(id: SidePanelId, direction: -1 | 1): void {
   });
 }
 
-/** An undocked box never goes below this, whatever was dragged or saved. */
-export const PANEL_FLOAT_MIN = { width: 260, height: 200 } as const;
-const FLOAT_DEFAULT = { width: 360, height: 480 } as const;
-
-/** The box kept inside a `width` x `height` window: never wider or taller
- * than the window, its top edge always on screen, and at least its own
- * minimum. A window that shrank since the box was saved still shows all of it. */
-export function clampPanelFloat(box: PanelFloat, width: number, height: number): PanelFloat {
-  const w = Math.round(Math.max(PANEL_FLOAT_MIN.width, Math.min(box.width, Math.max(PANEL_FLOAT_MIN.width, width - 16))));
-  const h = Math.round(Math.max(PANEL_FLOAT_MIN.height, Math.min(box.height, Math.max(PANEL_FLOAT_MIN.height, height - 16))));
-  const x = Math.round(Math.max(0, Math.min(box.x, width - w)));
-  const y = Math.round(Math.max(0, Math.min(box.y, height - h)));
-  return { x, y, width: w, height: h };
-}
-
-/** Undock a panel into a box (#389 step 3), where its column stood when `at`
- * is given, else at a default place. The column's saved width is kept for
- * when it is docked again. */
-export function undockSidePanel(id: SidePanelId, at?: PanelFloat): void {
-  const width = typeof window === "undefined" ? 1366 : window.innerWidth;
-  const height = typeof window === "undefined" ? 768 : window.innerHeight;
-  const box = at ?? { x: Math.max(0, width - 60 - FLOAT_DEFAULT.width), y: 80, ...FLOAT_DEFAULT };
-  setSidePanel(id, { open: true, float: clampPanelFloat(box, width, height) });
-}
-
-/** Back into its column, at the width it had there. */
-export function dockSidePanel(id: SidePanelId): void {
-  setSidePanel(id, { float: null });
-}
-
 /** Open a panel and make sure it is the one shown, even if it was already
  * open but folded for width; an open panel's saved state is left as it is. */
 export function revealSidePanel(id: SidePanelId): void {
@@ -263,6 +250,12 @@ export function toggleSidePanel(id: SidePanelId): void {
 /** The verse text exactly as stored, USFM markers and all, instead of the
  * reader's clean text. Marks stay on the same characters. */
 export const rawView = persisted("bridge.editor.rawView.v1", false, isBoolean);
+
+/** The verse list (the editor's own pane) is showing. On by default; the left
+ *  rail's Verses button and its tab's close button turn it off. With no tab
+ *  open at all, the work area says so and offers the verses back
+ *  (panelFit's `workAreaEmpty`). */
+export const versesOpen = persisted("bridge.editor.versesOpen.v1", true, isBoolean);
 
 /** The verse text size, a multiple of the normal size (indic-qa's A− / A+). */
 export const TEXT_SCALES = [0.85, 1, 1.15, 1.3, 1.5, 1.7] as const;
