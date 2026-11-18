@@ -384,6 +384,56 @@ class AppSettings:
         row = config['tasks'][task]
         return (str(row.get('model') or '').strip() or self.model), str(row.get('reasoningEffort') or 'medium')
 
+    # -- #500: what the tN/tW review request carries -------------------------
+
+    # Every key defaults to today's request. `leanEvidence` leaves out three
+    # sections of a translationWords article, the term's occurrence list and
+    # the example sections of a Translation Academy article; `countInInput`
+    # moves the verse's check count out of the instructions and the answer
+    # schema (the prompt-cache experiment). Both are experiments to be
+    # compared against a translator-judged run before either becomes default.
+    #
+    # #502: `versesPerRequest` (1 to 6; 1 is one verse per request, as always),
+    # `wholeChapter` (no verse limit, a request closes at a size cap) and
+    # `chapterContext` (one block shared by every request of a chapter, for
+    # the provider's prefix cache). With all three at their defaults the
+    # review runs exactly as it did before they existed.
+    _AI_REVIEW_FLAGS = ('leanEvidence', 'countInInput', 'wholeChapter', 'chapterContext')
+    AI_REVIEW_VERSES_MAX = 6
+
+    @property
+    def ai_review(self) -> dict:
+        """The review-request options, complete, with the defaults filled in."""
+        raw = self.data.get('ai_review')
+        raw = raw if isinstance(raw, dict) else {}
+        out: dict = {flag: raw.get(flag) is True for flag in self._AI_REVIEW_FLAGS}
+        size = raw.get('versesPerRequest')
+        out['versesPerRequest'] = (
+            size if isinstance(size, int) and not isinstance(size, bool) and 1 <= size <= self.AI_REVIEW_VERSES_MAX
+            else 1
+        )
+        return out
+
+    @ai_review.setter
+    def ai_review(self, value: Any) -> None:
+        """Validate and merge: a partial object keeps what it does not name."""
+        if not isinstance(value, dict):
+            raise ValueError('aiReview must be an object')
+        merged = dict(self.data.get('ai_review')) if isinstance(self.data.get('ai_review'), dict) else {}
+        for key, item in value.items():
+            if key in self._AI_REVIEW_FLAGS:
+                if not isinstance(item, bool):
+                    raise ValueError(f'aiReview.{key} must be true or false')
+                merged[key] = item
+            elif key == 'versesPerRequest':
+                if isinstance(item, bool) or not isinstance(item, int) or not 1 <= item <= self.AI_REVIEW_VERSES_MAX:
+                    raise ValueError(f'aiReview.versesPerRequest must be a whole number from 1 to {self.AI_REVIEW_VERSES_MAX}')
+                merged[key] = item
+            else:
+                raise ValueError(f'unknown aiReview setting {key!r}')
+        self.data['ai_review'] = merged
+        self.save_sanitized()
+
     @property
     def provider(self) -> str:
         """Free-text provider label (e.g. 'openai', 'anthropic', 'azure',

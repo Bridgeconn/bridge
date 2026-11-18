@@ -1508,6 +1508,9 @@ export interface AIReviewJobSnapshot {
   currentChapter: string | null;
   currentVerse: string | null;
   currentStage: string;
+  /** #502: the verses of the request in flight when several verses go in one
+   *  request. Empty, or absent from an older engine, in the single-verse run. */
+  currentWindow?: string[];
   results: Record<string, AIReviewJobVerseStatus>;
   latestResult: { key: string; result: AIReviewJobVerseResult } | null;
   error: string | null;
@@ -1539,12 +1542,29 @@ export interface AiTaskSettings {
   tasks: Record<AiTask, AiTaskChoice>;
 }
 
+/** #500 / #502: what one tN/tW review request holds. Every default is the
+ *  request Bridge has always sent: one verse, the full articles. */
+export interface AiReviewSettings {
+  /** 1 to 6. 1 is one verse per request. */
+  versesPerRequest: number;
+  /** No verse limit: a small chapter is one request, a large one is split. */
+  wholeChapter: boolean;
+  /** One block of articles and decisions first in every request of a chapter. */
+  chapterContext: boolean;
+  /** Shorter articles and no occurrence list. Changes what the AI reads. */
+  leanEvidence: boolean;
+  /** The check count in the input, not in the instructions or the schema. */
+  countInInput: boolean;
+}
+
 export interface SettingsData {
   provider: string;
   apiBaseUrl: string;
   model: string;
   /** Absent only from engines older than #473. */
   aiTasks?: AiTaskSettings;
+  /** Absent only from engines older than #500. */
+  aiReview?: AiReviewSettings;
   reviewerName: string;
   /** ISO-8601 UTC, or "" if never explicitly changed via Settings (the
    * OS-seeded default on a fresh profile does not count as a change). */

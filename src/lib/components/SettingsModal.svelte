@@ -8,7 +8,7 @@
   import { nudgeLanguageQa } from "../languageQaInline";
   import { askConfirmation } from "../confirmAction";
   import { manualOverrideMode, navigationStatus, project, reviewerMode } from "../stores";
-  import type { AiReasoningEffort, AiTask, AiTaskSettings, InlineConfidence, NavigationSyncState, ParatextConnectorStatus, SettingsData, TerminologyRule, UserRole } from "../types/finding";
+  import type { AiReasoningEffort, AiReviewSettings, AiTask, AiTaskSettings, InlineConfidence, NavigationSyncState, ParatextConnectorStatus, SettingsData, TerminologyRule, UserRole } from "../types/finding";
   import type { HouseStyleEntry, HouseStyleListResponse, HouseStyleProposal } from "../types/houseStyle";
   import type { CheckerSettings } from "../types/languageQa";
   import CheckerSettingsDialog from "./CheckerSettingsDialog.svelte";
@@ -61,6 +61,12 @@
   let savedReviewModel = APPROVED_REVIEW_MODEL;
   let savedModelFields = "";
   let reviewModelSwitchedFrom = "";
+  // #500 / #502: what one review request holds. These defaults are the
+  // request Bridge has always sent; an engine that reports none keeps them.
+  let aiReview: AiReviewSettings = {
+    versesPerRequest: 1, wholeChapter: false, chapterContext: false, leanEvidence: false, countInInput: false,
+  };
+  const versesPerRequestChoices = [1, 2, 3, 4, 5, 6];
   const modelFields = () => JSON.stringify({ model, useOneModel, aiTasks });
   /** The model tN/tW review runs on with the form as it stands. */
   const reviewModelNow = () => (useOneModel ? model : aiTasks.review.model.trim() || model).trim() || APPROVED_REVIEW_MODEL;
@@ -166,6 +172,7 @@
           triage: { ...aiTasks.triage, ...s.aiTasks.tasks.triage },
         };
       }
+      if (s.aiReview) aiReview = { ...aiReview, ...s.aiReview };
       hasApiKey = s.hasApiKey;
       aiUsage = s.aiUsage ?? aiUsage;
       allowOverride = s.reviewerMode === "advanced";
@@ -230,6 +237,7 @@
         provider, apiBaseUrl, model, reviewerMode: manualOverrideMode(allowOverride),
         paratextNavigation, logosNavigation, reviewerName,
         aiTasks: { useOneModel, tasks: aiTasks },
+        aiReview,
       };
       if (apiKey.trim()) params.apiKey = apiKey.trim();
       const result = await bridge.setSettings(params);
@@ -728,6 +736,36 @@
                 </div>
               {/each}
             </div>
+          {/if}
+        </div>
+
+        <div class="field" data-ai-review-request>
+          <div class="field-label">Review request</div>
+          <div class="task-row">
+            <label for="versesPerRequest">Verses per request</label>
+            <select id="versesPerRequest" bind:value={aiReview.versesPerRequest} disabled={!canChangeModel || aiReview.wholeChapter}>
+              {#each versesPerRequestChoices as count (count)}<option value={count}>{count}</option>{/each}
+            </select>
+            <div class="hint">1 sends each verse on its own, as Bridge always has. A higher number sends neighbouring verses of a section together with one shared set of articles: fewer requests and less repeated text, but each answer covers more checks. A request closes early at 24 checks. Each verse still gets its own stored review. Not yet compared with a translator-judged run.</div>
+          </div>
+          <label class="mode-option" class:selected={aiReview.wholeChapter}>
+            <input type="checkbox" bind:checked={aiReview.wholeChapter} disabled={!canChangeModel} />
+            <span><b>Whole chapter in one request</b><small>Experimental. A small chapter goes in one request; a large one is split, at section headings where it has them. A very long answer can be cut off, and a request that fails is still billed before it is retried in smaller pieces.</small></span>
+          </label>
+          <label class="mode-option" class:selected={aiReview.chapterContext}>
+            <input type="checkbox" bind:checked={aiReview.chapterContext} disabled={!canChangeModel} />
+            <span><b>Share one context block across a chapter</b><small>Experimental. Every request of a chapter starts with the same articles and reviewer decisions, so the provider can bill the repeat at its cached rate. It costs more, not less, when the provider does not cache it.</small></span>
+          </label>
+          <label class="mode-option" class:selected={aiReview.leanEvidence}>
+            <input type="checkbox" bind:checked={aiReview.leanEvidence} disabled={!canChangeModel} />
+            <span><b>Send shorter reference articles</b><small>Experimental. Leaves out the Bible-reference lists and worked examples of translationWords and Translation Academy articles, and the list of a term's other occurrences. This changes what the AI reads.</small></span>
+          </label>
+          <label class="mode-option" class:selected={aiReview.countInInput}>
+            <input type="checkbox" bind:checked={aiReview.countInInput} disabled={!canChangeModel} />
+            <span><b>Keep the check count out of the instructions</b><small>Experimental. Makes the instructions the same for every verse, which may let the provider cache more of each request.</small></span>
+          </label>
+          {#if !canChangeModel}
+            <div class="hint">Only a project admin can change these.</div>
           {/if}
         </div>
 

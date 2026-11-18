@@ -24,7 +24,7 @@
   import { findingSpan, revealFinding } from "../findingFocus";
   import { askConfirmation } from "../confirmAction";
   import { greekRoomChapterSummary, greekRoomVerseRunning, runVerseGreekRoom } from "../verseChecks";
-  import { aiReviewRequest, aiJobActive } from "../aiReviewUi";
+  import { aiReviewRequest, aiJobActive, aiWindowLabel } from "../aiReviewUi";
   import { setSidePanel } from "../editorPrefs";
   import type { ReviewTab } from "../verseIssues";
   import type { AiExplainResult, AIReviewJobSnapshot, FindingStatus, QaFinding } from "../types/finding";
@@ -787,6 +787,9 @@
               <div><b>{visibleAIJob.state === "succeeded" ? "Complete" : visibleAIJob.currentStage}</b><span>{visibleAIJob.percent}%</span></div>
               <progress max="100" value={visibleAIJob.percent} />
               <small>{visibleAIJob.completedVerses}/{visibleAIJob.totalVerses} verses{visibleAIJob.failedVerses ? ` · ${visibleAIJob.failedVerses} failed` : ""}</small>
+              {#if aiWindowLabel(visibleAIJob)}
+                <small data-ai-window>{aiWindowLabel(visibleAIJob)}</small>
+              {/if}
               {#if aiSelectionTally.applied + aiSelectionTally.pending > 0}
                 <small class="ai-selection-tally">
                   <b>{aiSelectionTally.applied}</b> {aiSelectionTally.applied === 1 ? "check" : "checks"} selected automatically ·

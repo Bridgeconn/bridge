@@ -16,6 +16,10 @@ from .alignment_reliability import compile_link_proposal
 from .models import AICheckReview, QAIssue, VerseAlignment
 from .tc_project import TranslationCoreProject
 from .model_router import DEFAULT_REVIEW_MODEL, estimate_cost
+from .ai_review_payload import (
+    ReviewPayloadOptions, approved_rendering_groups, sent_alignment_groups, sent_check_evidence,
+    sent_evidence_item, sent_language_context, sent_mapping_states, sent_token,
+)
 from .cache_engine import dependency_snapshot
 from .security import ai_payload_manifest
 from .plugins import PluginRegistry
@@ -24,6 +28,7 @@ from .usfm import strip_usfm
 from .semantic_mapping_bridge import prepare_semantic_mappings_for_review
 from .semantic_alignment_guard import cross_verse_alignment_exclusions, guard_alignment_response
 from .semantic_review_policy import apply_semantic_review_policy_all
+from .local_tw_pass import shadow_tw_decisions
 
 
 class AIError(RuntimeError):
@@ -155,6 +160,9 @@ REVIEW_INSTRUCTIONS_STATIC = (
     'If the rationale names or quotes a target rendering, include every corresponding supplied target ID in selection_ids. '
     'For Translation Notes, apply the linked Translation Academy method/principle and judge whether the target translation handles the specific issue. '
     'For Translation Words, use the Translation Word article, TWL occurrence, source morphology, and approved project renderings; allow contextually justified variation. '
+    'INPUT SHAPE: each fact is supplied once. current_alignment_groups lists the existing alignment as source_ids and target_ids, which are the IDs of source_topWords and target_bottomWords; a word listed without occurrence/occurrences occurs once in the verse. '
+    'approved_project_renderings lists each distinct rendering of the key term already selected in this project, most used first, with the number of checks that use it (count). '
+    'The source quote and the note of a check are on its translationCore_checks row (source_quote, occurrenceNote). '
     'Then perform whole-verse QA following the CHECKING METHOD below: accuracy/completeness first, including omission, unsupported addition, wrong lexical meaning, negation/scope, participants/pronouns, number/person, commands/questions, semantic relations, figures, terminology, and stale/misaligned meaning. '
     'Separately evaluate only the language-appropriate editorial categories listed at the end of these instructions. '
     'False-positive discipline: before reporting a missing-rendering or wrong-lexical-meaning issue, inspect every supplied target token for a valid inflected, suffixed, compounded, transliterated, or contextually equivalent rendering. Do not call a rendering absent merely because it differs from an English gloss or citation form. Test the strongest plausible explanation that the target rendering is valid, consult existing alignment/approved decisions/terminology, and report only one finding for one underlying problem. '
@@ -162,7 +170,7 @@ REVIEW_INSTRUCTIONS_STATIC = (
     'Reference only evidence IDs that exist in evidence_catalog. Reference Bibles/English are secondary aids, never authority over source data. '
     'Do not propose a correction merely because a literal rendering differs. Human/community final approval remains human. Return only the schema. '
     'IMPORTANT STAGE 3 LOCATION RULES: source and target verse numbers are reference anchors, not mandatory semantic boundaries. '
-    'Use semantic_passage_mappings to determine where each checked source meaning is realized. '
+    'Use semantic_mapping_check_states to determine where each checked source meaning is realized: each row names its check (checkId), the state, the target spans (targetSpans) with their verse references and, where the meaning was located, the mapper confidence and explanation. '
     'selection_ids can encode ONLY the current verse bottom IDs. '
     'When a check state is found_another_verse or split_across_verses, return an empty selection_ids array and nothing_to_select=false; do not invent a current-verse token. '
     'When represented_implicitly, return empty selection_ids and nothing_to_select=false because Bridge records an explicit semantic state. '
@@ -172,18 +180,32 @@ REVIEW_INSTRUCTIONS_STATIC = (
 )
 
 
-def review_instructions(language: Any, check_count: int) -> str:
+def review_instructions(language: Any, check_count: int, count_in_input: bool = False) -> str:
     """The full-review instructions: the static block, then the per-project
     and per-verse tail (#472). `language` is a plugin language context
-    (`source_name`, `target_name`, `qa_categories`, `prompt_guidance`)."""
-    tail = (
+    (`source_name`, `target_name`, `qa_categories`, `prompt_guidance`).
+
+    With `count_in_input` (#500, off by default) the tail names no number, so
+    the whole text is the same for every verse of a project; the count is the
+    input's `expected_check_reviews`."""
+    count_sentence = (
+        'THIS VERSE: the input field expected_check_reviews states how many input checks there are; '
+        'return exactly that many result rows.'
+        if count_in_input else
+        f'THIS VERSE: {check_count} input checks require exactly {check_count} result rows.'
+    )
+    return REVIEW_INSTRUCTIONS_STATIC + review_project_tail(language) + count_sentence
+
+
+def review_project_tail(language: Any) -> str:
+    """The per-project sentences that follow the static block (#472): the
+    language pair, the editorial categories and the language guidance."""
+    return (
         f' PROJECT: this is a {language.source_name} → {language.target_name} project; '
         f'the target language is {language.target_name}. '
         f'Language-appropriate editorial categories for this project: {", ".join(language.qa_categories)}. '
         f'{language.prompt_guidance} '
-        f'THIS VERSE: {check_count} input checks require exactly {check_count} result rows.'
     )
-    return REVIEW_INSTRUCTIONS_STATIC + tail
 
 
 def review_prompt_cache_key(project: Any) -> str:
@@ -259,6 +281,105 @@ def project_term_rendering(record: dict[str, Any]) -> dict[str, Any]:
         'nothingToSelect': bool(record.get('nothingToSelect', False)),
         'invalidated': bool(record.get('invalidated', False)),
     }
+
+
+def review_check_schema(with_reference: bool = False) -> dict[str, Any]:
+    """The answer schema of one check row. A window answer (#502) carries the
+    row's verse reference as well."""
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+    if with_reference:
+        properties['reference'] = {'type': 'string'}
+        required.append('reference')
+    properties.update({
+        'tool': {'type': 'string'}, 'group_id': {'type': 'string'}, 'check_id': {'type': 'string'},
+        'source_quote': {'type': 'string'},
+        'selection_ids': {'type': 'array', 'items': {'type': 'string'}},
+        'nothing_to_select': {'type': 'boolean'},
+        'verdict': {'type': 'string', 'enum': ['pass','review','problem','not_applicable']},
+        'severity': {'type': 'string', 'enum': ['critical','high','medium','editorial','info']},
+        'rationale': {'type': 'string'}, 'suggested_correction': {'type': 'string'},
+        'confidence': {'type': 'number', 'minimum': 0, 'maximum': 1},
+        'evidence_ids': {'type': 'array', 'items': {'type': 'string'}},
+    })
+    required += ['tool','group_id','check_id','source_quote','selection_ids','nothing_to_select','verdict','severity','rationale','suggested_correction','confidence','evidence_ids']
+    return {'type': 'object', 'additionalProperties': False, 'properties': properties, 'required': required}
+
+
+def review_issue_schema(with_reference: bool = False) -> dict[str, Any]:
+    """The answer schema of one whole-verse QA row."""
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+    if with_reference:
+        properties['reference'] = {'type': 'string'}
+        required.append('reference')
+    properties.update({
+        'severity': {'type': 'string', 'enum': ['critical','high','medium','editorial','info']},
+        'category': {'type': 'string'}, 'title': {'type': 'string'}, 'detail': {'type': 'string'},
+        'confidence': {'type': 'number', 'minimum': 0, 'maximum': 1},
+        'check_id': {'type': 'string'}, 'group_id': {'type': 'string'},
+        'evidence_ids': {'type': 'array', 'items': {'type': 'string'}},
+    })
+    required += ['severity','category','title','detail','confidence','check_id','group_id','evidence_ids']
+    return {'type': 'object', 'additionalProperties': False, 'properties': properties, 'required': required}
+
+
+def build_verse_evidence(
+    pack: dict[str, Any], kb: Any, options: ReviewPayloadOptions,
+    evidence_id: Callable[[int, dict[str, Any]], str] | None = None,
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], list[dict[str, Any]]]:
+    """From one verse's evidence pack: `(full catalog, sent catalog, check rows)`.
+
+    The full catalog is the local record a review's `evidence_used` is resolved
+    from; the sent catalog holds kind, title and content of the items a check
+    can cite (#500). Ids are `E001`, `E002`, ... in pack order unless
+    `evidence_id(n, item)` names them (the window review keys an article by
+    what it is, so one article shared by several verses is one catalog entry).
+    """
+    make_id = evidence_id or (lambda n, item: f'E{n:03d}')
+    evidence_catalog: dict[str, dict[str, Any]] = {}
+    sent_catalog: dict[str, dict[str, Any]] = {}
+    check_inputs: list[dict[str, Any]] = []
+    ev_n = 1
+    for c in pack.get('checks', []):
+        check_evidence: list[tuple[str, dict[str, Any]]] = []
+        for ev in c.get('evidence', []):
+            eid = make_id(ev_n, ev); ev_n += 1
+            evidence_catalog[eid] = ev
+            check_evidence.append((eid, ev))
+        ev_ids = sent_check_evidence(check_evidence, options)
+        for eid in ev_ids:
+            sent_catalog[eid] = sent_evidence_item(evidence_catalog[eid], options)
+        group = str(c.get('groupId') or '')
+        history = (
+            approved_rendering_groups(project_term_rendering(r) for r in kb.project_term_renderings(group, 120))
+            if c.get('tool') == 'translationWords' else []
+        )
+        check_inputs.append({
+            'tool': c.get('tool'), 'groupId': group, 'checkId': c.get('checkId'),
+            'source_quote': c.get('source_quote'), 'occurrence': c.get('occurrence'),
+            'occurrenceNote': c.get('occurrenceNote'), 'existingSelections': c.get('existingSelections'),
+            'nothingToSelect': c.get('nothingToSelect'), 'invalidated': c.get('invalidated'),
+            'evidence_ids': ev_ids, 'approved_project_renderings': history,
+        })
+    # The Translation Academy checking articles are no longer catalogued
+    # here (#471): the method is `CHECKING_METHOD_DIGEST` in the
+    # instructions, so a `qa_issues` row cites verse evidence only.
+    for rb in pack.get('reference_bibles', []):
+        eid = make_id(ev_n, rb); ev_n += 1
+        evidence_catalog[eid] = rb
+        sent_catalog[eid] = sent_evidence_item(rb, options)
+    return evidence_catalog, sent_catalog, check_inputs
+
+
+def frozen_reviewer_decisions(project: Any) -> list[dict[str, Any]]:
+    """The project's last 100 reviewer decisions as the request carries them,
+    ordered by the timestamp, which is then dropped with the rest of the
+    record's identity (#470, `project_reviewer_decision`)."""
+    return [
+        project_reviewer_decision(d)
+        for d in sorted(project.project_decisions(), key=lambda d: str(d.get('modifiedTimestamp', '')))[-100:]
+    ]
 
 
 @dataclass
@@ -338,6 +459,9 @@ class OpenAIResponsesClient:
         # #472: set once a provider has rejected `prompt_cache_key`, so a
         # chapter run pays the 400 once, not once per verse.
         self.prompt_cache_key_unsupported = False
+        # #500: what the review request leaves out beyond the always-on
+        # de-duplication. Every switch is off unless the caller sets it.
+        self.review_options = ReviewPayloadOptions()
 
     def _model_supports_reasoning_effort(self) -> bool:
         name = self.model.lower()
@@ -366,8 +490,9 @@ class OpenAIResponsesClient:
         return ''.join(parts)
 
     def _request_json(
-        self, payload: dict[str, Any], headers: dict[str, str],
+        self, payload: dict[str, Any], headers: dict[str, str], timeout: float | None = None,
     ) -> tuple[int, dict[str, Any]]:
+        timeout = self.timeout if timeout is None else float(timeout)
         body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
         status = 0
         raw = b''
@@ -375,7 +500,7 @@ class OpenAIResponsesClient:
         # errors fail immediately and are handled by the caller.
         for attempt in range(3):
             try:
-                status, raw = self.transport(self.endpoint, headers, body, self.timeout)
+                status, raw = self.transport(self.endpoint, headers, body, timeout)
             except ai_http.TransportFailure:
                 # #476: the request went out and was never answered (a read
                 # timeout, a dropped connection). The provider may bill the
@@ -466,7 +591,7 @@ class OpenAIResponsesClient:
 
     def _post_text(
         self, instructions: str, input_text: str, schema_name: str, schema: dict[str, Any],
-        prompt_cache_key: str | None = None,
+        prompt_cache_key: str | None = None, timeout: float | None = None,
     ) -> str:
         """Issue one Responses API call and return its raw output text.
 
@@ -509,17 +634,17 @@ class OpenAIResponsesClient:
             'User-Agent': 'translationCore-AI-Bridge/0.9.6',
         }
         self.last_reasoning_effort = self.reasoning_effort
-        status, response = self._request_json(payload, headers)
+        status, response = self._request_json(payload, headers, timeout)
         if self._reasoning_parameter_unsupported(status, response):
             payload = dict(payload)
             payload.pop('reasoning', None)
-            status, response = self._request_json(payload, headers)
+            status, response = self._request_json(payload, headers, timeout)
             self.last_reasoning_effort = None
         if 'prompt_cache_key' in payload and self._prompt_cache_key_unsupported(status, response):
             payload = dict(payload)
             payload.pop('prompt_cache_key', None)
             self.prompt_cache_key_unsupported = True
-            status, response = self._request_json(payload, headers)
+            status, response = self._request_json(payload, headers, timeout)
         if status < 200 or status >= 300:
             err = response.get('error', {})
             msg = err.get('message') if isinstance(err, dict) else None
@@ -543,9 +668,11 @@ class OpenAIResponsesClient:
 
     def _post_structured(
         self, instructions: str, input_text: str, schema_name: str, schema: dict[str, Any],
-        prompt_cache_key: str | None = None,
+        prompt_cache_key: str | None = None, timeout: float | None = None,
     ) -> dict[str, Any]:
-        text = self._post_text(instructions, input_text, schema_name, schema, prompt_cache_key=prompt_cache_key)
+        text = self._post_text(
+            instructions, input_text, schema_name, schema, prompt_cache_key=prompt_cache_key, timeout=timeout,
+        )
         try:
             result = json.loads(text)
         except json.JSONDecodeError as e:
@@ -701,12 +828,11 @@ class OpenAIResponsesClient:
             'reference': f'{project.book_id} {chapter}:{verse}',
             'mode': mode,
             'target_verse': project.target_verse_text(chapter, verse),
+            # Each word list goes once (#500). The `hebrew_topWords` /
+            # `tamil_bottomWords` aliases were the same two lists again, a
+            # quarter of this request; nothing in Bridge read them.
             'source_tokens_to_consider': top,
             'target_tokens_to_consider': bottom,
-            # Backwards-compatible payload aliases retained for existing tests/plugins. In v0.7.4
-            # these arrays contain only the tokens the AI is allowed to consider in gap-fill mode.
-            'hebrew_topWords': top,
-            'tamil_bottomWords': bottom,
             'protected_existing_groups': existing_groups if mode == 'gap_fill' else [],
             'unresolved_source_ids': unresolved_top_ids if mode == 'gap_fill' else list(inv.top_ids),
             'unresolved_target_ids': unresolved_bottom_ids if mode == 'gap_fill' else list(inv.bottom_ids),
@@ -842,160 +968,23 @@ class OpenAIResponsesClient:
             summary += f' · {len(suppressed)} low-confidence/duplicate AI finding(s) suppressed by reviewer-noise gate.'
         return issues, summary
 
-    def run_full_review(
-        self, project: TranslationCoreProject, chapter: str, verse: str,
-        alignment: VerseAlignment, knowledge_base=None, progress_callback=None,
-        expected_input_fingerprint: str | None = None,
-        semantic_mapping_pack: dict[str, Any] | None = None,
-    ) -> tuple[list[AICheckReview], list[QAIssue], str, dict[str, Any]]:
-        """AI performs the resource reading + target selection work, human reviews final evidence-backed results."""
-        from .knowledge_base import TranslationHelpsKnowledgeBase
+    def parse_review_rows(
+        self, project: TranslationCoreProject, chapter: str, verse: str, *,
+        inventory: Any, check_inputs: list[dict[str, Any]],
+        evidence_catalog: dict[str, dict[str, Any]], result: dict[str, Any],
+        semantic_mapping_pack: dict[str, Any] | None,
+    ) -> tuple[list[AICheckReview], list[QAIssue], list[QAIssue], str]:
+        """Validate one verse's rows of a review answer and return
+        `(reviews, issues, suppressed issues, summary)`.
 
-        kb = knowledge_base or TranslationHelpsKnowledgeBase(project)
-        language = PluginRegistry().detect_project(project, alignment, project.target_verse_text(chapter, verse))
-        if progress_callback: progress_callback(48, 'Building verse evidence package')
-        inv = make_inventory(alignment)
-        bottom_tokens = [
-            {'id': tid, 'word': t.word, 'occurrence': t.occurrence, 'occurrences': t.occurrences}
-            for tid, t in inv.bottom_ids.items()
-        ]
-        top_tokens = [
-            {'id': tid, 'word': t.word, 'occurrence': t.occurrence, 'occurrences': t.occurrences,
-             'strong': t.strong, 'lemma': t.lemma, 'morph': t.morph}
-            for tid, t in inv.top_ids.items()
-        ]
-        aligned = []
-        for g in alignment.alignments:
-            aligned.append({
-                'hebrew': [{'word': x.word, 'lemma': x.lemma, 'morph': x.morph, 'strong': x.strong,
-                            'occurrence': x.occurrence, 'occurrences': x.occurrences} for x in g.top_words],
-                'tamil': [{'word': x.word, 'occurrence': x.occurrence, 'occurrences': x.occurrences} for x in g.bottom_words],
-            })
-
-        pack = kb.evidence_pack_for_verse(chapter, verse, max_chars=42000)
-        if progress_callback: progress_callback(58, 'Translation Helps evidence resolved')
-        evidence_catalog: dict[str, dict[str, Any]] = {}
-        check_inputs = []
-        ev_n = 1
-        for c in pack.get('checks', []):
-            ev_ids = []
-            for ev in c.get('evidence', []):
-                eid = f'E{ev_n:03d}'; ev_n += 1
-                evidence_catalog[eid] = ev
-                ev_ids.append(eid)
-            group = str(c.get('groupId') or '')
-            history = (
-                [project_term_rendering(r) for r in kb.project_term_renderings(group, 120)]
-                if c.get('tool') == 'translationWords' else []
-            )
-            check_inputs.append({
-                'tool': c.get('tool'), 'groupId': group, 'checkId': c.get('checkId'),
-                'source_quote': c.get('source_quote'), 'occurrence': c.get('occurrence'),
-                'occurrenceNote': c.get('occurrenceNote'), 'existingSelections': c.get('existingSelections'),
-                'nothingToSelect': c.get('nothingToSelect'), 'invalidated': c.get('invalidated'),
-                'evidence_ids': ev_ids, 'approved_project_renderings': history,
-            })
-        # The Translation Academy checking articles are no longer catalogued
-        # here (#471): the method is `CHECKING_METHOD_DIGEST` in the
-        # instructions, so a `qa_issues` row cites verse evidence only.
-        for rb in pack.get('reference_bibles', []):
-            eid=f'E{ev_n:03d}'; ev_n += 1; evidence_catalog[eid]=rb
-
-        # #476: everything from here to the review's answer is this review's
-        # usage -- the mapping call below when this runs on its own (from
-        # prepare_verse_review the mapping and the gap-fill came before and
-        # are summed there), then the review call.
-        usage_mark = self.usage_mark()
-        if semantic_mapping_pack is None:
-            semantic_mapping_pack = prepare_semantic_mappings_for_review(
-                project=project,
-                client=self,
-                chapter=chapter,
-                verse=verse,
-            )
-
-        # Each token list and the verse go once, under the language-neutral
-        # names (#471). The `tamil_verse` / `hebrew_topWords` /
-        # `tamil_bottomWords` aliases were a second copy of the same data for
-        # old tests and plugins; nothing reads them from this payload now
-        # (the alignment proposal in `propose_alignment` has its own fields).
-        # Key order is the serialised order (#472): the project-level constants
-        # first so the input's prefix is identical from verse to verse, the
-        # verse itself last.
-        input_obj = {
-            'resource_provenance': pack.get('resource_provenance', {}),
-            'language_context': language.to_dict(),
-            # Ordered by the timestamp, which is then dropped with the rest of
-            # the record's identity (#470, `project_reviewer_decision`).
-            'project_reviewer_decisions': [
-                project_reviewer_decision(d)
-                for d in sorted(project.project_decisions(), key=lambda d: str(d.get('modifiedTimestamp', '')))[-100:]
-            ],
-            'reference': f'{project.book_id} {chapter}:{verse}',
-            'target_verse': project.target_verse_text(chapter, verse),
-            'source_topWords': top_tokens,
-            'target_bottomWords': bottom_tokens,
-            'current_alignment_groups': aligned,
-            'translationCore_checks': check_inputs,
-            'evidence_catalog': evidence_catalog,
-            'semantic_passage_mappings': semantic_mapping_pack.get('mappings', []) if semantic_mapping_pack else [],
-            'semantic_mapping_check_states': semantic_mapping_pack.get('checkStates', []) if semantic_mapping_pack else [],
-            'semantic_mapping_unresolved': semantic_mapping_pack.get('unresolved', []) if semantic_mapping_pack else [],
-        }
-        self.last_privacy_manifest = ai_payload_manifest(input_obj['reference'], input_obj)
-
-        check_schema = {
-            'type': 'object', 'additionalProperties': False,
-            'properties': {
-                'tool': {'type': 'string'}, 'group_id': {'type': 'string'}, 'check_id': {'type': 'string'},
-                'source_quote': {'type': 'string'},
-                'selection_ids': {'type': 'array', 'items': {'type': 'string'}},
-                'nothing_to_select': {'type': 'boolean'},
-                'verdict': {'type': 'string', 'enum': ['pass','review','problem','not_applicable']},
-                'severity': {'type': 'string', 'enum': ['critical','high','medium','editorial','info']},
-                'rationale': {'type': 'string'}, 'suggested_correction': {'type': 'string'},
-                'confidence': {'type': 'number', 'minimum': 0, 'maximum': 1},
-                'evidence_ids': {'type': 'array', 'items': {'type': 'string'}},
-            },
-            'required': ['tool','group_id','check_id','source_quote','selection_ids','nothing_to_select','verdict','severity','rationale','suggested_correction','confidence','evidence_ids'],
-        }
-        issue_schema = {
-            'type': 'object', 'additionalProperties': False,
-            'properties': {
-                'severity': {'type': 'string', 'enum': ['critical','high','medium','editorial','info']},
-                'category': {'type': 'string'}, 'title': {'type': 'string'}, 'detail': {'type': 'string'},
-                'confidence': {'type': 'number', 'minimum': 0, 'maximum': 1},
-                'check_id': {'type': 'string'}, 'group_id': {'type': 'string'},
-                'evidence_ids': {'type': 'array', 'items': {'type': 'string'}},
-            },
-            'required': ['severity','category','title','detail','confidence','check_id','group_id','evidence_ids'],
-        }
-        schema = {
-            'type': 'object', 'additionalProperties': False,
-            'properties': {
-                'summary': {'type': 'string'},
-                # Strict structured-output providers can enforce complete coverage before
-                # Bridge receives the response. Parser validation below remains the safety
-                # net for compatible providers that do not enforce JSON Schema fully.
-                'check_reviews': {
-                    'type': 'array',
-                    'items': check_schema,
-                    'minItems': len(check_inputs),
-                    'maxItems': len(check_inputs),
-                },
-                'qa_issues': {'type': 'array', 'items': issue_schema},
-            },
-            'required': ['summary','check_reviews','qa_issues'],
-        }
-        instructions = review_instructions(language, len(check_inputs))
-        if progress_callback: progress_callback(64, 'AI reviewing Notes, Words and whole verse')
-        result = self._post_structured(
-            instructions, json.dumps(input_obj, ensure_ascii=False), 'tc_full_review', schema,
-            prompt_cache_key=review_prompt_cache_key(project),
-        )
-        review_usage, review_cost = self.usage_since(usage_mark)
-        if progress_callback: progress_callback(88, 'Validating AI selections and evidence')
-
+        Shared by the single-verse review and the window review (#502): the
+        selection gate, the missing-row handling, the identity checks, the
+        reviewer-noise gates and the semantic policy are the same code for
+        both. `result` holds this verse's `check_reviews`, `qa_issues` and
+        `summary`, with `selection_ids` in this verse's own inventory ids.
+        Raises AIError for an answer that cannot be accepted for this verse.
+        """
+        inv = inventory
         reviews: list[AICheckReview] = []
         known_ids = set(inv.bottom_ids)
         for item in result.get('check_reviews', []):
@@ -1123,6 +1112,125 @@ class OpenAIResponsesClient:
         summary = str(result.get('summary',''))
         if suppressed_issues:
             summary += f' · {len(suppressed_issues)} low-confidence/duplicate AI finding(s) suppressed.'
+        return reviews, issues, suppressed_issues, summary
+
+    def run_full_review(
+        self, project: TranslationCoreProject, chapter: str, verse: str,
+        alignment: VerseAlignment, knowledge_base=None, progress_callback=None,
+        expected_input_fingerprint: str | None = None,
+        semantic_mapping_pack: dict[str, Any] | None = None,
+    ) -> tuple[list[AICheckReview], list[QAIssue], str, dict[str, Any]]:
+        """AI performs the resource reading + target selection work, human reviews final evidence-backed results."""
+        from .knowledge_base import TranslationHelpsKnowledgeBase
+
+        kb = knowledge_base or TranslationHelpsKnowledgeBase(project)
+        language = PluginRegistry().detect_project(project, alignment, project.target_verse_text(chapter, verse))
+        if progress_callback: progress_callback(48, 'Building verse evidence package')
+        options = self.review_options
+        inv = make_inventory(alignment)
+        # #500: a word's text, lemma, morphology and Strong's number go once,
+        # in the two word lists; the alignment groups point at them by id.
+        bottom_tokens = [sent_token(tid, t, source=False) for tid, t in inv.bottom_ids.items()]
+        top_tokens = [sent_token(tid, t, source=True) for tid, t in inv.top_ids.items()]
+        aligned = sent_alignment_groups(alignment, inv)
+
+        pack = kb.evidence_pack_for_verse(chapter, verse, max_chars=42000)
+        if progress_callback: progress_callback(58, 'Translation Helps evidence resolved')
+        # `evidence_catalog` is the full local record: what a review's
+        # `evidence_used` is resolved from and what is stored with it.
+        # `sent_catalog` is what the request carries (#500): kind, title and
+        # content of each item a check can cite.
+        evidence_catalog, sent_catalog, check_inputs = build_verse_evidence(pack, kb, options)
+
+        # #476: everything from here to the review's answer is this review's
+        # usage -- the mapping call below when this runs on its own (from
+        # prepare_verse_review the mapping and the gap-fill came before and
+        # are summed there), then the review call.
+        usage_mark = self.usage_mark()
+        if semantic_mapping_pack is None:
+            semantic_mapping_pack = prepare_semantic_mappings_for_review(
+                project=project,
+                client=self,
+                chapter=chapter,
+                verse=verse,
+            )
+
+        # Each token list and the verse go once, under the language-neutral
+        # names (#471). The `tamil_verse` / `hebrew_topWords` /
+        # `tamil_bottomWords` aliases were a second copy of the same data for
+        # old tests and plugins; nothing reads them from this payload now
+        # (the alignment proposal in `propose_alignment` has its own fields).
+        # Key order is the serialised order (#472): the project-level constants
+        # first so the input's prefix is identical from verse to verse, the
+        # verse itself last.
+        #
+        # #500: `resource_provenance` is not sent. No sentence of the
+        # instructions mentions it and no field of the answer depends on it;
+        # the stored review's `resourceProvenance` comes from the pack below,
+        # as before. It also carried local folder paths. The mappings are
+        # stated once, as `semantic_mapping_check_states` (the same spans,
+        # keyed by check); `semantic_passage_mappings` was the second copy
+        # (`sent_mapping_states`).
+        mapping_states, mapping_unresolved = sent_mapping_states(semantic_mapping_pack)
+        input_obj = {
+            'language_context': sent_language_context(language),
+            'project_reviewer_decisions': frozen_reviewer_decisions(project),
+            'reference': f'{project.book_id} {chapter}:{verse}',
+            # The verse as the reviewer reads it: markers and footnotes are
+            # not target words and are in no token list.
+            'target_verse': strip_usfm(project.target_verse_text(chapter, verse)),
+            'source_topWords': top_tokens,
+            'target_bottomWords': bottom_tokens,
+            'current_alignment_groups': aligned,
+            'translationCore_checks': check_inputs,
+            'evidence_catalog': sent_catalog,
+            'semantic_mapping_check_states': mapping_states,
+            'semantic_mapping_unresolved': mapping_unresolved,
+        }
+        if options.count_in_input:
+            input_obj['expected_check_reviews'] = len(check_inputs)
+        self.last_privacy_manifest = ai_payload_manifest(input_obj['reference'], input_obj)
+
+        check_schema = review_check_schema()
+        issue_schema = review_issue_schema()
+        schema = {
+            'type': 'object', 'additionalProperties': False,
+            'properties': {
+                'summary': {'type': 'string'},
+                # Strict structured-output providers can enforce complete coverage before
+                # Bridge receives the response. Parser validation below remains the safety
+                # net for compatible providers that do not enforce JSON Schema fully.
+                'check_reviews': (
+                    # #500 cache experiment: no per-verse number in the schema,
+                    # so it is identical for every verse. The parser below
+                    # still refuses a duplicate and fills a missing row.
+                    {'type': 'array', 'items': check_schema}
+                    if options.count_in_input else
+                    {
+                        'type': 'array',
+                        'items': check_schema,
+                        'minItems': len(check_inputs),
+                        'maxItems': len(check_inputs),
+                    }
+                ),
+                'qa_issues': {'type': 'array', 'items': issue_schema},
+            },
+            'required': ['summary','check_reviews','qa_issues'],
+        }
+        instructions = review_instructions(language, len(check_inputs), options.count_in_input)
+        if progress_callback: progress_callback(64, 'AI reviewing Notes, Words and whole verse')
+        result = self._post_structured(
+            instructions, json.dumps(input_obj, ensure_ascii=False), 'tc_full_review', schema,
+            prompt_cache_key=review_prompt_cache_key(project),
+        )
+        review_usage, review_cost = self.usage_since(usage_mark)
+        if progress_callback: progress_callback(88, 'Validating AI selections and evidence')
+
+        reviews, issues, suppressed_issues, summary = self.parse_review_rows(
+            project, chapter, verse, inventory=inv, check_inputs=check_inputs,
+            evidence_catalog=evidence_catalog, result=result,
+            semantic_mapping_pack=semantic_mapping_pack,
+        )
         if expected_input_fingerprint is not None and project.review_input_fingerprint(chapter, verse) != expected_input_fingerprint:
             raise AIError('Verse/project data changed while AI was working; stale AI review was discarded.')
         saved = project.record_ai_review_result(chapter, verse, {
@@ -1151,6 +1259,12 @@ class OpenAIResponsesClient:
         alignment. Nothing is written to translationCore alignmentData or checkData.
         """
         start_input_fingerprint = project.review_input_fingerprint(chapter, verse)
+        # #501, shadow mode: what a local rule would have decided for this
+        # verse's translationWords checks, from the stored alignment, worked
+        # out before any call. It is stored beside the review below and read
+        # by nothing: every check still goes to the model and nothing here is
+        # applied.
+        local_tw_shadow = shadow_tw_decisions(project, chapter, verse, alignment)
         # #476: the semantic mapping, the gap-fill alignment and the review
         # are all this verse's calls; the stored usage, the job's cost line
         # and the lifetime counter get their sum, not the review alone (on
@@ -1207,6 +1321,7 @@ class OpenAIResponsesClient:
             'checkReviews': [x.to_dict() for x in reviews],
             'qaIssues': [x.to_dict() for x in issues],
             'semanticMapping': semantic_mapping_pack,
+            'localTwShadow': local_tw_shadow,
         })
         meta['saved_to'] = str(saved)
         self.last_cost_usd = total_cost

@@ -25951,3 +25951,411 @@ app:** it needs an AI run to produce the cell.
 **Also today.** #504 filed: a backup or transaction copy fails on Windows when its path
 passes 260 characters (11 of the 23 engine tests that fail on this machine; the other
 12 need the git-ignored Stage 3 semantic database). Not fixed.
+
+## 2026-11-17 — AI review cost: an offline request capture, and duplicated and unused context removed from the three requests (#500)
+
+**Why.** Rina asked for three cost items to be tried (#500, #501, #502). A captured
+sample of one verse (GEN 1:3) showed more duplication than #500 listed, most of it
+outside the review call. The figures in the issue were one small verse; this entry
+has the whole chapter.
+
+**Measurement tool: `scripts/capture_ai_requests.py`.** Copies a project and the
+`resources` folder beside `projects` into a scratch folder laid out like the data
+folder, points `LOCALAPPDATA` at it before any engine import, replaces
+`ai_http.urlopen` with a function that raises, and runs each verse through
+`prepare_verse_review` with a transport that records the POST body and answers it
+locally. The real project is read by `copytree` and never opened. It reports
+characters per request and per input field, the evidence catalog by kind, the check
+rows by field, and how many leading characters one review request shares with the
+next. The answers are stand-ins (the review answer is one `review` row per check);
+the mapping answer is the mapping the copy already stores, so the review request
+carries the mapping a real run produced, while the mapping request itself is issued
+cold, once per set of source units, as a first run would.
+
+Checked against the sample (`bridge-ai-sample-GEN-1-3.zip`): the mapping request
+(19,136 input, 24,926 body) and the alignment request (5,881 / 9,599) match to the
+character; the review input is 26,433 against 26,163, and the 270 are the scratch
+folder's longer path inside `resource_provenance` and `source_path`. So the before
+figures below are under 1% high for the review call, and the after figures carry no
+path at all.
+
+Two project copies were measured, both Hindi IRV Genesis as imported on 2026-11-05
+for #469: `hin_bible_gen` (holds the gpt-5.6 results; the sample was made from it)
+and `hin_hindi-irv-2_gen` (holds the gpt-5.6-terra results). The folder names do
+not say which run they held; the stored reviews' `model` does.
+
+**Before, GEN 1 (31 verses, 281 checks), characters.**
+
+| Call | Requests | Instructions | Schema | Input | Body |
+|---|---|---|---|---|---|
+| Mapping | 47 | 63,450 | 101,332 | 999,056 | 1,278,418 |
+| Alignment gap-fill | 31 | 62,930 | 20,522 | 366,469 | 511,248 |
+| Review | 31 | 246,941 | 52,571 | 2,067,141 | 2,545,602 |
+| Total | 109 | 373,321 | 174,425 | 3,432,666 | 4,335,268 |
+
+109 requests against the 111 the provider billed on the terra run (110 on the terra
+copy), so the capture is close to what a paid run sends. Largest fields: mapping
+`resource_provenance` 774,325; review `evidence_catalog` 1,019,673,
+`translationCore_checks` 276,707 (of which `approved_project_renderings` 148,496),
+`semantic_mapping_check_states` 228,252, `semantic_passage_mappings` 162,923,
+`current_alignment_groups` 96,994, `semantic_mapping_unresolved` 93,001.
+
+**What changed** (`tc_ai_bridge/ai_review_payload.py`, `ai_client.py`,
+`semantic_mapping.py`, `security.py`). Always on:
+
+- Review: `resource_provenance` is not sent; the stored `resourceProvenance` is
+  taken from the evidence pack as before. Evidence items are sent as `kind`,
+  `title`, `content`; the full item (path, version, provider, sha256) is still what
+  `evidence_used` stores. The `originalQuote` and `translationNote` items, which
+  restate `source_quote` and `occurrenceNote` on the check row, are left out unless
+  a check would then have nothing to cite (a review citing no evidence is never
+  applied automatically). `approved_project_renderings` is one row per distinct
+  rendering with a `count` and up to three source forms, most used first, at most
+  ten, over the same 120 records as before. `current_alignment_groups` is
+  `source_ids` / `target_ids`; a word carries `occurrence` / `occurrences` only
+  when it repeats. `language_context` is the two language names and
+  `qa_categories`. `target_verse` is the plain verse (`strip_usfm`).
+  `semantic_passage_mappings` is not sent; its two facts that the check states did
+  not have, the mapper's `confidence` and `evidence.explanation`, are carried onto
+  the sent check state. A `semantic_mapping_unresolved` row that is a check state
+  verbatim (an unresolved source anchor is in both lists) is not sent twice. The
+  stored `semanticMapping` pack is untouched.
+- Instructions: `semantic_passage_mappings` is no longer named; three sentences
+  describe the compact shapes. The static block is 725 characters longer.
+- Mapping: `resource_provenance` (the bundled-resource manifest) is not sent. It
+  still identifies the resources in `_fingerprint`, so stored mappings stay valid.
+- Alignment gap-fill: the `hebrew_topWords` / `tamil_bottomWords` alias lists are
+  gone. `ai_payload_manifest` reads `source_tokens_to_consider` for
+  `containsOriginalLanguage`.
+
+Off by default, `settings.set {"aiReview": {...}}` (admin only, like the model;
+the dialog controls come with #502's settings):
+
+- `leanEvidence`: a translationWords article without Bible References, Examples
+  from the Bible stories and Word Data; no TWL occurrence list; a Translation
+  Academy article without its example sections. These change what the model reads.
+- `countInInput`: the check count as `expected_check_reviews` in the input, not in
+  the instructions' last sentence or the schema's `minItems` / `maxItems`. With it
+  on the provider no longer enforces the row count; the parser's duplicate and
+  missing-row handling is unchanged.
+
+**After, GEN 1, same copy, characters of input.**
+
+| | Mapping | Alignment | Review | Total input | Total body |
+|---|---|---|---|---|---|
+| Before | 999,056 | 366,469 | 2,067,141 | 3,432,666 | 4,335,268 |
+| After (default) | 223,556 | 252,895 | 1,414,499 | 1,890,950 (−45%) | 2,628,116 (−39%) |
+| After, `leanEvidence` | 223,556 | 252,895 | 929,127 | 1,405,578 (−59%) | 2,129,158 (−51%) |
+
+GEN 1:3: mapping 19,136 → 2,636, alignment 5,881 → 4,386, review 26,433 → 16,197
+(9,706 with `leanEvidence`). The terra copy gives the same picture: 3,463,357 →
+1,885,357. The engine's rough token estimate for the request bodies goes from
+1,496,928 to 962,429 (704,175 lean); that estimate is not the provider's count.
+
+**Cache hypothesis, as far as it goes offline.** Before, two consecutive review
+requests had identical instructions on 2 of 30 pairs (the two with the same check
+count) and shared 7,920 leading characters of them; the answer schema differed on
+the same 28 pairs. That is consistent with the provider caching about the size of
+the instructions (1,762 tokens) and nothing after. With `countInInput` the
+instructions and the schema are identical on 30 of 30 pairs. What follows them is
+the input, and after this change two inputs share only their first 210 characters
+(`language_context` and an empty decisions list) before the verse reference. So the
+count move by itself can add at most the schema and those 210 characters to a
+cached prefix. A shared block worth caching has to be put there, which is #502's
+chapter context. Whether the provider caches across the instructions/schema/input
+boundary, and in what order it lays them out, needs a paid run.
+
+**Not done, and why.**
+- #500's first item, filtering `project_reviewer_decisions` to the verse's groups:
+  both copies have no reviewer decisions (62 characters over the chapter), so there
+  is nothing to measure on this benchmark. The last-100 list is as it was.
+- `translationCore_checks` in the gap-fill request (84,247 characters): #500 says
+  to test whether gap-fill needs the notes, not assume. Left in.
+
+**Found on the way, not fixed here.**
+1. Every verse of a reviewed chapter still sends a gap-fill request (31 of 31, 30
+   of 31 on the terra copy). `needs_alignment` is true while any source word has no
+   target, and some never will, so a re-review asks again each time.
+2. `evidence_pack_for_verse(max_chars=42000)` stops adding evidence when the budget
+   runs out: 6 checks in GEN 1 (in 1:22, 1:27, 1:28) are reviewed with no evidence
+   at all and 5 articles are cut mid-text. A check with no evidence can never be
+   applied automatically. The budget counts the restated quote and note too.
+3. `semantic_mapping_check_states` lists every check of the verse's passage, not
+   only the verse's own: 401 of 681 rows over the chapter (153,277 of 258,933
+   characters after this change) are for checks the request does not ask about.
+4. The same article is catalogued once per check: 97,432 characters of the review
+   catalog are repeats inside one verse, and the chapter's 162 distinct items would
+   be 220,049 characters if each went once against 847,260 now. #502 addresses this.
+
+**Verified.** Ran: the capture before and after on both copies; `pytest tests/ai
+tests/alignment/test_ai_review_auto_align.py
+tests/alignment/test_ai_review_stale_after_apply.py
+tests/service/test_ai_task_settings.py tests/service/test_ai_review_request_shape.py
+tests/semantic/test_semantic_mapping_stage3.py
+tests/alignment/test_ai_alignment_propose.py`. The full gates are run once for the
+#500/#502/#501 batch and recorded in the #501 entry. Not verified: any verdict. No
+request was sent to a provider.
+
+
+## 2026-11-17 — AI review cost: several verses per request, a chapter-shared context and a whole-chapter option, all off by default (#502)
+
+**Why.** #474 designed sending a window of verses with one shared evidence catalog
+and was closed as a design note. #502 asked for it to be built, with a context block
+shared by a chapter and a whole-chapter option, and measured offline before any paid
+run.
+
+**Default.** `aiReview.versesPerRequest` is 1 and both options are off. Then
+`_start_ai_review_spec` passes no `run_chapter`, the job is the per-verse loop it
+was, and nothing in `ai_review_windows.py` runs. Checked two ways: the capture of
+GEN 1 with the defaults is byte-identical, request for request (109 of 109), to the
+capture taken before any of this was written; and
+`test_one_verse_per_request_is_the_default_and_is_the_single_verse_review`.
+
+**What was built** (`tc_ai_bridge/ai_review_windows.py`, with `ai_client.py`,
+`ai_review_jobs.py`, `bridge_service.py`, `secret_store.py`).
+
+- Shared with the single-verse review, by extraction and not by copy:
+  `build_verse_evidence`, `review_check_schema` / `review_issue_schema`,
+  `review_project_tail`, `frozen_reviewer_decisions` and
+  `OpenAIResponsesClient.parse_review_rows` (the selection gate, missing rows,
+  identity checks, `gate_check_reviews`, the semantic policy). `_post_structured`
+  takes a per-call `timeout`. In the service, `_begin_ai_review_verse` and
+  `_finish_ai_review_verse` are the two ends of `_run_ai_review_for_project`, used
+  by both runs, so a verse is finished (usage counter, gap-fill alignment saved,
+  safe selections, issue lifecycle) by one body of code.
+- `WindowReviewSession`: each verse makes its own calls first, as
+  `prepare_verse_review` does (fingerprint, semantic mapping, gap-fill), and its
+  block is built; verses join the current window until `window_accepts` says no;
+  the window is sent as `tc_window_review`. Windows are formed as the job goes,
+  because a verse's size is known only once its own calls have returned.
+- A window: contiguous verses in the job's order, at most `versesPerRequest` (6 at
+  most), never across a section heading (`<chapter>.headings.json`), closed early
+  at 24 checks or 60,000 characters (#474's caps, as constants). A verse over a cap
+  alone is a window of one. Whole chapter: no verse limit, caps of 100 checks and
+  240,000 characters, and a heading closes a window that is already half full, so
+  a chapter too large for one request is cut at its headings where it has them.
+  The two whole-chapter caps are provisional; nothing has tested a provider's
+  output limit.
+- The request: `language_context`, `project_reviewer_decisions`,
+  `evidence_catalog`, `verses[]`, then the window's
+  `semantic_mapping_check_states` / `_unresolved` once (verses of one passage hold
+  the same rows). Evidence ids are content ids (`tw:god`, `ta:figs-metaphor`,
+  `twl:god`, verse-scoped ids for a verse's own items); an article whose text
+  differs under the same id (cut by the per-verse 42,000 budget) gets the id with a
+  content hash. Token ids are `<verse>|<id>`.
+- The answer: `summaries[]`, `check_reviews[]` and `qa_issues[]`, every row with
+  its verse `reference`; the schema pins the window's total row count. Rows are
+  grouped by verse and each verse goes through `parse_review_rows`. A verse with no
+  rows gets today's missing-row `review` rows. A verse with an unknown token or
+  evidence id, a duplicated or foreign check fails alone and the others are
+  stored. A row naming a verse outside the window makes the whole answer unusable.
+- Whole-window failure (transport, timeout, HTTP error, not JSON, not
+  attributable): retried once at half size, then verse by verse; a one-verse
+  window that fails is a failed verse.
+- Stored per verse exactly as before, plus `batch: {windowId, verses, attempt,
+  chapterContext, share, windowUsage, windowEstimatedCostUSD}`. The fingerprint is
+  the verse's own, taken before its first call; a verse whose fingerprint changed
+  while its window was in flight is discarded alone with today's stale error. Usage
+  per verse is its own calls plus its share (by block size) of every review request
+  it took part in, failed attempts included; shares sum to the request's tokens
+  exactly, and the request's own usage is on `batch`.
+- Timeout per window: 90 s + 40 s a verse, capped at 300 s (900 s whole chapter),
+  never below the client's 240 s.
+- Chapter context: every article the job's verses cite, each once, and the reviewer
+  decisions as they stood when the job started, serialised identically at the front
+  of every request. It forces the count out of the instructions and schema
+  (`countInInput`), because a number ahead of the shared block would end the shared
+  prefix.
+- Job: `currentWindow` on the snapshot; a verse with no outcome after a chapter's
+  window run is reported failed rather than left out.
+
+**UI.** Settings > AI provider > Review request: Verses per request (1–6), Whole
+chapter in one request, Share one context block across a chapter, and #500's two
+switches, all locked for a non-admin. The AI tab shows "Verses 1:4–7 are being
+reviewed together in one request" under the progress bar while a window of more
+than one verse is in flight.
+
+**Measured offline, GEN 1, review request input in characters** (the mapping and
+gap-fill requests are per verse and the same in every row: 223,556 + 252,895):
+
+| Setting | Review requests | Review input | Of it, repeats the previous request's start | All requests, input |
+|---|---|---|---|---|
+| 1 verse (default, after #500) | 31 | 1,414,499 | 6,319 | 1,890,950 |
+| 4 verses, caps as designed | 26 | 1,289,750 | 19,980 | 1,766,201 |
+| 4 verses, caps lifted (80 checks, 400,000) | 10 | 990,502 | 1,938 | 1,466,953 |
+| 6 verses, caps lifted | 8 | 976,766 | 1,509 | 1,453,217 |
+| Whole chapter | 6 | 939,058 | 1,087 | 1,415,509 |
+| Chapter context, 1 verse | 31 | 7,525,135 | 6,733,129 | 8,001,586 |
+| Chapter context, 4 verses, caps lifted | 10 | 2,703,396 | 2,019,937 | 3,179,847 |
+| Chapter context, whole chapter | 4 | 1,352,508 | 673,312 | 1,828,959 |
+| 4 verses, caps lifted, `leanEvidence` | 10 | 697,327 | 1,938 | 1,173,778 |
+
+What these say:
+
+- With #474's caps a setting of 4 barely batches GEN 1: windows of one or two
+  verses, 26 requests for 31 verses. A GEN 1 verse averages 9 checks and 45,000
+  characters of review input, so 24 checks and 60,000 characters are reached at
+  once. The caps were written against smaller verses. Raising them is a decision
+  for the paid run, because it is exactly the "more checks in one answer" risk.
+- With the caps lifted, windows follow the section headings ([2, 3, 3, 4, 1, 4, 2,
+  4, 4, 4] verses) and the review input falls 30% (1,414,499 → 990,502). Going to 6
+  or to the whole chapter adds little on input; the rest of batching's saving, one
+  reasoning run and one envelope per window, is on the output side and cannot be
+  measured offline.
+- The chapter's shared catalog is 224,437 characters. Sent with every request it
+  multiplies the input (7.5M characters at one verse per request). If the provider
+  served every repeat from its cache at a tenth, the review input would count as
+  about 1,465,000 at one verse (worse than no context), 885,000 at 4 lifted and
+  747,000 whole-chapter, against 990,502 and 939,058 without it. So it helps only
+  with large windows and only if the cache really hits; if it misses, it costs
+  1.4 to 5 times more. The cache has a minimum prefix and a short lifetime, and a
+  window takes minutes. This needs the paid run before anyone turns it on.
+
+**Known differences from the single-verse run** (why the default stays 1): a verse
+does not see a rendering applied from an earlier verse of the same window; with
+chapter context it does not see a reviewer decision made after the job started;
+per-verse usage is an estimate, the window's is exact.
+
+**Deviations from #474 as written.** The setting's default is 1, not 4 (the
+instruction for this work). The mapping is still called per verse rather than once
+per window: `checks_for_seed_passage` already maps a whole structural passage in
+one request and later verses of it are cache hits, so the request count is the same
+and the single-verse result is reproduced exactly. `summary` is `summaries[]`.
+
+**Not verified.** No request reached a provider, so nothing is known about verdict
+quality per check in a window, whether a long answer is cut off, timeouts, or what
+the provider caches. The desktop app was not run: the dialog controls and the AI
+tab line are covered by Vitest only.
+
+**Tests.** `tests/ai/test_ai_review_windows.py` (13: defaults, timeout, headings,
+window formation and caps, whole chapter, content ids, the answer split, usage
+shares, schema, instructions, manifest) and
+`tests/service/test_ai_review_window_jobs.py` (7, on a five-verse Titus with real
+helps: the default run; windows cut at the heading with one stored review per
+verse; half-size retry then verse by verse; a bad verse failing alone and retried
+alone; a verse edited mid-flight discarded alone; the chapter context block
+identical across requests; whole chapter). Vitest: 3 new SettingsModal tests and
+`aiReviewUi.test.ts`.
+
+
+## 2026-11-17 — AI review cost: a local translationWords rule, in shadow mode only (#501)
+
+**Why.** For some translationWords checks the answer may be readable without a
+model: the word aligned to the source term in this verse is already a rendering the
+project uses for that term. Taking those checks away from the AI changes who decides
+a check, which is a change to the auto-apply behaviour and needs a decision. This
+entry is the shadow step only: the rule says what it would have decided, beside the
+AI review, and nothing reads what it says.
+
+**What was built.** `tc_ai_bridge/local_tw_pass.py`, `shadow_tw_decisions(project,
+chapter, verse, alignment)`. A check would pass only when all of these hold:
+
+1. It is a translationWords check and not invalidated.
+2. Every word of its source quote is among the verse's aligned source words, by
+   word and occurrence. A phrase containing a word that repeats in the verse does
+   not qualify (the check's occurrence counts the phrase, not the word).
+3. Each of those source words is in an alignment group that has target words and
+   holds no other source word (no partial match).
+4. The target words of those groups are, as a set of words, exactly the selection
+   of another check of the same term in the project that is not a Nothing-to-Select
+   and not invalidated. The check's own stored selection never counts.
+
+The alignment is the verse's stored one, read before any AI call: a rule that ran
+instead of the AI would have nothing else.
+
+Stored as `localTwShadow` on the AI review, in the single-verse run
+(`prepare_verse_review`) and the window run: `{mode: "shadow", ruleVersion: 1,
+twChecks, wouldPass, checks: [{checkId, groupId, sourceQuote, wouldPass, reason,
+alignedTargetWords, matchedRendering, matchingRenderings, matchingReferences,
+renderingsConsidered}]}`. A failure inside the rule is stored as `error` and never
+costs a verse its review.
+
+**What it cannot do.** `MODE` is the string `shadow` and there is no other. The
+module calls no writer; a test snapshots every file of a project before and after
+and finds them identical, with no `checkData` folder created. The record is in no
+request (tested on both runs), every check of the verse is still sent (the number of
+stored check reviews equals the number of checks), and
+`test_shadow_is_the_only_mode_and_the_record_is_read_by_nothing` fails if any engine
+module other than the two that store it mentions the record or the function. No
+workbench schema change: the review payload is JSON.
+
+**Comparison, GEN 1** (`scripts/compare_local_tw_shadow.py`, on copies; the stored
+AI reviews are read, nothing is re-run). 121 of the chapter's 281 checks are
+translationWords.
+
+| | terra run (`hin_hindi-irv-2_gen`) | gpt-5.6 run (`hin_bible_gen`) |
+|---|---|---|
+| tW checks the AI passed | 65 | 62 |
+| Rule would pass, counting only earlier verses' selections ("first run") | 53 | 62 |
+| … of those, AI passed with the same words | 32 | 36 |
+| … of those, AI passed with other words | 0 | 0 |
+| … of those, AI left for review | 21 | 26 |
+| Rule would pass, counting every other selection ("now") | 63 | 71 |
+| … of those, AI passed with the same words / other words / review | 38 / 0 / 25 | 41 / 1 / 29 |
+| Rule's first-run passes that are in the translator's sheet, judged | 4, all "none wrong" | 4, all "none wrong" |
+
+Why the rule did not take the rest (terra, first run): no other rendering of the
+term yet 22, aligned words not a rendering in use 25, partial match 17, quote not
+among the aligned source words 2, not aligned 2.
+
+How to read it:
+
+- Where both the rule and the AI gave an answer, they gave the same words (one
+  exception in the "now" view on the gpt-5.6 copy: 1:4 `good`, where the alignment
+  has अच्छा and the AI selected अच्छा है). The rule never passed a check
+  the AI called a problem; the AI called no tW check of GEN 1 a problem.
+- Every one of the checks the rule would pass and the AI left for review (21 and
+  26) was left because of the Stage 3 mapping state, not a judgement on the word:
+  `needs_extended_passage_review` on all 21 of the terra run, and that or
+  `mapping_error` on the gpt-5.6 run. In each the AI selected nothing. So the rule
+  would have passed checks that today wait for a human only because Stage 3 did not
+  locate the term. Whether that is the rule being right or the rule ignoring a
+  cross-verse question is the substance of the decision this issue leaves open.
+- The translator's sheet covers only the 37 checks where the three paid runs
+  differed, so it can speak for 4 of the rule's 53. A judged sample of the rule's
+  own passes does not exist yet.
+- The alignment the rule read was written by the AI gap-fill during those same
+  runs. On a fresh import with no alignment the rule takes nothing until the verse
+  is aligned, so "53 of 121" is what it would take on a chapter that is already
+  aligned, not on a first AI pass over an unaligned book.
+- In the "now" view most renderings were applied from the same AI run, so agreement
+  there is partly the run agreeing with itself; the first-run view is the fair one.
+
+**Not done, needing a decision first** (`docs/DECISIONS.md`): skipping the AI for a
+check the rule would pass, or recording a local pass as a check result.
+
+**Found on the way, not fixed here.**
+- On the terra run 54 of the 56 tW checks left for review in GEN 1 were left by the
+  Stage 3 state `needs_extended_passage_review` (2 by an unresolved source anchor),
+  including 21 where the verse's own alignment has the term on the project's usual
+  rendering. That is 45% of the chapter's tW checks waiting on a human for a
+  location question. Relevant to #109.
+- `_run_ai_review_for_project` counts a verse twice in the lifetime usage counter
+  when it fails or is cancelled after its review was stored: the usage is recorded
+  once when the review comes back and again by the failure handler. Pre-existing;
+  the window run records it once.
+
+**Tests.** `tests/ai/test_local_tw_pass.py` (9: the rule's conditions one by one, the
+own-selection exclusion, the no-write snapshot, failure recorded and not raised, the
+only-mode and read-by-nothing check) and assertions in the two service tests that the
+record is stored and is in no request.
+
+**Gates for the #500 / #502 / #501 batch, run once on the three commits together
+(2026-11-17, Windows, Python 3.12.10).**
+- Engine: `pytest -n auto`, 5,953 passed, 1 failed, 3 xfailed.
+  The failure is `tests/project_io/test_tc_project_chapter_cache.py::
+  test_a_change_inside_one_timestamp_tick_is_still_read`, which none of this work
+  touches. It passed four times run alone (three with these changes, once with
+  them stashed): it relies on finishing inside the chapter cache's
+  recently-written window and lost it under the parallel run. Reported, not fixed.
+- Frontend: `npm run check` 0 errors 0 warnings; `npm run test` 1,263 passed in 131
+  files; `npm run build` ok.
+- Frozen: `scripts/build-sidecars.ps1`, then `scripts/smoke_sidecars.py
+  engine/dist/bridge-engine.exe` passed. The smoke test starts the frozen engine and
+  exercises import, checks, alignment, the packs and the hub; it does not send an AI
+  review request, so the frozen pair is proven to load the new modules, not to run a
+  window review.
+- Not run: `cargo check` / `cargo test` (no Rust file changed), the desktop app, and
+  any request to a provider.
+- After the last change the default capture of GEN 1 was taken again and is
+  byte-identical to the one taken after #500 on all 109 requests.
