@@ -90,6 +90,8 @@ import type {
   VerseHeading,
   QaFinding,
   SettingsData,
+  ChatGptModel,
+  ChatGptState,
   TerminologyRule,
   IssueResolutionHandoffResult,
   IssueResolutionListResponse,
@@ -334,6 +336,11 @@ export type EngineMethod =
   | "collection.cancelChecks"
   | "ai.review.cancel"
   | "ai.review.listForChapter"
+  | "ai.chatgpt.status"
+  | "ai.chatgpt.signIn"
+  | "ai.chatgpt.cancelSignIn"
+  | "ai.chatgpt.signOut"
+  | "ai.chatgpt.models"
   | "ai.review.retry"
   | "ai.review.start"
   | "ai.review.status"
@@ -1657,6 +1664,28 @@ export const bridge = {
 
   setSettings(params: Record<string, unknown>): Promise<SettingsData> {
     return call("settings.set", params);
+  },
+
+  // #506: Sign in with ChatGPT. signIn returns at once (the browser opens and
+  // the engine waits on its own thread); poll chatgptStatus until it settles.
+  chatgptStatus(): Promise<ChatGptState> {
+    return call("ai.chatgpt.status");
+  },
+
+  chatgptSignIn(): Promise<ChatGptState> {
+    return call("ai.chatgpt.signIn");
+  },
+
+  chatgptCancelSignIn(): Promise<ChatGptState> {
+    return call("ai.chatgpt.cancelSignIn");
+  },
+
+  chatgptSignOut(): Promise<ChatGptState> {
+    return call("ai.chatgpt.signOut");
+  },
+
+  chatgptModels(refresh = false): Promise<{ models: ChatGptModel[]; error: { code: string; message: string } | null }> {
+    return call("ai.chatgpt.models", { refresh });
   },
 
   terminologyList(): Promise<{ rules: TerminologyRule[] }> {

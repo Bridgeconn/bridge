@@ -84,7 +84,7 @@ describe("AutoAlignChapterButton", () => {
     render(AutoAlignChapterButton, { props: { chapter: "1", onOpenReview: vi.fn() } });
     const button = await screen.findByRole("button", { name: "Align chapter with AI" });
     await waitFor(() => expect(button).toBeDisabled());
-    expect(button).toHaveAttribute("title", "Add an API key in Settings to align automatically");
+    expect(button).toHaveAttribute("title", "Add an API key or sign in with ChatGPT in Settings to align automatically");
   });
 
   it("reports an unavailable provider from start instead of failing", async () => {

@@ -259,7 +259,8 @@
   // own mount, and a throw just means "no AI button".
   onMount(async () => {
     try {
-      aiAvailable = Boolean((await bridge.getSettings())?.hasApiKey);
+      const settings = await bridge.getSettings();
+      aiAvailable = Boolean(settings?.aiReady ?? settings?.hasApiKey);
     } catch {
       aiAvailable = false;
     }
@@ -1454,10 +1455,10 @@
     use:tooltip={aiAvailable === undefined
       ? "Checking whether an AI provider is configured…"
       : !aiAvailable
-        ? "Add an API key in Settings to align automatically"
+        ? "Add an API key or sign in with ChatGPT in Settings to align automatically"
         : windowIssue || "Ask your AI provider twice and write what both readings agree on"}>
     <span class="ai-name">{lastRun ? "Align again" : "Align automatically"}</span>
-    <small>{aiAvailable === false ? "Needs an API key: add one in Settings."
+    <small>{aiAvailable === false ? "Needs an API key or a ChatGPT sign-in: set one up in Settings."
       : windowIssue ? windowIssue
       : "Asks your AI provider twice, source-first and target-first. Words both passes agree on are aligned; the rest become suggestions for you."}</small>
   </button>

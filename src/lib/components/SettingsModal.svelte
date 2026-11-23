@@ -8,7 +8,7 @@
   import { nudgeLanguageQa } from "../languageQaInline";
   import { askConfirmation } from "../confirmAction";
   import { manualOverrideMode, navigationStatus, project, reviewerMode } from "../stores";
-  import type { AiReasoningEffort, AiReviewSettings, AiTask, AiTaskSettings, InlineConfidence, NavigationSyncState, ParatextConnectorStatus, SettingsData, TerminologyRule, UserRole } from "../types/finding";
+  import type { AiReasoningEffort, AiReviewSettings, AiTask, AiTaskSettings, ChatGptModel, ChatGptState, InlineConfidence, NavigationSyncState, ParatextConnectorStatus, SettingsData, TerminologyRule, UserRole } from "../types/finding";
   import type { HouseStyleEntry, HouseStyleListResponse, HouseStyleProposal } from "../types/houseStyle";
   import type { CheckerSettings } from "../types/languageQa";
   import CheckerSettingsDialog from "./CheckerSettingsDialog.svelte";
@@ -45,6 +45,19 @@
   };
   let apiKey = "";
   let hasApiKey = false;
+  // #506: Sign in with ChatGPT, for running the AI on a ChatGPT Plus or Pro
+  // plan instead of an API key. The engine runs the browser sign-in on its own
+  // thread; this dialog starts it and polls its status until it settles.
+  let chatgpt: ChatGptState | null = null;
+  let chatgptModels: ChatGptModel[] = [];
+  let chatgptBusy = false;
+  let chatgptMessage = "";
+  let chatgptPoll: ReturnType<typeof setInterval> | null = null;
+  $: usesChatGpt = provider === "chatgpt";
+  // The saved model stays choosable when the account does not list it.
+  $: chatgptModelChoices = !model || chatgptModels.some((m) => m.slug === model)
+    ? chatgptModels
+    : [{ slug: model, displayName: `${model} (not offered by this account)`, reasoningEfforts: [], contextWindow: null }, ...chatgptModels];
   // #477: the lifetime counter, kept by the engine on every counted call.
   let aiUsage: SettingsData["aiUsage"] = { tokens: 0, estimatedCostUSD: 0, since: null };
   let allowOverride = false;
@@ -174,6 +187,9 @@
       }
       if (s.aiReview) aiReview = { ...aiReview, ...s.aiReview };
       hasApiKey = s.hasApiKey;
+      chatgpt = s.chatgpt ?? null;
+      if (chatgpt?.status === "signingIn") watchChatGptSignIn();
+      else if (chatgpt?.status === "signedIn") void loadChatGptModels();
       aiUsage = s.aiUsage ?? aiUsage;
       allowOverride = s.reviewerMode === "advanced";
       paratextNavigation = s.paratextNavigation;
@@ -208,6 +224,98 @@
   function applyPreset() {
     if (provider in providerPresets && !apiBaseUrl) {
       apiBaseUrl = providerPresets[provider];
+    }
+  }
+
+  // -- #506: Sign in with ChatGPT ------------------------------------------
+
+  function stopChatGptPoll() {
+    if (chatgptPoll) { clearInterval(chatgptPoll); chatgptPoll = null; }
+  }
+
+  async function loadChatGptModels() {
+    try {
+      const listed = await bridge.chatgptModels();
+      if (destroyed) return;
+      chatgptModels = listed.models ?? [];
+      if (listed.error) chatgptMessage = listed.error.message;
+    } catch (e) {
+      chatgptModels = [];
+    }
+  }
+
+  /** A sign-in ended, one way or the other. */
+  async function chatgptSettled(state: ChatGptState) {
+    chatgpt = state;
+    if (state.status !== "signedIn") return;
+    // Signing in IS choosing this provider: store that now, so AI does not go
+    // on using an API key until someone remembers to press Save. Only the
+    // provider is sent, so unsaved edits to the other fields are not saved.
+    try {
+      await bridge.setSettings({ provider: "chatgpt" });
+      provider = "chatgpt";
+      chatgptMessage = "Signed in. Bridge's AI now uses this ChatGPT plan.";
+    } catch (e) {
+      chatgptMessage = e instanceof Error ? e.message : String(e);
+    }
+    await loadChatGptModels();
+  }
+
+  function watchChatGptSignIn() {
+    stopChatGptPoll();
+    chatgptPoll = setInterval(async () => {
+      try {
+        const state = await bridge.chatgptStatus();
+        if (destroyed) return;
+        if (state.status === "signingIn") { chatgpt = state; return; }
+        stopChatGptPoll();
+        await chatgptSettled(state);
+      } catch (e) {
+        console.error("failed to read the ChatGPT sign-in status", e);
+      }
+    }, 1000);
+  }
+
+  async function chatgptSignIn() {
+    chatgptBusy = true;
+    chatgptMessage = "";
+    try {
+      const state = await bridge.chatgptSignIn();
+      chatgpt = state;
+      if (state.status === "signingIn") watchChatGptSignIn();
+      else await chatgptSettled(state);
+    } catch (e) {
+      chatgptMessage = e instanceof Error ? e.message : String(e);
+    } finally {
+      chatgptBusy = false;
+    }
+  }
+
+  async function chatgptCancelSignIn() {
+    stopChatGptPoll();
+    try {
+      chatgpt = await bridge.chatgptCancelSignIn();
+    } catch (e) {
+      chatgptMessage = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async function chatgptSignOut() {
+    if (!(await askConfirmation({
+      title: "Sign out of ChatGPT?",
+      body: "Bridge stops using this ChatGPT plan on this computer. AI features stop working until you sign in again or choose another provider.",
+      confirmLabel: "Sign out",
+      danger: true,
+    }))) return;
+    chatgptBusy = true;
+    chatgptMessage = "";
+    try {
+      chatgpt = await bridge.chatgptSignOut();
+      chatgptModels = [];
+    } catch (e) {
+      chatgptMessage = e instanceof Error ? e.message : String(e);
+    } finally {
+      chatgptBusy = false;
     }
   }
 
@@ -267,6 +375,7 @@
   /** #477: "Used so far on this device: 7,159,086 tokens · ~$45.38 (since 14 Oct 2026)". */
   function aiUsageSummary(usage: SettingsData["aiUsage"]): string {
     const tokens = `${(usage.tokens ?? 0).toLocaleString()} tokens`;
+    // #506: requests on a ChatGPT plan are counted in tokens and add no dollars.
     const cost = `~$${(usage.estimatedCostUSD ?? 0).toFixed(2)}`;
     const since = usage.since
       ? ` (since ${new Date(usage.since).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })})`
@@ -397,7 +506,7 @@
   let connectorMessage = "";
   let connectorError = false;
   let destroyed = false;
-  onDestroy(() => { destroyed = true; });
+  onDestroy(() => { destroyed = true; stopChatGptPoll(); });
 
   async function loadConnector(): Promise<void> {
     try {
@@ -696,18 +805,66 @@
             <option value="azure">Azure OpenAI</option>
             <option value="local">Local / self-hosted (Ollama, LM Studio, vLLM)</option>
             <option value="custom">Custom</option>
+            <option value="chatgpt">ChatGPT account (sign in, Plus or Pro)</option>
           </select>
         </div>
 
-        <div class="field">
-          <label for="baseUrl">API base URL</label>
-          <input id="baseUrl" type="text" bind:value={apiBaseUrl} placeholder="Leave blank to use OpenAI's default endpoint" />
-          <div class="hint">Works with any OpenAI-Responses-API-compatible endpoint — Azure OpenAI, a self-hosted server, OpenRouter, etc. Blank means the standard OpenAI endpoint.</div>
-        </div>
+        {#if usesChatGpt}
+          <!-- #506: the AI on a ChatGPT plan. No API key and no base URL here. -->
+          <div class="field" data-chatgpt-signin>
+            <div class="field-label">ChatGPT account</div>
+            {#if chatgpt?.status === "signedIn"}
+              <div class="key-row">
+                <span class="usage-line" data-chatgpt-identity>Signed in as <b>{chatgpt.email || chatgpt.name || "your ChatGPT account"}</b></span>
+                <button type="button" class="btn" on:click={chatgptSignOut} disabled={chatgptBusy}>Sign out</button>
+              </div>
+              <div class="hint">Bridge's AI requests use this account's ChatGPT plan allowance, not an API key. If the plan's limit is reached, a running job stops and can be run again later.</div>
+            {:else if chatgpt?.status === "signingIn"}
+              <div class="key-row">
+                <span class="usage-line">Waiting for you to finish signing in in your browser…</span>
+                <button type="button" class="btn" on:click={chatgptCancelSignIn}>Cancel</button>
+              </div>
+              {#if chatgpt.signInUrl}
+                <div class="hint">If your browser did not open, copy this address into it:</div>
+                <input type="text" readonly value={chatgpt.signInUrl} aria-label="Sign-in address" on:focus={(e) => e.currentTarget.select()} />
+              {/if}
+            {:else}
+              <div class="key-row">
+                <span class="usage-line">{chatgpt?.status === "reauthRequired" ? "Your sign-in has expired." : "Not signed in."}</span>
+                <button type="button" class="btn primary" on:click={chatgptSignIn} disabled={chatgptBusy}>{chatgpt?.status === "reauthRequired" ? "Sign in again" : "Continue with ChatGPT"}</button>
+              </div>
+              <div class="hint">Opens OpenAI's sign-in page in your browser. Needs a ChatGPT Plus or Pro plan; a Free account is refused. Bridge never sees your password.</div>
+            {/if}
+            {#if chatgpt?.error}
+              <div class="hint signin-problem" role="alert" data-chatgpt-error>{chatgpt.error.message}</div>
+            {/if}
+            {#if chatgpt?.limitReached}
+              <div class="hint signin-problem" role="status" data-chatgpt-limit>{chatgpt.limitMessage}</div>
+            {/if}
+            {#if chatgptMessage}
+              <div class="hint" role="status" data-chatgpt-message>{chatgptMessage}</div>
+            {/if}
+          </div>
+        {:else}
+          <div class="field">
+            <label for="baseUrl">API base URL</label>
+            <input id="baseUrl" type="text" bind:value={apiBaseUrl} placeholder="Leave blank to use OpenAI's default endpoint" />
+            <div class="hint">Works with any OpenAI-Responses-API-compatible endpoint — Azure OpenAI, a self-hosted server, OpenRouter, etc. Blank means the standard OpenAI endpoint.</div>
+          </div>
+        {/if}
 
         <div class="field">
           <label for="model">Model</label>
-          <input id="model" type="text" bind:value={model} disabled={!canChangeModel} placeholder="e.g. gpt-5.6-terra, gpt-5.6, claude-sonnet-5, llama3" />
+          {#if usesChatGpt && chatgptModelChoices.length}
+            <!-- #506: the models this ChatGPT account is offered under its plan. -->
+            <select id="model" bind:value={model} disabled={!canChangeModel} data-chatgpt-models>
+              {#each chatgptModelChoices as choice (choice.slug)}
+                <option value={choice.slug}>{choice.displayName}</option>
+              {/each}
+            </select>
+          {:else}
+            <input id="model" type="text" bind:value={model} disabled={!canChangeModel} placeholder="e.g. gpt-5.6-terra, gpt-5.6, claude-sonnet-5, llama3" />
+          {/if}
           {#if !canChangeModel}
             <div class="hint" data-model-locked>Only a project admin can change the AI model.</div>
           {/if}
@@ -769,16 +926,18 @@
           {/if}
         </div>
 
-        <div class="field">
-          <label for="apiKey">API key</label>
-          <div class="key-row">
-            <input id="apiKey" type="password" bind:value={apiKey} placeholder={hasApiKey ? "•••••••••••••••• (already set — enter to replace)" : "Enter your API key"} />
-            {#if hasApiKey}
-              <button type="button" class="btn" on:click={removeApiKey} disabled={saving}>Remove key</button>
-            {/if}
+        {#if !usesChatGpt}
+          <div class="field">
+            <label for="apiKey">API key</label>
+            <div class="key-row">
+              <input id="apiKey" type="password" bind:value={apiKey} placeholder={hasApiKey ? "•••••••••••••••• (already set — enter to replace)" : "Enter your API key"} />
+              {#if hasApiKey}
+                <button type="button" class="btn" on:click={removeApiKey} disabled={saving}>Remove key</button>
+              {/if}
+            </div>
+            <div class="hint">Stored locally via your OS's secure storage — never sent anywhere except the endpoint above.</div>
           </div>
-          <div class="hint">Stored locally via your OS's secure storage — never sent anywhere except the endpoint above.</div>
-        </div>
+        {/if}
 
         <div class="field">
           <div class="field-label">Used so far on this device</div>
@@ -787,6 +946,9 @@
             <button type="button" class="btn" on:click={resetAiUsage} disabled={saving}>Reset counter</button>
           </div>
           <div class="hint">Every request Bridge sent from this computer, as the provider reported it — the review, the semantic mapping and the gap-fill alignment for each verse (#476), at the prices in Bridge's table. An estimate, not the provider's bill.</div>
+          {#if usesChatGpt}
+            <div class="hint" data-chatgpt-usage-note>Requests on a ChatGPT plan are counted in tokens here and add no dollars: they use the plan's allowance. Bridge cannot read how much allowance is left; see {chatgpt?.usageUrl || "chatgpt.com/settings/usage"}.</div>
+          {/if}
         </div>
 
         <div class="save-row">
@@ -1169,6 +1331,7 @@
   .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .btn:disabled { opacity: 0.6; cursor: not-allowed; }
   .save-msg { font-size: var(--fs-xs); color: var(--success); }
+  .signin-problem { color: var(--danger); }
   .ref-row { display: flex; gap: 6px; }
   .ref-row input { flex: 1; }
   .term-conflict { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--warning); border-radius: 6px; background: var(--warning-bg); font-size: var(--fs-sm); }

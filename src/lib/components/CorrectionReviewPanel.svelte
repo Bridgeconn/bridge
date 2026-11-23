@@ -105,7 +105,7 @@
   $: proposalCurrent = Boolean(
     selectedProposal?.lifecycleStatus === "ACTIVE" && proposalBlockingReasons.length === 0,
   );
-  $: providerAvailable = Boolean(settings?.hasApiKey);
+  $: providerAvailable = Boolean(settings?.aiReady ?? settings?.hasApiKey);
   $: proposalReviewed = Boolean(
     selectedProposal?.reviewStatus === "HUMAN_MODIFIED"
       || selectedProposal?.reviewStatus === "HUMAN_APPROVED",

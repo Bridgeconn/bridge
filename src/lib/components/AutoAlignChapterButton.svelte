@@ -37,7 +37,10 @@
 
   onMount(async () => {
     try {
-      hasKey = Boolean((await bridge.getSettings())?.hasApiKey);
+      // #506: ready with an API key or a ChatGPT sign-in; an engine from
+      // before that reports only hasApiKey.
+      const settings = await bridge.getSettings();
+      hasKey = Boolean(settings?.aiReady ?? settings?.hasApiKey);
     } catch {
       hasKey = false;
     }
@@ -160,13 +163,13 @@
       on:click={askEstimate}
       disabled={disabled || !hasKey || phase === "estimating"}
       title={hasKey === false
-        ? "Add an API key in Settings to align automatically"
+        ? "Add an API key or sign in with ChatGPT in Settings to align automatically"
         : "Align this chapter automatically: three verses at a time, each asked twice. Shows the cost before anything is sent."}
     >{phase === "estimating" ? "Working out the cost…" : "Align chapter with AI"}</button>
   {:else if phase === "confirm" && estimate}
     <span class="confirm" role="group" aria-label="Confirm automatic alignment">
       Chapter {chapter}: {estimate.windows} windows · {estimate.calls} requests ·
-      ~{Math.round(estimate.estimatedInputTokens / 1000)}k tokens · {money(estimate.estimatedCostUSD)}
+      ~{Math.round(estimate.estimatedInputTokens / 1000)}k tokens · {estimate.planUsage ? "uses your ChatGPT plan allowance" : money(estimate.estimatedCostUSD)}
       <button class="whole-book-btn primary" on:click={start}>Start</button>
       <button class="whole-book-btn" on:click={() => (phase = "idle")}>Cancel</button>
     </span>

@@ -609,7 +609,7 @@ describe("CrossVerseAlignmentModal", () => {
       await renderPage("2");
       const button = await aiItem(/Align automatically/);
       await waitFor(() => expect(button).toBeDisabled());
-      expect(hintOf(button)).toBe("Add an API key in Settings to align automatically");
+      expect(hintOf(button)).toBe("Add an API key or sign in with ChatGPT in Settings to align automatically");
       expect((await aiItem(/Suggest links/))).toBeEnabled();
     });
 

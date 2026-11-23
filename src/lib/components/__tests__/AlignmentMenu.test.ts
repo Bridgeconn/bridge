@@ -81,14 +81,14 @@ describe("AlignmentMenu (#488)", () => {
 
   it("keeps the buttons' disabled states and tooltips", async () => {
     const actions = mount({ crossVerseDisabled: true, alignChapterDisabled: true,
-      alignChapterTitle: "Add an API key in Settings to align automatically" });
+      alignChapterTitle: "Add an API key or sign in with ChatGPT in Settings to align automatically" });
     await fireEvent.click(trigger());
     const cross = entry(/Cross-verse alignment/);
     expect(cross).toBeDisabled();
     expect(hintOf(cross)).toBe("Align several verses of this chapter side by side (Ctrl-click or Shift-click verses to pick them first)");
     const auto = entry("Align chapter with AI");
     expect(auto).toBeDisabled();
-    expect(hintOf(auto)).toBe("Add an API key in Settings to align automatically");
+    expect(hintOf(auto)).toBe("Add an API key or sign in with ChatGPT in Settings to align automatically");
     await fireEvent.click(cross);
     await fireEvent.click(auto);
     expect(actions.onCrossVerse).not.toHaveBeenCalled();

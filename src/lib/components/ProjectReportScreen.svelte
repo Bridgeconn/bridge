@@ -222,7 +222,7 @@
     : "";
   $: triageButtonTitle = triageAvailable
     ? "Ask the configured AI model how likely each Greek Room finding is to be a false positive"
-    : (triageUnavailableReason || "AI triage needs an API key. Add one in Settings.");
+    : (triageUnavailableReason || "AI triage needs an API key or a ChatGPT sign-in. Set one up in Settings.");
 </script>
 
 <svelte:window on:beforeprint={() => (printing = true)} on:afterprint={() => (printing = false)} />
