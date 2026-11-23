@@ -40,6 +40,12 @@ class AITransportError(AIError, ai_http.TransportFailure):
     AIError, so every existing `except AIError` handles it unchanged."""
 
 
+class AIPlanLimitError(AIError):
+    """Nothing more can be sent on a ChatGPT sign-in for now (#506): the plan's
+    limit was reached, or the sign-in has lapsed. Never retried; a job that
+    meets it stops instead of failing each remaining verse in turn."""
+
+
 _QUOTED_TEXT = re.compile(
     r'"([^"\r\n]+)"|\'([^\'\r\n]+)\'|“([^”\r\n]+)”|‘([^’\r\n]+)’'
 )
@@ -463,6 +469,17 @@ class OpenAIResponsesClient:
         # de-duplication. Every switch is off unless the caller sets it.
         self.review_options = ReviewPayloadOptions()
 
+    def _should_retry(self, status: int, raw: bytes) -> bool:
+        """Whether an answer with this status is worth sending again. A hook:
+        the ChatGPT plan client (#506) refuses to retry a reached plan limit,
+        which also arrives as a 429."""
+        return status in (408, 409, 429, 500, 502, 503, 504)
+
+    def _estimate_cost(self, input_tokens: int, output_tokens: int, cached_input_tokens: int) -> float:
+        """Dollars for one call at Bridge's price table. A hook: a call on a
+        ChatGPT plan (#506) is not billed in dollars."""
+        return estimate_cost(self.model, input_tokens, output_tokens, cached_input_tokens)
+
     def _model_supports_reasoning_effort(self) -> bool:
         name = self.model.lower()
         # Reasoning-family models (o1/o3/o4-mini, gpt-5.x incl. this app's
@@ -508,10 +525,10 @@ class OpenAIResponsesClient:
                 # estimated from the body, never as a free call.
                 estimated = estimate_input_tokens(body)
                 self.last_usage = AIUsage(estimated, 0, estimated, 0, calls=1, unanswered_calls=1)
-                self.last_cost_usd = estimate_cost(self.model, estimated, 0)
+                self.last_cost_usd = self._estimate_cost(estimated, 0, 0)
                 self.call_log.append((self.last_usage, self.last_cost_usd))
                 raise
-            if status not in (408, 409, 429, 500, 502, 503, 504):
+            if not self._should_retry(status, raw):
                 break
             if attempt < 2:
                 time.sleep(1.0 * (2 ** attempt))
@@ -659,7 +676,7 @@ class OpenAIResponsesClient:
             cached,
             calls=1,
         )
-        self.last_cost_usd=estimate_cost(self.model,self.last_usage.input_tokens,self.last_usage.output_tokens,self.last_usage.cached_input_tokens)
+        self.last_cost_usd=self._estimate_cost(self.last_usage.input_tokens,self.last_usage.output_tokens,self.last_usage.cached_input_tokens)
         self.call_log.append((self.last_usage, self.last_cost_usd))
         text = self._extract_text(response)
         if not text:

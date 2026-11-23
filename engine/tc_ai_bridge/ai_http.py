@@ -106,3 +106,19 @@ _OPENER = urllib.request.build_opener(_HTTPHandler(), _HTTPSHandler())
 def urlopen(req: urllib.request.Request, timeout: float) -> Any:
     """`urllib.request.urlopen(req, timeout=...)`, connecting IPv4 first."""
     return _OPENER.open(req, timeout=timeout)
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
+_NO_REDIRECT_OPENER = urllib.request.build_opener(_HTTPHandler(), _HTTPSHandler(), _NoRedirect())
+
+
+def urlopen_no_redirect(req: urllib.request.Request, timeout: float) -> Any:
+    """`urlopen`, but a redirect is an `HTTPError` instead of being followed.
+    For a request that carries a sign-in credential (#506): following a
+    redirect would hand the credential, and the Scripture in the body, to
+    whatever origin the answer named."""
+    return _NO_REDIRECT_OPENER.open(req, timeout=timeout)

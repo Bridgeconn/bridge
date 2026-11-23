@@ -157,6 +157,8 @@ _READ = (
     "alignment.status", "alignment.backups", "alignment.resetStatus", "alignment.resetChapter.status", "alignment.resetChapter.preview",
     "lexicon.getEntry", "settings.get", "terminology.list",
     "ai.review.status", "ai.review.listForChapter",
+    # #506: who is signed in to ChatGPT and which models that account offers.
+    "ai.chatgpt.status", "ai.chatgpt.models",
     "passageSemantic.status", "passageSemantic.getProjectMetadata", "passageSemantic.getCurrentPassage",
     "passageSemantic.getStaleSummary", "passageSemantic.getMigrationReport",
     "sourceSemantic.getRange", "sourceSemantic.getUnit", "sourceSemantic.getCoverageAccounts",
@@ -230,6 +232,9 @@ _WRITE = (
     "issueResolution.save", "issueResolution.queueParatext", "issueResolution.retryParatext",
     "issueResolution.resolveFromParatext",
     "paratext.setReference", "paratext.installConnector", "logos.setReference", "settings.set",
+    # #506: the ChatGPT sign-in is this installation's AI credential, the same
+    # class of change as saving an API key through settings.set.
+    "ai.chatgpt.signIn", "ai.chatgpt.cancelSignIn", "ai.chatgpt.signOut",
     # #356: rewrites the link in every sibling's collection.json.
     "paratext.relink",
     # #358: Paratext write-back. Any Bridge write role may post (decision 4):

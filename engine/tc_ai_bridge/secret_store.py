@@ -301,6 +301,52 @@ class AppSettings:
                 return ''
         return ''
 
+    # -- Sign in with ChatGPT (#506) ----------------------------------------
+    #
+    # Who is signed in and which client id OpenAI issued for this computer are
+    # ordinary settings. The tokens are secrets, DPAPI-wrapped beside the API
+    # key (in-session only where DPAPI is unavailable). `chatgpt_session.py` is
+    # the only caller.
+
+    @property
+    def chatgpt_connection(self) -> dict:
+        value = self.data.get('chatgpt_connection')
+        return dict(value) if isinstance(value, dict) else {}
+
+    def set_chatgpt_connection(self, value: dict | None) -> None:
+        if value:
+            self.data['chatgpt_connection'] = dict(value)
+        else:
+            self.data.pop('chatgpt_connection', None)
+        self.save_sanitized()
+
+    def get_chatgpt_tokens(self) -> dict:
+        session = self.data.get('_session_chatgpt_tokens')
+        if isinstance(session, dict) and session:
+            return dict(session)
+        enc = str(self.data.get('chatgpt_tokens_dpapi', '')).strip()
+        if enc and os.name == 'nt':
+            try:
+                value = json.loads(dpapi_unprotect(enc))
+                return value if isinstance(value, dict) else {}
+            except Exception:
+                return {}
+        return {}
+
+    def set_chatgpt_tokens(self, tokens: dict | None) -> None:
+        """Store the token set, or with None remove it. A refresh token is used
+        once and replaced, so this is written before the new one is used."""
+        self.data.pop('chatgpt_tokens_dpapi', None)
+        self.data.pop('_session_chatgpt_tokens', None)
+        if tokens:
+            self.data['_session_chatgpt_tokens'] = dict(tokens)
+            if os.name == 'nt':
+                try:
+                    self.data['chatgpt_tokens_dpapi'] = dpapi_protect(json.dumps(tokens))
+                except Exception:
+                    pass
+        self.save_sanitized()
+
     @property
     def model(self) -> str:
         """The configured model; `DEFAULT_REVIEW_MODEL` (#479) until one is saved."""
