@@ -30,6 +30,9 @@ export const DISPLAY_FIXTURES: Record<string, VerseDisplay> = {
   ["a\n\\d A Psalm of David\n\\q1"]: {"plain": "a\nA Psalm of David\n", "notes": [], "removed": [[2, 5], [22, 25]], "styles": [], "warnings": [], "paras": [{"marker": "d", "position": 2}, {"marker": "q1", "position": 19}]},
   ["I lay down \\k and slept\\k*.\n\\p"]: {"plain": "I lay down and slept.\n", "notes": [], "removed": [[11, 14], [23, 26], [28, 30]], "styles": [{"marker": "k", "start": 11, "end": 20}], "warnings": [], "paras": [{"marker": "p", "position": 22}]},
   ["\\q1 கர்த்தாவே,\n\\q2 என் சத்துருக்கள்"]: {"plain": "கர்த்தாவே,\nஎன் சத்துருக்கள்", "notes": [], "removed": [[0, 4], [15, 19]], "styles": [], "warnings": [], "paras": [{"marker": "q1", "position": 0}, {"marker": "q2", "position": 11}]},
+  ["The book of \\bk Psalms\\bk* is a hymn book."]: {"plain": "The book of Psalms is a hymn book.", "notes": [], "removed": [[12, 16], [22, 26]], "styles": [{"marker": "bk", "start": 12, "end": 18}], "warnings": [], "paras": []},
+  ["Book one \\ior 1-41\\ior*"]: {"plain": "Book one 1-41", "notes": [], "removed": [[9, 14], [18, 23]], "styles": [{"marker": "ior", "start": 9, "end": 13}], "warnings": [], "paras": []},
+  ["A line\\f + \\ft with a note\\f* in it."]: {"plain": "A line in it.", "notes": [{"kind": "footnote", "caller": "+", "reference": "", "parts": [{"marker": "ft", "text": "with a note"}], "text": "with a note", "position": 6}], "removed": [[6, 29]], "styles": [], "warnings": [], "paras": []},
 };
 
 /** The engine's display for a seeded raw string, or the identity display for a

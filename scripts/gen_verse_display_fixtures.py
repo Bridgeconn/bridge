@@ -45,6 +45,10 @@ RAW = [
     "a\n\\d A Psalm of David\n\\q1",
     "I lay down \\k and slept\\k*.\n\\p",
     "\\q1 கர்த்தாவே,\n\\q2 என் சத்துருக்கள்",
+    # BookIntroduction.test.ts introduction lines (#507)
+    "The book of \\bk Psalms\\bk* is a hymn book.",
+    "Book one \\ior 1-41\\ior*",
+    "A line\\f + \\ft with a note\\f* in it.",
 ]
 
 entries = []

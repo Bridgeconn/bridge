@@ -120,7 +120,9 @@ def test_chapter_verse_data_says_which_paragraph_a_verse_opens_in(tmp_path):
     heading are in no stored verse string; they come from the preserved source."""
     engine = _import_poetry(tmp_path)
     result = call(engine, "chapter.verseData", {"chapter": "3"})["result"]
-    assert sorted(result["headings"]) == ["3", "4"]
+    # Verse 1 carries the psalm's title (\d before verse 1), 3 and 4 a heading each.
+    assert sorted(result["headings"]) == ["1", "3", "4"]
+    assert result["headings"]["1"] == [{"tag": "d", "text": "A Psalm of David"}]
     # Verse 2 is not here: the \q1 it opens in is the last marker of verse 1's
     # own text, which the reader carries forward.
     assert result["openers"] == {"1": "q1", "3": "q1", "4": "p"}

@@ -86,6 +86,7 @@ import type {
   UsersList,
   WorkspaceUser,
   VerseAlignment,
+  IntroEntry,
   VerseData,
   VerseHeading,
   VerseMarkupAction,
@@ -507,6 +508,9 @@ export type EngineMethod =
   | "verse.edit"
   | "verse.history"
   | "verse.markup"
+  | "heading.edit"
+  | "book.introduction"
+  | "book.introduction.edit"
   | "verse.get"
   | "verse.runChecks";
 
@@ -1107,6 +1111,34 @@ export const bridge = {
     opening?: string;
   }): Promise<VerseMarkupResult> {
     return call("verse.markup", params);
+  },
+
+  /** #507: the text of one heading a verse introduces -- a section heading
+   *  (`\s`), a major one (`\ms`), a reference line (`\r`) or a psalm title
+   *  before verse 1 (`\d`). `index` is its place among that verse's headings.
+   *  The engine writes nothing unless the heading still reads
+   *  `expectedOldText`. The answer is the verse's headings after the save. */
+  editHeading(chapter: string, verse: string, index: number, newText: string, expectedOldText: string): Promise<{
+    chapter: string; verse: string; index: number;
+    headings: VerseHeading[];
+    /** Marker problems in the saved text; never blocking (the save happened). */
+    warnings: string[];
+  }> {
+    return call("heading.edit", { chapter, verse, index, newText, expectedOldText });
+  },
+
+  /** #507: the open book's introduction, in order. Empty for a book with none. */
+  bookIntroduction(): Promise<{ bookId: string; entries: IntroEntry[] }> {
+    return call("book.introduction", {});
+  },
+
+  /** #507: the text of one introduction line; `index` is the entry's own.
+   *  Refused unless the line still reads `expectedOldText`. */
+  editIntroduction(index: number, newText: string, expectedOldText: string): Promise<{
+    entry: IntroEntry;
+    warnings: string[];
+  }> {
+    return call("book.introduction.edit", { index, newText, expectedOldText });
   },
 
   getVerse(chapter: string, verse: string): Promise<VerseData> {

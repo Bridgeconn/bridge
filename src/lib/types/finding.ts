@@ -1257,6 +1257,17 @@ export interface VerseHeading {
   text: string;
 }
 
+/** One line of the book's introduction (`\is`, `\ip`, `\iot`, `\io1` ...),
+ *  from `book.introduction` (#507). `index` is the line's place in the book's
+ *  stored headers and is what an edit names; `text` is the raw stored string
+ *  an edit works on; `display` is what the reader shows, as for a verse. */
+export interface IntroEntry {
+  index: number;
+  tag: string;
+  text: string;
+  display: VerseDisplay;
+}
+
 export type NativeCheckTool = "translationNotes" | "translationWords";
 export type CheckSelectionStatus = "pending" | "selected" | "nothing_to_select" | "invalidated";
 export type CheckEvaluationStatus = "not_run" | "running" | "passed" | "issue_open" | "needs_review" | "failed";

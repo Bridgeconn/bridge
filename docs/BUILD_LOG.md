@@ -26534,3 +26534,101 @@ and the book introduction) and parts 4 to 6 (editing headings, the Psalm title a
 introduction). Parts 4 to 6 each need the maintainer's decision first: a heading edit
 from the editor is a new caller of `apply_heading_edit`, an introduction edit is a new
 writer, and a `\d` before verse 1 is a Scripture-write question.
+
+## 2026-11-23 — #507 parts 3 to 6: headings, psalm titles and the introduction, shown and edited
+
+Same branch, on top of 374d754. Joel took the three decisions these parts needed, for
+the team, while the maintainer was on leave (`docs/DECISIONS.md` 2026-11-23). With this
+every marker #507 lists is both shown and editable in the editor.
+
+**Parser (`usfm_parser.py`).**
+- A heading after a chapter's last verse stays pending and is filed against the next
+  chapter's first verse. It used to be filed a verse early, which drew `\ms BOOK TWO`
+  above the last verse of Psalm 41. Only a heading after the book's last verse is still
+  filed against that verse.
+- A heading before the first `\c` is a heading of chapter 1's first verse, not a header
+  line. `\ms BOOK ONE` over Psalm 1 was in `headers.json` and was never drawn.
+- A `\d` between `\c` and the chapter's first `\v` is filed with that verse's headings
+  under tag `d` (`TITLE_MARKER`). It was in no verse and no heading: kept only in the
+  preserved source, not shown, not editable. A `\d` after a `\v` is unchanged.
+- `UsfmHeading` and `UsfmHeader` carry their place in the source (`offset`, `end`), so
+  an export can write an edited one back.
+- `opening_paragraphs` no longer counts a title before verse 1 as the paragraph that
+  verse opens in. `INTRODUCTION_MARKERS` is the one list of introduction paragraphs.
+
+**Engine.**
+- `heading.edit {chapter, verse, index, newText, expectedOldText}`: the text of one
+  heading or title, through the existing `apply_heading_edit`. Language QA's scan of the
+  chapter is invalidated, because it reads headings.
+- `book.introduction`: the introduction lines from `headers.json`, each with the same
+  `display` payload a verse has. A project with no `headers.json` is read from its
+  preserved source by `identify_usfm`.
+- `book.introduction.edit {index, newText, expectedOldText}`: one line's text, through
+  the new `TranslationCoreProject.apply_header_edit` (a backup, a journal transaction
+  with the before and after, rollback on failure, refusal on a stale text). Introduction
+  markers only.
+- Both edits collapse whitespace as the import does and refuse a text holding a marker
+  that would start a new block (`\c`, `\v`, `\p`, `\q1`, `\s`, `\ip` ...). Unbalanced
+  inline markers are reported with the save and do not block it, as for a verse.
+- Export (`_source_preserving_usfm`): a heading, title or introduction line that
+  differs from the source is written back in its own place, keeping the blank lines the
+  block ended with. This also fixes headings changed through the Paratext review queue,
+  which Bridge's own export used to drop. A verse whose stored headings do not match
+  the source by count is left as the source has it.
+- `heading.edit` and `book.introduction.edit` are `WRITE`, `book.introduction` is `READ`.
+
+**Frontend.**
+- `HeadingRow.svelte` draws each heading (it took the heading styles from `VerseList`)
+  and edits it in place: a pencil, a one-line box, Enter to save, Esc to cancel. The
+  heading's accessible name is its text alone (`aria-labelledby`), so the button inside
+  it is not read as part of the heading. A title (`\d`) is italic at the verse's size
+  and, like `\r`, does not stick.
+- `BookIntroduction.svelte` shows the introduction above the book's first chapter:
+  titles, headings, paragraphs and the outline's levels, with the character styles the
+  engine reports and a callout for a footnote. It folds away (remembered, open by
+  default). A line is edited as its stored string, like a verse; Ctrl+Enter saves.
+
+**Run and watched (2026-11-23, Windows, Python 3.12).**
+- Engine, `pytest -n auto --basetemp=C:/t507/bt8`: 5,993 passed, 12 failed, 4 skipped,
+  3 xfailed. All 12 are `tests/semantic/test_semantic_mapping_stage3.py` (the absent
+  Stage 3 database). Neither golden moved.
+- One existing test was changed on purpose:
+  `test_headings_are_filed_against_the_verse_they_introduce` pinned the old
+  "a verse early" filing and now pins the new one.
+- New engine tests: `tests/service/test_heading_and_introduction_edit.py` (13, through a
+  real import and the dispatcher), among them an untouched book exporting byte for byte
+  and eight edits exported with nothing else moved; four new parser tests.
+- Frontend: `npm run check` 0 errors 0 warnings; `npm run test` 142 files, 1,410
+  passed; `npm run build` completed.
+- Frozen: `scripts/build-sidecars.ps1`, then `scripts/smoke_sidecars.py
+  engine/dist/bridge-engine.exe` passed. The smoke test does not call anything new, so
+  the frozen `bridge-engine.exe` was also driven over stdio by hand with a small Psalms
+  import: `verse.markup`, `display.paras`, `openers`, the title and `\ms` filing,
+  `book.introduction`, `heading.edit` on a heading and on a title,
+  `book.introduction.edit`, a refused block marker, and an export compared with the
+  expected file. 12 of 12 passed. This covers parts 1 and 2 as well, which had not been
+  run frozen.
+
+**Not run.** `cargo check` / `cargo test` (no Rust file changed; none of the new calls
+is slow enough to need a timeout arm). The desktop app: a dev app started at 15:15 from
+other work was still running with the old engine and was left alone.
+
+**Not verified. For Joel at 1366x768:** the pencil on a heading (faint, clear on hover)
+and the edit box in its place; a title above verse 1; `\ms` at the top of the chapter it
+opens; the introduction's indents, its fold, and its edit box growing with the text; a
+right-to-left project.
+
+**What a reviewer will notice.**
+- A project imported before this build must be imported again to get the title before
+  verse 1 and the new `\ms` placement. The introduction, the poetry lines and the edits
+  work on an existing project.
+- The Paratext review queue's introduction region is unchanged: it still writes to
+  Paratext only and does not touch `headers.json`. A heading that sits before a `\c` may
+  no longer be found by a Paratext heading proposal anchored at the verse before it,
+  which then becomes review-only. Read from the code, not tried against a host.
+
+**Left out of #507, on purpose.** Adding or removing a heading, a title or an
+introduction line, and changing a marker (the issue's open question; the decision covers
+text only). Poetry lines in `AlignmentModal`, `TranslationHelpsReview` and
+`VerseHistoryPopover`, which still show `display.plain`. `\cl` and `\cd` between `\c`
+and verse 1, which were not asked for.

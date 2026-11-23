@@ -7,8 +7,10 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { get } from "svelte/store";
 import { tick } from "svelte";
 
-const { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRecord, housestyleSetState, languageQaLearnedForget, languageQaScopeFind, verseHistory, languageQaWordsAdd, languageQaOccurrences, paratextNotesForChapter, verseMarkup } = vi.hoisted(() => ({
+const { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRecord, housestyleSetState, languageQaLearnedForget, languageQaScopeFind, verseHistory, languageQaWordsAdd, languageQaOccurrences, paratextNotesForChapter, verseMarkup, editHeading, bookIntroduction } = vi.hoisted(() => ({
   verseMarkup: vi.fn(),
+  editHeading: vi.fn(),
+  bookIntroduction: vi.fn(),
   paratextNotesForChapter: vi.fn(),
   languageQaWordsAdd: vi.fn(),
   languageQaOccurrences: vi.fn(),
@@ -24,7 +26,7 @@ const { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRec
 }));
 
 vi.mock("../../api/bridgeClient", () => ({
-  bridge: { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRecord, housestyleSetState, languageQaLearnedForget, languageQaScopeFind, verseHistory, languageQaWordsAdd, languageQaOccurrences, paratextNotesForChapter, verseMarkup },
+  bridge: { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRecord, housestyleSetState, languageQaLearnedForget, languageQaScopeFind, verseHistory, languageQaWordsAdd, languageQaOccurrences, paratextNotesForChapter, verseMarkup, editHeading, bookIntroduction },
 }));
 import { lqaFinding } from "./languageQaFixture";
 import { scopeDialog } from "../../scopedApply";
@@ -130,6 +132,8 @@ function seed(text: string, findings: QaFinding[] = []): void {
   decideVerse.mockResolvedValue(undefined);
   editVerse.mockResolvedValue({ issueResolutionsNeedingRecheck: 0 });
   runVerseChecks.mockResolvedValue([]);
+  // #507: the list reads the open book's introduction; most tests have none.
+  bookIntroduction.mockResolvedValue({ bookId: "php", entries: [] });
 }
 
 /** The one verse row seed() renders, addressed the way the component keys it. */
@@ -1940,6 +1944,62 @@ describe("VerseList paragraph and poetry lines (#507)", () => {
       await fireEvent.click(tool("q2"));
       expect(await screen.findByText("The first line takes its level from the verse before it.")).toBeInTheDocument();
       expect(area.value).toBe("Lord, how\n\\q2 many");
+    });
+  });
+
+  describe("what stands outside the verses", () => {
+    afterEach(() => project.set(null));
+
+    it("draws a psalm title above verse 1 as a title, not as a verse line or a sticky heading", () => {
+      seed(PSALM_3_1);
+      headingsByVerse.set({ [key]: [{ tag: "d", text: "A Psalm of David, when he fled." }] });
+      render(VerseList, { props: { onSelect: vi.fn() } });
+      const title = screen.getByRole("heading", { name: "A Psalm of David, when he fled." });
+      expect(title.classList.contains("title")).toBe(true);
+      expect(title.classList.contains("unstuck")).toBe(true);
+      // Above the verse row, and not in the verse's own text.
+      expect(title.compareDocumentPosition(verseRow())).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      expect(verseRow().textContent).not.toContain("A Psalm of David");
+    });
+
+    it("edits a heading in place and shows the headings the engine stored", async () => {
+      seed("alpha beta");
+      headingsByVerse.set({ [key]: [{ tag: "ms", text: "BOOK TWO" }, { tag: "s", text: "The Lord answers" }] });
+      const onSelect = vi.fn();
+      render(VerseList, { props: { onSelect } });
+      await fireEvent.click(screen.getByLabelText("Edit the heading: The Lord answers"));
+      const input = screen.getByLabelText("Text of the heading") as HTMLInputElement;
+      editHeading.mockResolvedValue({ chapter: "1", verse: "6", index: 1, warnings: [],
+        headings: [{ tag: "ms", text: "BOOK TWO" }, { tag: "s", text: "The Lord replies" }] });
+      await fireEvent.input(input, { target: { value: "The Lord replies" } });
+      await fireEvent.keyDown(input, { key: "Enter" });
+      expect(await screen.findByRole("heading", { name: "The Lord replies" })).toBeInTheDocument();
+      // The chapter and verse the list is showing, and this heading's place among that verse's headings.
+      expect(editHeading).toHaveBeenCalledWith("1", "6", 1, "The Lord replies", "The Lord answers");
+      // The major heading beside it is untouched, and editing a heading selects no verse.
+      expect(screen.getByRole("heading", { name: "BOOK TWO" }).classList.contains("major")).toBe(true);
+      expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    it("shows the book's introduction above the first chapter's verses", async () => {
+      seed("alpha beta");
+      bookIntroduction.mockResolvedValue({ bookId: "psa", entries: [
+        { index: 4, tag: "is", text: "Introduction", display: displayFor("Introduction") },
+        { index: 5, tag: "ip", text: "About the book.", display: displayFor("About the book.") },
+      ] });
+      project.set({ path: "C:/p/psa", bookId: "psa", bookName: "Psalms", targetLanguage: "English",
+                    tcVersion: "", chapters: ["1", "2"], checkTypes: {} });
+      render(VerseList, { props: { onSelect: vi.fn() } });
+      const intro = await screen.findByRole("region", { name: "Book introduction" });
+      expect(Array.from(intro.querySelectorAll(".intro-text")).map((line) => line.textContent)).toEqual(["Introduction", "About the book."]);
+      expect(intro.compareDocumentPosition(verseRow())).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      // Not on a later chapter.
+      cleanup();
+      currentChapter.set("2");
+      chapterVerseNums.set({ "2": ["6"] });
+      render(VerseList, { props: { onSelect: vi.fn() } });
+      await waitFor(() => expect(bookIntroduction).toHaveBeenCalledTimes(2));
+      expect(screen.queryByRole("region", { name: "Book introduction" })).toBeNull();
     });
   });
 

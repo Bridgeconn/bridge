@@ -251,6 +251,10 @@ export function toggleSidePanel(id: SidePanelId): void {
  * reader's clean text. Marks stay on the same characters. */
 export const rawView = persisted("bridge.editor.rawView.v1", false, isBoolean);
 
+/** The book's introduction (`\is`, `\ip`, `\iot`, `\io1` ...) is unfolded
+ *  above the first chapter (#507). Shown by default; folding it is remembered. */
+export const introOpen = persisted("bridge.editor.introOpen.v1", true, isBoolean);
+
 /** The verse list (the editor's own pane) is showing. On by default; the left
  *  rail's Verses button and its tab's close button turn it off. With no tab
  *  open at all, the work area says so and offers the verses back

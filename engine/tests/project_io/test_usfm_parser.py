@@ -9,7 +9,7 @@ import pytest
 
 from tc_ai_bridge.project_import import parse_scripture_file
 from tc_ai_bridge.usfm import whitespace_tokens
-from tc_ai_bridge.usfm_parser import HEADING_MARKERS, UsfmParseError, opening_paragraphs, parse_usfm
+from tc_ai_bridge.usfm_parser import HEADING_MARKERS, TITLE_MARKER, UsfmParseError, opening_paragraphs, parse_usfm
 
 
 def _verses(parsed):
@@ -84,11 +84,59 @@ def test_headings_are_filed_against_the_verse_they_introduce():
         "\\id TIT\n\\c 1\n\\s Opening\n\\p\n\\v 1 a\n\\v 2 b\n\\s The work\n\\p\n\\v 3 c\n\\s Trailing\n"
         "\\c 2\n\\p\n\\v 1 d\n"
     )
+    # #507: a heading after a chapter's last verse introduces the NEXT chapter.
+    # It used to be filed a verse early, under 1:3, and was drawn above it.
     assert [(h.chapter, h.verse, h.text) for h in parsed.headings] == [
-        ("1", "1", "Opening"), ("1", "3", "The work"), ("1", "3", "Trailing"),
+        ("1", "1", "Opening"), ("1", "3", "The work"), ("2", "1", "Trailing"),
     ]
     assert _verses(parsed)[("1", "2")] == "b"
     assert _verses(parsed)[("1", "3")] == "c"
+    # Each heading knows where it sits in the source, marker to next block.
+    source = (
+        "\\id TIT\n\\c 1\n\\s Opening\n\\p\n\\v 1 a\n\\v 2 b\n\\s The work\n\\p\n\\v 3 c\n\\s Trailing\n"
+        "\\c 2\n\\p\n\\v 1 d\n"
+    )
+    assert [source[h.offset:h.end] for h in parsed.headings] == ["\\s Opening\n", "\\s The work\n", "\\s Trailing\n"]
+
+
+def test_a_heading_after_the_books_last_verse_is_filed_against_that_verse():
+    """Nothing follows it to introduce; filing it there beats losing it."""
+    parsed = parse_usfm("\\id TIT\n\\c 1\n\\p\n\\v 1 a\n\\c 2\n\\p\n\\v 1 b\n\\s At the very end\n")
+    assert [(h.chapter, h.verse, h.text) for h in parsed.headings] == [("2", "1", "At the very end")]
+    assert _verses(parsed)[("2", "1")] == "b"
+
+
+def test_a_heading_before_the_first_chapter_opens_chapter_1_and_is_not_a_header():
+    parsed = parse_usfm("\\id PSA\n\\h Psalms\n\\mt Psalms\n\\ip About.\n\\ms BOOK ONE\n\\c 1\n\\q1\n\\v 1 a\n")
+    assert [(h.chapter, h.verse, h.tag, h.text) for h in parsed.headings] == [("1", "1", "ms", "BOOK ONE")]
+    assert [h.tag for h in parsed.headers] == ["id", "h", "mt", "ip"]
+    # A header line knows its place too, so an edited introduction line can
+    # be written back there.
+    about = next(h for h in parsed.headers if h.tag == "ip")
+    assert "\\id PSA\n\\h Psalms\n\\mt Psalms\n\\ip About.\n\\ms BOOK ONE\n"[about.offset:about.end] == "\\ip About.\n"
+
+
+def test_a_title_before_verse_1_is_filed_with_that_verses_headings():
+    """#507: between `\\c` and the first `\\v` a `\\d` is in no verse, so it
+    was stored nowhere but the preserved source. After a `\\v` it stays in
+    that verse's text, as before."""
+    parsed = parse_usfm(
+        "\\id PSA\n\\c 3\n\\d A Psalm of David\n\\q1\n\\v 1 a\n\\d Inside verse one\n\\q1\n\\v 2 b\n"
+        "\\c 4\n\\s A heading\n\\d To the choirmaster\n\\q1\n\\v 1 c\n"
+    )
+    assert [(h.chapter, h.verse, h.tag, h.text) for h in parsed.headings] == [
+        ("3", "1", TITLE_MARKER, "A Psalm of David"),
+        ("4", "1", "s", "A heading"), ("4", "1", TITLE_MARKER, "To the choirmaster"),
+    ]
+    assert _verses(parsed)[("3", "1")] == "a\n\\d Inside verse one\n\\q1"
+    assert TITLE_MARKER not in HEADING_MARKERS
+    # The title is not the paragraph verse 1 opens in.
+    assert opening_paragraphs(
+        "\\id PSA\n\\c 3\n\\d A Psalm of David\n\\q1\n\\v 1 a\n\\c 4\n\\d Only a title\n\\v 1 c\n", "3", ["1"],
+    ) == {"1": "q1"}
+    assert opening_paragraphs(
+        "\\id PSA\n\\c 3\n\\d A Psalm of David\n\\q1\n\\v 1 a\n\\c 4\n\\d Only a title\n\\v 1 c\n", "4", ["1"],
+    ) == {}
 
 
 _POETRY = (

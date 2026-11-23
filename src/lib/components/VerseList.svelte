@@ -19,6 +19,8 @@
   import FlagPopover from "./FlagPopover.svelte";
   import VerseHistoryPopover from "./VerseHistoryPopover.svelte";
   import VerseLineWrap from "./VerseLineWrap.svelte";
+  import HeadingRow from "./HeadingRow.svelte";
+  import BookIntroduction from "./BookIntroduction.svelte";
   import { rawView, revealSidePanel, textScale } from "../editorPrefs";
   import { openIssueSummary } from "../verseIssues";
   import { loadParatextNoteCounts, noteCountFor, requestParatextNote } from "../paratextNotes";
@@ -120,11 +122,6 @@
     q2: "Second-level poetry line (\\q2): set the level of the line the cursor is on",
     q3: "Third-level poetry line (\\q3): set the level of the line the cursor is on",
   };
-
-  /** `\r`, `\mr`, `\sr`: a parallel-passage or range reference under a heading. */
-  function isReferenceHeading(tag: string): boolean {
-    return tag === "r" || tag === "mr" || tag === "sr";
-  }
   // The verse whose Language QA decision history is open (verse menu).
   let historyFor: { projectPath: string; chapter: string; verse: string } | null = null;
   // Which underlined finding Left/Right last landed on, scoped to one verse
@@ -1089,8 +1086,9 @@
     // The section heading above this verse sticks to the top of the list:
     // stop the verse below it, not under it.
     let heading: HTMLElement | null = null;
-    // A reference line (\r) does not stick, so it never covers the verse.
-    for (const item of scrollContainer.querySelectorAll<HTMLElement>(".section-heading:not(.reference)")) {
+    // A reference line (\r) and a psalm title (\d) do not stick, so they
+    // never cover the verse (HeadingRow marks them `unstuck`).
+    for (const item of scrollContainer.querySelectorAll<HTMLElement>(".section-heading:not(.unstuck)")) {
       if (item.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING) heading = item;
       else break;
     }
@@ -1233,17 +1231,18 @@
 <div class="editor-scroll" bind:this={scrollContainer} lang={$targetLang} on:scroll={saveReadingPosition}
   style:--verse-scale={$textScale} style:--num-ch={numberDigits}>
 
+  <!-- #507: the book's introduction, above its first chapter only. -->
+  <BookIntroduction />
 
   {#each $verseNums as v}
     {@const key = verseKey($currentChapter, v)}
     {@const headings = $headingsByVerse[key] ?? []}
-    {#each headings as heading}
+    {#each headings as heading, headingIndex}
       <!-- Rendered above the verse it introduces, not as part of the previous
            verse's text where it used to live (#180). Not selectable, not
            checkable and never alignable: it is not a translation of any source
-           word. -->
-      <h3 class="section-heading" class:major={heading.tag.startsWith("ms")}
-        class:reference={isReferenceHeading(heading.tag)}>{heading.text}</h3>
+           word. HeadingRow draws it and, since #507, edits its text. -->
+      <HeadingRow chapter={$currentChapter} verse={v} index={headingIndex} {heading} />
     {/each}
     {@const findings = $findingsByVerse[key] ?? []}
     {@const checkStatus = $checkStatusByVerse[key]}
@@ -1571,35 +1570,8 @@
   .editor-scroll { flex: 1; overflow-y: auto; scrollbar-gutter: stable; padding: 0 4px 18px 12px; background: var(--surface); container-type: inline-size; }
   .editor-scroll > :first-child { margin-top: 8px; }
 
-  /* A heading is the team's text, so it uses --font-target like the verses, but
-     it is editorial rather than Scripture: no hover, no selection, no findings.
-     The extra top margin is what separates one section from the last verse of
-     the previous one. */
-  .section-heading {
-    font-family: var(--font-target);
-    font-size: var(--fs-lg);
-    font-weight: 700;
-    color: var(--text-2, var(--text-3));
-    margin: 12px 0 4px;
-    padding: 2px 8px;
-    line-height: 1.6;
-    /* 2026-11-15 (Joel): the heading of the section being read stays at the
-       top of the list. Every heading sticks at the same place and a later one
-       is drawn over an earlier one, so the next heading replaces it scrolling
-       down and the previous one returns scrolling up. */
-    position: sticky; top: 0; z-index: 1;
-    background: var(--surface);
-    box-shadow: 0 1px 0 color-mix(in srgb, var(--border) 55%, transparent);
-  }
-  .section-heading.major { font-size: var(--fs-xl); text-align: center; }
-  /* \r, \mr, \sr (#507): the parallel passage or range under a heading, e.g.
-     "(Mark 1:1-8)". Lighter and italic so it reads as a reference, not a
-     second heading; and it does not stick, so the heading above it is the one
-     that stays at the top of the list instead of being covered by this. */
-  .section-heading.reference {
-    position: static; margin-top: 0; box-shadow: none;
-    font-size: var(--fs-sm); font-weight: 400; font-style: italic;
-  }
+  /* The headings between verses are drawn by HeadingRow.svelte, which holds
+     their styles. */
   /* --row-line is the height of the text's first line: the number, the
      issue count and the two actions are centred on it. */
   .verse { --row-line: calc(var(--fs-xl) * var(--verse-scale, 1) * 1.85); position: relative; display: flex; gap: 10px; padding: 3px 8px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; }
