@@ -26382,3 +26382,48 @@ drafts the release. Publishing the draft is left to Joel or Revant.
 at hand; Joel will check on the installed build). The QA matrix's manual desktop rows
 for the new editor layout and alignment tabs beyond what Joel tested by hand during
 the pass.
+
+## 2026-11-23 — Sign in with ChatGPT, step A: a test script, no app change (#506)
+
+Branch `chatgpt-signin`, not `main`: Joel asked for this work on a branch, merged
+after the team approves.
+
+**Why.** Benz asked for ChatGPT account sign-in so Bridge's AI can run on a
+person's ChatGPT plan instead of an API key. OpenAI's "Sign in with ChatGPT" plan
+usage is offered to open-source apps that run locally, through the same Responses
+API `ai_client.py` speaks. Two things its pages do not say decide whether the
+feature can be built: whether strict `json_schema` output is accepted under plan
+usage, and which models an account is offered (Bridge's measured review results
+are on `gpt-5.6-terra`).
+
+**What changed.** One new file, `scripts/spike_chatgpt_signin.py`, standard library
+only. It signs in (PKCE, a loopback redirect on `127.0.0.1:1455/auth/callback`,
+the one-time dynamic client registration), lists the models, and sends: a plain
+request, a small strict schema, and a request with Bridge's real review
+instructions and answer schema shaped as `_post_text` shapes it (`store: false`,
+`reasoning`, `prompt_cache_key`) plus the required `stream: true`, twice, to see
+whether the second reports cached input. When the provider names an unsupported
+parameter it drops that one field and sends again, so the report says what is
+refused. It then refreshes the token once, revokes the refresh token, and writes a
+report with no token and a masked email. `--replay` sends a real body captured with
+`capture_ai_requests.py --dump`. Tokens are never written to disk; only the host id
+and the issued client id are kept, in the user's home folder.
+
+Throwaway: it does not verify the ID token's signature. The real feature must.
+
+**Run.** `scripts/spike_chatgpt_signin.py --self-test` with the engine's
+interpreter: passed, 12 of 12 checks. The self-test drives the whole flow against
+a fake provider inside the script, written from OpenAI's documented contract, so
+it proves the script's own logic (PKCE, state check, registration, stream parsing,
+the drop-one-field retry, refresh rotation, sign-out, no token in the report). It
+proves nothing about OpenAI's real behaviour.
+
+**Not run.** The script against OpenAI: it needs a ChatGPT Plus or Pro account
+signed in on the machine. That run is the point of step A and its report decides
+whether steps B to E (engine sign-in, streaming, Settings UI, docs) are built.
+Engine pytest, the frontend gates and cargo were not run: no engine, frontend or
+Rust file changed.
+
+**Open before any app code lands.** A login is a stop-and-ask item in `CLAUDE.md`.
+Benz asked for it; the maintainer's agreement and a `docs/DECISIONS.md` entry are
+still owed.
