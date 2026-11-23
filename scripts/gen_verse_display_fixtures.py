@@ -38,6 +38,13 @@ RAW = [
     "\\f + \\ft n\\f*alpha",
     "alpha\\f + \\ft n\\f*",
     "a\\f + \\ft one\\f*b\\x + \\xt G 1:1\\x*c",
+    # verseLines.test.ts and VerseList.test.ts poetry and paragraph lines (#507)
+    "Lord, how\n\\q2 many are they \\qs Selah\\qs*\n\\q1",
+    "Many say\n\\b\n\\q1",
+    "But you\n\\q2 are a shield\\f + \\ft a note\\f*\n\\q1 my glory",
+    "a\n\\d A Psalm of David\n\\q1",
+    "I lay down \\k and slept\\k*.\n\\p",
+    "\\q1 கர்த்தாவே,\n\\q2 என் சத்துருக்கள்",
 ]
 
 entries = []

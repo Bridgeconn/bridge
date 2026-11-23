@@ -26382,3 +26382,83 @@ drafts the release. Publishing the draft is left to Joel or Revant.
 at hand; Joel will check on the installed build). The QA matrix's manual desktop rows
 for the new editor layout and alignment tabs beyond what Joel tested by hand during
 the pass.
+
+## 2026-11-23 — #507 part 1: poetry lines, Selah, `\r` and an in-verse `\d` in the reader
+
+Branch `usfm-editor-507`, cut from `main` at 6ea7d40 on Joel's instruction. #507 asks
+for display and editing of `\s \ms \ms1 \r \d \q \q1-3 \qs \k \is \ip \iot \io1`. This
+is the first of its six parts: display of what is inside a verse. It writes nothing.
+
+**What was wrong.** `display` had no paragraph field, so the reader could not tell
+`\q1` from `\q2`. The line break survived in `display.plain` as `\n` and the reader's
+CSS collapsed it, so poetry read as prose. `\r` looked exactly like `\s`, and because
+every heading sticks at the same place, a stuck `\r` covered the `\s` above it.
+
+**Engine.**
+- `usfm_verse.lift_verse` records each paragraph marker inside a verse in `paras`
+  (`[{marker, position}]`, `position` a code point into `plain` where that paragraph's
+  content starts). `PARAGRAPH_MARKERS` is the one list. A marker with nothing after it
+  is recorded too: the `\q1` a stored verse ends with is the paragraph the next verse
+  opens in. `display` gains `paras`; nothing else in it changed.
+- Two paragraph markers are in no stored verse string: the one before a chapter's
+  first verse, and the one after a section heading (#180 cuts the heading out of the
+  verse before it, and the bare `\q1` line goes with it).
+  `usfm_parser.opening_paragraphs` reads those from the preserved `<book>.usfm`. It
+  parses only the text between the previous `\v` (or the `\c`) and each wanted verse,
+  as one small document through `parse_usfm`, so the cost does not grow with the book.
+  `chapter.verseData` returns them as `openers` (`{verse: marker}`); `{}` when the
+  project has no preserved source.
+- Measured on the Tamil IRV Luke: 135 openers over 24 chapters in 84 ms (3.5 ms a
+  chapter), every one equal to what the whole-book parse says.
+
+**Frontend.**
+- `utils/verseLines.ts`: `openingParas` carries the last paragraph marker down the
+  chapter, the engine's `openers` winning where it has one; `splitIntoLines` groups a
+  verse's pieces into lines. No character is added, dropped or moved, because every
+  selection and finding offset counts characters of the verse body.
+- `VerseLineWrap.svelte` puts one block per line, classed `pl-q1`, `pl-q2`, `pl-d` ...
+  A verse that is one line of ordinary prose gets no wrapper at all, so its DOM is what
+  it was.
+- `\qs` floats to the end of its line. `\r`, `\mr`, `\sr` headings are lighter, italic
+  and do not stick. The change-history and Paratext marks moved inside the last line,
+  so they stay on it.
+- New store `paraOpenersByVerse`, filled from `chapter.verseData` and cleared on a book
+  switch.
+
+**A bug the new tests caught before commit.** Svelte kept template whitespace between
+pieces as a space once the inner `{#each}` no longer had whitespace around it, which
+would have shifted every selection offset in a poetry verse by one per piece. The
+pieces loop is now written with no whitespace inside it, and a test reads the verse's
+text back and compares it with the engine's `plain`.
+
+**Run and watched (2026-11-23, Windows, Python 3.12).**
+- Engine, `pytest -n auto --basetemp=C:/t507/bt`: 5,961 passed, 14 failed, 4 skipped,
+  3 xfailed. Of the 14: 12 are `tests/semantic/test_semantic_mapping_stage3.py`, which
+  need the git-ignored Stage 3 database (absent on this machine). One was this change:
+  `test_correction_case_c_production.py` pins the exact key set of `display`; it now
+  lists `paras` and passes. One, `test_paratext_decided_policy_protocol.py::
+  test_a_verified_paratext_resolve_closes_...`, failed in the parallel run and passed
+  run alone; it touches nothing here. Reported, not fixed.
+- A first run without `--basetemp` gave 39 failures, the path-limit ones of #504 among
+  them.
+- New engine tests: `paras` against usfmtc's own paragraphs for every verse of both
+  IRV fixtures (50 of Luke's verses carry one), `opening_paragraphs` against the
+  whole-book parse on Luke, and `chapter.verseData` through a real import.
+- Frontend: `npm run check` 0 errors 0 warnings; `npm run test` 140 files, 1,378
+  passed; `npm run build` completed.
+
+**Not run.** `scripts/build-sidecars.ps1` and `scripts/smoke_sidecars.py`: the frozen
+pair has not been rebuilt, so the frozen engine is not proven to send `paras` or
+`openers`. `cargo check` / `cargo test`: no Rust file changed. The desktop app.
+
+**Not verified (jsdom does not lay out). For Joel at 1366x768:** the indent of `\q1`,
+`\q2`, `\q3` and the deeper continuation of a wrapped line; "Selah" at the far end of
+its line, and where it goes when the line is full; the `\r` line scrolling away while
+its `\s` stays stuck; the ↺ and PT marks on the last line of a poetry verse; a
+right-to-left project.
+
+**Known gaps, left for the later parts of #507.** A `\d` before verse 1, a `\ms` before
+a `\c`, and the book introduction are still not shown. `AlignmentModal`,
+`TranslationHelpsReview` and `VerseHistoryPopover` show `display.plain` and do not draw
+lines. A project with no preserved source draws a chapter's first verse and each verse
+after a heading as prose.

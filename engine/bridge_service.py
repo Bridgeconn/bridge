@@ -142,7 +142,7 @@ from tc_ai_bridge.workspace_repository import WorkspaceRepository, project_path_
 from tc_ai_bridge.resource_materializer import materialize_book_checks
 from tc_ai_bridge.usfm import strip_usfm, whitespace_tokens
 from tc_ai_bridge.usfm_verse import WHITESPACE_TOKEN_TRIM_CHARS, lift_verse
-from tc_ai_bridge.usfm_parser import UsfmParseError, parse_usfm, read_usfm_text
+from tc_ai_bridge.usfm_parser import UsfmParseError, opening_paragraphs, parse_usfm, read_usfm_text
 from tc_ai_bridge import versification as versification_tool
 from tc_ai_bridge import alignment_gaps
 from tc_ai_bridge import alignment_null_decisions as null_decisions_tool
@@ -294,9 +294,9 @@ def _stable_finding_id(*, chapter: str, verse: str, engine: str,
 
 def verse_display(text: str) -> dict[str, Any]:
     """The display payload for one stored verse string (#91 Phase 2):
-    `{plain, notes, removed, styles, warnings}` from the fragment reader, all
-    offsets in code points. Attached wherever the protocol hands the frontend
-    a verse's text, so the frontend never parses USFM."""
+    `{plain, notes, removed, styles, warnings, paras}` from the fragment
+    reader, all offsets in code points. Attached wherever the protocol hands
+    the frontend a verse's text, so the frontend never parses USFM."""
     return lift_verse(text).to_dict()
 
 
@@ -795,6 +795,9 @@ class BridgeEngine:
         self._connector_installer = paratext_install.ConnectorInstaller()
         self.greek_room = GreekRoomEngine()
         self.project: Optional[TranslationCoreProject] = None
+        # #507: the last preserved `<book>.usfm` decoded for `_paragraph_openers`,
+        # as ((path, mtime_ns, size), text). One book; replaced on a different key.
+        self._preserved_source_cache: Optional[tuple[tuple[str, int, int], str]] = None
         # #112 step two: project.open returns before the PassageSemanticRuntime
         # exists and a worker builds it. `passage_semantic_runtime` is a
         # property that waits for that build, so every path that needs the
@@ -2749,13 +2752,49 @@ class BridgeEngine:
         # this call exists precisely to avoid a second round trip (#180). Keyed
         # by the verse each heading introduces; `{}` for a project imported
         # before #180 or a book with no headings.
+        headings = self.project.chapter_headings(chapter)
         return {
             "chapter": chapter, "verses": out,
-            "headings": self.project.chapter_headings(chapter),
+            "headings": headings,
+            # verse -> the paragraph marker it opens in ("q1", "p" ...), for
+            # the verses whose stored neighbours cannot say: the chapter's
+            # first verse and each verse a heading introduces (#507).
+            "openers": self._paragraph_openers(chapter, verses, headings),
             # verse -> recorded edits, for the change-history mark. A directory
             # listing per edited verse; no record is read here.
             "editCounts": self.project.verse_edit_counts(chapter),
         }
+
+    def _paragraph_openers(
+        self, chapter: str, verses: list[str], headings: dict[str, Any],
+    ) -> dict[str, str]:
+        """The paragraph each verse opens in, where only the preserved source
+        knows it (#507). Every verse's `display.paras` lists the paragraph
+        markers inside its own stored text, and the last of them is the
+        paragraph the next verse opens in, so the reader carries that forward.
+        The marker before a chapter's first verse, and the one after a section
+        heading, are in no stored verse; `usfm_parser.opening_paragraphs` reads
+        those from `<book>.usfm`. `{}` when the project has no preserved source
+        or it cannot be read: the reader then draws those verses as prose,
+        which is what it drew before."""
+        if not verses:
+            return {}
+        source_path = self.project.usfm_path()
+        if source_path is None:
+            return {}
+        known = set(verses)
+        wanted = [verses[0], *(verse for verse in headings if verse in known and verse != verses[0])]
+        try:
+            stat = source_path.stat()
+            key = (str(source_path), stat.st_mtime_ns, stat.st_size)
+            cached = self._preserved_source_cache
+            if cached is None or cached[0] != key:
+                # One decoded book, replaced when another book or file is read.
+                cached = (key, read_usfm_text(source_path))
+                self._preserved_source_cache = cached
+            return opening_paragraphs(cached[1], chapter, wanted)
+        except (OSError, UsfmParseError):
+            return {}
 
     VERSE_HISTORY_LIMIT = 500
 

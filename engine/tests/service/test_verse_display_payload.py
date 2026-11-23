@@ -5,6 +5,7 @@ parses USFM. Drives the RPCs, so it lives here."""
 from __future__ import annotations
 
 from bridge_service import BridgeEngine
+from tc_ai_bridge.project_import import import_source
 from tests.support.projects import _write_minimal_book, call
 
 PHP_1_6 = (
@@ -69,4 +70,64 @@ def test_a_verse_without_markup_has_an_identity_display(tmp_path):
     raw = "ஆதியிலே தேவன் வானத்தையும் பூமியையும் படைத்தார்."
     engine = _open(tmp_path, raw)
     display = call(engine, "verse.get", {"chapter": "1", "verse": "1"})["result"]["display"]
-    assert display == {"plain": raw, "notes": [], "removed": [], "styles": [], "warnings": []}
+    assert display == {"plain": raw, "notes": [], "removed": [], "styles": [], "warnings": [], "paras": []}
+
+
+# --- paragraph and poetry lines (#507) ----------------------------------------
+
+POETRY_USFM = (
+    "\\id PSA\n\\h Psalms\n\\mt Psalms\n"
+    "\\c 3\n\\d A Psalm of David\n\\q1\n\\v 1 Lord, how\n\\q2 many are they \\qs Selah\\qs*\n\\q1\n"
+    "\\v 2 Many say\n\\s The Lord answers\n\\q1\n\\v 3 But you\n\\q2 are a shield\n\\s Prose now\n\\p\n"
+    "\\v 4 I lay down \\k and slept\\k*.\n"
+)
+
+
+def _import_poetry(tmp_path):
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "PSA.usfm").write_text(POETRY_USFM, encoding="utf-8")
+    destination = tmp_path / "projects"
+    destination.mkdir()
+    imported = import_source(source, destination, {
+        "languageId": "eng", "languageName": "English", "languageDirection": "ltr",
+        "projectName": "Psalms review", "bibleName": "Test Bible",
+    })
+    engine = BridgeEngine()
+    assert call(engine, "project.open", {"path": imported["primaryProjectPath"]})["success"] is True
+    return engine
+
+
+def test_display_lists_the_paragraph_markers_inside_a_verse(tmp_path):
+    engine = _import_poetry(tmp_path)
+    verses = call(engine, "chapter.verseData", {"chapter": "3"})["result"]["verses"]
+    display = verses["1"]["display"]
+    assert display["plain"] == "Lord, how\nmany are they Selah\n"
+    # Each line starts where its marker's content starts; the trailing \q1 is
+    # the paragraph verse 2 opens in.
+    assert display["paras"] == [
+        {"marker": "q2", "position": len("Lord, how\n")},
+        {"marker": "q1", "position": len(display["plain"])},
+    ]
+    assert [(s["marker"], display["plain"][s["start"]:s["end"]]) for s in display["styles"]] == [("qs", "Selah")]
+    assert [(s["marker"], verses["4"]["display"]["plain"][s["start"]:s["end"]])
+            for s in verses["4"]["display"]["styles"]] == [("k", "and slept")]
+    assert verses["4"]["display"]["paras"] == []
+
+
+def test_chapter_verse_data_says_which_paragraph_a_verse_opens_in(tmp_path):
+    """The marker before a chapter's first verse and the one after a section
+    heading are in no stored verse string; they come from the preserved source."""
+    engine = _import_poetry(tmp_path)
+    result = call(engine, "chapter.verseData", {"chapter": "3"})["result"]
+    assert sorted(result["headings"]) == ["3", "4"]
+    # Verse 2 is not here: the \q1 it opens in is the last marker of verse 1's
+    # own text, which the reader carries forward.
+    assert result["openers"] == {"1": "q1", "3": "q1", "4": "p"}
+
+
+def test_openers_are_empty_without_a_preserved_source(tmp_path):
+    engine = _open(tmp_path, "Lord, how\n\\q2 many are they")
+    result = call(engine, "chapter.verseData", {"chapter": "1"})["result"]
+    assert result["openers"] == {}
+    assert result["verses"]["1"]["display"]["paras"] == [{"marker": "q2", "position": len("Lord, how\n")}]

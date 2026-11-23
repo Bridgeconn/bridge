@@ -48,7 +48,7 @@ import io
 import re
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterable
 
 # Section headings and their kin. A heading between two verses is an editorial
 # navigation aid, not a translation of any source word, so it is never part of
@@ -506,3 +506,89 @@ def parse_usfm(text: str) -> ParsedUsfm:
         warnings=tuple(bridge_warnings) + tuple(_warning_text(error) for error in errors),
         structure=tuple(structure),
     )
+
+
+_CHAPTER_NUMBER_LINE = re.compile(r"^[ \t]*\\c[ \t]+(?P<number>\S+)", re.MULTILINE)
+_VERSE_NUMBER_ANYWHERE = re.compile(r"\\v\s+(?P<number>\S+)")
+
+
+def opening_paragraphs(text: str, chapter: str, verses: Iterable[str]) -> dict[str, str]:
+    """The paragraph marker some verses of `chapter` open in, read from the
+    preserved source: `{verse: "q1"}` (#507).
+
+    A stored verse string keeps its own paragraph markers, and the one it ends
+    with is the paragraph the next verse opens in, so a reader can carry that
+    forward. Two places are in no stored verse string, and only the source
+    knows them:
+
+    - before a chapter's first verse (`\\c 3`, `\\d A Psalm`, `\\q1`, `\\v 1`);
+    - after a section heading. The heading is cut out of the verse before it
+      (#180), and the bare `\\q1` or `\\p` line between it and the next `\\v`
+      goes with it.
+
+    Both sit outside every verse's text, so no edit can change them and an
+    export writes them back as they are. This reads exactly those two places
+    and nothing else: for the chapter's first verse, the last paragraph marker
+    before its `\\v`; for any other verse in `verses`, the last one after the
+    last heading before its `\\v`. A verse with no such marker is left out, and
+    so is a verse the caller named that no heading precedes.
+
+    Only the text between the previous `\\v` (or the `\\c`) and each wanted
+    verse is parsed, as one small document through :func:`parse_usfm`, so the
+    cost does not grow with the size of the book or the chapter.
+    """
+    text = text.lstrip("\ufeff")
+    wanted = {str(verse) for verse in verses}
+    if not wanted:
+        return {}
+    chapter_lines = list(_CHAPTER_NUMBER_LINE.finditer(text))
+    chunk = None
+    for index, line in enumerate(chapter_lines):
+        if line.group("number") == str(chapter):
+            end = chapter_lines[index + 1].start() if index + 1 < len(chapter_lines) else len(text)
+            chunk = text[line.start():end]
+            break
+    if chunk is None:
+        return {}
+    marks = [(match.start(), match.group("number")) for match in _VERSE_NUMBER_ANYWHERE.finditer(chunk)]
+    if not marks:
+        return {}
+
+    # One small document: the chapter's lead-in, then the stretch before each
+    # wanted verse, each closed by that verse's own `\v` so the parser files
+    # the paragraph markers against it.
+    parts = ["\\id XXX\n"]
+    if marks[0][1] not in wanted:
+        parts.append("\\c 1\n")
+    length = sum(len(part) for part in parts)
+    regions: list[tuple[str, int, int, bool]] = []  # verse, start, end, first of the chapter
+    seen: set[str] = set()
+    for index, (at, number) in enumerate(marks):
+        if number not in wanted or number in seen:
+            continue
+        seen.add(number)
+        piece = chunk[0 if index == 0 else marks[index - 1][0]:at]
+        closer = f"\\v {number} x\n"
+        regions.append((number, length, length + len(piece), index == 0))
+        parts.extend((piece, closer))
+        length += len(piece) + len(closer)
+    if not regions:
+        return {}
+    try:
+        parsed = parse_usfm("".join(parts))
+    except UsfmParseError:
+        return {}
+
+    paragraphs = [item for item in parsed.structure if item.kind == "para"]
+    out: dict[str, str] = {}
+    for number, start, end, first in regions:
+        inside = [item for item in paragraphs if start <= item.offset < end]
+        last_heading = max(
+            (index for index, item in enumerate(inside) if item.marker in HEADING_MARKERS), default=-1,
+        )
+        if last_heading < 0 and not first:
+            continue
+        after = [item.marker for item in inside[last_heading + 1:] if item.marker not in HEADING_MARKERS]
+        if after:
+            out[number] = after[-1]
+    return out

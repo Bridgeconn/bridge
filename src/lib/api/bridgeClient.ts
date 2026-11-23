@@ -1076,6 +1076,10 @@ export const bridge = {
     headings: Record<string, VerseHeading[]>;
     /** verse -> recorded edits (verse.history); absent from an older engine. */
     editCounts?: Record<string, number>;
+    /** verse -> the paragraph marker it opens in ("q1", "p" ...), only for the
+     *  verses whose neighbours' text cannot say: the chapter's first verse and
+     *  each verse a heading introduces (#507). Absent from an older engine. */
+    openers?: Record<string, string>;
   }> {
     return call("chapter.verseData", { chapter });
   },

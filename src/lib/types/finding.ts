@@ -1161,6 +1161,14 @@ export interface StyleSpan {
   end: number;
 }
 
+/** A paragraph marker inside the verse (`\q1`, `\q2`, `\p`, `\d`, `\b` …):
+ *  its content starts at `plain[position]`, code points (#507). One with
+ *  nothing after it is the paragraph the next verse opens in. */
+export interface ParaMark {
+  marker: string;
+  position: number;
+}
+
 /**
  * What the reader shows for one verse, computed by the engine's fragment
  * reader (`usfm_verse.lift_verse`, #91) next to the text it describes. The
@@ -1176,6 +1184,9 @@ export interface VerseDisplay {
   removed: [number, number][];
   styles: StyleSpan[];
   warnings: string[];
+  /** Paragraph and poetry markers inside the verse, in order (#507). Absent
+   *  from an older engine, which is the same as none. */
+  paras?: ParaMark[];
 }
 
 export interface VerseData {

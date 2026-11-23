@@ -15,7 +15,7 @@ import { codePointToUtf16 } from "./codePoints";
 
 /** The display of a verse that has no engine display yet: the raw string as-is. */
 export function identityDisplay(raw: string): VerseDisplay {
-  return { plain: raw, notes: [], removed: [], styles: [], warnings: [] };
+  return { plain: raw, notes: [], removed: [], styles: [], warnings: [], paras: [] };
 }
 
 /**

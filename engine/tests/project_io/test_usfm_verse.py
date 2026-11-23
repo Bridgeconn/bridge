@@ -142,6 +142,37 @@ def test_a_poetry_marker_inside_the_verse_keeps_its_line_break():
     assert lifted.plain == "யெகோவா என் மேய்ப்பராக இருக்கிறார்;\nநான் தாழ்ச்சி அடையமாட்டேன்.\n"
 
 
+def test_paragraph_markers_are_recorded_where_their_content_starts():
+    """#507: the reader draws each poetry line on its own line at its own
+    indent from these, and never parses USFM for it."""
+    lifted = lift_verse("Lord, how\n\\q2 many are they \\qs Selah\\qs*\n\\b\n\\q1")
+    assert lifted.plain == "Lord, how\nmany are they Selah\n\n"
+    assert [(p.marker, p.position) for p in lifted.paras] == [
+        ("q2", len("Lord, how\n")),
+        ("b", len("Lord, how\nmany are they Selah\n")),
+        # Nothing follows it: this is the paragraph the next verse opens in.
+        ("q1", len(lifted.plain)),
+    ]
+    assert lifted.plain[lifted.paras[0].position:].startswith("many are they")
+    # A character style is not a paragraph, and neither is its closer.
+    assert [(s.marker, lifted.plain[s.start:s.end]) for s in lifted.styles] == [("qs", "Selah")]
+
+
+def test_a_descriptive_title_inside_a_verse_is_a_paragraph():
+    lifted = lift_verse("a\n\\d A Psalm of David\n\\q1")
+    assert [(p.marker, lifted.plain[p.position:].split("\n")[0]) for p in lifted.paras] == [
+        ("d", "A Psalm of David"), ("q1", ""),
+    ]
+
+
+def test_a_verse_that_starts_with_a_paragraph_marker_has_it_at_zero():
+    lifted = lift_verse("\\q1 Lord, how\n\\q2 many")
+    assert [(p.marker, p.position) for p in lifted.paras] == [("q1", 0), ("q2", len("Lord, how\n"))]
+    assert lifted.to_dict()["paras"] == [
+        {"marker": "q1", "position": 0}, {"marker": "q2", "position": len("Lord, how\n")},
+    ]
+
+
 def test_warnings_are_total_not_refusals():
     unbalanced = lift_verse("\\wj Jesus said")
     assert unbalanced.warnings == ("Unbalanced \\wj: 1 open, 0 close",)
@@ -157,7 +188,7 @@ def test_to_dict_is_the_protocol_payload():
     assert payload["plain"] == "Paul, servant"
     assert payload["notes"][0]["reference"] == "1.6" and payload["notes"][0]["position"] == 5
     assert payload["removed"] == [[5, 29]]
-    assert payload["styles"] == [] and payload["warnings"] == []
+    assert payload["styles"] == [] and payload["warnings"] == [] and payload["paras"] == []
 
 
 # --- redundant style reopen (#203) -------------------------------------------
@@ -240,6 +271,50 @@ def test_plain_text_agrees_with_usfmtc_on_every_fixture_verse(fixture_name, requ
         if ours != theirs:
             disagreements.append((verse.chapter, verse.verse, ours[-60:], theirs[-60:]))
     assert disagreements == [], f"{len(disagreements)} of {len(parsed.verses)} verses: {disagreements[:5]}"
+
+
+def _usx_paragraph_styles(verse_text: str) -> list[str]:
+    """The paragraphs usfmtc finds inside one stored verse string, by style.
+    The first is the paragraph usfmtc opens for a `\\v` that follows `\\c`
+    directly; it is not in the source."""
+    roots, _errors = _usfmtc_documents(f"\\id TST\n\\c 1\n\\v 1 {verse_text}\n")
+    styles = [
+        str(element.get("style") or "")
+        for root in roots for element in root.iter() if element.tag == "para"
+    ]
+    return styles[1:]
+
+
+@pytest.mark.parametrize("fixture_name", ["tamil_php_usfm", "tamil_luk_usfm"])
+def test_paragraph_markers_agree_with_usfmtc_on_every_fixture_verse(fixture_name, request):
+    """#507: the same binding as the plain-text parity above, for `paras`."""
+    path = request.getfixturevalue(fixture_name)
+    parsed = parse_usfm(path.read_text(encoding="utf-8-sig"))
+    disagreements = []
+    with_paragraphs = 0
+    for verse in parsed.verses:
+        ours = [para.marker for para in lift_verse(verse.text).paras]
+        theirs = _usx_paragraph_styles(verse.text)
+        with_paragraphs += bool(ours)
+        if ours != theirs:
+            disagreements.append((verse.chapter, verse.verse, ours, theirs))
+    assert disagreements == [], f"{len(disagreements)} of {len(parsed.verses)} verses: {disagreements[:5]}"
+    if fixture_name == "tamil_luk_usfm":
+        # 50 of Luke's verses carry a paragraph marker (quoted poetry, paragraph
+        # breaks), so the comparison above is not vacuous.
+        assert with_paragraphs == 50
+
+
+def test_paragraph_edge_table_agrees_with_usfmtc():
+    for raw in [
+        "line one\n\\q2 line two\n\\q1",
+        "a\n\\d A Psalm of David\n\\q1",
+        "Many say\n\\b\n\\q1 again \\qs Selah\\qs*",
+        "one\n\\li1 first\n\\li2 second\n\\p",
+        "prose\n\\pi indented\n\\m back \\nd Lord\\nd*",
+        "the \\nd Lord\\nd*, \\wj said \\+it so\\+it* to him\\wj*.",
+    ]:
+        assert [para.marker for para in lift_verse(raw).paras] == _usx_paragraph_styles(raw), raw
 
 
 def test_edge_table_agrees_with_usfmtc():

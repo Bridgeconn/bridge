@@ -47,6 +47,12 @@ Marker classes -- the one list the parity test guards:
   space is marker syntax and goes with it, a closer's is text. A character
   style that opens and closes is recorded in `styles` so a reader can render
   it; the line break before a `\\q2` stays, as whitespace.
+- **Paragraph markers** (`PARAGRAPH_MARKERS`: `\\p`, `\\q1`, `\\q2`, `\\d`, `\\b`
+  …) are removed like any other marker token, and each is also recorded in
+  `paras` with the place in `plain` where its content starts (#507). That is
+  what lets the reader draw a poetry line on its own line at its own indent
+  without parsing anything. A marker with nothing after it is recorded too:
+  the `\\q1` a stored verse ends with is the paragraph the NEXT verse opens in.
 """
 from __future__ import annotations
 
@@ -164,6 +170,15 @@ class StyleSpan:
 
 
 @dataclass(frozen=True)
+class ParaMark:
+    marker: str    # without backslash: "q1", "q2", "p", "d", "b" ...
+    position: int  # into `plain`, code points: where this paragraph's content starts
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"marker": self.marker, "position": self.position}
+
+
+@dataclass(frozen=True)
 class LiftedVerse:
     raw: str
     plain: str
@@ -172,6 +187,7 @@ class LiftedVerse:
     styles: tuple[StyleSpan, ...] = ()
     warnings: tuple[str, ...] = ()
     removed: tuple[tuple[int, int], ...] = field(default=())  # raw ranges, merged
+    paras: tuple[ParaMark, ...] = ()      # paragraph markers inside the verse, in order
 
     def map_offset(self, raw_offset: int) -> int:
         """Where a raw offset lands in `plain`. An offset inside a removed range
@@ -232,6 +248,7 @@ class LiftedVerse:
             "removed": [[start, end] for start, end in self.removed],
             "styles": [span.to_dict() for span in self.styles],
             "warnings": list(self.warnings),
+            "paras": [para.to_dict() for para in self.paras],
         }
 
 
@@ -245,6 +262,19 @@ STYLE_MARKERS = frozenset({
     "png", "qac", "qs", "qt", "rq", "sc", "sig", "sls", "sup", "tl", "wj",
 })
 _STYLE_REOPEN = re.compile(r"\\(?P<plus>\+?)(?P<marker>[A-Za-z]+)\*\\(?P=plus)(?P=marker) ")
+
+# Paragraph-level markers that chapter JSON keeps inside a verse (USFM 3.0
+# paragraphs, poetry, lists, table rows, and the descriptive title `\d`). Each
+# starts a new block of the verse; `lift_verse` records where (#507). Section
+# headings are not here: the parser cuts them out of verse text (#180).
+PARAGRAPH_MARKERS = frozenset({
+    "p", "m", "po", "pr", "cls", "pmo", "pm", "pmc", "pmr", "mi", "nb", "pc", "b",
+    "pi", "pi1", "pi2", "pi3", "ph", "ph1", "ph2", "ph3",
+    "q", "q1", "q2", "q3", "q4", "qr", "qc", "qa", "qd",
+    "qm", "qm1", "qm2", "qm3",
+    "d", "lh", "lf", "li", "li1", "li2", "li3", "li4",
+    "lim", "lim1", "lim2", "lim3", "lim4", "tr",
+})
 
 
 @dataclass(frozen=True)
@@ -347,6 +377,7 @@ def lift_verse(raw: str) -> LiftedVerse:
     # (name, raw offset of the opener) for character styles still open.
     open_styles: list[tuple[str, int]] = []
     style_ranges: list[tuple[str, int, int]] = []  # name, raw open, raw close
+    para_starts: list[tuple[str, int]] = []        # name, raw offset its content starts at
     for match in _MARKER.finditer(raw):
         if removed[match.start()]:
             continue
@@ -357,6 +388,10 @@ def lift_verse(raw: str) -> LiftedVerse:
         remove(match.start(), end)
         name = match.group(2)
         if name is None:
+            continue
+        if not closer and not match.group(1) and name in PARAGRAPH_MARKERS:
+            # A paragraph never closes, so it is not an open character style.
+            para_starts.append((name, end))
             continue
         if match.group(3):
             for index in range(len(open_styles) - 1, -1, -1):
@@ -401,7 +436,9 @@ def lift_verse(raw: str) -> LiftedVerse:
     if start is not None:
         ranges.append((start, len(raw)))
 
+    paras = tuple(ParaMark(name, plain_pos(starts_at)) for name, starts_at in para_starts)
+
     return LiftedVerse(
         raw=raw, plain=plain, raw_index=raw_index, notes=notes, styles=styles,
-        warnings=tuple(warnings), removed=tuple(ranges),
+        warnings=tuple(warnings), removed=tuple(ranges), paras=paras,
     )

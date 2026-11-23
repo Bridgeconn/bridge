@@ -28,6 +28,7 @@ vi.mock("../../api/bridgeClient", () => ({
 import { lqaFinding } from "./languageQaFixture";
 import { scopeDialog } from "../../scopedApply";
 import { displayFor } from "./verseDisplayFixtures";
+import { selectionInVerse } from "../../utils/selection";
 import type { LanguageQaSuggestion } from "../../types/languageQa";
 
 import VerseList from "../VerseList.svelte";
@@ -43,6 +44,7 @@ import {
   nativeChecksByVerse,
   aiCheckReviewsByVerse,
   headingsByVerse,
+  paraOpenersByVerse,
   selectedVerse,
   verseKey,
   languageQaFindingsByVerse,
@@ -104,6 +106,7 @@ function seed(text: string, findings: QaFinding[] = []): void {
   // fixtures are the engine's own output for these strings.
   verseDisplay.set({ [verseKey("1", "6")]: displayFor(text) });
   headingsByVerse.set({});
+  paraOpenersByVerse.set({});
   findingsByVerse.set({ [verseKey("1", "6")]: findings });
   checkStatusByVerse.set({});
   checkGroupsByVerse.set({});
@@ -1727,5 +1730,158 @@ describe("VerseList Paratext note key (#426)", () => {
     paratextNoteRequest.set(null);
     await fireEvent.keyDown(row, { key: "n", ctrlKey: true });
     expect(get(paratextNoteRequest)).toBeNull();
+  });
+});
+
+// #507: paragraph and poetry lines, Selah, a psalm title inside a verse, and
+// the reference line under a heading. jsdom does not lay out, so these check
+// structure and classes; the indents themselves need the desktop app.
+describe("VerseList paragraph and poetry lines (#507)", () => {
+  // The engine's own displays for these strings (verseDisplayFixtures.ts).
+  const PSALM_3_1 = "Lord, how\n\\q2 many are they \\qs Selah\\qs*\n\\q1";
+  const WITH_NOTE = "But you\n\\q2 are a shield\\f + \\ft a note\\f*\n\\q1 my glory";
+  const TITLE = "a\n\\d A Psalm of David\n\\q1";
+  const key = verseKey("1", "6");
+
+  afterEach(() => {
+    paraOpenersByVerse.set({});
+    historyCountByVerse.set({});
+    headingsByVerse.set({});
+    rawView.set(false);
+  });
+
+  /** The verse's own text as the selection helpers read it: no button labels. */
+  function ownText(root: Element): string {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: (node) => (node.parentElement?.closest("button") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+    });
+    let text = "";
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) text += node.nodeValue ?? "";
+    return text;
+  }
+
+  /** Every offset into the verse counts characters from its start, so the
+   *  text must begin with exactly the plain text. The template leaves one
+   *  space after the last piece, as it did before there were lines. */
+  function expectOwnText(plain: string): void {
+    const text = ownText(verseRow().querySelector(".vtext") as HTMLElement);
+    expect(text.slice(0, plain.length)).toBe(plain);
+    expect(text.slice(plain.length).trim()).toBe("");
+  }
+
+  const lines = () => Array.from(verseRow().querySelectorAll<HTMLElement>(".vline"));
+
+  it("draws each poetry line as its own line, classed by its marker", () => {
+    seed(PSALM_3_1);
+    paraOpenersByVerse.set({ [key]: "q1" });
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    expect(verseRow().querySelector(".vbody")?.classList.contains("structured")).toBe(true);
+    expect(lines().map((line) => [line.classList.contains("pl-q1"), line.classList.contains("pl-q2"), line.textContent?.trim()]))
+      .toEqual([[true, false, "Lord, how"], [false, true, "many are they Selah"]]);
+    // No marker is shown, and Selah is styled inside its own line.
+    expect(verseRow().querySelector(".vtext")?.textContent).not.toContain("\\");
+    expect(lines()[1].querySelector(".st-qs")?.textContent).toBe("Selah");
+  });
+
+  it("adds, drops and moves no character: the text read back is the engine's plain text", () => {
+    for (const raw of [PSALM_3_1, WITH_NOTE, TITLE]) {
+      seed(raw);
+      paraOpenersByVerse.set({ [key]: "q1" });
+      render(VerseList, { props: { onSelect: vi.fn() } });
+      expectOwnText(displayFor(raw).plain);
+      cleanup();
+    }
+  });
+
+  it("maps a selection on the second line to the same plain offsets as before", () => {
+    seed(PSALM_3_1);
+    paraOpenersByVerse.set({ [key]: "q1" });
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    const vtext = verseRow().querySelector(".vtext") as HTMLElement;
+    const walker = document.createTreeWalker(lines()[1], NodeFilter.SHOW_TEXT);
+    const node = walker.nextNode() as Text;
+    expect(node.nodeValue?.startsWith("many")).toBe(true);
+    const range = { startContainer: node, endContainer: node, startOffset: 0, endOffset: 4 };
+    const original = window.getSelection;
+    window.getSelection = (() => ({ rangeCount: 1, isCollapsed: false, getRangeAt: () => range })) as unknown as typeof window.getSelection;
+    try {
+      const plain = displayFor(PSALM_3_1).plain;
+      expect(selectionInVerse(vtext)).toEqual({ start: plain.indexOf("many"), end: plain.indexOf("many") + 4 });
+    } finally {
+      window.getSelection = original;
+    }
+  });
+
+  it("keeps a footnote callout on its own line", () => {
+    seed(WITH_NOTE);
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    expect(lines().map((line) => line.querySelectorAll(".note-btn").length)).toEqual([0, 1, 0]);
+    expect(lines().map((line) => line.className.split(" ").filter((name) => name.startsWith("pl-")))).toEqual([[], ["pl-q2"], ["pl-q1"]]);
+  });
+
+  it("draws a psalm title inside a verse as a title line", () => {
+    seed(TITLE);
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    const title = verseRow().querySelector(".vline.pl-d") as HTMLElement;
+    expect(title.textContent?.trim()).toBe("A Psalm of David");
+  });
+
+  it("leaves a verse of ordinary prose exactly as it was: no line element at all", () => {
+    seed("alpha beta");
+    paraOpenersByVerse.set({ [key]: "p" });
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    const body = verseRow().querySelector(".vbody") as HTMLElement;
+    expect(body.classList.contains("structured")).toBe(false);
+    expect(lines()).toHaveLength(0);
+    expect((body.firstChild as Text).nodeValue).toBe("alpha beta");
+  });
+
+  it("opens a verse in the paragraph the verse before it ended with", () => {
+    seed(PSALM_3_1);
+    chapterVerseNums.set({ "1": ["6", "7"] });
+    verseTexts.update((texts) => ({ ...texts, [verseKey("1", "7")]: "gamma delta" }));
+    verseDisplay.update((display) => ({ ...display, [verseKey("1", "7")]: displayFor("gamma delta") }));
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    // Verse 6 ends with \q1 and verse 7 has no marker of its own.
+    const next = document.querySelector('[data-verse-key="1:7"]') as HTMLElement;
+    const [line] = Array.from(next.querySelectorAll<HTMLElement>(".vline"));
+    expect(line.classList.contains("pl-q1")).toBe(true);
+    expect(line.textContent?.trim()).toBe("gamma delta");
+  });
+
+  it("shows the stored string with its markers in Raw view, as one block", () => {
+    seed(PSALM_3_1);
+    paraOpenersByVerse.set({ [key]: "q1" });
+    rawView.set(true);
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    expect(lines()).toHaveLength(0);
+    expect(verseRow().querySelector(".vtext")?.textContent).toContain("\\q2 many are they \\qs Selah\\qs*");
+  });
+
+  it("keeps the change-history mark on the verse's last line, and where it was for prose", () => {
+    seed(PSALM_3_1);
+    paraOpenersByVerse.set({ [key]: "q1" });
+    historyCountByVerse.set({ [key]: 2 });
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    expect(lines()[0].querySelector(".history-btn")).toBeNull();
+    expect(lines()[1].querySelector(".history-btn")?.textContent).toBe("↺2");
+    cleanup();
+
+    seed("alpha beta");
+    historyCountByVerse.set({ [key]: 1 });
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    expect(verseRow().querySelectorAll(".vtext .history-btn")).toHaveLength(1);
+    expectOwnText("alpha beta");
+  });
+
+  it("marks a reference line (\\r) under a heading, and only it", () => {
+    seed("alpha beta");
+    headingsByVerse.set({ [key]: [{ tag: "s", text: "John the Baptist" }, { tag: "r", text: "(Mark 1:1-8)" }, { tag: "ms", text: "Book Two" }] });
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    const classOf = (name: string) => screen.getByRole("heading", { name }).classList;
+    expect(classOf("(Mark 1:1-8)").contains("reference")).toBe(true);
+    expect(classOf("John the Baptist").contains("reference")).toBe(false);
+    expect(classOf("Book Two").contains("reference")).toBe(false);
+    expect(classOf("Book Two").contains("major")).toBe(true);
   });
 });
