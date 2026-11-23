@@ -1,8 +1,9 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
 import { get } from "svelte/store";
+import { tick } from "svelte";
 import AutoAlignChapterButton from "../AutoAlignChapterButton.svelte";
-import { alignmentRevisionByVerse } from "../../stores";
+import { alignmentRevisionByVerse, settingsOpen } from "../../stores";
 
 const { getSettings, autoAlignEstimate, autoAlignStart, autoAlignStatus, autoAlignCancel } = vi.hoisted(() => ({
   getSettings: vi.fn(),
@@ -85,6 +86,37 @@ describe("AutoAlignChapterButton", () => {
     const button = await screen.findByRole("button", { name: "Align chapter with AI" });
     await waitFor(() => expect(button).toBeDisabled());
     expect(button).toHaveAttribute("title", "Add an API key or sign in with ChatGPT in Settings to align automatically");
+  });
+
+  // #506: a key is saved, or a ChatGPT sign-in made, in Settings while the
+  // editor stays open behind it.
+  it("asks again when Settings closes, so a sign-in made there enables it", async () => {
+    getSettings.mockResolvedValue({ hasApiKey: false, aiReady: false });
+    render(AutoAlignChapterButton, { props: { chapter: "1", onOpenReview: vi.fn() } });
+    const button = await screen.findByRole("button", { name: "Align chapter with AI" });
+    await waitFor(() => expect(button).toBeDisabled());
+    expect(getSettings).toHaveBeenCalledTimes(1);
+
+    settingsOpen.set(true);
+    await tick();
+    expect(getSettings).toHaveBeenCalledTimes(1); // opening Settings asks nothing
+    getSettings.mockResolvedValue({ hasApiKey: false, aiReady: true });
+    settingsOpen.set(false);
+
+    await waitFor(() => expect(button).toBeEnabled());
+    expect(getSettings).toHaveBeenCalledTimes(2);
+  });
+
+  it("is ready on a ChatGPT sign-in with no API key, and says the run uses the plan", async () => {
+    getSettings.mockResolvedValue({ hasApiKey: false, aiReady: true });
+    autoAlignEstimate.mockResolvedValue({ ...ESTIMATE, hasApiKey: false, aiReady: true, planUsage: true });
+    render(AutoAlignChapterButton, { props: { chapter: "1", onOpenReview: vi.fn() } });
+    const button = await screen.findByRole("button", { name: "Align chapter with AI" });
+    await waitFor(() => expect(button).toBeEnabled());
+    await fireEvent.click(button);
+    const confirm = await screen.findByRole("group", { name: "Confirm automatic alignment" });
+    expect(confirm).toHaveTextContent("uses your ChatGPT plan allowance");
+    expect(confirm).not.toHaveTextContent("$");
   });
 
   it("reports an unavailable provider from start instead of failing", async () => {

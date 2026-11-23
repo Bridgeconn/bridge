@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/svelte";
 import { get } from "svelte/store";
+import { tick } from "svelte";
 import { answerConfirmation, confirmRequest } from "../../confirmAction";
 import CrossVerseAlignmentModal from "../CrossVerseAlignmentModal.svelte";
 // @ts-expect-error Vite's test-only raw loader is not part of the app tsconfig.
@@ -28,7 +29,7 @@ function byHint(root: HTMLElement, match: string | RegExp): HTMLElement {
 }
 import {
   alignmentRevisionByVerse, alignmentStatusByVerse, chapterVerseNums, checkStatusByVerse, checkGroupsByVerse,
-  currentChapter, findingsByVerse, noteAlignmentChanged,
+  currentChapter, findingsByVerse, noteAlignmentChanged, settingsOpen,
 } from "../../stores";
 import type {
   AlignmentContext, AlignmentRange, AlignmentToken, AutoAlignJobStatus, AutoAlignWindowResult, CrossVerseLink, CrossVerseLinkResult,
@@ -611,6 +612,22 @@ describe("CrossVerseAlignmentModal", () => {
       await waitFor(() => expect(button).toBeDisabled());
       expect(hintOf(button)).toBe("Add an API key or sign in with ChatGPT in Settings to align automatically");
       expect((await aiItem(/Suggest links/))).toBeEnabled();
+    });
+
+    // #506: a key is saved, or a ChatGPT sign-in made, in Settings while this
+    // page stays open behind it.
+    it("asks again when Settings closes, so a sign-in made there enables Align automatically", async () => {
+      getSettings.mockResolvedValue({ hasApiKey: false, aiReady: false });
+      await renderPage("2");
+      const button = await aiItem(/Align automatically/);
+      await waitFor(() => expect(button).toBeDisabled());
+
+      settingsOpen.set(true);
+      await tick();
+      getSettings.mockResolvedValue({ hasApiKey: false, aiReady: true });
+      settingsOpen.set(false);
+
+      await waitFor(async () => expect(await aiItem(/Align automatically/)).toBeEnabled());
     });
 
     it("Not missing ▸ Implicit records a null decision through alignment.null.set", async () => {

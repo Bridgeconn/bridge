@@ -125,6 +125,32 @@ def test_a_cancelled_sign_in_is_not_an_error(tmp_path):
     assert state["status"] == "signedOut" and state["error"] is None
 
 
+def test_a_sign_in_that_finishes_after_cancel_is_not_kept(tmp_path):
+    """The redirect had already arrived when Cancel was pressed, so the code
+    exchange went on and returned tokens. Nobody asked to keep them."""
+    http = FakeHttp()
+    http.queue_post(signin.REVOKE_URL, 200, {})
+    settings = isolated_settings(tmp_path)
+
+    def finishes_after_cancel(**kwargs):
+        kwargs["on_registration"](CLIENT_ID)
+        assert kwargs["cancel"].wait(5)
+        return signed_in_result()
+
+    session = ChatGPTSession(settings, http=http, sign_in=finishes_after_cancel)
+    session.start_sign_in()
+    state = session.cancel_sign_in()
+
+    assert state["status"] == "signedOut" and state["error"] is None
+    assert settings.get_chatgpt_tokens() == {}
+    assert not session.is_signed_in()
+    assert http.posted(signin.REVOKE_URL) == [{
+        "token": "refresh-1", "token_type_hint": "refresh_token", "client_id": CLIENT_ID,
+    }]
+    # The registration is still good for the next sign-in.
+    assert settings.chatgpt_connection == {"clientId": CLIENT_ID}
+
+
 def test_a_fresh_token_is_reused_and_one_near_expiry_is_renewed_and_stored_first(tmp_path):
     http = FakeHttp()
     settings, session = _signed_in(tmp_path, http=http)

@@ -293,6 +293,11 @@ class AIReviewJobManager:
                     run_chapter(chapter, verses, job.spec.mode, report, job.cancel_event)
                     if self._cancelled(job):
                         return
+                    # Before the fill-in below: a chapter stopped by the
+                    # provider leaves its unsent verses without a result, for
+                    # Retry, not marked as failures of their own.
+                    if self._halted(job, halt):
+                        return
                     with job.lock:
                         job.current_window = []
                     # Every verse of the chapter has an outcome, whatever the

@@ -13,7 +13,7 @@
   // watches and reports it.
   import { onDestroy, onMount } from "svelte";
   import { bridge } from "../api/bridgeClient";
-  import { noteAlignmentChanged } from "../stores";
+  import { noteAlignmentChanged, settingsOpen } from "../stores";
   import type { AutoAlignEstimate, AutoAlignJobStatus } from "../types/finding";
 
   export let chapter: string;
@@ -35,7 +35,7 @@
   let error = "";
   let timer: ReturnType<typeof setInterval> | null = null;
 
-  onMount(async () => {
+  async function readAiReady() {
     try {
       // #506: ready with an API key or a ChatGPT sign-in; an engine from
       // before that reports only hasApiKey.
@@ -44,7 +44,15 @@
     } catch {
       hasKey = false;
     }
-  });
+  }
+  onMount(readAiReady);
+  // Settings is where a key is saved or a ChatGPT sign-in made. Ask again when
+  // it closes, or this stays disabled until the editor is opened afresh.
+  let settingsWasOpen = false;
+  $: {
+    if (settingsWasOpen && !$settingsOpen) void readAiReady();
+    settingsWasOpen = $settingsOpen;
+  }
   onDestroy(() => stopPolling());
 
   // The chapter changed underneath an unstarted confirm: its estimate is for

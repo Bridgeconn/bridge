@@ -26666,3 +26666,66 @@ translator-judged run.
 
 **Known gaps, left as they are.** After-run usage lines in the review panel and the
 cross-verse page still print a dollar figure, which reads "$0.00" on a plan.
+
+## 2026-11-23 — Sign in with ChatGPT: first desktop run, and three fixes from review (#506, PR #508)
+
+**Seen in the desktop app, by Joel.** On the `chatgpt-signin` branch he chose the
+ChatGPT account provider in Settings, signed in through the browser, and ran an AI
+review on one verse; it worked. That is the first run of this feature in a Bridge
+window, and it covers the provider choice, the browser opening from the app, the
+sign-in completing and one single-verse tN/tW review on the plan. Not tried there
+yet: a whole chapter, Align chapter with AI, Sign out, a sign-in left unused for
+hours, and the layout at 1366x768 specifically.
+
+**CI on PR #508 passed** before these fixes: frontend, and the engine suite (serial,
+50 minutes).
+
+**Three findings from the automated review on the PR, each checked against the code
+and fixed.**
+
+1. *AI buttons stayed disabled after a sign-in made while the editor was open.*
+   `AutoAlignChapterButton` and `CrossVerseAlignmentModal` read readiness once, on
+   mount. The same was already true of saving an API key; a sign-in makes it more
+   visible. Both now ask again when Settings closes (`settingsOpen` going false).
+2. *Cancel could lose a race.* If Cancel was pressed after the browser redirect had
+   arrived, the code exchange carried on and its tokens were stored. `_run_sign_in`
+   now checks the cancel flag when the sign-in returns, revokes those tokens and
+   stores nothing. The registration is kept.
+3. *A plan limit did not stop a multi-verse-per-request chapter.* The window runner
+   halved the refused window and sent it again verse by verse, then went on
+   preparing and failing every later verse of the chapter (nothing was sent: the
+   five-minute pause refused each at once). `WindowReviewSession.run` takes `halt`
+   and stops preparing; a window refused with `AIPlanLimitError` is not halved; a
+   verse prepared but not sent fails with the reason and keeps what it spent; and
+   the job checks `halt` before filling in "no result" for the verses never
+   reached, so they stay without a result for Retry.
+
+The triage and auto-align jobs are unchanged and still rely on the pause.
+
+**Run.**
+
+- New tests: a late-finishing cancelled sign-in is not kept
+  (`test_chatgpt_session.py`); a windowed chapter stopped part way leaves its
+  unsent verses without a result (`test_ai_review_job_halt.py`); a plan limit met in
+  a two-verses-per-request chapter through the real job, with the plan client and a
+  fake provider: two review requests in all, verses 1-2 succeeded, 3 and 4 failed
+  with the reason, 5 without a result, Retry offered 3, 4, 5
+  (`test_ai_review_window_jobs.py`); both components ask again when Settings
+  closes, and the auto-align confirm line says it uses the plan
+  (`AutoAlignChapterButton.test.ts`, `CrossVerseAlignmentModal.test.ts`).
+- Engine, `pytest -n auto` with a short `--basetemp`: 5,998 passed, 17 failed. 12
+  need the absent Stage 3 database. The other 5 (`test_add_books`,
+  `test_lexicon_loads_within_the_startup_budget`, two of
+  `test_paratext_decided_policy_protocol.py`, and
+  `test_continuous_foreground_polling_does_not_starve_worker`) pass run on their
+  own; the frontend suite was running on the same machine. With the short temp
+  path all of `test_ai_review_window_jobs.py` passed inside the full run, which is
+  what #504 predicts.
+- Frontend: `npm run check` 0 errors 0 warnings; `npm run build` passed;
+  `npm run test` 139 files, 1,363 passed, on an idle machine. A first full run
+  started while the engine suite was using every core reported 2 failures in one
+  file; only its summary lines were kept, so which tests is not known. They did not
+  recur.
+
+**Not verified.** None of the three fixes has been seen in the desktop app. The
+frozen sidecars were not rebuilt after these fixes.

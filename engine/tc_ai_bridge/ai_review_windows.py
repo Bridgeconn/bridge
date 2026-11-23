@@ -40,7 +40,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Sequence
 
 from .ai_client import (
-    AIError, AIUsage, OpenAIResponsesClient, REVIEW_INSTRUCTIONS_STATIC, build_verse_evidence,
+    AIError, AIPlanLimitError, AIUsage, OpenAIResponsesClient, REVIEW_INSTRUCTIONS_STATIC, build_verse_evidence,
     frozen_reviewer_decisions, review_check_schema, review_issue_schema, review_project_tail,
     review_prompt_cache_key, usage_dict,
 )
@@ -641,12 +641,21 @@ class WindowReviewSession:
 
     # -- running -------------------------------------------------------------
 
-    def run(self, reporter: Any, cancel_event: Any) -> None:
+    def run(self, reporter: Any, cancel_event: Any, halt: Callable[[], str] | None = None) -> None:
+        """`halt` (#506) is asked before each verse is prepared and before the
+        last window is sent. A non-empty answer means the provider will accept
+        nothing more for now (a ChatGPT plan's limit, a lapsed sign-in): the
+        verses not yet prepared are left without a result, for Retry, and a
+        verse already prepared fails with that reason and keeps what it spent."""
         if self.settings.chapter_context:
             self._build_chapter_context()
         current: list[PreparedVerse] = []
+        stopped = ''
         for verse in self.verses:
             if cancel_event.is_set():
+                break
+            stopped = halt() if halt is not None else ''
+            if stopped:
                 break
             try:
                 reporter.begin(verse)
@@ -661,7 +670,12 @@ class WindowReviewSession:
                 current = []
             current.append(prepared)
         if current:
-            self._send(current, reporter, cancel_event)
+            stopped = stopped or (halt() if halt is not None else '')
+            if stopped:
+                for p in current:
+                    reporter.failed(p.verse, AIPlanLimitError(stopped), p.usage, p.cost)
+            else:
+                self._send(current, reporter, cancel_event)
 
     def _send(self, window: Sequence[PreparedVerse], reporter: Any, cancel_event: Any, attempt: int = 0) -> None:
         """Send one window. A request that fails as a whole (transport,
@@ -704,7 +718,12 @@ class WindowReviewSession:
             'ok': error is None, 'usage': usage_dict(usage),
         })
         if error is not None:
-            if len(window) == 1:
+            if isinstance(error, AIPlanLimitError):
+                # Not a bad window: nothing will be accepted, so halving it and
+                # sending it again verse by verse would only repeat the refusal.
+                for p in window:
+                    reporter.failed(p.verse, error, p.usage, p.cost)
+            elif len(window) == 1:
                 reporter.failed(window[0].verse, error, window[0].usage, window[0].cost)
             elif attempt == 0:
                 middle = (len(window) + 1) // 2

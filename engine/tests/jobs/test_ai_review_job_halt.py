@@ -105,3 +105,25 @@ def test_job_without_a_halt_check_runs_as_it_always_has():
     started = manager.start(_spec(), run_verse=lambda *args: {"summary": "ok"})
     terminal = _wait(manager, started["jobId"])
     assert terminal["state"] == "succeeded" and len(terminal["results"]) == 4
+
+
+def test_windowed_chapter_stopped_part_way_leaves_unsent_verses_without_a_result():
+    """The chapter runner reported the verses it reached and stopped. The rest
+    are not failures of their own: they are simply not done, for Retry."""
+    manager = AIReviewJobManager()
+    halted = {"reason": ""}
+
+    def run_chapter(chapter, verses, mode, report, cancel_event):
+        report.result(verses[0], {"summary": "ok"})
+        report.result(verses[1], error=REASON)
+        halted["reason"] = REASON
+
+    started = manager.start(
+        _spec(), run_verse=lambda *args: {"summary": "unused"}, run_chapter=run_chapter,
+        halt=lambda: halted["reason"],
+    )
+    terminal = _wait(manager, started["jobId"])
+
+    assert terminal["state"] == "failed" and terminal["error"] == REASON
+    assert set(terminal["results"]) == {"1:1", "1:2"}
+    assert manager.spec_for_retry(started["jobId"]).chapter_verses == {"1": ["2", "3"], "2": ["1"]}

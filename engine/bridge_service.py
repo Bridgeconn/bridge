@@ -5256,7 +5256,9 @@ class BridgeEngine:
                     reason="AI review was cancelled before this verse was sent.",
                 )
 
-        WindowReviewSession(client, project, chapter, verses, window_settings).run(Reporter(), cancel_event)
+        WindowReviewSession(client, project, chapter, verses, window_settings).run(
+            Reporter(), cancel_event, halt=self._ai_halt_reason,
+        )
 
     def _start_ai_review_spec(
         self, project: TranslationCoreProject, spec: AIReviewJobSpec,

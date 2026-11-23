@@ -139,6 +139,13 @@ class ChatGPTSession:
             with self._lock:
                 self._last_error = {'code': 'sign_in_failed', 'message': f'Sign-in failed: {error}'}
             return
+        if attempt['cancel'].is_set():
+            # Cancelled while the code was being exchanged: the listener had
+            # already answered, so `sign_in` could not see it. Nobody asked to
+            # keep this sign-in; end it at the provider and store nothing. The
+            # registration `remember_registration` saved is kept.
+            signin.revoke(http=self.http, client_id=result.client_id, tokens=result.tokens)
+            return
         with self._lock:
             self.settings.set_chatgpt_tokens(result.tokens.to_json())
             self.settings.set_chatgpt_connection({

@@ -7,12 +7,15 @@ request and answers from the request's own ids.
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 
 from bridge_service import BridgeEngine
 from tc_ai_bridge import ai_review_windows
+from tc_ai_bridge.chatgpt_session import ChatGPTSession
 from tc_ai_bridge.secret_store import AppSettings
+from tests.support import chatgpt as fake_chatgpt
 from tests.support.ai_review import _metadata, _wait_for_ai_job
 from tests.support.projects import call
 
@@ -353,3 +356,55 @@ def test_whole_chapter_sends_a_small_chapter_in_one_request(titus_five, monkeypa
     assert [_window_verses(r) for r in reviews] == [VERSES]
     assert reviews[0]["_timeout"] == 290.0  # 90 + 40 x 5
     assert all(engine.project.ai_review_cache_status("1", v) == "current" for v in VERSES)
+
+
+def test_a_chatgpt_plan_limit_stops_the_chapter_where_it_is_met(titus_five):
+    """#506. Verses 1-2 are reviewed; the window holding verse 3 meets the
+    plan's limit. That window is not halved and re-sent, verse 4 (prepared, not
+    yet sent) fails with the same reason, verse 5 is never prepared and has no
+    result, and the job ends there so Retry can pick up 3, 4 and 5."""
+    settings, path = titus_five
+    requests: list[dict] = []
+    review_requests = {"count": 0}
+
+    def review(request, review_input):
+        review_requests["count"] += 1
+        if review_requests["count"] == 2:
+            return 429, json.dumps({"error": {
+                "code": "subscription_sharing_usage_limit_exceeded", "message": "limit reached",
+            }}).encode("utf-8")
+        return None
+
+    inner = _transport(requests, review=review)
+
+    def plan_transport(url, headers, body, timeout):
+        # What the plan client sends: the session's token, streamed, the input
+        # as a one-message list. Unwrapped here for the helper above.
+        request = json.loads(body.decode("utf-8"))
+        assert headers["Authorization"] == "Bearer access-1" and request["stream"] is True
+        request["input"] = request["input"][0]["content"]
+        return inner(url, headers, json.dumps(request).encode("utf-8"), timeout)
+
+    engine = BridgeEngine(settings=settings, ai_transport=plan_transport)
+    engine._chatgpt = ChatGPTSession(
+        settings, http=fake_chatgpt.FakeHttp(), sign_in=lambda **kwargs: fake_chatgpt.signed_in_result(),
+    )
+    engine.chatgpt_session.start_sign_in()
+    deadline = time.monotonic() + 5
+    while not engine.chatgpt_session.is_signed_in() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert call(engine, "settings.set", {"provider": "chatgpt", "aiReview": {"versesPerRequest": 2}})["success"]
+    call(engine, "project.open", {"path": path})
+
+    snapshot = _run_chapter(engine)
+
+    assert snapshot["state"] == "failed" and "plan limit" in snapshot["error"], snapshot["error"]
+    results = snapshot["results"]
+    assert results["1:1"]["status"] == "succeeded" and results["1:2"]["status"] == "succeeded"
+    assert results["1:3"]["status"] == "failed" and "plan limit" in results["1:3"]["error"]
+    assert results["1:4"]["status"] == "failed" and "plan limit" in results["1:4"]["error"]
+    assert "1:5" not in results
+    # Two review requests in all: verses 1-2, then the refused one. No halving.
+    assert [_window_verses(r) for r in _reviews(requests)] == [["1", "2"], ["3"]]
+    retry = engine._ai_review_jobs.spec_for_retry(snapshot["jobId"])
+    assert retry.chapter_verses == {"1": ["3", "4", "5"]}
