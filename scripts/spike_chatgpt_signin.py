@@ -92,7 +92,7 @@ def _b64url(data: bytes) -> str:
 
 
 def new_pkce() -> tuple[str, str]:
-    verifier = _b64url(secrets.token_bytes(48))
+    verifier = _b64url(secrets.token_bytes(32))
     return verifier, _b64url(hashlib.sha256(verifier.encode("ascii")).digest())
 
 
@@ -113,7 +113,8 @@ def unverified_claims(id_token: str) -> dict[str, Any]:
 
 
 def http(method: str, url: str, *, headers: dict[str, str] | None = None,
-         form: dict[str, str] | None = None, timeout: float = 60.0) -> tuple[int, bytes]:
+         form: dict[str, str] | None = None, timeout: float = 60.0,
+         with_headers: bool = False) -> Any:
     all_headers = {"User-Agent": USER_AGENT, "Accept": "application/json", **(headers or {})}
     data = None
     if form is not None:
@@ -122,9 +123,10 @@ def http(method: str, url: str, *, headers: dict[str, str] | None = None,
     request = urllib.request.Request(url, data=data, headers=all_headers, method=method)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.status, response.read()
+            result = (response.status, response.read(), dict(response.headers))
     except urllib.error.HTTPError as error:
-        return error.code, error.read()
+        result = (error.code, error.read(), dict(error.headers))
+    return result if with_headers else result[:2]
 
 
 def as_json(body: bytes) -> dict[str, Any]:
@@ -161,7 +163,14 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         if parsed.path != REDIRECT_PATH:
             self.send_error(404)
             return
-        self.server.result = {k: v[0] for k, v in parse_qs(parsed.query).items()}  # type: ignore[attr-defined]
+        server: Any = self.server
+        params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+        server.hits += 1
+        if server.got.is_set() or not hmac.compare_digest(params.get("state", ""), server.state):
+            # A stray or repeated request must not replace the real answer.
+            self.send_error(400, "Invalid sign-in state")
+            return
+        server.result = params
         page = ("<html><body style='font-family:sans-serif'><h3>Bridge sign-in test</h3>"
                 "<p>You can close this tab and go back to the terminal.</p></body></html>").encode("utf-8")
         self.send_response(200)
@@ -169,7 +178,7 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(page)))
         self.end_headers()
         self.wfile.write(page)
-        self.server.got.set()  # type: ignore[attr-defined]
+        server.got.set()
 
     def log_message(self, *args: Any) -> None:  # the query carries the code: never log it
         pass
@@ -188,8 +197,11 @@ def save_registration(path: Path, registration: dict[str, str]) -> None:
 
 
 def sign_in(provider: Provider, registration_path: Path, port: int,
-            open_browser: Callable[[str], Any], timeout: float) -> dict[str, Any]:
+            open_browser: Callable[[str], Any], timeout: float, *,
+            send_host_id: bool = False, new_registration: bool = False) -> dict[str, Any]:
     registration = load_registration(registration_path)
+    if new_registration:
+        registration.pop("client_id", None)
     new_registration = not registration.get("client_id")
     if not registration.get("ext_agent_host_id"):
         registration["ext_agent_host_id"] = f"urn:uuid:{uuid.uuid4()}"
@@ -201,16 +213,17 @@ def sign_in(provider: Provider, registration_path: Path, port: int,
     except OSError as error:
         raise SpikeError(f"Port {port} on 127.0.0.1 is not free ({error}). Close what holds it "
                          f"or pass --port.") from error
+    state, nonce = _b64url(secrets.token_bytes(32)), _b64url(secrets.token_bytes(32))
     server.result = {}  # type: ignore[attr-defined]
+    server.hits = 0  # type: ignore[attr-defined]
+    server.state = state  # type: ignore[attr-defined]
     server.got = threading.Event()  # type: ignore[attr-defined]
     threading.Thread(target=server.serve_forever, daemon=True).start()
     redirect_uri = f"http://127.0.0.1:{server.server_address[1]}{REDIRECT_PATH}"
 
-    state, nonce = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
     verifier, challenge = new_pkce()
     params = {
         "client_id": REGISTRATION_CLIENT if new_registration else registration["client_id"],
-        "ext_agent_host_id": registration["ext_agent_host_id"],
         "response_type": "code",
         "redirect_uri": redirect_uri,
         "scope": SCOPE,
@@ -220,6 +233,12 @@ def sign_in(provider: Provider, registration_path: Path, port: int,
         "code_challenge": challenge,
         "code_challenge_method": "S256",
     }
+    # OpenAI's reference client (sign-in-with-chatgpt-devkit, oauth.ts) sends the
+    # host id only when told the deployment supports it, and defaults to not
+    # sending it. The first run of this script sent it and the code exchange
+    # was refused with invalid_grant.
+    if send_host_id:
+        params["ext_agent_host_id"] = registration["ext_agent_host_id"]
     if new_registration:
         params["agent_name_hint"] = AGENT_NAME
     url = f"{provider.authorize_url}?{urlencode(params)}"
@@ -230,6 +249,7 @@ def sign_in(provider: Provider, registration_path: Path, port: int,
         if not server.got.wait(timeout):  # type: ignore[attr-defined]
             raise SpikeError(f"No sign-in arrived within {int(timeout)} seconds.")
         callback: dict[str, str] = server.result  # type: ignore[attr-defined]
+        callback_hits: int = server.hits  # type: ignore[attr-defined]
     finally:
         server.shutdown()
         server.server_close()
@@ -237,8 +257,6 @@ def sign_in(provider: Provider, registration_path: Path, port: int,
     if callback.get("error"):
         raise SpikeError(f"Sign-in was refused: {callback['error']} "
                          f"{callback.get('error_description', '')}".strip())
-    if not hmac.compare_digest(callback.get("state", ""), state):
-        raise SpikeError("The sign-in answer carried the wrong state; refusing it.")
     code = callback.get("code", "")
     if not code:
         raise SpikeError("The sign-in answer carried no code.")
@@ -251,7 +269,7 @@ def sign_in(provider: Provider, registration_path: Path, port: int,
     elif issued and issued != registration["client_id"]:
         raise SpikeError("The sign-in answer named a different client id; refusing it.")
 
-    status, body = http("POST", provider.token_url, form={
+    status, body, headers = http("POST", provider.token_url, with_headers=True, form={
         "grant_type": "authorization_code",
         "client_id": registration["client_id"],
         "code": code,
@@ -261,12 +279,22 @@ def sign_in(provider: Provider, registration_path: Path, port: int,
     })
     tokens = as_json(body)
     if status != 200 or not tokens.get("access_token"):
-        raise SpikeError(f"The code exchange failed (HTTP {status}): {error_summary(tokens)}")
+        # An error body carries no credential; show all of it.
+        request_id = next((v for k, v in headers.items() if k.lower() == "x-request-id"), "")
+        raise SpikeError(
+            f"The code exchange failed (HTTP {status}).\n"
+            f"  error body: {body.decode('utf-8', 'replace')[:800]}\n"
+            f"  request id: {request_id or '(none)'}\n"
+            f"  new registration: {new_registration}; host id sent: {send_host_id}; "
+            f"callback requests: {callback_hits}; callback fields: {sorted(callback)}; "
+            f"code length: {len(code)}; redirect: {redirect_uri}\n"
+            f"  scope the sign-in granted: {callback.get('scope', '(none)')}; issuer: {callback.get('iss', '(none)')}")
     granted = str(callback.get("scope") or tokens.get("scope") or "").split()
     return {
         "tokens": tokens,
         "clientId": registration["client_id"],
         "newRegistration": new_registration,
+        "hostIdSent": send_host_id,
         "grantedScopes": sorted(granted),
         "redirectUri": redirect_uri,
     }
@@ -500,15 +528,18 @@ def replay_payload(path: Path, model: str) -> dict[str, Any]:
 # -- the run ---------------------------------------------------------------
 
 def run(provider: Provider, *, registration_path: Path, port: int, model: str, replay: Path | None,
-        open_browser: Callable[[str], Any], timeout: float) -> dict[str, Any]:
+        open_browser: Callable[[str], Any], timeout: float,
+        send_host_id: bool = False, new_registration: bool = False) -> dict[str, Any]:
     report: dict[str, Any] = {"ranAt": time.strftime("%Y-%m-%dT%H:%M:%S"), "tests": []}
-    session = sign_in(provider, registration_path, port, open_browser, timeout)
+    session = sign_in(provider, registration_path, port, open_browser, timeout,
+                      send_host_id=send_host_id, new_registration=new_registration)
     tokens = session["tokens"]
     refresh_token = str(tokens.get("refresh_token") or "")
     try:
         claims = unverified_claims(str(tokens.get("id_token") or ""))
         report["signIn"] = {
             "newRegistration": session["newRegistration"],
+            "hostIdSent": session["hostIdSent"],
             "clientIdPrefix": session["clientId"][:7],
             "grantedScopes": session["grantedScopes"],
             "planUseGranted": PLAN_SCOPE in session["grantedScopes"],
@@ -569,6 +600,7 @@ def run(provider: Provider, *, registration_path: Path, port: int, model: str, r
 class _FakeProvider(BaseHTTPRequestHandler):
     """Just enough of the documented contract to exercise every step above."""
     challenge = ""
+    host_ids: list[str | None] = []
     refresh_tokens: set[str] = set()
     revoked: list[str] = []
 
@@ -597,10 +629,12 @@ class _FakeProvider(BaseHTTPRequestHandler):
             wanted = {"client_id": REGISTRATION_CLIENT, "agent_name_hint": AGENT_NAME, "response_type": "code",
                       "scope": SCOPE, "resource": RESOURCE, "code_challenge_method": "S256"}
             wrong = [k for k, v in wanted.items() if query.get(k) != v]
-            if wrong or not query.get("ext_agent_host_id", "").startswith("urn:uuid:"):
+            host_id = query.get("ext_agent_host_id")
+            if wrong or (host_id is not None and not host_id.startswith("urn:uuid:")):
                 self._json(400, {"error": "invalid_request", "error_description": f"bad {wrong}"})
                 return
             type(self).challenge = query["code_challenge"]
+            type(self).host_ids.append(host_id)
             back = urlencode({"code": "fake-code", "state": query["state"], "client_id": "oaiapp_selftest",
                               "scope": SCOPE})
             self._send(302, b"", extra={"Location": f"{query['redirect_uri']}?{back}"})
@@ -700,6 +734,7 @@ def self_test() -> int:
     checks = {
         "registered a client id": registration.get("client_id") == "oaiapp_selftest",
         "kept a host id": str(registration.get("ext_agent_host_id", "")).startswith("urn:uuid:"),
+        "host id not sent unless asked": _FakeProvider.host_ids == [None],
         "plan scope granted": report["signIn"]["planUseGranted"],
         "email masked": report["signIn"]["email"] == "t***@example.com",
         "hidden model left out": [m["slug"] for m in report["models"]["listed"]] == ["fake-large"],
@@ -733,6 +768,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="Where the host id and issued client id are kept.")
     parser.add_argument("--report", default=str(Path(tempfile.gettempdir()) / "bridge-chatgpt-signin-spike-report.json"),
                         help="Where the report is written.")
+    parser.add_argument("--send-host-id", action="store_true",
+                        help="Send ext_agent_host_id on the authorization request (OpenAI's reference client "
+                             "leaves it out by default).")
+    parser.add_argument("--new-registration", action="store_true",
+                        help="Ignore the saved client id and register this computer again.")
     parser.add_argument("--self-test", action="store_true", help="Run against a fake local provider.")
     args = parser.parse_args(argv)
     for stream in (sys.stdout, sys.stderr):
@@ -743,7 +783,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         report = run(Provider(), registration_path=Path(args.registration), port=args.port, model=args.model,
                      replay=Path(args.replay) if args.replay else None,
-                     open_browser=webbrowser.open, timeout=args.timeout)
+                     open_browser=webbrowser.open, timeout=args.timeout,
+                     send_host_id=args.send_host_id, new_registration=args.new_registration)
     except SpikeError as error:
         print(f"\nStopped: {error}")
         return 1

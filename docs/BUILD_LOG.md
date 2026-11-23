@@ -26427,3 +26427,48 @@ Rust file changed.
 **Open before any app code lands.** A login is a stop-and-ask item in `CLAUDE.md`.
 Benz asked for it; the maintainer's agreement and a `docs/DECISIONS.md` entry are
 still owed.
+
+### Same day: two live runs, both refused at the code exchange
+
+Joel signed in twice on this machine. Both times the browser sign-in completed
+(one callback, carrying `code`, `state`, `iss`, `scope` and an issued `client_id`),
+and both times the code-for-token exchange answered `HTTP 400 {"error":
+"invalid_grant"}` with no reason or description (second run's request id
+`1558c0cb-c7d2-4497-b3fb-ae56fad54de4`). No token was ever issued, so no model was
+listed and no test request was sent. **Step A's two questions are still unanswered.**
+
+- Run 1 sent `ext_agent_host_id` and a 64-character PKCE verifier, as OpenAI's
+  pages describe.
+- Run 2 was changed to match OpenAI's reference client
+  (`openai/sign-in-with-chatgpt-devkit`, `packages/local/src/oauth.ts`) field for
+  field: no host id unless `--send-host-id`, a 43-character verifier, first
+  state-valid callback only, a fresh registration (`--new-registration`). The
+  failure message now prints the whole error body, the request id and the granted
+  scope. Same refusal.
+
+Between them the two runs cover the request shapes of two clients whose exchange is
+reported working (the reference client, and the MIT-licensed `earendil-works/pi`,
+which does send the host id). So the request format is probably not the cause;
+what is left is the account (its plan, workspace or region) or something on
+OpenAI's side. Not established. Which plan the account is on is the next thing to
+find out.
+
+**The reference client was read, not run and not copied.** Its licence is OpenAI's
+"Sign in with ChatGPT DevKit Noncommercial License", which excludes development or
+testing "by or for a business, employer, or client". A control run with it was
+prepared and then dropped for that reason, and the scratch copy deleted. Bridge's
+sign-in must be written from the documented protocol, as this script is; none of
+that code may enter the repo.
+
+**Reported against the same service by other clients** (the reference repo's open
+issues, read 2026-11-23; none reproduced here):
+
+- #5: a refresh is refused with `invalid_grant` after the token has sat unused for
+  a couple of hours, so the person must sign in again. Open since 2026-10-04, no
+  reply from OpenAI on the thread.
+- #9: prompt caching mostly reports zero cached tokens under plan usage, so a
+  repeated prefix is not discounted against the allowance.
+- #6: a period of HTTP 520 on every plan-usage request (2026-10-14/15).
+- #3: OpenAI staff confirm there is no API for the remaining allowance.
+
+Run: `--self-test` after each change, 13 of 13 checks.
