@@ -26472,3 +26472,13 @@ issues, read 2026-11-23; none reproduced here):
 - #3: OpenAI staff confirm there is no API for the remaining allowance.
 
 Run: `--self-test` after each change, 13 of 13 checks.
+
+**Later the same day: the account was on the Free plan.** Joel checked: the account
+both runs signed in with is a personal ChatGPT Free account, and no workspace was
+asked for. Plan usage is offered to Plus and Pro only, so this is the likely reason
+for the refusal. Likely, not shown: no run with a Plus or Pro account has been made
+yet, so the script itself is still unproven against OpenAI. Worth keeping for the
+real feature: a Free account is let through the whole browser sign-in and approval
+and is refused only at the code exchange, with a bare `invalid_grant` and no
+reason. Bridge would have to turn that into "this needs a ChatGPT Plus or Pro
+plan" itself.
