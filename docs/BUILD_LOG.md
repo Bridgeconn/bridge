@@ -26729,3 +26729,12 @@ The triage and auto-align jobs are unchanged and still rely on the pause.
 
 **Not verified.** None of the three fixes has been seen in the desktop app. The
 frozen sidecars were not rebuilt after these fixes.
+
+**Later the same day.** The sidecars were rebuilt from 35fb7aa and
+`smoke_sidecars.py` passed on them. Joel then tested in the desktop app and reported
+that everything he tried works as expected. That is his report of the whole list he
+was given (a chapter review, Align chapter with AI, Sign out, the buttons enabling
+after a sign-in made with the editor open, Cancel); which items he ran was not
+itemised. Two cases cannot be produced at will and should be read as still
+unconfirmed unless he says otherwise: the plan's limit actually being reached, and
+a sign-in renewed after sitting unused for hours.
