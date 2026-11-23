@@ -26482,3 +26482,62 @@ real feature: a Free account is let through the whole browser sign-in and approv
 and is refused only at the code exchange, with a bare `invalid_grant` and no
 reason. Bridge would have to turn that into "this needs a ChatGPT Plus or Pro
 plan" itself.
+
+### 2026-11-23, with a Plus account: step A passes
+
+Three more live runs, on a ChatGPT Plus account. The first two each exposed
+something the documentation does not say, and the script was corrected; the third
+answered step A.
+
+1. Sign-in, the model list, an immediate refresh (the refresh token rotates) and
+   revocation all worked, which confirms the Free plan was why the earlier runs
+   were refused. Every test request was refused with `HTTP 400 {"detail": "Input
+   must be a list"}`: **plan usage does not accept a string `input`**, which is
+   what `ai_client._post_text` sends. It must be `[{"role": "user", "content":
+   ...}]`.
+2. With a list input all six requests were accepted, and the script read none of
+   them: **the stream comes back with no `Content-Type` header at all**, and the
+   script was testing for `text/event-stream`. A bug in the script; the reference
+   client has a comment about exactly this.
+3. All six requests completed:
+
+| Request | Model | Result |
+|---|---|---|
+| plain text | `gpt-5.6-terra` | `ready` |
+| small strict schema | `gpt-5.6-terra` | valid JSON, the two required keys |
+| Bridge review instructions + answer schema, `reasoning`, `prompt_cache_key` | `gpt-5.6-terra` | valid JSON, `summary` / `check_reviews` / `qa_issues`; 2,075 input tokens, 0 cached |
+| the same request again | `gpt-5.6-terra` | valid JSON; 2,075 input tokens, **1,792 cached** |
+| the same request | `gpt-6.2-sol` | valid JSON |
+| the same request | `gpt-5.6-luna` | valid JSON |
+
+**What step A establishes** (each seen in these runs, on one account, one day):
+
+- Strict `json_schema` output is accepted under plan usage with Bridge's own review
+  schema, and `reasoning.effort` and `prompt_cache_key` are accepted with it.
+  Nothing Bridge sends had to be dropped.
+- The account is offered ten models, `gpt-5.6-terra` (Bridge's default) and
+  `gpt-5.6-luna` among them, so the measured default and a cheap tier for alignment
+  and triage are both available. The catalogue is `{"models": [...]}` with `slug`,
+  `display_name`, `visibility`, and per model `supported_reasoning_levels` and
+  `context_window`.
+- `response.completed` carries the whole response object, `output` and `usage`
+  (input, cached and output tokens, and an `attribution` breakdown) included, so a
+  streaming transport can hand `_post_text` the same JSON it reads today.
+- The repeated request was discounted. One pair of requests a few seconds apart;
+  the reference repo's issue #9 reports the discount often not applying, and this
+  does not contradict that.
+- Signing in again with the saved client id works (no second registration), and a
+  refresh straight after sign-in works.
+
+**What it does not establish.** The built-in review request is a hand-made
+miniature (one public verse, one check): it shows the format is accepted, and says
+nothing about verdict quality on a real chapter. A refresh after the token has sat
+unused for hours (issue #5) was not tried. Nothing was measured about how fast a
+real chapter uses a Plus plan's five-hour allowance. No real captured request was
+replayed (`--replay`).
+
+The script now wraps a string input in a list, reads any non-JSON answer as a
+stream, prefers Bridge's default model when it is offered, also tries the newest
+and the cheap model, and records each model's reasoning levels and context window.
+Run: `--self-test`, 13 of 13, with the fake provider now answering as OpenAI does
+(no `Content-Type`, a string input refused).

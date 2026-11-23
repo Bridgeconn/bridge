@@ -69,6 +69,8 @@ DEFAULT_PORT = 1455
 AGENT_NAME = "Bridge"
 USER_AGENT = "bridge-signin-spike"
 REGISTRATION_CLIENT = "dynamic_agent_client"
+BRIDGE_DEFAULT_MODEL = "gpt-5.6-terra"  # model_router.DEFAULT_REVIEW_MODEL
+BRIDGE_CHEAP_MODEL = "gpt-5.6-luna"
 # A parameter the request cannot do without: never dropped by the retry below.
 ESSENTIAL_FIELDS = {"model", "input", "instructions", "stream", "store"}
 
@@ -330,7 +332,10 @@ def list_models(provider: Provider, access_token: str) -> dict[str, Any]:
     rows = data.get("models") if isinstance(data.get("models"), list) else data.get("data")
     rows = rows if isinstance(rows, list) else []
     listed = [
-        {"slug": str(row.get("slug") or row.get("id") or ""), "displayName": str(row.get("display_name") or "")}
+        {"slug": str(row.get("slug") or row.get("id") or ""), "displayName": str(row.get("display_name") or ""),
+         "reasoningLevels": row.get("supported_reasoning_levels"),
+         "defaultReasoning": row.get("default_reasoning_level"),
+         "contextWindow": row.get("context_window"), "plans": row.get("available_in_plans")}
         for row in rows
         if isinstance(row, dict) and row.get("visibility", "list") == "list"
     ]
@@ -347,7 +352,8 @@ def list_models(provider: Provider, access_token: str) -> dict[str, Any]:
 def stream_response(provider: Provider, access_token: str, payload: dict[str, Any],
                     timeout: float = 240.0) -> dict[str, Any]:
     out: dict[str, Any] = {"httpStatus": None, "events": collections.Counter(), "text": "",
-                           "completed": None, "failed": None, "error": None, "streamed": True}
+                           "completed": None, "failed": None, "error": None, "streamed": True,
+                           "contentType": None, "firstLines": []}
 
     def handle(data: str) -> None:
         if data.strip() == "[DONE]":
@@ -383,15 +389,22 @@ def stream_response(provider: Provider, access_token: str, payload: dict[str, An
         return out
     with response:
         out["httpStatus"] = response.status
-        if "text/event-stream" not in str(response.headers.get("Content-Type") or ""):
+        content_type = str(response.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        out["contentType"] = content_type or "(none)"
+        if content_type == "application/json":
             # Not a stream after all: one JSON body.
             out["streamed"] = False
             body = as_json(response.read())
             out["completed"] = body or None
             return out
+        # Anything else is read as a stream: plan usage answers with valid
+        # events and NO Content-Type (seen on the second Plus run, where a
+        # check for "text/event-stream" threw six good answers away).
         data_lines: list[str] = []
         for raw in response:
             line = raw.decode("utf-8", "replace").rstrip("\r\n")
+            if len(out["firstLines"]) < 6:
+                out["firstLines"].append(line[:160])
             if not line:
                 if data_lines:
                     handle("\n".join(data_lines))
@@ -421,6 +434,10 @@ def run_test(provider: Provider, access_token: str, name: str, payload: dict[str
     """Send `payload`; when the provider names an unsupported parameter, drop
     that one field and send again, so the report says exactly what is refused."""
     attempts: list[dict[str, Any]] = []
+    # Plan usage refuses a string `input` ("Input must be a list", seen on the
+    # first Plus run); Bridge sends a string today, so the client must wrap it.
+    if isinstance(payload.get("input"), str):
+        payload = {**payload, "input": [{"role": "user", "content": payload["input"]}]}
     for _ in range(4):
         started = time.monotonic()
         result = stream_response(provider, access_token, payload)
@@ -438,6 +455,9 @@ def run_test(provider: Provider, access_token: str, name: str, payload: dict[str
             "model": payload.get("model"),
             "httpStatus": result["httpStatus"],
             "streamed": result["streamed"],
+            "contentType": result["contentType"],
+            # Only when nothing could be read: what the body began with.
+            "firstLines": None if result["events"] or result["completed"] is not None else result["firstLines"],
             "eventTypes": dict(result["events"]),
             "completedSeen": result["completed"] is not None,
             "completedHasOutput": "output" in completed,
@@ -557,7 +577,9 @@ def run(provider: Provider, *, registration_path: Path, port: int, model: str, r
         report["models"] = models
         slugs = [row["slug"] for row in models["listed"]]
         print(f"Models offered ({len(slugs)}): {', '.join(slugs) or 'none'}")
-        chosen = model or (slugs[0] if slugs else "")
+        # Bridge's measured review results are on its default model, so test
+        # that one when the account is offered it.
+        chosen = model or (BRIDGE_DEFAULT_MODEL if BRIDGE_DEFAULT_MODEL in slugs else (slugs[0] if slugs else ""))
         if not chosen:
             raise SpikeError(f"No model to test with (models HTTP {models['httpStatus']}: {models['error']}).")
         report["modelTested"] = chosen
@@ -569,6 +591,10 @@ def run(provider: Provider, *, registration_path: Path, port: int, model: str, r
         ]
         # The same request again: does the second one report cached input?
         payloads.append(("Bridge review schema, repeated", payloads[2][1]))
+        # The newest model offered and the cheap tier: do they take the schema too?
+        for other in dict.fromkeys([slugs[0] if slugs else "", BRIDGE_CHEAP_MODEL]):
+            if other and other != chosen and other in slugs:
+                payloads.append((f"Bridge review schema on {other}", bridge_review_payload(other)))
         if replay is not None:
             payloads.append((f"replayed request {replay.name}", replay_payload(replay, chosen)))
         for name, payload in payloads:
@@ -607,7 +633,8 @@ class _FakeProvider(BaseHTTPRequestHandler):
     def _send(self, status: int, body: bytes, content_type: str = "application/json",
               extra: dict[str, str] | None = None) -> None:
         self.send_response(status)
-        self.send_header("Content-Type", content_type)
+        if content_type:
+            self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         for key, value in (extra or {}).items():
             self.send_header(key, value)
@@ -683,6 +710,9 @@ class _FakeProvider(BaseHTTPRequestHandler):
                 self._json(400, {"error": {"code": "subscription_sharing_unsupported_capability",
                                            "param": "stream", "message": "stream:true and store:false required"}})
                 return
+            if not isinstance(body.get("input"), list):
+                self._json(400, {"detail": "Input must be a list"})
+                return
             if "prompt_cache_key" in body:  # exercises the drop-one-field retry
                 self._json(400, {"error": {"code": "subscription_sharing_unsupported_capability",
                                            "param": "prompt_cache_key", "message": "unsupported"}})
@@ -699,7 +729,7 @@ class _FakeProvider(BaseHTTPRequestHandler):
                               "input_tokens_details": {"cached_tokens": 0}}}},
             ]
             stream = "".join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n" for e in events).encode("utf-8")
-            self._send(200, stream, content_type="text/event-stream")
+            self._send(200, stream, content_type="")  # as plan usage answers: no Content-Type
         else:
             self.send_error(404)
 
