@@ -26541,3 +26541,128 @@ stream, prefers Bridge's default model when it is offered, also tries the newest
 and the cheap model, and records each model's reasoning levels and context window.
 Run: `--self-test`, 13 of 13, with the fake provider now answering as OpenAI does
 (no `Content-Type`, a string input refused).
+
+## 2026-11-23 — Sign in with ChatGPT, steps B to E: the engine, the Settings screen, the docs (#506)
+
+Branch `chatgpt-signin`. Step A (above) said the feature can work; this is the
+feature. Joel approved the plan and said to continue after step A passed.
+
+**What a person does.** Settings > AI provider > Provider: "ChatGPT account (sign
+in, Plus or Pro)" > **Continue with ChatGPT**. The browser opens on OpenAI's page;
+when they approve, Settings shows "Signed in as …", the provider is stored, and
+the Model field becomes a list of what that account is offered. Every AI feature
+then runs as before, on the plan. **Sign out** ends it on this computer.
+
+**Engine.**
+
+- `tc_ai_bridge/chatgpt_signin.py`: the protocol and no Bridge state. PKCE, the
+  loopback listener (first answer carrying this attempt's `state` only; port 1455,
+  any free port if it is taken), the code exchange, refresh, revocation, the model
+  catalogue, and the ID token's RS256 signature checked in plain integers (stdlib
+  only, so the frozen engine gains no dependency). Written from the documented
+  contract and step A's runs; nothing from OpenAI's noncommercial reference client.
+- `tc_ai_bridge/chatgpt_session.py`: one per engine. Tokens DPAPI-wrapped in
+  `settings.json` through two new `AppSettings` methods; the identity and the issued
+  client id as an ordinary setting. Renews a token five minutes before expiry,
+  under a lock, and stores the rotated refresh token before using it. A refused
+  renewal that means "sign in again" clears the tokens and says so. After a plan
+  limit nothing is sent for five minutes.
+- `tc_ai_bridge/chatgpt_plan_client.py`: `ChatGPTPlanClient(OpenAIResponsesClient)`.
+  Wraps a string `input` in a list, sets `stream: true`, reads the event stream to
+  `response.completed` and returns that event's response object, so `_post_text`
+  parses what it always has. A plan limit raises the new `AIPlanLimitError` and is
+  never retried; a 401 renews the token and re-sends once; cost is $0, tokens are
+  counted.
+- `ai_client.py`: three small hooks the subclass overrides (`_should_retry`,
+  `_estimate_cost`, and the existing `_model_supports_reasoning_effort`), and
+  `AIPlanLimitError`. No behaviour change for an API key: the hooks return what the
+  inline code did.
+- `ai_http.py`: `urlopen_no_redirect`, used for every request that carries the
+  sign-in.
+- `bridge_service.py`: `_ai_client` builds the plan client when the provider is
+  `chatgpt`; five methods (`ai.chatgpt.status` / `signIn` / `cancelSignIn` /
+  `signOut` / `models`), classified in `authorization.py`; `settings.get` gains
+  `aiReady` (could a request be sent now) and `chatgpt` (the sign-in's state, no
+  token), while `hasApiKey` keeps meaning exactly that.
+- `ai_review_jobs.py`: `start(..., halt=)`. Asked before each verse or chapter; a
+  non-empty answer ends the job there as failed with that message, and Retry
+  resumes from the verses with no succeeded result. The triage and auto-align jobs
+  were not given this: they rely on the five-minute pause, which makes each
+  remaining unit fail at once without sending anything.
+
+No schema change in any of the three databases. No golden, threshold, Scripture
+writer or auto-apply behaviour touched. No Rust file changed: sign-in starts and is
+polled, so no call outlives the default timeout.
+
+**Frontend.** `SettingsModal.svelte` gains the provider option and the sign-in
+block (signed out, waiting with the address shown, signed in, expired, refused,
+limit reached), hides the base URL and API key on that provider, and offers the
+account's models. Signing in stores the provider at once, and only the provider.
+Three components that asked `hasApiKey` now ask `aiReady` (falling back to
+`hasApiKey` for an older engine), and five "add an API key" messages now say "or
+sign in with ChatGPT". The auto-align confirm line says "uses your ChatGPT plan
+allowance" in place of a dollar figure.
+
+**Cost.** Asked for alongside the sign-in. What this change does: the Model list
+comes from the account, so the existing "Model per task" setting can put alignment
+and triage on a cheaper tier (`gpt-5.6-luna` is offered); a reached limit stops a
+job instead of spending a request per remaining verse; tokens are still counted.
+What it deliberately does not do: switch on any of the #500/#502 request options
+by default. Those change what the model reads and have not been compared with a
+translator-judged run.
+
+**Run.**
+
+- New engine tests, 50: `tests/ai/test_chatgpt_signin.py` (15),
+  `test_chatgpt_session.py` (12), `test_chatgpt_plan_client.py` (10),
+  `tests/jobs/test_ai_review_job_halt.py` (5),
+  `tests/service/test_chatgpt_signin_rpc.py` (8), against a fake of the provider
+  in `tests/support/chatgpt.py`. All pass.
+- Engine, `pytest -n auto`: 5,990 passed, 22 failed, 4 skipped, 3 xfailed. None of
+  the 22 is from this change:
+  - 12, all of `tests/semantic/test_semantic_mapping_stage3.py`, need the git-ignored
+    Stage 3 semantic database, absent on this machine (as on the 0.26.0 run).
+  - 7, all of `tests/service/test_ai_review_window_jobs.py`: one verse of each run
+    fails with `[WinError 3] The system cannot find the path specified`, the
+    260-character path limit (#504). All 7 pass with a shorter `--basetemp`.
+  - 3 (`test_lexicon_loads_within_the_startup_budget` and two of
+    `test_paratext_decided_policy_protocol.py`) pass run on their own. The suite
+    ran while the frontend suite and a build were running on the same machine.
+- Frozen: `scripts/build-sidecars.ps1`, then `scripts/smoke_sidecars.py
+  engine/dist/bridge-engine.exe` passed. The smoke test does not sign in. Asked
+  separately over stdio with an empty data folder, the frozen engine answers
+  `ai.chatgpt.status` (`signedOut`) and `settings.get` carries `aiReady` and
+  `chatgpt`: the new modules load in the frozen build. A sign-in from the frozen
+  engine has not been made.
+- Frontend: `npm run check` 0 errors 0 warnings; `npm run test` 139 files, 1,360
+  passed (8 new, in `SettingsModal.test.ts`); `npm run build` passed.
+- **Live, the real engine code against OpenAI** (a scratch script, a Plus account,
+  settings in a temp folder): `ai.chatgpt.signIn` through the dispatcher, a real ID
+  token accepted by the integer RS256 check, no token in plain text in
+  `settings.json` and a DPAPI entry present, ten models listed, a strict-JSON
+  request through `ChatGPTPlanClient` and its real streaming transport answered in
+  3.4 s with usage counted and cost 0, a forced renewal rotated and stored the
+  refresh token and the next request succeeded, `ai.chatgpt.signOut` revoked.
+  An earlier attempt timed out unapproved and `cancelSignIn` returned cleanly.
+
+**Not run, not verified.**
+
+- The desktop app. Nobody has clicked "Continue with ChatGPT" in a Bridge window:
+  that the frozen engine opens the browser, and how the block looks at 1366x768,
+  are unseen. jsdom shows structure, not layout.
+- A sign-in from the frozen engine (see Frozen above): whether `webbrowser.open`
+  opens the browser from the windowless packaged process is unseen. Settings shows
+  the address to copy if it does not.
+- `cargo check` / `cargo test`: no Rust file changed.
+- A real tN/tW review of a chapter on the plan: verdict quality against the
+  measured `gpt-5.6-terra` API baseline, and how much of a Plus plan's five-hour
+  allowance a chapter uses.
+- A plan limit actually being reached, and a renewal after hours unused. Both are
+  covered only by tests against the fake, written from OpenAI's error table and
+  other clients' reports.
+- The fallback to a free port when 1455 is taken, against OpenAI.
+- macOS and Linux, where there is no DPAPI: the sign-in lasts for the session only,
+  as the API key does.
+
+**Known gaps, left as they are.** After-run usage lines in the review panel and the
+cross-verse page still print a dollar figure, which reads "$0.00" on a plan.

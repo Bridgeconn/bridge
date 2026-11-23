@@ -1,5 +1,31 @@
 # Decisions
 
+## 2026-11-23 — Sign in with ChatGPT as an optional AI provider (#506)
+
+**Decision:** Benz asked for a ChatGPT account sign-in (relayed by Joel, 2026-11-23).
+Settings > AI provider gains "ChatGPT account": a browser sign-in on OpenAI's own page
+(its flow for open-source apps that run locally: PKCE, a loopback redirect, a one-time
+client registration), after which Bridge's existing AI requests run on that person's
+ChatGPT Plus or Pro plan instead of an API key. The API key providers are unchanged.
+**Status:** built on the `chatgpt-signin` branch. A login is a stop-and-ask item; the
+maintainer's agreement is still owed and is the condition for merging to `main`.
+**Because:** a team member who already pays for ChatGPT paid again per request through
+an API key (about $5.40 a chapter of tN/tW review). A live test showed Bridge's strict
+JSON review format is accepted under plan usage on the default model (BUILD_LOG,
+2026-11-23). Not taken: OpenAI's reference client, whose licence is noncommercial and
+excludes work "by or for a business, employer, or client"; the flow is written from the
+documented protocol instead. Not taken: Gemini account sign-in, for which Google offers
+third-party apps no route.
+**Rules out:** a login for anything but this optional AI credential; the sign-in on the
+import, check or open path; Bridge seeing or storing a password; falling back from the
+plan to an API key without the person choosing it; using the ChatGPT identity as
+Bridge's user identity (that is still a chosen name plus a device); and reading this as
+a precedent for other account sign-ins, each of which is its own question.
+**Known limits, none Bridge's to fix:** each person needs their own Plus or Pro plan
+(a Free account is refused); OpenAI gives no way to read the remaining allowance; other
+clients report a sign-in that has sat unused for hours failing to renew, which Bridge
+answers by asking the person to sign in again.
+
 ## 2026-11-02 — Automatic app updates, enabled by default (#321)
 
 **Decision:** Benz approved the optional GitHub update network path and asked for
