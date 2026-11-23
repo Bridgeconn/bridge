@@ -88,6 +88,8 @@ import type {
   VerseAlignment,
   VerseData,
   VerseHeading,
+  VerseMarkupAction,
+  VerseMarkupResult,
   QaFinding,
   SettingsData,
   TerminologyRule,
@@ -504,6 +506,7 @@ export type EngineMethod =
   | "verse.decide"
   | "verse.edit"
   | "verse.history"
+  | "verse.markup"
   | "verse.get"
   | "verse.runChecks";
 
@@ -1088,6 +1091,22 @@ export const bridge = {
   verseHistory(params: { chapter?: string; verse?: string; limit?: number } = {}): Promise<
     import("../types/finding").VerseHistory> {
     return call("verse.history", params);
+  },
+
+  /** #507: one marker edit on the string the verse editor holds. `style`
+   *  switches `\k` or `\qs` on the selection, `level` sets the poetry level of
+   *  the cursor's line, `break` starts a line at the cursor, `join` runs the
+   *  cursor's line on from the one above. Offsets are code points. Nothing is
+   *  written: the answer is the new string, to be saved through editVerse.
+   *  The engine does this because the frontend never parses USFM. */
+  verseMarkup(params: {
+    text: string; action: VerseMarkupAction; start: number; end?: number;
+    /** `k` or `qs` for `style`; `q`, `q1`, `q2` or `q3` for `level`. */
+    marker?: string;
+    /** The level the verse's first line is at, which the string does not hold. */
+    opening?: string;
+  }): Promise<VerseMarkupResult> {
+    return call("verse.markup", params);
   },
 
   getVerse(chapter: string, verse: string): Promise<VerseData> {

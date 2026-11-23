@@ -10,7 +10,10 @@ from __future__ import annotations
 import pytest
 
 from tc_ai_bridge.usfm_parser import _usfmtc_documents, parse_usfm
-from tc_ai_bridge.usfm_verse import lift_verse, normalize_style_reopens, redundant_style_reopens
+from tc_ai_bridge.usfm_verse import (
+    break_line, edit_markup, join_line, lift_verse, normalize_style_reopens, redundant_style_reopens,
+    set_line_level, toggle_style,
+)
 
 
 def _collapse(text: str) -> str:
@@ -171,6 +174,170 @@ def test_a_verse_that_starts_with_a_paragraph_marker_has_it_at_zero():
     assert lifted.to_dict()["paras"] == [
         {"marker": "q1", "position": 0}, {"marker": "q2", "position": len("Lord, how\n")},
     ]
+
+
+# --- marker edits on the string an editor holds (#507) ------------------------
+
+def _words(raw: str) -> str:
+    return " ".join(lift_verse(raw).plain.split())
+
+
+def test_a_selection_is_marked_as_a_keyword_and_the_words_do_not_change():
+    raw = "I lay down and slept."
+    start = raw.index("and")
+    edit = toggle_style(raw, start, start + len("and slept"), "k")
+    assert edit.changed and edit.reason == ""
+    assert edit.text == "I lay down \\k and slept\\k*."
+    assert edit.text[edit.start:edit.end] == "and slept"
+    assert _words(edit.text) == _words(raw)
+    assert [(s.marker, lift_verse(edit.text).plain[s.start:s.end]) for s in lift_verse(edit.text).styles] == [
+        ("k", "and slept"),
+    ]
+
+
+def test_selah_is_marked_without_its_surrounding_spaces():
+    raw = "many are they Selah\n\\q1"
+    start = raw.index(" Selah")
+    edit = toggle_style(raw, start, start + len(" Selah\n"), "qs")
+    assert edit.text == "many are they \\qs Selah\\qs*\n\\q1"
+    assert edit.text[edit.start:edit.end] == "Selah"
+
+
+def test_the_same_button_takes_the_style_off_for_a_selection_or_a_caret_inside_it():
+    raw = "I lay down \\k and slept\\k*."
+    inside = raw.index("slept")
+    for start, end in [(inside, inside), (inside, inside + 5), (raw.index("\\k"), raw.index(".")),]:
+        edit = toggle_style(raw, start, end, "k")
+        assert edit.changed and edit.text == "I lay down and slept.", (start, end)
+        assert edit.text[edit.start:edit.end] == "and slept"
+    # Another style is left alone.
+    assert toggle_style(raw, inside, inside + 5, "qs").changed is False
+
+
+def test_a_style_is_refused_rather_than_guessed():
+    for raw, start, end, why in [
+        ("alpha beta", 3, 3, "Select the words"),                       # nothing selected
+        ("alpha \\nd Lord\\nd* beta", 0, 15, "marker or a note"),       # a marker inside
+        ("alpha\\f + \\ft note\\f* beta", 0, 22, "marker or a note"),   # a note inside
+        ("alpha \\wj beta gamma\\wj*", 10, 14, "inside \\wj"),          # nested
+        ("alpha \\nd Lord\\nd* beta", 7, 20, "marker or a note"),       # starts inside a marker
+    ]:
+        edit = toggle_style(raw, start, end, "k")
+        assert edit.changed is False and edit.text == raw, raw
+        assert why in edit.reason, (raw, edit.reason)
+    assert "cannot be switched" in toggle_style("alpha", 0, 5, "wj").reason
+
+
+def test_a_lines_level_is_changed_in_place():
+    raw = "Lord, how\n\\q2 many are they\n\\q1"
+    edit = set_line_level(raw, raw.index("many"), "q3")
+    assert edit.changed and edit.text == "Lord, how\n\\q3 many are they\n\\q1"
+    assert edit.text[edit.start:].startswith("many")
+    # The verse's last marker is the level the next verse opens at.
+    assert set_line_level(raw, len(raw), "q2").text == "Lord, how\n\\q2 many are they\n\\q2"
+    # \q to \q1 lengthens the marker; the caret stays on the same word.
+    longer = set_line_level("a\n\\q b c", len("a\n\\q b "), "q1")
+    assert longer.text == "a\n\\q1 b c" and longer.text[longer.start:] == "c"
+
+
+def test_a_level_is_refused_on_the_first_line_and_when_it_is_already_that():
+    raw = "Lord, how\n\\q2 many are they"
+    first = set_line_level(raw, 3, "q2")
+    assert first.changed is False and "verse before it" in first.reason
+    assert "already" in set_line_level(raw, raw.index("many"), "q2").reason
+    assert "not a line level" in set_line_level(raw, raw.index("many"), "s1").reason
+
+
+def test_a_line_is_broken_between_words_at_the_level_of_the_line_it_is_in():
+    raw = "Lord, how\n\\q2 many are they that rise"
+    edit = break_line(raw, raw.index(" that"))
+    assert edit.changed and edit.text == "Lord, how\n\\q2 many are they\n\\q2 that rise"
+    assert edit.text[edit.start:] == "that rise"
+    assert _words(edit.text) == _words(raw)
+    # On the first line the level is the one the caller says the verse opens at.
+    assert break_line(raw, raw.index(" how"), "q1").text.startswith("Lord,\n\\q1 how\n\\q2 many")
+    assert break_line("alpha beta", 5).text == "alpha\n\\p beta"
+    # At the end of the verse it adds the marker the next verse opens in.
+    assert break_line("alpha beta", 10, "q1").text == "alpha beta\n\\q1"
+
+
+def test_a_break_is_refused_inside_a_word_a_marker_or_at_a_line_start():
+    raw = "Lord, how\n\\q2 many are they \\qs Selah\\qs*\n\\q1"
+    for offset, why in [
+        (2, "between words"),                         # inside "Lord"
+        (raw.index("\\q2") + 1, "inside a marker"),   # inside the marker token
+        (0, "cannot start with a line marker"),
+        (raw.index("many"), "already starts here"),   # right after \q2
+        (raw.index("\n\\q2"), "already starts here"), # end of the line above a marker
+        (len(raw), "already starts here"),            # after the verse's last marker
+    ]:
+        edit = break_line(raw, offset, "q1")
+        assert edit.changed is False and edit.text == raw, offset
+        assert why in edit.reason, (offset, edit.reason)
+
+
+def test_a_line_is_joined_to_the_one_above_it():
+    raw = "Lord, how\n\\q2 many are they\n\\q1"
+    edit = join_line(raw, raw.index("many"))
+    assert edit.changed and edit.text == "Lord, how many are they\n\\q1"
+    assert edit.text[edit.start:].startswith("many")
+    assert _words(edit.text) == _words(raw)
+    # On the verse's last marker, only the marker goes.
+    assert join_line(raw, len(raw)).text == "Lord, how\n\\q2 many are they"
+    # A stanza break is a line with no words: the lines after it stay lines.
+    assert join_line("Many say\n\\b\n\\q1 again", len("Many say\n\\")).text == "Many say\n\\q1 again"
+    # A verse that starts with a marker loses just the marker.
+    assert join_line("\\q1 Lord, how", 6).text == "Lord, how"
+
+
+def test_a_join_is_refused_on_the_first_line_and_under_a_stanza_break():
+    assert "first line" in join_line("Lord, how\n\\q2 many", 3).reason
+    refused = join_line("Many say\n\\b\n\\q1 again", len("Many say\n\\b\n\\q1 ag"))
+    assert refused.changed is False and "stanza break" in refused.reason
+
+
+def test_edit_markup_names_the_four_edits_and_refuses_any_other():
+    raw = "Lord, how\n\\q2 many are they"
+    at = raw.index("many")
+    assert edit_markup(raw, "style", start=at, end=at + 4, marker="k").text == "Lord, how\n\\q2 \\k many\\k* are they"
+    assert edit_markup(raw, "level", start=at, marker="q1").text == "Lord, how\n\\q1 many are they"
+    assert edit_markup(raw, "break", start=raw.index(" are"), opening="q1").text == "Lord, how\n\\q2 many\n\\q2 are they"
+    assert edit_markup(raw, "join", start=at).text == "Lord, how many are they"
+    other = edit_markup(raw, "delete", start=at)
+    assert other.changed is False and other.text == raw and "Unknown" in other.reason
+    assert other.to_dict() == {"text": raw, "start": at, "end": 0, "changed": False, "reason": other.reason}
+
+
+@pytest.mark.parametrize("fixture_name", ["tamil_php_usfm", "tamil_luk_usfm"])
+def test_no_marker_edit_changes_the_words_of_any_fixture_verse(fixture_name, request):
+    """The one rule: whatever the edit and wherever the cursor, the verse's
+    words are the same afterwards, and a refusal returns the string untouched."""
+    path = request.getfixturevalue(fixture_name)
+    parsed = parse_usfm(path.read_text(encoding="utf-8-sig"))
+    changed = 0
+    # Every 12th verse, three cursor positions: enough to meet notes, styles
+    # and paragraph markers without making this the slowest test in the file.
+    for verse in parsed.verses[::12]:
+        raw = verse.text
+        words = _words(raw)
+        cuts = sorted({len(raw) // 3, (2 * len(raw)) // 3, len(raw)})
+        for offset in cuts:
+            edits = [
+                toggle_style(raw, offset, min(len(raw), offset + 12), "k"),
+                toggle_style(raw, offset, min(len(raw), offset + 12), "qs"),
+                set_line_level(raw, offset, "q2"),
+                break_line(raw, offset, "q1"),
+                join_line(raw, offset),
+            ]
+            for edit in edits:
+                assert _words(edit.text) == words, (verse.chapter, verse.verse, offset)
+                assert edit.changed or edit.text == raw
+                assert 0 <= edit.start <= edit.end <= len(edit.text)
+                # The result is still a verse the reader can show without a new warning.
+                if edit.changed:
+                    assert lift_verse(edit.text).warnings == lift_verse(raw).warnings, (verse.chapter, verse.verse, offset)
+                changed += edit.changed
+    assert changed >= len(parsed.verses[::12])  # at least one real edit a verse, on average
 
 
 def test_warnings_are_total_not_refusals():

@@ -173,6 +173,8 @@ class StyleSpan:
 class ParaMark:
     marker: str    # without backslash: "q1", "q2", "p", "d", "b" ...
     position: int  # into `plain`, code points: where this paragraph's content starts
+    raw_start: int = 0  # the marker token in the raw string: its backslash ...
+    raw_end: int = 0    # ... to the end of its one following space, when it has one
 
     def to_dict(self) -> dict[str, Any]:
         return {"marker": self.marker, "position": self.position}
@@ -377,7 +379,7 @@ def lift_verse(raw: str) -> LiftedVerse:
     # (name, raw offset of the opener) for character styles still open.
     open_styles: list[tuple[str, int]] = []
     style_ranges: list[tuple[str, int, int]] = []  # name, raw open, raw close
-    para_starts: list[tuple[str, int]] = []        # name, raw offset its content starts at
+    para_starts: list[tuple[str, int, int]] = []   # name, raw start of the token, raw end
     for match in _MARKER.finditer(raw):
         if removed[match.start()]:
             continue
@@ -391,7 +393,7 @@ def lift_verse(raw: str) -> LiftedVerse:
             continue
         if not closer and not match.group(1) and name in PARAGRAPH_MARKERS:
             # A paragraph never closes, so it is not an open character style.
-            para_starts.append((name, end))
+            para_starts.append((name, match.start(), end))
             continue
         if match.group(3):
             for index in range(len(open_styles) - 1, -1, -1):
@@ -436,9 +438,210 @@ def lift_verse(raw: str) -> LiftedVerse:
     if start is not None:
         ranges.append((start, len(raw)))
 
-    paras = tuple(ParaMark(name, plain_pos(starts_at)) for name, starts_at in para_starts)
+    paras = tuple(
+        ParaMark(name, plain_pos(token_end), token_start, token_end)
+        for name, token_start, token_end in para_starts
+    )
 
     return LiftedVerse(
         raw=raw, plain=plain, raw_index=raw_index, notes=notes, styles=styles,
         warnings=tuple(warnings), removed=tuple(ranges), paras=paras,
     )
+
+
+# --- marker edits on the string an editor holds (#507) -----------------------
+#
+# The verse editor edits the raw stored string. These make the marker changes a
+# reviewer would otherwise type by hand -- mark words as a keyword (`\k`) or as
+# Selah (`\qs`), set a poetry line's level, break a line, join two -- on that
+# string, and hand back the new string and where the selection is in it. They
+# write nothing: the editor still saves through `verse.edit`, and the reviewer
+# sees the result before saving. They live here because finding a marker in a
+# verse string is this module's job and nobody else's (gotcha 14).
+#
+# One rule holds for all of them: **the verse's words do not change.** Each
+# result is checked against it (`_same_words`), and an edit that would change
+# them is refused with the reason rather than returned.
+
+# The character styles the editor can switch on and off for a selection.
+TOGGLE_STYLES = ("k", "qs")
+# The poetry levels the editor offers for a line.
+LINE_LEVELS = ("q", "q1", "q2", "q3")
+
+
+@dataclass(frozen=True)
+class MarkupEdit:
+    text: str      # the verse string after the edit; the one given when refused
+    start: int     # the selection in `text`, code points
+    end: int
+    changed: bool
+    reason: str = ""  # why nothing changed, for the reviewer; "" when it did
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"text": self.text, "start": self.start, "end": self.end,
+                "changed": self.changed, "reason": self.reason}
+
+
+def _refused(raw: str, start: int, end: int, reason: str) -> MarkupEdit:
+    return MarkupEdit(raw, start, end, False, reason)
+
+
+def _same_words(before: str, after: str) -> bool:
+    return " ".join(lift_verse(before).plain.split()) == " ".join(lift_verse(after).plain.split())
+
+
+def _clamp(raw: str, offset: int) -> int:
+    return max(0, min(len(raw), int(offset)))
+
+
+def _line_of(lifted: LiftedVerse, offset: int) -> ParaMark | None:
+    """The paragraph marker whose line `offset` is in: the last one at or
+    before it. None on the verse's first line, which has no marker of its own."""
+    found = None
+    for para in lifted.paras:
+        if para.raw_start > offset:
+            break
+        found = para
+    return found
+
+
+def toggle_style(raw: str, start: int, end: int, marker: str) -> MarkupEdit:
+    """Mark raw[start:end] with a character style (`\\k … \\k*`), or take the
+    style off when the selection or the caret is already inside one."""
+    start, end = sorted((_clamp(raw, start), _clamp(raw, end)))
+    if marker not in TOGGLE_STYLES:
+        return _refused(raw, start, end, f"\\{marker} cannot be switched from here.")
+    existing = re.compile(rf"\\{re.escape(marker)} (.*?)\\{re.escape(marker)}\*", re.DOTALL)
+    for match in existing.finditer(raw):
+        if match.start() <= start and end <= match.end():
+            inner = match.group(1)
+            text = raw[:match.start()] + inner + raw[match.end():]
+            if not _same_words(raw, text):
+                return _refused(raw, start, end, "Taking the marker off would change the verse's words.")
+            return MarkupEdit(text, match.start(), match.start() + len(inner), True)
+    while start < end and raw[start].isspace():
+        start += 1
+    while end > start and raw[end - 1].isspace():
+        end -= 1
+    if start == end:
+        return _refused(raw, start, end, "Select the words to mark first.")
+    selected = raw[start:end]
+    lifted = lift_verse(raw)
+    if ("\\" in selected or "|" in selected
+            or lifted.removed_range_containing(start) or lifted.removed_range_containing(end)):
+        return _refused(raw, start, end, "Select plain words only: the selection has a marker or a note in it.")
+    at = lifted.map_offset(start)
+    for span in lifted.styles:
+        if span.start <= at < span.end:
+            return _refused(
+                raw, start, end,
+                f"The selection is inside \\{span.marker} … \\{span.marker}*. Marking inside another style is not done from here.",
+            )
+    opener = f"\\{marker} "
+    text = raw[:start] + opener + selected + f"\\{marker}*" + raw[end:]
+    if not _same_words(raw, text):
+        return _refused(raw, start, end, "Marking this selection would change the verse's words.")
+    return MarkupEdit(text, start + len(opener), start + len(opener) + len(selected), True)
+
+
+def set_line_level(raw: str, offset: int, marker: str) -> MarkupEdit:
+    """Change the paragraph marker of the line `offset` is in to `marker`."""
+    offset = _clamp(raw, offset)
+    if marker not in LINE_LEVELS:
+        return _refused(raw, offset, offset, f"\\{marker} is not a line level.")
+    para = _line_of(lift_verse(raw), offset)
+    if para is None:
+        return _refused(
+            raw, offset, offset,
+            "The first line of a verse takes its level from the marker that ends the verse before it. "
+            "Change it there.",
+        )
+    if para.marker == marker:
+        return _refused(raw, offset, offset, f"This line is already \\{marker}.")
+    name_start = para.raw_start + 1
+    name_end = name_start + len(para.marker)
+    text = raw[:name_start] + marker + raw[name_end:]
+    if not _same_words(raw, text):
+        return _refused(raw, offset, offset, "Changing this marker would change the verse's words.")
+    caret = offset if offset <= name_start else max(name_start + len(marker), offset + len(marker) - len(para.marker))
+    return MarkupEdit(text, caret, caret, True)
+
+
+def break_line(raw: str, offset: int, opening: str = "") -> MarkupEdit:
+    """Start a new line at `offset`, at the level of the line it is in.
+    `opening` is the level of the verse's first line, which the string itself
+    does not hold. At the end of the verse this adds the marker the next verse
+    opens in."""
+    offset = _clamp(raw, offset)
+    lifted = lift_verse(raw)
+    if lifted.removed_range_containing(offset):
+        return _refused(raw, offset, offset, "Put the cursor between words, not inside a marker or a note.")
+    para = _line_of(lifted, offset)
+    marker = para.marker if para is not None else opening
+    if marker not in PARAGRAPH_MARKERS or marker == "b":
+        marker = opening if opening in PARAGRAPH_MARKERS and opening != "b" else "p"
+    before = raw[:offset].rstrip(" \t")
+    after = raw[offset:].lstrip(" \t")
+    if not before.strip():
+        return _refused(
+            raw, offset, offset,
+            "A verse cannot start with a line marker: its first line takes its level from the verse before it.",
+        )
+    # Nothing between this line's own marker and the cursor, or between the
+    # cursor and the next marker: the new line, or the old one, would be empty.
+    if para is not None and not raw[para.raw_end:offset].strip():
+        return _refused(raw, offset, offset, "A line already starts here.")
+    for following in lifted.paras:
+        if following.raw_start >= offset and not raw[offset:following.raw_start].strip():
+            return _refused(raw, offset, offset, "A line already starts here.")
+    text = before + "\n\\" + marker + (" " + after if after else "")
+    if not _same_words(raw, text):
+        return _refused(raw, offset, offset, "Put the cursor between words.")
+    caret = len(before) + 2 + len(marker) + (1 if after else 0)
+    return MarkupEdit(text, caret, caret, True)
+
+
+def join_line(raw: str, offset: int) -> MarkupEdit:
+    """Remove the paragraph marker of the line `offset` is in, so the line
+    runs on from the one above it."""
+    offset = _clamp(raw, offset)
+    lifted = lift_verse(raw)
+    para = _line_of(lifted, offset)
+    if para is None:
+        return _refused(raw, offset, offset, "This is the verse's first line: there is no line above it in this verse.")
+    before = raw[:para.raw_start].rstrip()
+    following = next((item for item in lifted.paras if item.raw_start > para.raw_start), None)
+    content_end = following.raw_start if following is not None else len(raw)
+    if not raw[para.raw_end:content_end].strip():
+        # The line holds no words (a stanza break, or the marker the next verse
+        # opens in): only the marker goes, and the lines after it stay lines.
+        rest = raw[content_end:]
+        text = before + ("\n" if before and rest else "") + rest
+        caret = len(before)
+    else:
+        above = _line_of(lifted, para.raw_start - 1) if para.raw_start else None
+        if above is not None and above.marker == "b" and not raw[above.raw_end:para.raw_start].strip():
+            return _refused(
+                raw, offset, offset,
+                "The line above is a stanza break (\\b), which holds no words. Join that line first.",
+            )
+        after = raw[para.raw_end:].lstrip()
+        text = before + (" " if before else "") + after
+        caret = len(before) + (1 if before else 0)
+    if not _same_words(raw, text):
+        return _refused(raw, offset, offset, "Joining these lines would change the verse's words.")
+    return MarkupEdit(text, caret, caret, True)
+
+
+def edit_markup(raw: str, action: str, *, start: int = 0, end: int = 0, marker: str = "",
+                opening: str = "") -> MarkupEdit:
+    """One marker edit by name, for the protocol (`verse.markup`)."""
+    if action == "style":
+        return toggle_style(raw, start, end, marker)
+    if action == "level":
+        return set_line_level(raw, start, marker)
+    if action == "break":
+        return break_line(raw, start, opening)
+    if action == "join":
+        return join_line(raw, start)
+    return _refused(raw, _clamp(raw, start), _clamp(raw, end), f"Unknown marker edit: {action}.")

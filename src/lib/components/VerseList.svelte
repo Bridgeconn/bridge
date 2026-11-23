@@ -42,6 +42,7 @@
   import {
     applySuggestedFindingFix, applyLanguageQaSuggestedFix, editingChapter, editingVerse, editText, editSaving,
     editError, editWarnings, saveVerseEdit, cancelVerseEdit, startVerseEdit, recheckingKey, editWithSelection,
+    applyVerseMarkup, editMarkupBusy, editMarkupNote,
   } from "../verseEditor";
   import { findingSpan, pendingReveal, revealFinding } from "../findingFocus";
   import { openAlignment } from "../alignmentUi";
@@ -108,6 +109,17 @@
       ? [{ marker: "", gap: false, pieces }]
       : splitIntoLines(pieces, lineStartsForLayout(display), opening ?? NO_OPENING);
   }
+
+  // #507: the marker toolbar over the verse edit box. Only one verse is edited
+  // at a time, so one reference to its textarea is enough.
+  let editArea: HTMLTextAreaElement | null = null;
+  const LINE_LEVELS = ["q", "q1", "q2", "q3"];
+  const LEVEL_HINT: Record<string, string> = {
+    q: "Poetry line (\\q): set the level of the line the cursor is on",
+    q1: "First-level poetry line (\\q1): set the level of the line the cursor is on",
+    q2: "Second-level poetry line (\\q2): set the level of the line the cursor is on",
+    q3: "Third-level poetry line (\\q3): set the level of the line the cursor is on",
+  };
 
   /** `\r`, `\mr`, `\sr`: a parallel-passage or range reference under a heading. */
   function isReferenceHeading(tag: string): boolean {
@@ -1288,6 +1300,8 @@
         {/if}
       </div>
       {#if isEditingThis}
+        <!-- #507: the level this verse's first line is at, for "Break line". -->
+        {@const opening = verseOpenings[key]?.marker ?? ""}
         <div
           class="vedit"
           on:click|stopPropagation
@@ -1296,8 +1310,34 @@
           on:contextmenu|stopPropagation
           role="presentation"
         >
+          <!-- #507: marker edits without typing USFM. The engine makes each
+               change on the text below (the frontend never parses USFM) and
+               nothing is saved until ✓. mousedown is cancelled so a click here
+               does not take the selection out of the textarea. Text labels,
+               not an icon font (gotcha 9). -->
+          <div class="vedit-tools" role="toolbar" aria-label={`USFM markers for verse ${v}`}>
+            <button type="button" class="ui-btn small" data-markup="k" disabled={$editSaving || $editMarkupBusy}
+              use:tooltip={"Keyword (\\k): mark the selected words, or take the mark off"}
+              on:mousedown|preventDefault on:click={() => void applyVerseMarkup(editArea, "style", "k")}>Keyword</button>
+            <button type="button" class="ui-btn small" data-markup="qs" disabled={$editSaving || $editMarkupBusy}
+              use:tooltip={"Selah (\\qs): mark the selected word, or take the mark off"}
+              on:mousedown|preventDefault on:click={() => void applyVerseMarkup(editArea, "style", "qs")}>Selah</button>
+            <span class="tools-sep" aria-hidden="true"></span>
+            <span class="tools-label">Line</span>
+            {#each LINE_LEVELS as level}
+              <button type="button" class="ui-btn small level" data-markup={level} disabled={$editSaving || $editMarkupBusy}
+                use:tooltip={LEVEL_HINT[level]} aria-label={LEVEL_HINT[level]}
+                on:mousedown|preventDefault on:click={() => void applyVerseMarkup(editArea, "level", level)}>{"\\" + level}</button>
+            {/each}
+            <button type="button" class="ui-btn small" data-markup="break" disabled={$editSaving || $editMarkupBusy}
+              use:tooltip={"Start a new line at the cursor, at the level of the line it is on"}
+              on:mousedown|preventDefault on:click={() => void applyVerseMarkup(editArea, "break", "", opening)}>Break line</button>
+            <button type="button" class="ui-btn small" data-markup="join" disabled={$editSaving || $editMarkupBusy}
+              use:tooltip={"Join the line the cursor is on to the line above it"}
+              on:mousedown|preventDefault on:click={() => void applyVerseMarkup(editArea, "join")}>Join line</button>
+          </div>
           <div class="vedit-row">
-            <textarea use:autosize bind:value={$editText} disabled={$editSaving} dir={$targetDir} lang={$targetLang} />
+            <textarea use:autosize bind:this={editArea} bind:value={$editText} disabled={$editSaving} dir={$targetDir} lang={$targetLang} />
             <div class="edit-actions">
               <button
                 class="icon-btn save" on:click={() => void saveVerseEdit()}
@@ -1307,6 +1347,7 @@
               <button class="icon-btn cancel" on:click={cancelVerseEdit} disabled={$editSaving} title="Cancel">✕</button>
             </div>
           </div>
+          {#if $editMarkupNote}<p class="edit-note" role="status">{$editMarkupNote}</p>{/if}
           {#if $editError}<p class="edit-error">{$editError}</p>{/if}
         </div>
       {:else}
@@ -1700,6 +1741,14 @@
   .vedit textarea:focus { outline: none; border-color: var(--text-3); }
   .vedit textarea:disabled { opacity: .6; }
   .edit-error { color: var(--danger); font-size: var(--fs-xs); margin: 6px 0 0; line-height: 1.4; }
+  /* #507: the marker toolbar over the edit box. It wraps rather than scrolls:
+     the editor column is narrow at 1366x768. */
+  .vedit-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 0 0 6px; font-family: var(--font-ui); }
+  .vedit-tools .level { font-family: var(--font-mono, ui-monospace, monospace); padding-inline: 7px; }
+  .tools-sep { width: 1px; align-self: stretch; margin: 2px 4px; background: var(--border-strong); }
+  .tools-label { font-size: var(--fs-3xs); font-weight: 600; color: var(--text-3); margin-inline-end: 2px; }
+  /* Why a marker edit changed nothing. Not an error: nothing went wrong. */
+  .edit-note { color: var(--text-2); font-family: var(--font-ui); font-size: var(--fs-xs); margin: 6px 0 0; line-height: 1.4; }
   .edit-actions { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
   .icon-btn {
     width: 32px; height: 32px; padding: 0; font-size: var(--fs-xl); font-weight: 800; border-radius: 7px;

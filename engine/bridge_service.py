@@ -141,7 +141,7 @@ from tc_ai_bridge.secret_store import AppSettings
 from tc_ai_bridge.workspace_repository import WorkspaceRepository, project_path_key, WorkspaceError
 from tc_ai_bridge.resource_materializer import materialize_book_checks
 from tc_ai_bridge.usfm import strip_usfm, whitespace_tokens
-from tc_ai_bridge.usfm_verse import WHITESPACE_TOKEN_TRIM_CHARS, lift_verse
+from tc_ai_bridge.usfm_verse import WHITESPACE_TOKEN_TRIM_CHARS, edit_markup, lift_verse
 from tc_ai_bridge.usfm_parser import UsfmParseError, opening_paragraphs, parse_usfm, read_usfm_text
 from tc_ai_bridge import versification as versification_tool
 from tc_ai_bridge import alignment_gaps
@@ -590,6 +590,9 @@ class Methods:
     VERSE_DECIDE = "verse.decide"
     VERSE_EDIT = "verse.edit"
     VERSE_HISTORY = "verse.history"
+    # #507: one marker edit (\k, \qs, a poetry line) on the string the verse
+    # editor holds. Writes nothing; the editor saves through verse.edit.
+    VERSE_MARKUP = "verse.markup"
 
     CHECK_LIST_FOR_VERSE = "check.listForVerse"
     # #272: the chapter's stored findings, when still current.
@@ -2795,6 +2798,32 @@ class BridgeEngine:
             return opening_paragraphs(cached[1], chapter, wanted)
         except (OSError, UsfmParseError):
             return {}
+
+    def verse_markup(self, params: dict[str, Any]) -> dict[str, Any]:
+        """verse.markup (#507): one marker edit on the string the verse editor
+        holds -- `style` (switch `\\k` or `\\qs` on a selection), `level` (a
+        line's poetry level), `break` (start a line at the cursor), `join`
+        (run a line on from the one above). `text` is the editor's unsaved
+        string, and `start`/`end` its selection in code points. The answer is
+        the new string, the selection in it, whether anything changed, and the
+        reason when nothing did.
+
+        Nothing is written and no project is read: the reviewer sees the
+        result in the editor and saves it, or not, through `verse.edit`. It is
+        an RPC because finding a marker in a verse string is the engine's job
+        (gotcha 14); the frontend never parses USFM."""
+        text = params.get("text")
+        if not isinstance(text, str):
+            raise ProjectError("text must be the verse string being edited")
+        try:
+            start = int(params.get("start", 0))
+            end = int(params.get("end", start))
+        except (TypeError, ValueError):
+            raise ProjectError("start and end must be code-point offsets") from None
+        return edit_markup(
+            text, str(params.get("action") or ""), start=start, end=end,
+            marker=str(params.get("marker") or ""), opening=str(params.get("opening") or ""),
+        ).to_dict()
 
     VERSE_HISTORY_LIMIT = 500
 
@@ -10115,6 +10144,8 @@ class BridgeEngine:
                 return EngineResponse.ok(request.id, result=result)
             if m == Methods.VERSE_HISTORY:
                 return EngineResponse.ok(request.id, result=self.verse_history(p))
+            if m == Methods.VERSE_MARKUP:
+                return EngineResponse.ok(request.id, result=self.verse_markup(p))
             if m == Methods.CHECK_LOAD_CHAPTER_FINDINGS:
                 return EngineResponse.ok(request.id, result=self.load_chapter_findings(str(p["chapter"])))
             if m == Methods.CHECK_LIST_FOR_VERSE:

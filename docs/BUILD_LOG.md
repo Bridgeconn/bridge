@@ -26462,3 +26462,75 @@ a `\c`, and the book introduction are still not shown. `AlignmentModal`,
 `TranslationHelpsReview` and `VerseHistoryPopover` show `display.plain` and do not draw
 lines. A project with no preserved source draws a chapter's first verse and each verse
 after a heading as prose.
+
+## 2026-11-23 — #507 part 2: a marker toolbar in the verse edit box (`\k`, `\qs`, poetry lines)
+
+Same branch, on top of e1c5313. The second of #507's six parts, and the only editing
+part that needs no decision: it adds no writer. The edit box still holds the raw
+stored string and still saves through `verse.edit`.
+
+**What it does.** A toolbar over the edit box: Keyword, Selah, `\q` `\q1` `\q2` `\q3`,
+Break line, Join line.
+- Keyword and Selah wrap the selection in `\k … \k*` or `\qs … \qs*`. The same button
+  takes the mark off when the selection or the cursor is inside one.
+- A level button changes the marker of the line the cursor is on.
+- Break line starts a line at the cursor, at the level of the line it is on. At the
+  end of the verse it adds the marker the next verse opens in.
+- Join line removes the marker of the cursor's line, so it runs on from the line above.
+
+**Why the engine does it.** Finding a marker in a verse string is `usfm_verse`'s job
+(gotcha 14), so the edits are `toggle_style`, `set_line_level`, `break_line` and
+`join_line` there, behind one new RPC, `verse.markup {text, action, marker, start, end,
+opening}`. It takes the editor's unsaved string and answers `{text, start, end,
+changed, reason}`. It reads no project and writes nothing; it is classified `READ` in
+`authorization.METHOD_ACTIONS`. `ParaMark` gained `raw_start`/`raw_end` (not in the
+payload) so the edits know where each marker token is.
+
+**The one rule.** No marker edit changes the verse's words. Every result is compared
+with the input by its plain text (`_same_words`) and refused with a reason if it
+differs. Refusals a reviewer will meet:
+- A level or a join on the verse's first line. That line has no marker of its own: its
+  level is the marker that ends the verse before it. To change it, put the cursor on
+  that verse's last line and press a level. The first verse of a chapter, and a verse
+  after a heading, take theirs from the preserved source and cannot be changed here.
+- A break inside a word, inside a marker or a note, or where a line already starts.
+- A style over a selection that has a marker or a note in it, or inside another style
+  (that needs the nested `\+k` form, which this does not write).
+
+**Frontend.** `verseEditor.applyVerseMarkup` converts the textarea's UTF-16 selection
+to code points, calls the engine, puts the answer in the textarea and restores the
+selection. An answer for text that was typed over meanwhile is dropped. A refusal shows
+the engine's reason under the edit box. `mousedown` on a tool is cancelled so a click
+does not take the selection out of the textarea.
+
+**Run and watched (2026-11-23, Windows, Python 3.12).**
+- Engine, `pytest -n auto --basetemp=C:/t507/bt5`: 5,977 passed, 12 failed, 4 skipped,
+  3 xfailed. All 12 are `tests/semantic/test_semantic_mapping_stage3.py`, which need
+  the git-ignored Stage 3 database (absent on this machine). The Paratext test that
+  failed once in the part 1 run passed here.
+- New engine tests: each edit and each refusal by hand; a sweep over every 12th verse
+  of both IRV fixtures asserting that no edit at any of three cursor positions changes
+  the words, leaves a selection out of range, or adds a reader warning; `verse.markup`
+  through the dispatcher with and without an open project;
+  `test_every_engine_method_is_classified` covers the new method.
+- Frontend: `npm run check` 0 errors 0 warnings; `npm run test` 140 files, 1,387
+  passed; `npm run build` completed.
+
+**Not run.** The frozen sidecars (`build-sidecars.ps1`, `smoke_sidecars.py`); `cargo`
+(no Rust file changed: `verse.markup` answers in milliseconds, so it needs no timeout
+arm in `sidecar.rs`); the desktop app.
+
+**Not verified. For Joel at 1366x768:** that the toolbar wraps cleanly over a narrow
+edit box; that a click on a tool keeps the selection in the textarea in the real
+WebView; that the edit box grows after Break line.
+
+**Known limits.** A marker edit replaces the textarea's text from code, which empties
+the browser's own Ctrl+Z history for that box; each tool is undone by its opposite
+(Keyword twice, Break then Join) or by Cancel. The first line's level cannot be set
+from the verse itself, as above.
+
+**Still open in #507.** Part 3 (showing a `\d` before verse 1, a `\ms` before a `\c`
+and the book introduction) and parts 4 to 6 (editing headings, the Psalm title and the
+introduction). Parts 4 to 6 each need the maintainer's decision first: a heading edit
+from the editor is a new caller of `apply_heading_edit`, an introduction edit is a new
+writer, and a `\d` before verse 1 is a Scripture-write question.

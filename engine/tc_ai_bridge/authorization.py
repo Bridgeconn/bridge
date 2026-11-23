@@ -151,7 +151,7 @@ _READ = (
     "languageQa.reference", "languageQa.related",
     "checks.status",
     "team.roles",
-    "verse.get", "verse.history", "check.listForVerse", "check.validateSelection", "check.loadChapterFindings",
+    "verse.get", "verse.history", "verse.markup", "check.listForVerse", "check.validateSelection", "check.loadChapterFindings",
     "alignment.get", "alignment.getRange", "alignment.gapScan", "alignment.crossVerse.propose",
     "alignment.autoAlign.verdict", "alignment.autoAlign.status", "alignment.autoAlign.estimate",
     "alignment.status", "alignment.backups", "alignment.resetStatus", "alignment.resetChapter.status", "alignment.resetChapter.preview",

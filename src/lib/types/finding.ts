@@ -1189,6 +1189,20 @@ export interface VerseDisplay {
   paras?: ParaMark[];
 }
 
+/** The marker edits the verse editor's toolbar asks the engine for (#507). */
+export type VerseMarkupAction = "style" | "level" | "break" | "join";
+
+/** The engine's answer to one marker edit (`verse.markup`): the new verse
+ *  string and the selection in it, in code points. `reason` says why nothing
+ *  changed when `changed` is false. */
+export interface VerseMarkupResult {
+  text: string;
+  start: number;
+  end: number;
+  changed: boolean;
+  reason: string;
+}
+
 export interface VerseData {
   chapter: string;
   verse: string;

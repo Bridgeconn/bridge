@@ -126,6 +126,33 @@ def test_chapter_verse_data_says_which_paragraph_a_verse_opens_in(tmp_path):
     assert result["openers"] == {"1": "q1", "3": "q1", "4": "p"}
 
 
+def test_verse_markup_edits_the_editor_string_and_writes_nothing(tmp_path):
+    """verse.markup (#507) works on the string the editor holds: it needs no
+    open project, and with one open it leaves the stored verse alone."""
+    raw = "Lord, how\n\\q2 many are they Selah"
+    start = raw.index("Selah")
+    closed = call(BridgeEngine(), "verse.markup",
+                  {"text": raw, "action": "style", "marker": "qs", "start": start, "end": len(raw)})
+    assert closed["success"] is True
+    assert closed["result"] == {
+        "text": "Lord, how\n\\q2 many are they \\qs Selah\\qs*",
+        "start": start + len("\\qs "), "end": start + len("\\qs Selah"), "changed": True, "reason": "",
+    }
+
+    engine = _open(tmp_path, raw)
+    for params, expected in [
+        ({"action": "level", "marker": "q1", "start": raw.index("many")}, "Lord, how\n\\q1 many are they Selah"),
+        ({"action": "break", "start": raw.index(" are"), "opening": "q1"}, "Lord, how\n\\q2 many\n\\q2 are they Selah"),
+        ({"action": "join", "start": raw.index("many")}, "Lord, how many are they Selah"),
+    ]:
+        result = call(engine, "verse.markup", {"text": raw, **params})["result"]
+        assert result["changed"] is True and result["text"] == expected
+    refused = call(engine, "verse.markup", {"text": raw, "action": "level", "marker": "q2", "start": 2})["result"]
+    assert refused["changed"] is False and refused["text"] == raw and "verse before it" in refused["reason"]
+    assert call(engine, "verse.get", {"chapter": "1", "verse": "1"})["result"]["text"] == raw
+    assert call(engine, "verse.markup", {"action": "join", "start": 0})["success"] is False
+
+
 def test_openers_are_empty_without_a_preserved_source(tmp_path):
     engine = _open(tmp_path, "Lord, how\n\\q2 many are they")
     result = call(engine, "chapter.verseData", {"chapter": "1"})["result"]

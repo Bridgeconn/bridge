@@ -7,7 +7,8 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { get } from "svelte/store";
 import { tick } from "svelte";
 
-const { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRecord, housestyleSetState, languageQaLearnedForget, languageQaScopeFind, verseHistory, languageQaWordsAdd, languageQaOccurrences, paratextNotesForChapter } = vi.hoisted(() => ({
+const { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRecord, housestyleSetState, languageQaLearnedForget, languageQaScopeFind, verseHistory, languageQaWordsAdd, languageQaOccurrences, paratextNotesForChapter, verseMarkup } = vi.hoisted(() => ({
+  verseMarkup: vi.fn(),
   paratextNotesForChapter: vi.fn(),
   languageQaWordsAdd: vi.fn(),
   languageQaOccurrences: vi.fn(),
@@ -23,7 +24,7 @@ const { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRec
 }));
 
 vi.mock("../../api/bridgeClient", () => ({
-  bridge: { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRecord, housestyleSetState, languageQaLearnedForget, languageQaScopeFind, verseHistory, languageQaWordsAdd, languageQaOccurrences, paratextNotesForChapter },
+  bridge: { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRecord, housestyleSetState, languageQaLearnedForget, languageQaScopeFind, verseHistory, languageQaWordsAdd, languageQaOccurrences, paratextNotesForChapter, verseMarkup },
 }));
 import { lqaFinding } from "./languageQaFixture";
 import { scopeDialog } from "../../scopedApply";
@@ -1872,6 +1873,74 @@ describe("VerseList paragraph and poetry lines (#507)", () => {
     render(VerseList, { props: { onSelect: vi.fn() } });
     expect(verseRow().querySelectorAll(".vtext .history-btn")).toHaveLength(1);
     expectOwnText("alpha beta");
+  });
+
+  describe("the marker toolbar over the edit box", () => {
+    async function openEditor(raw: string): Promise<HTMLTextAreaElement> {
+      seed(raw);
+      paraOpenersByVerse.set({ [key]: "q1" });
+      render(VerseList, { props: { onSelect: vi.fn() } });
+      await fireEvent.click(screen.getByLabelText("Edit verse 6"));
+      return verseRow().querySelector("textarea") as HTMLTextAreaElement;
+    }
+    const tool = (name: string) => verseRow().querySelector(`.vedit-tools [data-markup="${name}"]`) as HTMLButtonElement;
+
+    it("is shown only while a verse is edited, with a button for each marker edit", async () => {
+      seed(PSALM_3_1);
+      render(VerseList, { props: { onSelect: vi.fn() } });
+      expect(document.querySelector(".vedit-tools")).toBeNull();
+      await fireEvent.click(screen.getByLabelText("Edit verse 6"));
+      const toolbar = screen.getByRole("toolbar", { name: "USFM markers for verse 6" });
+      expect(Array.from(toolbar.querySelectorAll("button")).map((button) => button.textContent))
+        .toEqual(["Keyword", "Selah", "\\q", "\\q1", "\\q2", "\\q3", "Break line", "Join line"]);
+      // The edit box still holds the stored string, markers and all.
+      expect((verseRow().querySelector("textarea") as HTMLTextAreaElement).value).toBe(PSALM_3_1);
+    });
+
+    it("sends the textarea's selection to the engine and shows the string it answers with", async () => {
+      const raw = "Lord, how\n\\q2 many are they Selah";
+      const area = await openEditor(raw);
+      const from = raw.indexOf("Selah");
+      area.setSelectionRange(from, from + 5);
+      const marked = "Lord, how\n\\q2 many are they \\qs Selah\\qs*";
+      verseMarkup.mockResolvedValue({ text: marked, start: from + 4, end: from + 9, changed: true, reason: "" });
+      await fireEvent.click(tool("qs"));
+      await waitFor(() => expect(area.value).toBe(marked));
+      expect(verseMarkup).toHaveBeenCalledWith({ text: raw, action: "style", marker: "qs", start: from, end: from + 5, opening: "" });
+      expect(area.value.slice(area.selectionStart, area.selectionEnd)).toBe("Selah");
+      // Nothing is saved until the reviewer saves.
+      expect(editVerse).not.toHaveBeenCalled();
+    });
+
+    it("sends a level with the cursor's place, and a break with the level the verse opens at", async () => {
+      const raw = "Lord, how\n\\q2 many are they";
+      const area = await openEditor(raw);
+      area.setSelectionRange(raw.indexOf("many"), raw.indexOf("many"));
+      verseMarkup.mockResolvedValue({ text: raw, start: 0, end: 0, changed: false, reason: "" });
+      await fireEvent.click(tool("q3"));
+      await waitFor(() => expect(verseMarkup).toHaveBeenCalledTimes(1));
+      expect(verseMarkup).toHaveBeenLastCalledWith({ text: raw, action: "level", marker: "q3", start: raw.indexOf("many"), end: raw.indexOf("many"), opening: "" });
+      area.setSelectionRange(5, 5);
+      await fireEvent.click(tool("break"));
+      await waitFor(() => expect(verseMarkup).toHaveBeenCalledTimes(2));
+      expect(verseMarkup).toHaveBeenLastCalledWith({ text: raw, action: "break", marker: "", start: 5, end: 5, opening: "q1" });
+      await fireEvent.click(tool("join"));
+      await waitFor(() => expect(verseMarkup).toHaveBeenCalledTimes(3));
+      expect(verseMarkup).toHaveBeenLastCalledWith({ text: raw, action: "join", marker: "", start: 5, end: 5, opening: "" });
+    });
+
+    it("says why when the engine changes nothing, and keeps the selection in the textarea on a press", async () => {
+      const area = await openEditor("Lord, how\n\\q2 many");
+      area.setSelectionRange(2, 2);
+      verseMarkup.mockResolvedValue({ text: area.value, start: 2, end: 2, changed: false, reason: "The first line takes its level from the verse before it." });
+      // A mouse press on a tool must not move focus out of the textarea.
+      const press = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+      tool("q2").dispatchEvent(press);
+      expect(press.defaultPrevented).toBe(true);
+      await fireEvent.click(tool("q2"));
+      expect(await screen.findByText("The first line takes its level from the verse before it.")).toBeInTheDocument();
+      expect(area.value).toBe("Lord, how\n\\q2 many");
+    });
   });
 
   it("marks a reference line (\\r) under a heading, and only it", () => {

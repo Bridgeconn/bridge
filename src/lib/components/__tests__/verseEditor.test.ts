@@ -5,19 +5,21 @@ import { editorChecks } from "../../editorPrefs";
 // These edit-path fixtures exercise the existing full native check selection.
 beforeEach(() => editorChecks.set(["tN", "tW", "alignment", "text", "languageQa"]));
 
-const { editVerse, runVerseChecks, decideVerse, getVerse } = vi.hoisted(() => ({
+const { editVerse, runVerseChecks, decideVerse, getVerse, verseMarkup } = vi.hoisted(() => ({
   editVerse: vi.fn(),
   runVerseChecks: vi.fn(),
   decideVerse: vi.fn(),
   getVerse: vi.fn(),
+  verseMarkup: vi.fn(),
 }));
 
 vi.mock("../../api/bridgeClient", () => ({
-  bridge: { editVerse, runVerseChecks, decideVerse, getVerse },
+  bridge: { editVerse, runVerseChecks, decideVerse, getVerse, verseMarkup },
 }));
 
 import {
-  applyLanguageQaSuggestedFix, applySuggestedFindingFix, cancelVerseEdit, editError, editText, editWarnings,
+  applyLanguageQaSuggestedFix, applySuggestedFindingFix, applyVerseMarkup, cancelVerseEdit, editError,
+  editMarkupBusy, editMarkupNote, editSaving, editText, editWarnings,
   editingVerse, saveVerseEdit, startVerseEdit,
 } from "../../verseEditor";
 import {
@@ -358,5 +360,105 @@ describe("a stale save (#127)", () => {
     editText.set("omega psi");
     expect(await saveVerseEdit()).toBe(true);
     expect(editVerse).toHaveBeenLastCalledWith("1", "6", "omega psi", "omega");
+  });
+});
+
+describe("applyVerseMarkup: the edit box's marker toolbar (#507)", () => {
+  const key = verseKey("1", "6");
+  let area: HTMLTextAreaElement;
+
+  /** The textarea as the component keeps it: bound to editText, with a selection. */
+  function open(text: string, start: number, end = start): void {
+    verseTexts.set({ [key]: text });
+    startVerseEdit("1", "6");
+    area.value = text;
+    area.setSelectionRange(start, end);
+  }
+
+  beforeEach(() => {
+    verseMarkup.mockReset();
+    editVerse.mockReset();
+    checkingProgress.set({ running: false, percent: 0, label: "", jobId: "", state: "idle", error: "", scope: "chapter" });
+    editSaving.set(false);
+    editMarkupBusy.set(false);
+    area = document.createElement("textarea");
+    document.body.appendChild(area);
+    // The component's bind:value: the textarea shows what the store holds.
+    const stop = editText.subscribe((value) => { area.value = value; });
+    return () => { stop(); area.remove(); cancelVerseEdit(); };
+  });
+
+  it("asks the engine with the selection in code points and shows its answer, selection and all", async () => {
+    // "𝔸" is two UTF-16 units and one code point: the offsets differ by one.
+    const text = "𝔸 many are they Selah";
+    const from = text.indexOf("Selah");
+    open(text, from, from + 5);
+    const marked = "𝔸 many are they \\qs Selah\\qs*";
+    verseMarkup.mockResolvedValue({ text: marked, start: 20, end: 25, changed: true, reason: "" });
+    const grew = vi.fn();
+    area.addEventListener("input", grew);
+
+    await applyVerseMarkup(area, "style", "qs");
+
+    expect(verseMarkup).toHaveBeenCalledWith({ text, action: "style", marker: "qs", start: from - 1, end: from + 4, opening: "" });
+    expect(get(editText)).toBe(marked);
+    // Code points 20-25 of the new string are "Selah"; in UTF-16 that is 21-26.
+    expect(area.value.slice(area.selectionStart, area.selectionEnd)).toBe("Selah");
+    expect([area.selectionStart, area.selectionEnd]).toEqual([21, 26]);
+    expect(grew).toHaveBeenCalled();  // the textarea resizes on "input"
+    expect(get(editMarkupNote)).toBe("");
+    expect(get(editMarkupBusy)).toBe(false);
+    // Nothing is saved by a marker edit.
+    expect(editVerse).not.toHaveBeenCalled();
+  });
+
+  it("passes the level of the verse's first line with a break", async () => {
+    open("Lord, how many", 9);
+    verseMarkup.mockResolvedValue({ text: "Lord, how\n\\q1 many", start: 14, end: 14, changed: true, reason: "" });
+    await applyVerseMarkup(area, "break", "", "q1");
+    expect(verseMarkup).toHaveBeenCalledWith({ text: "Lord, how many", action: "break", marker: "", start: 9, end: 9, opening: "q1" });
+    expect(get(editText)).toBe("Lord, how\n\\q1 many");
+  });
+
+  it("leaves the text alone and shows the engine's reason when it refuses", async () => {
+    open("Lord, how", 2);
+    verseMarkup.mockResolvedValue({ text: "Lord, how", start: 2, end: 2, changed: false, reason: "Change it there." });
+    await applyVerseMarkup(area, "level", "q2");
+    expect(get(editText)).toBe("Lord, how");
+    expect(get(editMarkupNote)).toBe("Change it there.");
+    // The next edit clears it, and so does closing the editor.
+    verseMarkup.mockResolvedValue({ text: "Lord,\n\\p how", start: 9, end: 9, changed: true, reason: "" });
+    area.setSelectionRange(5, 5);
+    await applyVerseMarkup(area, "break");
+    expect(get(editMarkupNote)).toBe("");
+  });
+
+  it("drops an answer for text that was typed over while the engine worked", async () => {
+    open("alpha beta", 0, 5);
+    let finish: (value: unknown) => void = () => undefined;
+    verseMarkup.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    const pending = applyVerseMarkup(area, "style", "k");
+    expect(get(editMarkupBusy)).toBe(true);
+    // A second click while the first is with the engine does nothing.
+    await applyVerseMarkup(area, "style", "k");
+    expect(verseMarkup).toHaveBeenCalledTimes(1);
+    editText.set("alpha beta gamma");
+    finish({ text: "\\k alpha\\k* beta", start: 3, end: 8, changed: true, reason: "" });
+    await pending;
+    expect(get(editText)).toBe("alpha beta gamma");
+    expect(get(editMarkupBusy)).toBe(false);
+  });
+
+  it("shows a failed call as a note and does not run during a save", async () => {
+    open("alpha beta", 0, 5);
+    verseMarkup.mockRejectedValue(new Error("engine busy"));
+    await applyVerseMarkup(area, "style", "k");
+    expect(get(editMarkupNote)).toBe("engine busy");
+    expect(get(editText)).toBe("alpha beta");
+    verseMarkup.mockClear();
+    editSaving.set(true);
+    await applyVerseMarkup(area, "style", "k");
+    await applyVerseMarkup(null, "style", "k");
+    expect(verseMarkup).not.toHaveBeenCalled();
   });
 });
