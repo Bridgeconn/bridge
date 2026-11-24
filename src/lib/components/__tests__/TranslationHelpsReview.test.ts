@@ -201,6 +201,66 @@ describe("TranslationHelpsReview: Mark resolved in Bridge (#358 f)", () => {
 });
 
 /**
+ * #515: a failed AI review no longer reopens a resolved issue (the engine
+ * keeps its status), so the card has to say both things: it is resolved, and
+ * the latest recheck failed. A cancelled review puts the issue back as it was
+ * and so needs no label of its own.
+ */
+describe("TranslationHelpsReview: a recheck that failed (#515)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    nativeChecksByVerse.set({});
+    aiCheckReviewsByVerse.set({});
+    paratextThreadsFor.mockResolvedValue({ state: "ready", links: [], pending: [] });
+  });
+
+  const failedRecheck = {
+    status: "failed", attempt: 2, error: "The AI provider could not be reached.",
+    reason: "Automatic AI recheck failed.", verdict: "pass", confidence: 0.94,
+    rationale: "The revised wording communicates the metaphor naturally.",
+  };
+
+  it("a resolved issue reads as resolved, shows the failure and offers the recheck", async () => {
+    listIssueResolutions.mockResolvedValue({ items: [resolution({
+      status: "resolved", recheck: failedRecheck,
+    } as Partial<IssueResolutionRecord>)] });
+    mount([check()]);
+
+    expect(await screen.findByText("Resolved (latest recheck failed)")).toBeInTheDocument();
+    expect(screen.getByText("The AI provider could not be reached.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run AI recheck" })).toBeInTheDocument();
+  });
+
+  it("an open issue keeps the plain label", async () => {
+    listIssueResolutions.mockResolvedValue({ items: [resolution({
+      status: "open", recheck: failedRecheck,
+    } as Partial<IssueResolutionRecord>)] });
+    mount([check()]);
+
+    expect(await screen.findByText("Recheck failed")).toBeInTheDocument();
+    expect(screen.queryByText("Resolved (latest recheck failed)")).toBeNull();
+  });
+
+  it("an issue closed from Paratext keeps saying so, with the failure below it", async () => {
+    listIssueResolutions.mockResolvedValue({ items: [resolution({
+      status: "resolved", recheck: failedRecheck,
+      history: [
+        { event: "created", at: "2026-10-27T00:00:00Z", by: "Benz" },
+        { event: "resolved_from_paratext", at: "2026-10-27T00:01:00Z", by: "Benz", status: "resolved",
+          previousStatus: "open", threadId: "T1" },
+        // What the engine appends for the failed run: no `status` key.
+        { event: "recheck_running", at: "2026-10-28T00:00:00Z", previousStatus: "resolved" },
+        { event: "recheck_failed", at: "2026-10-28T00:00:05Z", previousStatus: "resolved" },
+      ],
+    } as Partial<IssueResolutionRecord>)] });
+    mount([check()]);
+
+    expect(await screen.findByText("Resolved, following Paratext")).toBeInTheDocument();
+    expect(screen.getByText("The AI provider could not be reached.")).toBeInTheDocument();
+  });
+});
+
+/**
  * #478: on a fresh profile the check selection is Language QA only, so the
  * book's translationNotes/Words indexes are never built and the panel used to
  * show "Preparing…" with a spinner for good. The engine now says whether a run

@@ -336,3 +336,155 @@ def test_advanced_pass_waits_for_explicit_proposal_application_before_closing(
     })["result"]["items"][0]
     assert restored["status"] == "resolved"
     assert restored["recheck"]["status"] == "resolved"
+
+
+# -- #515: a cancelled or failed review and a saved issue ---------------------
+#
+# Decided 2026-11-24. A cancelled review reached no conclusion and stored
+# nothing (#513), so a saved issue on the verse goes back exactly as it was. A
+# failed review reached none either and no longer reopens a resolved issue.
+
+_GROUNDED_PASS = {
+    "tool": "translationNotes", "group_id": "figs-metaphor", "check_id": "tn-1",
+    "verdict": "pass", "confidence": 0.94,
+    "rationale": "The revised wording communicates the metaphor naturally.",
+    "suggested_correction": "",
+    "evidence_used": [{"title": "Translation Academy", "identifier": "figs-metaphor"}],
+}
+
+
+def _resolved_by_recheck(engine: BridgeEngine) -> dict:
+    """A saved issue an earlier, finished AI review closed."""
+    _save(engine, _check(engine))
+    engine.project.mark_issue_resolutions_recheck("1", "1", "running")
+    record = engine.project.reconcile_issue_resolutions_after_ai_review(
+        "1", "1", [_GROUNDED_PASS], model="review-model", summary="Closed by an earlier review.",
+    )[0]
+    assert record["status"] == "resolved" and record["recheck"]["status"] == "resolved"
+    return record
+
+
+def _record(engine: BridgeEngine) -> dict:
+    return _call(engine, "issueResolution.list", {"chapter": "1", "verse": "1"})["result"]["items"][0]
+
+
+def _lifecycle_events(engine: BridgeEngine, resolution_id: str) -> list[str]:
+    project = engine.project
+    log = project.workbench.events_for_row(
+        "issue_resolutions", resolution_id, project_id=project.workbench_identity.project_id,
+    )
+    return [
+        json.loads(entry["payload_json"])["event"]
+        for entry in log if str(entry["op"]).startswith("lifecycle:")
+    ]
+
+
+def test_a_cancelled_review_puts_a_resolved_issue_back_exactly_as_it_was(resolution_project, tmp_path):
+    engine = _engine(tmp_path, resolution_project)
+    before = _resolved_by_recheck(engine)
+
+    running = engine.project.mark_issue_resolutions_recheck("1", "1", "running")[0]
+    assert running["status"] == "resolved" and running["recheck"]["status"] == "running"
+    cancelled = engine.project.mark_issue_resolutions_recheck("1", "1", "cancelled", reason="Cancelled.")[0]
+
+    assert cancelled["status"] == "resolved"
+    # The whole recheck result is the earlier one: verdict, evidence, attempt,
+    # timestamps. Nothing says "cancelled", and no snapshot is left behind.
+    assert cancelled["recheck"] == before["recheck"]
+    after = _record(engine)
+    assert after["status"] == "resolved" and after["recheck"] == before["recheck"]
+    assert _call(engine, "issueResolution.list", {"chapter": "1", "verse": "1"})["result"]["resolved"] == 1
+    # The history is not rewritten: both events of the cancelled run are there,
+    # in the record and in the append-only change_log.
+    assert [e["event"] for e in after["history"][-2:]] == ["recheck_running", "recheck_cancelled"]
+    assert after["history"][-1]["restoredStatus"] == "resolved"
+    assert _lifecycle_events(engine, before["resolutionId"])[-2:] == ["recheck_running", "recheck_cancelled"]
+
+
+def test_a_cancelled_review_leaves_an_issue_waiting_for_a_recheck_waiting(resolution_project, tmp_path):
+    engine = _engine(tmp_path, resolution_project)
+    _resolved_by_recheck(engine)
+    edited = _call(engine, "verse.edit", {"chapter": "1", "verse": "1", "newText": "alpha beta delta"})
+    assert edited["success"] is True
+    before = _record(engine)
+    assert before["status"] == "open" and before["recheck"]["status"] == "stale"
+
+    engine.project.mark_issue_resolutions_recheck("1", "1", "running")
+    engine.project.mark_issue_resolutions_recheck("1", "1", "cancelled")
+
+    after = _record(engine)
+    assert after["status"] == "open"
+    assert after["recheck"] == before["recheck"]
+
+
+def test_a_cancelled_review_of_a_never_rechecked_issue_goes_back_to_not_run(resolution_project, tmp_path):
+    engine = _engine(tmp_path, resolution_project)
+    _save(engine, _check(engine))
+    assert _record(engine)["recheck"] == {"status": "not_run"}
+
+    engine.project.mark_issue_resolutions_recheck("1", "1", "running")
+    engine.project.mark_issue_resolutions_recheck("1", "1", "cancelled")
+
+    after = _record(engine)
+    assert after["status"] == "open" and after["recheck"] == {"status": "not_run"}
+
+
+def test_a_cancel_never_brings_back_a_resolution_the_verse_edit_took_away(resolution_project, tmp_path):
+    """The verse is edited while its review runs. The edit reopens the issue;
+    the cancel that follows must not restore the status from before the run,
+    which was for text that no longer exists."""
+    engine = _engine(tmp_path, resolution_project)
+    _resolved_by_recheck(engine)
+    engine.project.mark_issue_resolutions_recheck("1", "1", "running")
+    edited = _call(engine, "verse.edit", {"chapter": "1", "verse": "1", "newText": "alpha beta delta"})
+    assert edited["success"] is True
+    stale = _record(engine)
+    assert stale["status"] == "open" and stale["recheck"]["status"] == "stale"
+    assert "beforeRun" not in stale["recheck"]
+
+    engine.project.mark_issue_resolutions_recheck("1", "1", "cancelled")
+
+    after = _record(engine)
+    assert after["status"] == "open"
+    assert after["recheck"] == stale["recheck"]
+    assert after["history"][-1]["event"] == "recheck_cancelled"
+    assert after["history"][-1]["restoredStatus"] == "open"
+
+
+def test_a_failed_review_does_not_reopen_a_resolved_issue_and_shows_the_failure(resolution_project, tmp_path):
+    engine = _engine(tmp_path, resolution_project)
+    before = _resolved_by_recheck(engine)
+
+    engine.project.mark_issue_resolutions_recheck("1", "1", "running")
+    failed = engine.project.mark_issue_resolutions_recheck(
+        "1", "1", "failed", reason="Automatic AI recheck failed.", error="Provider unavailable",
+    )[0]
+
+    assert failed["status"] == "resolved"
+    assert failed["recheck"]["status"] == "failed"
+    assert failed["recheck"]["error"] == "Provider unavailable"
+    assert "beforeRun" not in failed["recheck"]
+    # The earlier pass is still what the issue rests on.
+    assert failed["recheck"]["verdict"] == before["recheck"]["verdict"] == "pass"
+    assert _call(engine, "issueResolution.list", {"chapter": "1", "verse": "1"})["result"]["resolved"] == 1
+    assert failed["history"][-1]["event"] == "recheck_failed"
+
+
+def test_an_issue_closed_from_paratext_stays_closed_and_keeps_how_it_was_closed(resolution_project, tmp_path):
+    """The Paratext link is closed once. An issue reopened by a cancelled or
+    failed review would have stayed open."""
+    engine = _engine(tmp_path, resolution_project)
+    saved = _save(engine, _check(engine))
+    engine.project.resolve_issue_resolution_from_paratext(
+        "1", "1", saved["resolutionId"], thread_id="R1", done_by="Reviewer Uma", done_at="2026-10-27T09:00:00Z",
+    )
+
+    for outcome in ("cancelled", "failed"):
+        engine.project.mark_issue_resolutions_recheck("1", "1", "running")
+        engine.project.mark_issue_resolutions_recheck("1", "1", outcome, error="Provider unavailable")
+        after = _record(engine)
+        assert after["status"] == "resolved", outcome
+        # The panel names how an issue was resolved from the newest event that
+        # carries a `status`; a recheck event must never be that event.
+        newest_with_status = next(e for e in reversed(after["history"]) if "status" in e)
+        assert newest_with_status["event"] == "resolved_from_paratext", outcome

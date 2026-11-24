@@ -302,7 +302,11 @@
       case "resolved": return "Resolved after recheck";
       case "reflagged": return "Issue remains after recheck";
       case "needs_review": return "Recheck needs human review";
-      case "failed": return "Recheck failed";
+      // #515: a failed recheck no longer reopens a resolved issue, so the
+      // label has to say both things.
+      case "failed": return record.status === "resolved" ? "Resolved (latest recheck failed)" : "Recheck failed";
+      // Written by nothing since #515 (a cancelled run puts the issue back as
+      // it was); kept for a record an earlier build marked.
       case "cancelled": return "Recheck cancelled";
       default: return record.status === "resolved" ? "Resolved" : "Resolution recorded";
     }

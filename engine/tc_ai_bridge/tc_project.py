@@ -1428,7 +1428,27 @@ class TranslationCoreProject:
         self, chapter: str | int, verse: str | int, state: str, *,
         reason: str = '', error: str = '',
     ) -> list[dict[str, Any]]:
-        """Move every saved issue on a verse through a durable recheck state."""
+        """Move every saved issue on a verse through a durable recheck state.
+
+        What each state does to the issue (#515, decided 2026-11-24):
+
+        - `stale`: the verse changed. The issue is reopened; an earlier pass
+          cannot stand for text it never saw.
+        - `running`: a review started. The status is untouched, and what the
+          issue looked like is kept on the record (`beforeRun`) for a cancel.
+        - `cancelled`: the review reached no conclusion and stored nothing
+          (#513), so the issue goes back exactly as it was before the run:
+          status and recheck result. A resolved issue stays resolved.
+        - `failed`: no conclusion either. The status is untouched; the failure
+          is shown on the recheck. It used to reopen a resolved issue, as a
+          cancel did, although a resolved issue only reaches a run with its
+          verse unchanged (an edit has already made it `stale` and open).
+
+        Every state appends its event to the history and the change_log. A
+        restore puts the visible state back; it does not unwrite what happened.
+        None of these events carries a `status` key: the newest event that has
+        one is what names how the issue was resolved (`resolved_from_paratext`).
+        """
         allowed = {'stale', 'running', 'failed', 'cancelled'}
         normalized = str(state or '').strip().lower()
         if normalized not in allowed:
@@ -1439,36 +1459,57 @@ class TranslationCoreProject:
             now, _ = self._timestamp()
             previous_status = str(record.get('status') or 'open')
             previous_recheck = record.get('recheck') if isinstance(record.get('recheck'), dict) else {}
-            attempt = int(previous_recheck.get('attempt') or 0)
-            if normalized == 'running':
-                attempt += 1
-            recheck = copy.deepcopy(previous_recheck)
-            recheck.update({
-                'status': normalized,
-                'attempt': attempt,
-                'inputFingerprint': self.review_input_fingerprint(chapter, verse),
-                'reason': str(reason or recheck.get('reason') or ''),
-                'error': str(error or ''),
-            })
-            if normalized == 'running':
-                recheck['startedAt'] = now
-                recheck['completedAt'] = ''
-            elif normalized in {'failed', 'cancelled'}:
-                recheck['completedAt'] = now
-            if normalized == 'stale':
-                # A prior pass cannot remain authoritative after Scripture changes.
-                record['status'] = 'open'
-                recheck['staleAt'] = now
-            elif normalized in {'failed', 'cancelled'} and previous_status == 'resolved':
-                record['status'] = 'open'
+            was_running = str(previous_recheck.get('status') or '') == 'running'
+            before = previous_recheck.get('beforeRun') if isinstance(previous_recheck.get('beforeRun'), dict) else None
+            # The recheck without its snapshot: what is carried into the next state.
+            carried = {key: value for key, value in previous_recheck.items() if key != 'beforeRun'}
+            fingerprint = self.review_input_fingerprint(chapter, verse)
+            event: dict[str, Any] = {
+                'event': f'recheck_{normalized}', 'at': now,
+                'previousStatus': previous_status, 'inputFingerprint': fingerprint,
+            }
+            if normalized == 'cancelled' and was_running and before is not None:
+                record['status'] = str(before.get('status') or 'open')
+                restored = before.get('recheck') if isinstance(before.get('recheck'), dict) else {}
+                recheck = copy.deepcopy(restored) or {'status': 'not_run'}
+                event.update({'reason': str(reason or ''), 'error': '', 'restoredStatus': record['status']})
+            elif normalized == 'cancelled' and not was_running:
+                # Cancelled before this verse's run was marked, or the verse was
+                # edited while it ran (it is `stale` and open, and stays so):
+                # there is nothing of this run on the record to take back.
+                recheck = copy.deepcopy(carried)
+                event.update({'reason': str(reason or ''), 'error': '', 'restoredStatus': previous_status})
+            else:
+                attempt = int(previous_recheck.get('attempt') or 0)
+                if normalized == 'running':
+                    attempt += 1
+                recheck = copy.deepcopy(carried)
+                recheck.update({
+                    'status': normalized,
+                    'attempt': attempt,
+                    'inputFingerprint': fingerprint,
+                    'reason': str(reason or recheck.get('reason') or ''),
+                    'error': str(error or ''),
+                })
+                if normalized == 'running':
+                    recheck['startedAt'] = now
+                    recheck['completedAt'] = ''
+                    # A run marked twice keeps the first snapshot: the second
+                    # "before" would be the running state itself.
+                    recheck['beforeRun'] = copy.deepcopy(before) if was_running and before is not None else {
+                        'status': previous_status, 'recheck': copy.deepcopy(carried),
+                    }
+                elif normalized in {'failed', 'cancelled'}:
+                    # `cancelled` only for a run an earlier build marked, with
+                    # no snapshot to go back to.
+                    recheck['completedAt'] = now
+                if normalized == 'stale':
+                    # A prior pass cannot remain authoritative after Scripture changes.
+                    record['status'] = 'open'
+                    recheck['staleAt'] = now
+                event.update({'reason': recheck.get('reason', ''), 'error': recheck.get('error', '')})
             record['recheck'] = recheck
             record['updatedAt'] = now
-            event = {
-                'event': f'recheck_{normalized}', 'at': now,
-                'previousStatus': previous_status,
-                'inputFingerprint': recheck['inputFingerprint'],
-                'reason': recheck.get('reason', ''), 'error': recheck.get('error', ''),
-            }
             history = list(record.get('history') or [])
             history.append(copy.deepcopy(event))
             record['history'] = history[-100:]

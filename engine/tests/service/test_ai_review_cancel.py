@@ -45,6 +45,8 @@ class Hold:
 
     def __init__(self) -> None:
         self.armed = False
+        # The provider refuses the held request instead of answering it.
+        self.refuse = False
         self.entered = threading.Event()
         self.release = threading.Event()
 
@@ -127,6 +129,8 @@ def _transport(requests: list[dict], hold: Hold):
         else:
             assert name in REVIEW_REQUESTS, name
             hold.wait_if_armed()
+            if hold.armed and hold.refuse:
+                return 400, json.dumps({"error": {"message": "The provider refused this request."}}).encode("utf-8")
             payload = _answer_review(request_input)
         return 200, json.dumps({
             "output_text": json.dumps(payload),
@@ -316,3 +320,85 @@ def test_a_chapter_cancelled_after_its_first_verse_keeps_that_verse(titus, monke
     resumed = _finish(engine, retried["result"]["jobId"])
     assert resumed["state"] == "succeeded", resumed
     assert resumed["totalVerses"] == 4 and resumed["skippedCurrentVerses"] == 1
+
+
+# -- #515: a saved issue on the verse ----------------------------------------
+
+
+def _issue_closed_from_paratext(engine) -> dict:
+    """A saved issue on Titus 1:1 that was resolved from Paratext: the kind a
+    cancelled review must never reopen, because its link is closed only once."""
+    check = _listed(engine)["checks"][0]
+    saved = call(engine, "issueResolution.save", {
+        "chapter": "1", "verse": "1", "tool": check["tool"],
+        "groupId": check["groupId"], "checkId": check["checkId"],
+        "expectedFingerprint": check["stateFingerprint"],
+        "selectedText": "Paul", "issueSummary": "The name may need a note.",
+        "reviewerNote": "Please review this name in context.",
+    })
+    assert saved["success"] is True, saved
+    engine.project.resolve_issue_resolution_from_paratext(
+        "1", "1", saved["result"]["resolutionId"],
+        thread_id="R1", done_by="Reviewer Uma", done_at="2026-10-27T09:00:00Z",
+    )
+    return _issue(engine)
+
+
+def _issue(engine) -> dict:
+    return call(engine, "issueResolution.list", {"chapter": "1", "verse": "1"})["result"]["items"][0]
+
+
+def test_a_cancelled_job_leaves_a_resolved_issue_resolved(titus):
+    settings, path = titus
+    engine, _, hold = _open(settings, path)
+    before = _issue_closed_from_paratext(engine)
+    assert before["status"] == "resolved" and before["recheck"] == {"status": "not_run"}
+    hold.armed = True
+
+    job_id = _start(engine, "verse")
+    assert hold.entered.wait(60)
+    # While the request is in flight the issue reads as being rechecked.
+    assert _issue(engine)["recheck"]["status"] == "running"
+    snapshot = _cancel_while_held(engine, hold, job_id)
+
+    assert snapshot["state"] == "cancelled", snapshot
+    after = _issue(engine)
+    assert after["status"] == "resolved"
+    assert after["recheck"] == {"status": "not_run"}
+    assert [e["event"] for e in after["history"][-2:]] == ["recheck_running", "recheck_cancelled"]
+
+
+def test_a_provider_error_after_cancel_is_a_cancelled_run_for_the_issue(titus):
+    """Cancel is pressed and the request in flight is then refused. Neither the
+    cancel nor the failure used to be recorded, which left the issue reading
+    "rechecking" with no run behind it."""
+    settings, path = titus
+    engine, _, hold = _open(settings, path)
+    before = _issue_closed_from_paratext(engine)
+    hold.armed = True
+    hold.refuse = True
+
+    snapshot = _cancel_while_held(engine, hold, _start(engine, "verse"))
+
+    assert snapshot["state"] == "cancelled", snapshot
+    after = _issue(engine)
+    assert after["recheck"] == before["recheck"] == {"status": "not_run"}
+    assert after["status"] == "resolved"
+    assert after["history"][-1]["event"] == "recheck_cancelled"
+
+
+def test_a_failed_job_keeps_a_resolved_issue_resolved_and_shows_the_failure(titus):
+    settings, path = titus
+    engine, _, hold = _open(settings, path)
+    _issue_closed_from_paratext(engine)
+    hold.armed = True
+    hold.refuse = True
+    hold.release.set()  # nothing is held: the request is refused at once
+
+    snapshot = _finish(engine, _start(engine, "verse"))
+
+    assert snapshot["state"] == "failed", snapshot
+    after = _issue(engine)
+    assert after["status"] == "resolved"
+    assert after["recheck"]["status"] == "failed"
+    assert "refused" in after["recheck"]["error"]
