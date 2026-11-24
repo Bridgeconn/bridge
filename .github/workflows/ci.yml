@@ -176,8 +176,17 @@ jobs:
     # the 17m13s the same suite takes on Linux -- Windows pays for the autouse
     # tmp_path fixture on every one of ~1060 tests, and additionally runs the
     # PowerShell/cscript Logos and Paratext connector tests that skip on Linux.
-    # 60 leaves real headroom over the measured number without hiding a hang.
-    timeout-minutes: 60
+    #
+    # 90, raised from 60 on 2026-11-24 (#510). 60 was set against that 41m39s; the
+    # suite is now about 6,000 tests, and on the six runs of 2026-11-23/24 its step
+    # alone took 38, 45, 45, 48 and 54 minutes and was cut off at 58 (run
+    # 45207853955, PR #509), which showed a pull request as failed with no test
+    # failing. The same code varies by twenty minutes from run to run, so that
+    # spread is the runner. 90 leaves about half an hour over the slowest finished
+    # run, plus the few minutes the other steps take, and still stops a real hang.
+    # If the suite outgrows this too, the answer is #82 (share the Stage 5-8
+    # setup), not a larger number.
+    timeout-minutes: 90
     defaults:
       run:
         working-directory: engine

@@ -3,7 +3,12 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { get } from "svelte/store";
 import { answerConfirmation, confirmRequest } from "../../confirmAction";
 
-const { getSettings, getNavigationStatus, setSettings, engineInfo, terminologyList, terminologyRecord, housestyleList, housestyleRecord, housestyleSetState, housestyleNameSuggestions, languageQaStatus, languageQaSetPack, pickFolder, setReference, checkerGet, checkerSet, wordsList, usersList, connectorStatus, installConnector } = vi.hoisted(() => ({
+const { getSettings, getNavigationStatus, setSettings, engineInfo, terminologyList, terminologyRecord, housestyleList, housestyleRecord, housestyleSetState, housestyleNameSuggestions, languageQaStatus, languageQaSetPack, pickFolder, setReference, checkerGet, checkerSet, wordsList, usersList, connectorStatus, installConnector, chatgptStatus, chatgptSignIn, chatgptCancelSignIn, chatgptSignOut, chatgptModels } = vi.hoisted(() => ({
+  chatgptStatus: vi.fn(),
+  chatgptSignIn: vi.fn(),
+  chatgptCancelSignIn: vi.fn(),
+  chatgptSignOut: vi.fn(),
+  chatgptModels: vi.fn(),
   setReference: vi.fn(),
   connectorStatus: vi.fn(),
   installConnector: vi.fn(),
@@ -54,6 +59,11 @@ vi.mock("../../api/bridgeClient", () => ({
     usersList,
     paratextConnectorStatus: connectorStatus,
     paratextInstallConnector: installConnector,
+    chatgptStatus,
+    chatgptSignIn,
+    chatgptCancelSignIn,
+    chatgptSignOut,
+    chatgptModels,
   },
 }));
 
@@ -1142,5 +1152,170 @@ describe("SettingsModal review model guard (#492)", () => {
     render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
     await screen.findByLabelText("Model");
     expect(screen.getByText(/Changed from gpt-5\.6 when Bridge was updated/)).toBeInTheDocument();
+  });
+});
+
+// #506: the AI on a ChatGPT plan. jsdom shows the block's structure and what it
+// asks the engine; that a browser really opens, and how the block looks at
+// 1366x768, need the desktop app.
+describe("SettingsModal ChatGPT sign-in (#506)", () => {
+  const chatgpt = (extra: Record<string, unknown> = {}) => ({
+    status: "signedOut", email: "", name: "", signInUrl: "", error: null,
+    limitReached: false, limitMessage: "", usageUrl: "https://chatgpt.com/settings/usage", ...extra,
+  });
+  const settings = (extra: Record<string, unknown> = {}) => ({
+    provider: "chatgpt", apiBaseUrl: "", model: "gpt-5.6-terra", hasApiKey: false, aiReady: false,
+    reviewerMode: "basic", paratextNavigation: false, logosNavigation: false, chatgpt: chatgpt(), ...extra,
+  });
+  const models = [
+    { slug: "gpt-6.2-sol", displayName: "GPT-6.2-Sol", reasoningEfforts: ["low", "medium"], contextWindow: 500000 },
+    { slug: "gpt-5.6-terra", displayName: "GPT-5.6-Terra", reasoningEfforts: ["low", "medium"], contextWindow: 272000 },
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    engineInfo.mockResolvedValue({
+      bridgeVersion: "0.26.0", companionSchemaVersion: 16, projectOpen: false, greekRoom: {},
+    });
+    getNavigationStatus.mockResolvedValue(navigationState());
+    setSettings.mockImplementation(async (params: Record<string, unknown>) => ({ ...settings(), ...params }));
+    chatgptModels.mockResolvedValue({ models, error: null });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("offers the ChatGPT account as a provider and keeps the API key fields for the others", async () => {
+    getSettings.mockResolvedValue(settings({ provider: "openai", chatgpt: chatgpt() }));
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+    const provider = await screen.findByLabelText("Provider");
+    expect(screen.getByLabelText("API key")).toBeInTheDocument();
+    expect(screen.getByLabelText("API base URL")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Continue with ChatGPT" })).toBeNull();
+
+    await fireEvent.change(provider, { target: { value: "chatgpt" } });
+
+    expect(await screen.findByRole("button", { name: "Continue with ChatGPT" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("API key")).toBeNull();
+    expect(screen.queryByLabelText("API base URL")).toBeNull();
+    expect(screen.getByText(/Needs a ChatGPT Plus or Pro plan/)).toBeInTheDocument();
+  });
+
+  it("signs in, stores the provider at once and lists the account's models", async () => {
+    getSettings.mockResolvedValue(settings());
+    chatgptSignIn.mockResolvedValue(chatgpt({ status: "signedIn", email: "translator@example.org" }));
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Continue with ChatGPT" }));
+
+    await waitFor(() => expect(screen.getByText("translator@example.org")).toBeInTheDocument());
+    // Only the provider: unsaved edits to other fields are not saved by signing in.
+    expect(setSettings).toHaveBeenCalledWith({ provider: "chatgpt" });
+    const model = await screen.findByLabelText("Model");
+    await waitFor(() => expect(model.tagName).toBe("SELECT"));
+    expect(Array.from((model as HTMLSelectElement).options).map((option) => option.value))
+      .toEqual(["gpt-6.2-sol", "gpt-5.6-terra"]);
+    expect(model).toHaveValue("gpt-5.6-terra");
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
+    expect(screen.getByText(/add no dollars/)).toBeInTheDocument();
+  });
+
+  it("waits for the browser sign-in, showing the address, and picks up the result", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    getSettings.mockResolvedValue(settings());
+    chatgptSignIn.mockResolvedValue(chatgpt({ status: "signingIn", signInUrl: "https://auth.openai.com/api/accounts/authorize?x=1" }));
+    chatgptStatus
+      .mockResolvedValueOnce(chatgpt({ status: "signingIn", signInUrl: "https://auth.openai.com/api/accounts/authorize?x=1" }))
+      .mockResolvedValue(chatgpt({ status: "signedIn", email: "translator@example.org" }));
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Continue with ChatGPT" }));
+
+    expect(await screen.findByText(/Waiting for you to finish signing in/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Sign-in address")).toHaveValue("https://auth.openai.com/api/accounts/authorize?x=1");
+    await vi.advanceTimersByTimeAsync(2100);
+    await waitFor(() => expect(screen.getByText("translator@example.org")).toBeInTheDocument());
+    expect(setSettings).toHaveBeenCalledWith({ provider: "chatgpt" });
+    // Settled: the status is not asked for again.
+    const asked = chatgptStatus.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(chatgptStatus.mock.calls.length).toBe(asked);
+  });
+
+  it("resumes waiting when Settings is reopened during a sign-in, and can cancel it", async () => {
+    getSettings.mockResolvedValue(settings({ chatgpt: chatgpt({ status: "signingIn", signInUrl: "https://auth.openai.com/x" }) }));
+    chatgptStatus.mockResolvedValue(chatgpt({ status: "signingIn", signInUrl: "https://auth.openai.com/x" }));
+    chatgptCancelSignIn.mockResolvedValue(chatgpt());
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => expect(chatgptCancelSignIn).toHaveBeenCalledOnce());
+    expect(await screen.findByRole("button", { name: "Continue with ChatGPT" })).toBeInTheDocument();
+    expect(setSettings).not.toHaveBeenCalled();
+  });
+
+  it("says why a sign-in was refused and does not change the provider", async () => {
+    getSettings.mockResolvedValue(settings({ provider: "openai" }));
+    chatgptSignIn.mockResolvedValue(chatgpt({
+      error: { code: "invalid_grant", message: "Using a ChatGPT plan in Bridge needs ChatGPT Plus or Pro; a Free account is refused at this step." },
+    }));
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+    await fireEvent.change(await screen.findByLabelText("Provider"), { target: { value: "chatgpt" } });
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Continue with ChatGPT" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("a Free account is refused at this step");
+    expect(setSettings).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Continue with ChatGPT" })).toBeInTheDocument();
+  });
+
+  it("asks to sign in again when the sign-in has expired, and shows a reached plan limit", async () => {
+    getSettings.mockResolvedValue(settings({ chatgpt: chatgpt({
+      status: "reauthRequired", email: "translator@example.org",
+      error: { code: "refresh_token_invalidated", message: "Your ChatGPT sign-in has expired and could not be renewed." },
+    }) }));
+    const first = render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+    expect(await screen.findByRole("button", { name: "Sign in again" })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("has expired");
+    first.unmount();
+
+    getSettings.mockResolvedValue(settings({ aiReady: true, chatgpt: chatgpt({
+      status: "signedIn", email: "translator@example.org", limitReached: true,
+      limitMessage: "Your ChatGPT plan limit has been reached, so Bridge has stopped sending AI requests.",
+    }) }));
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+    expect(await screen.findByText(/plan limit has been reached/)).toBeInTheDocument();
+  });
+
+  it("signs out only after the person confirms", async () => {
+    getSettings.mockResolvedValue(settings({ aiReady: true, chatgpt: chatgpt({ status: "signedIn", email: "translator@example.org" }) }));
+    chatgptSignOut.mockResolvedValue(chatgpt());
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Sign out" }));
+    await waitFor(() => expect(get(confirmRequest)?.title).toBe("Sign out of ChatGPT?"));
+    answerConfirmation(false);
+    await waitFor(() => expect(get(confirmRequest)).toBeNull());
+    expect(chatgptSignOut).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    await waitFor(() => expect(get(confirmRequest)).not.toBeNull());
+    answerConfirmation(true);
+
+    await waitFor(() => expect(chatgptSignOut).toHaveBeenCalledOnce());
+    expect(await screen.findByRole("button", { name: "Continue with ChatGPT" })).toBeInTheDocument();
+  });
+
+  it("keeps a saved model the account no longer lists choosable, and marks it", async () => {
+    getSettings.mockResolvedValue(settings({
+      model: "gpt-5.5-old", aiReady: true, chatgpt: chatgpt({ status: "signedIn", email: "translator@example.org" }),
+    }));
+    render(SettingsModal, { props: { initialPane: "ai", onClose: vi.fn() } });
+    const model = await screen.findByLabelText("Model");
+    await waitFor(() => expect(model.tagName).toBe("SELECT"));
+    expect(model).toHaveValue("gpt-5.5-old");
+    expect(screen.getByRole("option", { name: "gpt-5.5-old (not offered by this account)" })).toBeInTheDocument();
   });
 });

@@ -365,7 +365,10 @@ A raw Scripture import becomes a translationCore-compatible book project:
                                                 a fresh database is built; data\projects is rediscovered
                                                 either way and the outcome is reported on engine.info /
                                                 project.open as `workspaceRecovery`, never as an error
-%LOCALAPPDATA%\Bridge\data\settings.json       DPAPI-wrapped secrets only
+%LOCALAPPDATA%\Bridge\data\settings.json       DPAPI-wrapped secrets only: the API key, the hub token
+                                                and (#506) the ChatGPT sign-in's tokens. Who is signed
+                                                in and the client id OpenAI issued for this computer are
+                                                ordinary settings in workspace.sqlite3, not secrets
 %LOCALAPPDATA%\Bridge\data\reference-cache\    plain text of each reference Bible folder chosen in
                                                 Settings > Language QA, `<fingerprint>.json.gz`;
                                                 derived, rebuilt when the folder changes, never shipped
@@ -541,6 +544,18 @@ sync peer the desktop never waits on, not a dependency on any path above.
 Since 2026-10-23 the desktop can also *host* one (Settings > Team > Start a
 hub, a child of the engine alive only while Bridge is open); that changes
 packaging, not this rule.
+The optional AI can also authenticate with a **ChatGPT sign-in** instead of an
+API key (#506, 2026-11-23, DECISIONS.md; on the `chatgpt-signin` branch until the
+maintainer agrees). It is the same optional, human-invoked `ai_client.py` path
+with a different credential: `chatgpt_signin.py` (the protocol),
+`chatgpt_session.py` (what is kept, token renewal, the pause after a plan limit)
+and `chatgpt_plan_client.py` (the request differences). Nothing on the import,
+check or open path touches it. Three things about plan usage that are not in
+OpenAI's pages and were found on live runs: a string `input` is refused (it must
+be a list of messages), the event stream arrives with no `Content-Type`, and a
+Free account passes the whole browser sign-in and is refused only at the code
+exchange with a bare `invalid_grant`. OpenAI's reference client is under a
+noncommercial licence: read it for the protocol if you must, never copy it in.
 
 ## The analysis pipeline, and why stage numbers matter
 
@@ -826,7 +841,10 @@ raise it as a question in the issue rather than deciding it in a commit:
 - Anything that adds a server, an account, a login, or a network round-trip on a
   runtime path a translator hits. Decided 2026-10-12 for the hub only
   (`docs/DECISIONS.md`; #46, architecture review in #227 before #79): the team
-  hub is an optional sync peer the desktop never waits on. Any other network
+  hub is an optional sync peer the desktop never waits on. A ChatGPT sign-in as
+  the optional AI's credential was asked for by Benz on 2026-11-23 (#506) and is
+  built on a branch; it does not land on `main` without the maintainer's
+  agreement. Any other network
   dependency — an account, a login, a hosted service, a call on the import,
   check or open path — is still a question
 - Re-baselining either golden

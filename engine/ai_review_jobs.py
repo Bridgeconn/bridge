@@ -193,9 +193,16 @@ class AIReviewJobManager:
 
     def start(
         self, spec: AIReviewJobSpec, *, run_verse: RunVerse, run_chapter: Optional[RunChapter] = None,
+        halt: Optional[Callable[[], str]] = None,
     ) -> dict[str, Any]:
         """`run_chapter`, when given, replaces the per-verse loop for each
-        chapter (#502); without it the job is the single-verse run."""
+        chapter (#502); without it the job is the single-verse run.
+
+        `halt` (#506) is asked before each verse or chapter. A non-empty
+        answer ends the job there as failed with that message: the provider
+        will accept nothing more for now (a ChatGPT plan's limit, a lapsed
+        sign-in), so going on would only fail every remaining verse. Retry
+        resumes from the verses that have no succeeded result."""
         if spec.mode not in {"basic", "advanced"}:
             raise AIReviewJobError("AI reviewer mode must be basic or advanced.")
         if spec.scope not in {"verse", "chapter", "book"}:
@@ -209,7 +216,7 @@ class AIReviewJobManager:
             self._active_job_id = job.id
         threading.Thread(
             target=self._run,
-            args=(job, run_verse, run_chapter),
+            args=(job, run_verse, run_chapter, halt),
             name=f"bridge-ai-review-{job.id[:8]}",
             daemon=True,
         ).start()
@@ -263,7 +270,8 @@ class AIReviewJobManager:
                 resume_of=job.id,
             )
 
-    def _run(self, job: _AIReviewJob, run_verse: RunVerse, run_chapter: Optional[RunChapter] = None) -> None:
+    def _run(self, job: _AIReviewJob, run_verse: RunVerse, run_chapter: Optional[RunChapter] = None,
+             halt: Optional[Callable[[], str]] = None) -> None:
         with job.lock:
             job.state = "running"
         try:
@@ -274,6 +282,8 @@ class AIReviewJobManager:
                         continue
                     if self._cancelled(job):
                         return
+                    if self._halted(job, halt):
+                        return
                     with job.lock:
                         job.current_chapter = chapter
                         job.current_verse = verses[0]
@@ -282,6 +292,11 @@ class AIReviewJobManager:
                     report = _JobReport(job, chapter)
                     run_chapter(chapter, verses, job.spec.mode, report, job.cancel_event)
                     if self._cancelled(job):
+                        return
+                    # Before the fill-in below: a chapter stopped by the
+                    # provider leaves its unsent verses without a result, for
+                    # Retry, not marked as failures of their own.
+                    if self._halted(job, halt):
                         return
                     with job.lock:
                         job.current_window = []
@@ -293,6 +308,8 @@ class AIReviewJobManager:
                     continue
                 for verse in job.spec.chapter_verses.get(chapter, []):
                     if self._cancelled(job):
+                        return
+                    if self._halted(job, halt):
                         return
                     key = f"{chapter}:{verse}"
 
@@ -337,6 +354,8 @@ class AIReviewJobManager:
                         job.latest_result = result
                         job.current_verse_percent = 0
 
+            if self._halted(job, halt):  # the last verse may be the one that met the limit
+                return
             with job.lock:
                 failed = [item for item in job.results.values() if item.get("status") == "failed"]
                 job.state = "failed" if failed else "succeeded"
@@ -353,6 +372,22 @@ class AIReviewJobManager:
                 job.error = str(exc)
                 job.current_stage = "AI review failed"
                 job.finished_at = _now()
+
+    @staticmethod
+    def _halted(job: _AIReviewJob, halt: Optional[Callable[[], str]]) -> bool:
+        reason = halt() if halt is not None else ""
+        if not reason:
+            return False
+        with job.lock:
+            job.state = "failed"
+            job.error = reason
+            job.current_stage = "AI review stopped"
+            job.current_chapter = None
+            job.current_verse = None
+            job.current_window = []
+            job.current_verse_percent = 0
+            job.finished_at = _now()
+        return True
 
     @staticmethod
     def _cancelled(job: _AIReviewJob) -> bool:

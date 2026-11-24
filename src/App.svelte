@@ -1849,7 +1849,7 @@
         onAlignChapter={() => autoAlign?.ask()}
         alignChapterDisabled={Boolean(activeJobId) || !autoAlignHasKey || autoAlignPhase !== "idle"}
         alignChapterTitle={autoAlignHasKey === false
-          ? "Add an API key in Settings to align automatically"
+          ? "Add an API key or sign in with ChatGPT in Settings to align automatically"
           : autoAlignPhase === "idle" || autoAlignPhase === "estimating"
             ? "Align this chapter automatically: three verses at a time, each asked twice. Shows the cost before anything is sent."
             : "An automatic alignment of this chapter is open in the strip above the text"}

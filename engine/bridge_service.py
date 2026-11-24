@@ -114,6 +114,9 @@ from tc_ai_bridge.alignment_reliability import (
     alignment_fingerprint, compile_link_proposal, structural_issues, target_token_fingerprint,
 )
 from tc_ai_bridge.ai_client import AIError, OpenAIResponsesClient, Transport
+from tc_ai_bridge.chatgpt_plan_client import ChatGPTPlanClient
+from tc_ai_bridge.chatgpt_session import SIGNED_OUT_MESSAGE, ChatGPTSession
+from tc_ai_bridge.chatgpt_signin import SignInError
 from tc_ai_bridge.ai_review_payload import ReviewPayloadOptions
 from tc_ai_bridge.ai_review_windows import WindowReviewSession, WindowSettings
 from tc_ai_bridge.correction_wording import (
@@ -697,6 +700,13 @@ class Methods:
     AI_REVIEW_RETRY = "ai.review.retry"
     AI_REVIEW_LIST_CHAPTER = "ai.review.listForChapter"
 
+    # #506: Sign in with ChatGPT, for running the AI on a ChatGPT plan.
+    AI_CHATGPT_STATUS = "ai.chatgpt.status"
+    AI_CHATGPT_SIGN_IN = "ai.chatgpt.signIn"
+    AI_CHATGPT_CANCEL_SIGN_IN = "ai.chatgpt.cancelSignIn"
+    AI_CHATGPT_SIGN_OUT = "ai.chatgpt.signOut"
+    AI_CHATGPT_MODELS = "ai.chatgpt.models"
+
     PASSAGE_SEMANTIC_STATUS = "passageSemantic.status"
     PASSAGE_SEMANTIC_PROJECT_METADATA = "passageSemantic.getProjectMetadata"
     PASSAGE_SEMANTIC_CURRENT_PASSAGE = "passageSemantic.getCurrentPassage"
@@ -935,6 +945,8 @@ class BridgeEngine:
         # inject an isolated instance rather than touch the real machine's
         # settings. See tests/test_bridge_service.py.
         self.settings = settings if settings is not None else AppSettings()
+        # #506: the ChatGPT sign-in, built on first use (see `chatgpt_session`).
+        self._chatgpt: ChatGPTSession | None = None
         self._configure_language_qa()
         # Reference Bibles (one per folder) and related-word indexes, built on
         # background threads on first use and kept for the session.
@@ -4797,6 +4809,8 @@ class BridgeEngine:
             "estimatedInputTokens": input_tokens, "estimatedOutputTokens": output_tokens,
             "estimatedCostUSD": round(cost, 4), "model": model,
             "hasApiKey": bool(self.settings.get_api_key()),
+            # #506: on a ChatGPT plan the run uses plan allowance, not dollars.
+            "aiReady": self._ai_ready(), "planUsage": self._uses_chatgpt_plan(),
         }
 
     def start_auto_align_job(self, scope: str = "chapter", chapters: Any = None, apply: bool = True,
@@ -5037,6 +5051,38 @@ class BridgeEngine:
         restored = self.project.load_verse_alignment_history(chapter, verse, history_id=history_id)
         return self._save_alignment(chapter, verse, restored, expected_original, "restore")
 
+    # -- #506: Sign in with ChatGPT ------------------------------------------
+
+    @property
+    def chatgpt_session(self) -> ChatGPTSession:
+        if self._chatgpt is None:
+            self._chatgpt = ChatGPTSession(self.settings)
+        return self._chatgpt
+
+    def _uses_chatgpt_plan(self) -> bool:
+        """Settings > AI provider is on "ChatGPT account"."""
+        return self.settings.provider == "chatgpt"
+
+    def _ai_ready(self) -> bool:
+        """Whether an AI request could be sent now: signed in when the provider
+        is the ChatGPT account, an API key otherwise."""
+        if self._uses_chatgpt_plan():
+            return self.chatgpt_session.is_signed_in()
+        return bool(self.settings.get_api_key())
+
+    def _ai_halt_reason(self) -> str:
+        """Why a running AI job should stop asking, or empty (#506). Only the
+        ChatGPT plan has such a state: its limit, or a lapsed sign-in."""
+        if self._uses_chatgpt_plan():
+            return self.chatgpt_session.halt_reason()
+        return ""
+
+    def chatgpt_models(self, refresh: bool = False) -> dict[str, Any]:
+        try:
+            return {"models": self.chatgpt_session.models(refresh=bool(refresh)), "error": None}
+        except SignInError as exc:
+            return {"models": [], "error": {"code": exc.code, "message": str(exc)}}
+
     def _ai_client(self, task: str = "review") -> OpenAIResponsesClient:
         """The client for one AI task (#473): `review` (the tN/tW review, its
         gap-fill alignment inside `prepare_verse_review`, correction wording),
@@ -5044,20 +5090,30 @@ class BridgeEngine:
         or `triage`. The model and reasoning effort come from
         `AppSettings.ai_task_choice`; in one-model mode every task gets the
         configured model at medium, as before."""
-        api_key = self.settings.get_api_key()
-        if not api_key:
-            raise AIError(
-                "No OpenAI-compatible API key is configured. Add one in Settings before "
-                "requesting an AI alignment proposal."
-            )
         kwargs: dict[str, Any] = {}
         if self._ai_transport is not None:
             kwargs["transport"] = self._ai_transport
         model, reasoning_effort = self.settings.ai_task_choice(task)
-        client = OpenAIResponsesClient(
-            api_key, model=model, base_url=self.settings.api_base_url,
-            reasoning_effort=reasoning_effort, **kwargs
-        )
+        client: OpenAIResponsesClient
+        if self._uses_chatgpt_plan():
+            # #506: the signed-in ChatGPT plan instead of an API key. Same
+            # client, same requests; `ChatGPTPlanClient` says what differs.
+            if not self.chatgpt_session.is_signed_in():
+                raise AIError(SIGNED_OUT_MESSAGE)
+            client = ChatGPTPlanClient(
+                self.chatgpt_session, model=model, reasoning_effort=reasoning_effort, **kwargs
+            )
+        else:
+            api_key = self.settings.get_api_key()
+            if not api_key:
+                raise AIError(
+                    "No OpenAI-compatible API key is configured. Add one in Settings before "
+                    "requesting an AI alignment proposal."
+                )
+            client = OpenAIResponsesClient(
+                api_key, model=model, base_url=self.settings.api_base_url,
+                reasoning_effort=reasoning_effort, **kwargs
+            )
         # #500: the review request's experiments, all off unless set.
         client.review_options = ReviewPayloadOptions.from_settings(self.settings.ai_review)
         return client
@@ -5426,7 +5482,9 @@ class BridgeEngine:
                     reason="AI review was cancelled before this verse was sent.",
                 )
 
-        WindowReviewSession(client, project, chapter, verses, window_settings).run(Reporter(), cancel_event)
+        WindowReviewSession(client, project, chapter, verses, window_settings).run(
+            Reporter(), cancel_event, halt=self._ai_halt_reason,
+        )
 
     def _start_ai_review_spec(
         self, project: TranslationCoreProject, spec: AIReviewJobSpec,
@@ -5448,6 +5506,7 @@ class BridgeEngine:
                     project, ch, verses, reviewer_mode, report, cancel,
                 )) if windowed else None
             ),
+            halt=self._ai_halt_reason,
         )
 
     def start_ai_review_job(
@@ -5742,7 +5801,7 @@ class BridgeEngine:
         request_suggestion = bool(options.get("request_suggestion"))
         client: OpenAIResponsesClient | None = None
         provider = None
-        if request_suggestion and self.settings.get_api_key():
+        if request_suggestion and self._ai_ready():
             client = self._ai_client()
             provider = ConfiguredCorrectionSuggestionProvider(
                 client, provider_name=self.settings.provider or "openai-compatible",
@@ -9703,6 +9762,10 @@ class BridgeEngine:
             "bookmarks": self.settings.bookmarks,
             "recentChapters": self.settings.recent_chapters,
             "hasApiKey": bool(self.settings.get_api_key()),
+            # #506: `aiReady` is what a feature asks ("could a request be sent
+            # now?"); `hasApiKey` stays the literal fact Settings shows.
+            "aiReady": self._ai_ready(),
+            "chatgpt": self.chatgpt_session.state(),
             "aiUsage": self.settings.get_ai_usage_totals(),
         }
 
@@ -10577,6 +10640,16 @@ class BridgeEngine:
                 return EngineResponse.ok(request.id, result=self.get_settings())
             if m == Methods.SETTINGS_SET:
                 return EngineResponse.ok(request.id, result=self.set_settings(**p))
+            if m == Methods.AI_CHATGPT_STATUS:
+                return EngineResponse.ok(request.id, result=self.chatgpt_session.state())
+            if m == Methods.AI_CHATGPT_SIGN_IN:
+                return EngineResponse.ok(request.id, result=self.chatgpt_session.start_sign_in())
+            if m == Methods.AI_CHATGPT_CANCEL_SIGN_IN:
+                return EngineResponse.ok(request.id, result=self.chatgpt_session.cancel_sign_in())
+            if m == Methods.AI_CHATGPT_SIGN_OUT:
+                return EngineResponse.ok(request.id, result=self.chatgpt_session.sign_out())
+            if m == Methods.AI_CHATGPT_MODELS:
+                return EngineResponse.ok(request.id, result=self.chatgpt_models(bool(p.get("refresh"))))
             if m == Methods.TERMINOLOGY_LIST:
                 return EngineResponse.ok(request.id, result=self.terminology_list())
             if m == Methods.TERMINOLOGY_RECORD:

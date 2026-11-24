@@ -26632,3 +26632,432 @@ introduction line, and changing a marker (the issue's open question; the decisio
 text only). Poetry lines in `AlignmentModal`, `TranslationHelpsReview` and
 `VerseHistoryPopover`, which still show `display.plain`. `\cl` and `\cd` between `\c`
 and verse 1, which were not asked for.
+
+## 2026-11-23 — Sign in with ChatGPT, step A: a test script, no app change (#506)
+
+Branch `chatgpt-signin`, not `main`: Joel asked for this work on a branch, merged
+after the team approves.
+
+**Why.** Benz asked for ChatGPT account sign-in so Bridge's AI can run on a
+person's ChatGPT plan instead of an API key. OpenAI's "Sign in with ChatGPT" plan
+usage is offered to open-source apps that run locally, through the same Responses
+API `ai_client.py` speaks. Two things its pages do not say decide whether the
+feature can be built: whether strict `json_schema` output is accepted under plan
+usage, and which models an account is offered (Bridge's measured review results
+are on `gpt-5.6-terra`).
+
+**What changed.** One new file, `scripts/spike_chatgpt_signin.py`, standard library
+only. It signs in (PKCE, a loopback redirect on `127.0.0.1:1455/auth/callback`,
+the one-time dynamic client registration), lists the models, and sends: a plain
+request, a small strict schema, and a request with Bridge's real review
+instructions and answer schema shaped as `_post_text` shapes it (`store: false`,
+`reasoning`, `prompt_cache_key`) plus the required `stream: true`, twice, to see
+whether the second reports cached input. When the provider names an unsupported
+parameter it drops that one field and sends again, so the report says what is
+refused. It then refreshes the token once, revokes the refresh token, and writes a
+report with no token and a masked email. `--replay` sends a real body captured with
+`capture_ai_requests.py --dump`. Tokens are never written to disk; only the host id
+and the issued client id are kept, in the user's home folder.
+
+Throwaway: it does not verify the ID token's signature. The real feature must.
+
+**Run.** `scripts/spike_chatgpt_signin.py --self-test` with the engine's
+interpreter: passed, 12 of 12 checks. The self-test drives the whole flow against
+a fake provider inside the script, written from OpenAI's documented contract, so
+it proves the script's own logic (PKCE, state check, registration, stream parsing,
+the drop-one-field retry, refresh rotation, sign-out, no token in the report). It
+proves nothing about OpenAI's real behaviour.
+
+**Not run.** The script against OpenAI: it needs a ChatGPT Plus or Pro account
+signed in on the machine. That run is the point of step A and its report decides
+whether steps B to E (engine sign-in, streaming, Settings UI, docs) are built.
+Engine pytest, the frontend gates and cargo were not run: no engine, frontend or
+Rust file changed.
+
+**Open before any app code lands.** A login is a stop-and-ask item in `CLAUDE.md`.
+Benz asked for it; the maintainer's agreement and a `docs/DECISIONS.md` entry are
+still owed.
+
+### Same day: two live runs, both refused at the code exchange
+
+Joel signed in twice on this machine. Both times the browser sign-in completed
+(one callback, carrying `code`, `state`, `iss`, `scope` and an issued `client_id`),
+and both times the code-for-token exchange answered `HTTP 400 {"error":
+"invalid_grant"}` with no reason or description (second run's request id
+`1558c0cb-c7d2-4497-b3fb-ae56fad54de4`). No token was ever issued, so no model was
+listed and no test request was sent. **Step A's two questions are still unanswered.**
+
+- Run 1 sent `ext_agent_host_id` and a 64-character PKCE verifier, as OpenAI's
+  pages describe.
+- Run 2 was changed to match OpenAI's reference client
+  (`openai/sign-in-with-chatgpt-devkit`, `packages/local/src/oauth.ts`) field for
+  field: no host id unless `--send-host-id`, a 43-character verifier, first
+  state-valid callback only, a fresh registration (`--new-registration`). The
+  failure message now prints the whole error body, the request id and the granted
+  scope. Same refusal.
+
+Between them the two runs cover the request shapes of two clients whose exchange is
+reported working (the reference client, and the MIT-licensed `earendil-works/pi`,
+which does send the host id). So the request format is probably not the cause;
+what is left is the account (its plan, workspace or region) or something on
+OpenAI's side. Not established. Which plan the account is on is the next thing to
+find out.
+
+**The reference client was read, not run and not copied.** Its licence is OpenAI's
+"Sign in with ChatGPT DevKit Noncommercial License", which excludes development or
+testing "by or for a business, employer, or client". A control run with it was
+prepared and then dropped for that reason, and the scratch copy deleted. Bridge's
+sign-in must be written from the documented protocol, as this script is; none of
+that code may enter the repo.
+
+**Reported against the same service by other clients** (the reference repo's open
+issues, read 2026-11-23; none reproduced here):
+
+- #5: a refresh is refused with `invalid_grant` after the token has sat unused for
+  a couple of hours, so the person must sign in again. Open since 2026-10-04, no
+  reply from OpenAI on the thread.
+- #9: prompt caching mostly reports zero cached tokens under plan usage, so a
+  repeated prefix is not discounted against the allowance.
+- #6: a period of HTTP 520 on every plan-usage request (2026-10-14/15).
+- #3: OpenAI staff confirm there is no API for the remaining allowance.
+
+Run: `--self-test` after each change, 13 of 13 checks.
+
+**Later the same day: the account was on the Free plan.** Joel checked: the account
+both runs signed in with is a personal ChatGPT Free account, and no workspace was
+asked for. Plan usage is offered to Plus and Pro only, so this is the likely reason
+for the refusal. Likely, not shown: no run with a Plus or Pro account has been made
+yet, so the script itself is still unproven against OpenAI. Worth keeping for the
+real feature: a Free account is let through the whole browser sign-in and approval
+and is refused only at the code exchange, with a bare `invalid_grant` and no
+reason. Bridge would have to turn that into "this needs a ChatGPT Plus or Pro
+plan" itself.
+
+### 2026-11-23, with a Plus account: step A passes
+
+Three more live runs, on a ChatGPT Plus account. The first two each exposed
+something the documentation does not say, and the script was corrected; the third
+answered step A.
+
+1. Sign-in, the model list, an immediate refresh (the refresh token rotates) and
+   revocation all worked, which confirms the Free plan was why the earlier runs
+   were refused. Every test request was refused with `HTTP 400 {"detail": "Input
+   must be a list"}`: **plan usage does not accept a string `input`**, which is
+   what `ai_client._post_text` sends. It must be `[{"role": "user", "content":
+   ...}]`.
+2. With a list input all six requests were accepted, and the script read none of
+   them: **the stream comes back with no `Content-Type` header at all**, and the
+   script was testing for `text/event-stream`. A bug in the script; the reference
+   client has a comment about exactly this.
+3. All six requests completed:
+
+| Request | Model | Result |
+|---|---|---|
+| plain text | `gpt-5.6-terra` | `ready` |
+| small strict schema | `gpt-5.6-terra` | valid JSON, the two required keys |
+| Bridge review instructions + answer schema, `reasoning`, `prompt_cache_key` | `gpt-5.6-terra` | valid JSON, `summary` / `check_reviews` / `qa_issues`; 2,075 input tokens, 0 cached |
+| the same request again | `gpt-5.6-terra` | valid JSON; 2,075 input tokens, **1,792 cached** |
+| the same request | `gpt-6.2-sol` | valid JSON |
+| the same request | `gpt-5.6-luna` | valid JSON |
+
+**What step A establishes** (each seen in these runs, on one account, one day):
+
+- Strict `json_schema` output is accepted under plan usage with Bridge's own review
+  schema, and `reasoning.effort` and `prompt_cache_key` are accepted with it.
+  Nothing Bridge sends had to be dropped.
+- The account is offered ten models, `gpt-5.6-terra` (Bridge's default) and
+  `gpt-5.6-luna` among them, so the measured default and a cheap tier for alignment
+  and triage are both available. The catalogue is `{"models": [...]}` with `slug`,
+  `display_name`, `visibility`, and per model `supported_reasoning_levels` and
+  `context_window`.
+- `response.completed` carries the whole response object, `output` and `usage`
+  (input, cached and output tokens, and an `attribution` breakdown) included, so a
+  streaming transport can hand `_post_text` the same JSON it reads today.
+- The repeated request was discounted. One pair of requests a few seconds apart;
+  the reference repo's issue #9 reports the discount often not applying, and this
+  does not contradict that.
+- Signing in again with the saved client id works (no second registration), and a
+  refresh straight after sign-in works.
+
+**What it does not establish.** The built-in review request is a hand-made
+miniature (one public verse, one check): it shows the format is accepted, and says
+nothing about verdict quality on a real chapter. A refresh after the token has sat
+unused for hours (issue #5) was not tried. Nothing was measured about how fast a
+real chapter uses a Plus plan's five-hour allowance. No real captured request was
+replayed (`--replay`).
+
+The script now wraps a string input in a list, reads any non-JSON answer as a
+stream, prefers Bridge's default model when it is offered, also tries the newest
+and the cheap model, and records each model's reasoning levels and context window.
+Run: `--self-test`, 13 of 13, with the fake provider now answering as OpenAI does
+(no `Content-Type`, a string input refused).
+
+## 2026-11-23 — Sign in with ChatGPT, steps B to E: the engine, the Settings screen, the docs (#506)
+
+Branch `chatgpt-signin`. Step A (above) said the feature can work; this is the
+feature. Joel approved the plan and said to continue after step A passed.
+
+**What a person does.** Settings > AI provider > Provider: "ChatGPT account (sign
+in, Plus or Pro)" > **Continue with ChatGPT**. The browser opens on OpenAI's page;
+when they approve, Settings shows "Signed in as …", the provider is stored, and
+the Model field becomes a list of what that account is offered. Every AI feature
+then runs as before, on the plan. **Sign out** ends it on this computer.
+
+**Engine.**
+
+- `tc_ai_bridge/chatgpt_signin.py`: the protocol and no Bridge state. PKCE, the
+  loopback listener (first answer carrying this attempt's `state` only; port 1455,
+  any free port if it is taken), the code exchange, refresh, revocation, the model
+  catalogue, and the ID token's RS256 signature checked in plain integers (stdlib
+  only, so the frozen engine gains no dependency). Written from the documented
+  contract and step A's runs; nothing from OpenAI's noncommercial reference client.
+- `tc_ai_bridge/chatgpt_session.py`: one per engine. Tokens DPAPI-wrapped in
+  `settings.json` through two new `AppSettings` methods; the identity and the issued
+  client id as an ordinary setting. Renews a token five minutes before expiry,
+  under a lock, and stores the rotated refresh token before using it. A refused
+  renewal that means "sign in again" clears the tokens and says so. After a plan
+  limit nothing is sent for five minutes.
+- `tc_ai_bridge/chatgpt_plan_client.py`: `ChatGPTPlanClient(OpenAIResponsesClient)`.
+  Wraps a string `input` in a list, sets `stream: true`, reads the event stream to
+  `response.completed` and returns that event's response object, so `_post_text`
+  parses what it always has. A plan limit raises the new `AIPlanLimitError` and is
+  never retried; a 401 renews the token and re-sends once; cost is $0, tokens are
+  counted.
+- `ai_client.py`: three small hooks the subclass overrides (`_should_retry`,
+  `_estimate_cost`, and the existing `_model_supports_reasoning_effort`), and
+  `AIPlanLimitError`. No behaviour change for an API key: the hooks return what the
+  inline code did.
+- `ai_http.py`: `urlopen_no_redirect`, used for every request that carries the
+  sign-in.
+- `bridge_service.py`: `_ai_client` builds the plan client when the provider is
+  `chatgpt`; five methods (`ai.chatgpt.status` / `signIn` / `cancelSignIn` /
+  `signOut` / `models`), classified in `authorization.py`; `settings.get` gains
+  `aiReady` (could a request be sent now) and `chatgpt` (the sign-in's state, no
+  token), while `hasApiKey` keeps meaning exactly that.
+- `ai_review_jobs.py`: `start(..., halt=)`. Asked before each verse or chapter; a
+  non-empty answer ends the job there as failed with that message, and Retry
+  resumes from the verses with no succeeded result. The triage and auto-align jobs
+  were not given this: they rely on the five-minute pause, which makes each
+  remaining unit fail at once without sending anything.
+
+No schema change in any of the three databases. No golden, threshold, Scripture
+writer or auto-apply behaviour touched. No Rust file changed: sign-in starts and is
+polled, so no call outlives the default timeout.
+
+**Frontend.** `SettingsModal.svelte` gains the provider option and the sign-in
+block (signed out, waiting with the address shown, signed in, expired, refused,
+limit reached), hides the base URL and API key on that provider, and offers the
+account's models. Signing in stores the provider at once, and only the provider.
+Three components that asked `hasApiKey` now ask `aiReady` (falling back to
+`hasApiKey` for an older engine), and five "add an API key" messages now say "or
+sign in with ChatGPT". The auto-align confirm line says "uses your ChatGPT plan
+allowance" in place of a dollar figure.
+
+**Cost.** Asked for alongside the sign-in. What this change does: the Model list
+comes from the account, so the existing "Model per task" setting can put alignment
+and triage on a cheaper tier (`gpt-5.6-luna` is offered); a reached limit stops a
+job instead of spending a request per remaining verse; tokens are still counted.
+What it deliberately does not do: switch on any of the #500/#502 request options
+by default. Those change what the model reads and have not been compared with a
+translator-judged run.
+
+**Run.**
+
+- New engine tests, 50: `tests/ai/test_chatgpt_signin.py` (15),
+  `test_chatgpt_session.py` (12), `test_chatgpt_plan_client.py` (10),
+  `tests/jobs/test_ai_review_job_halt.py` (5),
+  `tests/service/test_chatgpt_signin_rpc.py` (8), against a fake of the provider
+  in `tests/support/chatgpt.py`. All pass.
+- Engine, `pytest -n auto`: 5,990 passed, 22 failed, 4 skipped, 3 xfailed. None of
+  the 22 is from this change:
+  - 12, all of `tests/semantic/test_semantic_mapping_stage3.py`, need the git-ignored
+    Stage 3 semantic database, absent on this machine (as on the 0.26.0 run).
+  - 7, all of `tests/service/test_ai_review_window_jobs.py`: one verse of each run
+    fails with `[WinError 3] The system cannot find the path specified`, the
+    260-character path limit (#504). All 7 pass with a shorter `--basetemp`.
+  - 3 (`test_lexicon_loads_within_the_startup_budget` and two of
+    `test_paratext_decided_policy_protocol.py`) pass run on their own. The suite
+    ran while the frontend suite and a build were running on the same machine.
+- Frozen: `scripts/build-sidecars.ps1`, then `scripts/smoke_sidecars.py
+  engine/dist/bridge-engine.exe` passed. The smoke test does not sign in. Asked
+  separately over stdio with an empty data folder, the frozen engine answers
+  `ai.chatgpt.status` (`signedOut`) and `settings.get` carries `aiReady` and
+  `chatgpt`: the new modules load in the frozen build. A sign-in from the frozen
+  engine has not been made.
+- Frontend: `npm run check` 0 errors 0 warnings; `npm run test` 139 files, 1,360
+  passed (8 new, in `SettingsModal.test.ts`); `npm run build` passed.
+- **Live, the real engine code against OpenAI** (a scratch script, a Plus account,
+  settings in a temp folder): `ai.chatgpt.signIn` through the dispatcher, a real ID
+  token accepted by the integer RS256 check, no token in plain text in
+  `settings.json` and a DPAPI entry present, ten models listed, a strict-JSON
+  request through `ChatGPTPlanClient` and its real streaming transport answered in
+  3.4 s with usage counted and cost 0, a forced renewal rotated and stored the
+  refresh token and the next request succeeded, `ai.chatgpt.signOut` revoked.
+  An earlier attempt timed out unapproved and `cancelSignIn` returned cleanly.
+
+**Not run, not verified.**
+
+- The desktop app. Nobody has clicked "Continue with ChatGPT" in a Bridge window:
+  that the frozen engine opens the browser, and how the block looks at 1366x768,
+  are unseen. jsdom shows structure, not layout.
+- A sign-in from the frozen engine (see Frozen above): whether `webbrowser.open`
+  opens the browser from the windowless packaged process is unseen. Settings shows
+  the address to copy if it does not.
+- `cargo check` / `cargo test`: no Rust file changed.
+- A real tN/tW review of a chapter on the plan: verdict quality against the
+  measured `gpt-5.6-terra` API baseline, and how much of a Plus plan's five-hour
+  allowance a chapter uses.
+- A plan limit actually being reached, and a renewal after hours unused. Both are
+  covered only by tests against the fake, written from OpenAI's error table and
+  other clients' reports.
+- The fallback to a free port when 1455 is taken, against OpenAI.
+- macOS and Linux, where there is no DPAPI: the sign-in lasts for the session only,
+  as the API key does.
+
+**Known gaps, left as they are.** After-run usage lines in the review panel and the
+cross-verse page still print a dollar figure, which reads "$0.00" on a plan.
+
+## 2026-11-23 — Sign in with ChatGPT: first desktop run, and three fixes from review (#506, PR #508)
+
+**Seen in the desktop app, by Joel.** On the `chatgpt-signin` branch he chose the
+ChatGPT account provider in Settings, signed in through the browser, and ran an AI
+review on one verse; it worked. That is the first run of this feature in a Bridge
+window, and it covers the provider choice, the browser opening from the app, the
+sign-in completing and one single-verse tN/tW review on the plan. Not tried there
+yet: a whole chapter, Align chapter with AI, Sign out, a sign-in left unused for
+hours, and the layout at 1366x768 specifically.
+
+**CI on PR #508 passed** before these fixes: frontend, and the engine suite (serial,
+50 minutes).
+
+**Three findings from the automated review on the PR, each checked against the code
+and fixed.**
+
+1. *AI buttons stayed disabled after a sign-in made while the editor was open.*
+   `AutoAlignChapterButton` and `CrossVerseAlignmentModal` read readiness once, on
+   mount. The same was already true of saving an API key; a sign-in makes it more
+   visible. Both now ask again when Settings closes (`settingsOpen` going false).
+2. *Cancel could lose a race.* If Cancel was pressed after the browser redirect had
+   arrived, the code exchange carried on and its tokens were stored. `_run_sign_in`
+   now checks the cancel flag when the sign-in returns, revokes those tokens and
+   stores nothing. The registration is kept.
+3. *A plan limit did not stop a multi-verse-per-request chapter.* The window runner
+   halved the refused window and sent it again verse by verse, then went on
+   preparing and failing every later verse of the chapter (nothing was sent: the
+   five-minute pause refused each at once). `WindowReviewSession.run` takes `halt`
+   and stops preparing; a window refused with `AIPlanLimitError` is not halved; a
+   verse prepared but not sent fails with the reason and keeps what it spent; and
+   the job checks `halt` before filling in "no result" for the verses never
+   reached, so they stay without a result for Retry.
+
+The triage and auto-align jobs are unchanged and still rely on the pause.
+
+**Run.**
+
+- New tests: a late-finishing cancelled sign-in is not kept
+  (`test_chatgpt_session.py`); a windowed chapter stopped part way leaves its
+  unsent verses without a result (`test_ai_review_job_halt.py`); a plan limit met in
+  a two-verses-per-request chapter through the real job, with the plan client and a
+  fake provider: two review requests in all, verses 1-2 succeeded, 3 and 4 failed
+  with the reason, 5 without a result, Retry offered 3, 4, 5
+  (`test_ai_review_window_jobs.py`); both components ask again when Settings
+  closes, and the auto-align confirm line says it uses the plan
+  (`AutoAlignChapterButton.test.ts`, `CrossVerseAlignmentModal.test.ts`).
+- Engine, `pytest -n auto` with a short `--basetemp`: 5,998 passed, 17 failed. 12
+  need the absent Stage 3 database. The other 5 (`test_add_books`,
+  `test_lexicon_loads_within_the_startup_budget`, two of
+  `test_paratext_decided_policy_protocol.py`, and
+  `test_continuous_foreground_polling_does_not_starve_worker`) pass run on their
+  own; the frontend suite was running on the same machine. With the short temp
+  path all of `test_ai_review_window_jobs.py` passed inside the full run, which is
+  what #504 predicts.
+- Frontend: `npm run check` 0 errors 0 warnings; `npm run build` passed;
+  `npm run test` 139 files, 1,363 passed, on an idle machine. A first full run
+  started while the engine suite was using every core reported 2 failures in one
+  file; only its summary lines were kept, so which tests is not known. They did not
+  recur.
+
+**Not verified.** None of the three fixes has been seen in the desktop app. The
+frozen sidecars were not rebuilt after these fixes.
+
+**Later the same day.** The sidecars were rebuilt from 35fb7aa and
+`smoke_sidecars.py` passed on them. Joel then tested in the desktop app and reported
+that everything he tried works as expected. That is his report of the whole list he
+was given (a chapter review, Align chapter with AI, Sign out, the buttons enabling
+after a sign-in made with the editor open, Cancel); which items he ran was not
+itemised. Two cases cannot be produced at will and should be read as still
+unconfirmed unless he says otherwise: the plan's limit actually being reached, and
+a sign-in renewed after sitting unused for hours.
+
+## 2026-11-24 — #509 merged to main; main merged into `chatgpt-signin` (#506, PR #508)
+
+**PR #509 (the editor work, #507) was merged into `main`** as 733402d, with a merge
+commit, on Joel's instruction after he had the team's approval. Its CI was not
+green at the time: `frontend` had passed, and `engine` shows as cancelled. That was
+not a test failure. The job has `timeout-minutes: 60` and was cut off at exactly
+sixty minutes; the PR records the suite passing locally (5,993 passed, the 12
+Stage 3 database tests failing). Issue #507 closed with the merge and its board
+card is on Done.
+
+**A restore point.** Joel asked for a copy of `main` before the next merge:
+`copyMain` (local and on GitHub) is `main` at 733402d, after #509 and before #508.
+`main` before #509 is the `v0.26.0` tag, 6ea7d40.
+
+**`main` was then merged into `chatgpt-signin`**, so that PR #508 merges without a
+conflict. Both branches had changed eight files (`CLAUDE.md`, this file,
+`docs/DECISIONS.md`, `bridge_service.py`, `authorization.py`, `App.svelte`,
+`bridgeClient.ts`, `types/finding.ts`). Seven merged as text with both sides'
+additions present; that was read, not assumed, for the three that are lists both
+sides add to (the method table in `authorization.py`, the `EngineMethod` union,
+the `Methods` constants and dispatch arms). The one conflict was this file, where
+both branches had appended entries at the end: both sets are kept, `main`'s #507
+entries first as they stand on `main`, then this branch's #506 entries. Nothing
+that is on `main` was removed.
+
+**Run, on the merged tree, before the merge was committed.**
+
+- Engine, `pytest -n auto` with a short `--basetemp`: 6,046 passed, 12 failed, 4
+  skipped, 3 xfailed. All 12 are `tests/semantic/test_semantic_mapping_stage3.py`,
+  which need the git-ignored Stage 3 database absent on this machine. The suite ran
+  on an otherwise idle machine and nothing else failed.
+- Frontend: `npm run check` 0 errors 0 warnings; `npm run build` passed;
+  `npm run test` 142 files, 1,421 passed.
+
+**Not run, not verified.**
+
+- `cargo check` / `cargo test`: neither branch changes a Rust file.
+- The two features together in the desktop app: the ChatGPT sign-in beside the #507
+  editor (headings, psalm titles, poetry lines, the marker toolbar).
+
+**Noticed, not fixed: the CI engine job is at its time limit.** `ci.yml` gives the
+serial engine suite 60 minutes. On PR #508 it took 50 minutes, then 59 minutes 10
+seconds; on PR #509 it was cancelled at 60. Each merge adds tests, so the job will
+now time out more often than it finishes, and a cancelled job reads as a red PR
+whatever the tests would have said. Raising `timeout-minutes` is a one-line change
+outside this task; raised with Joel.
+
+## 2026-11-24 — CI: the engine job's limit raised from 60 to 90 minutes (#510)
+
+Joel asked for the timeout noted above to be filed as an issue (#510) and fixed on
+this branch, so it reaches `main` with PR #508.
+
+**Measured first.** The entry above guessed from whole-job times. The "Run the
+Python suite" step on the six most recent CI runs, read from the runs themselves:
+38, 45, 45, 48 and 54 minutes, and cut off at 58 on `usfm-editor-507` (run
+45207853955), where the job reached its 60. The same code differs by twenty
+minutes between runs, so the spread is the runner, and "more often than it
+finishes" overstated it: five of six finished. After #509's merge the run on `main`
+(733402d) passed, 45 minutes; so did the run on this branch's merge commit
+(5ebcbe6), 48 minutes.
+
+**Changed.** `.github/workflows/ci.yml`: `timeout-minutes: 90` on the `engine` job,
+and its comment now carries these numbers and points at #82 (share the Stage 5-8
+setup) as the answer if the suite outgrows 90 as well. Nothing else in the
+workflow changed.
+
+**Run.** The file parses, and reads back `engine: 90`, `frontend: 15`, `rust: 30`
+with the same six jobs. A pull request's CI uses the workflow file from the pull
+request, so the run this push starts is the first under the new limit.
+
+**Not run.** Engine, frontend and Rust gates: no code, test or build input changed.
+Whether 90 is enough is only shown over time.

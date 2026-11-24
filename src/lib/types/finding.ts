@@ -582,6 +582,32 @@ export interface AutoAlignEstimate {
   estimatedCostUSD: number;
   model: string;
   hasApiKey: boolean;
+  /** #506: an AI request could be sent now (an API key, or a ChatGPT sign-in). */
+  aiReady?: boolean;
+  /** #506: the run uses a ChatGPT plan's allowance, so the dollar figure does not apply. */
+  planUsage?: boolean;
+}
+
+/** #506: the ChatGPT sign-in this installation holds. Never carries a token. */
+export interface ChatGptState {
+  status: "signedOut" | "signingIn" | "signedIn" | "reauthRequired";
+  email: string;
+  name: string;
+  /** While signing in: the address to open if the browser did not. */
+  signInUrl: string;
+  error: { code: string; message: string } | null;
+  /** The plan's limit was reached a few minutes ago; nothing is being sent. */
+  limitReached: boolean;
+  limitMessage: string;
+  usageUrl: string;
+}
+
+/** #506: a model the signed-in ChatGPT account may use under its plan. */
+export interface ChatGptModel {
+  slug: string;
+  displayName: string;
+  reasoningEfforts: string[];
+  contextWindow: number | null;
 }
 
 /** The verdict summary each alignment context carries. */
@@ -1644,6 +1670,10 @@ export interface SettingsData {
   bookmarks?: Place[];
   recentChapters?: Place[];
   hasApiKey: boolean;
+  /** #506: an AI request could be sent now: an API key, or a ChatGPT sign-in
+   *  when the provider is the ChatGPT account. What a feature should ask. */
+  aiReady?: boolean;
+  chatgpt?: ChatGptState;
   /** The lifetime counter of every counted AI call on this device (#477):
    *  shown in Settings > AI provider with a Reset. `since` is the UTC time
    *  it started (first counted call or last reset); null for a counter from
