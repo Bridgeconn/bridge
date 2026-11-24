@@ -7,7 +7,12 @@
   import { bindReviewProject } from "../reviewProjectGuard";
   import { get as getStore } from "svelte/store";
   import { currentChapter, project, selectedVerse, targetLang } from "../stores";
-  import type { ReferencePanelId } from "../editorPrefs";
+  import ChapterNav from "./ChapterNav.svelte";
+  import TextSizeButtons from "./TextSizeButtons.svelte";
+  import FollowToggle from "./FollowToggle.svelte";
+  import UiIcon from "./UiIcon.svelte";
+  import { tooltip } from "../tooltip";
+  import { referenceTextScale, type ReferencePanelId } from "../editorPrefs";
   import { folderName, projectReferenceName, referenceHeading } from "../referenceNames";
   import type { ReferenceChapter } from "../types/languageQa";
 
@@ -31,6 +36,9 @@
   export let onChooseFolder: (folder: string) => void = () => {};
   export let onOpenSettings: () => void = () => {};
   export let onSelectVerse: (verse: string) => void = () => {};
+  /** The bar's chapter picker and arrows: the caller's chapter switch, the
+   *  one the Verses header uses. This panel shows the text's chapter. */
+  export let onChapterChange: (chapter: string) => void = () => {};
 
   $: added = id !== "reference";
 
@@ -108,16 +116,23 @@
   });
 </script>
 
-<!-- Its column (SidePanel, by `id`) sets the width and the resize handle. -->
-<aside class="reference-panel" aria-label={added ? `Reference Bible: ${heading}` : "Reference Bible"}>
-  <!-- #379: the shared header bar; Change and the follow box are this panel's actions. -->
+<!-- Its column (SidePanel, by `id`) sets the width and the resize handle.
+     `--verse-scale` is the reference tabs' own text size (A− / A+ in the bar). -->
+<aside class="reference-panel" aria-label={added ? `Reference Bible: ${heading}` : "Reference Bible"} style:--verse-scale={$referenceTextScale}>
+  <!-- #379: the shared header bar. #519: laid out as the Verses header is.
+       Left, the chapter picker and arrows (they move the text's chapter, which
+       this panel shows); the reference's name in the middle; right, this
+       panel's actions as icons with instant hints: text size, follow, Change. -->
   <PanelHeader {id} title={heading} hint={reference?.source?.path ?? folder ?? ""} label="the Reference panel">
+    <svelte:fragment slot="lead"><ChapterNav {onChapterChange} /></svelte:fragment>
+    <!-- In a narrow group the text size goes first; follow and Change stay. -->
+    <span class="size-slot"><TextSizeButtons scale={referenceTextScale} /></span>
+    <FollowToggle bind:follow />
     {#if reference?.configured || (added && folder)}
-      <button type="button" class="change" on:click={choose} disabled={choosing}
-        title={added ? "Choose another reference Bible folder for this tab" : "Choose another reference Bible folder for this project"}>Change</button>
+      <button type="button" class="ui-icon-btn" aria-label="Change" on:click={choose} disabled={choosing}
+        use:tooltip={added ? "Change: choose another reference Bible folder for this tab"
+          : "Change: choose another reference Bible folder for this project"}><UiIcon name="folder" /></button>
     {/if}
-    <!-- In a narrow group the word goes and the box stays, still named "follow". -->
-    <label class="follow" title="Keep the selected verse in view"><input type="checkbox" aria-label="follow" bind:checked={follow} /><span class="follow-text">follow</span></label>
   </PanelHeader>
   {#if chooseError}
     <p class="note error" role="alert">{chooseError}</p>
@@ -158,19 +173,16 @@
   /* #379 item 6: the body is --surface at --fs-xs, its content 12px from the
      edge and 10px under the bar (the list's 4px plus each row's 6px 8px). */
   .reference-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--surface); font-size: var(--fs-xs); }
-  .follow { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
-  .follow input { margin: 0; }
-  /* The bar is a size container (PanelHeader): narrow, the word gives way. */
-  @container panel-bar (max-width: 300px) { .follow-text { display: none; } }
+  .size-slot { display: inline-flex; }
+  /* The bar is a size container (PanelHeader): narrow, the text size gives way
+     (it is still set from a wider tab), and the name keeps some room. */
+  @container panel-bar (max-width: 400px) { .size-slot { display: none; } }
   .note { margin: 10px 12px; font-size: var(--fs-xs); color: var(--text-3); }
   .note.quiet { margin-top: 12px; font-size: var(--fs-2xs); }
   .error { color: var(--danger); }
   .settings { margin: 0 12px; font: inherit; font-size: var(--fs-xs); color: var(--accent); background: none;
     border: 0; padding: 0; text-decoration: underline; cursor: pointer; text-align: left; }
   .settings.secondary { margin-top: 6px; color: var(--text-3); }
-  .change { font: inherit; font-size: var(--fs-2xs); padding: 2px 8px; border: 1px solid var(--border-strong);
-    border-radius: 6px; background: var(--surface); color: var(--text-2); cursor: pointer; white-space: nowrap; }
-  .change:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
   ol { list-style: none; margin: 0; padding: 4px; overflow-y: auto; flex: 1; }
   li button { display: flex; gap: 8px; width: 100%; text-align: left; padding: 6px 8px; border: 0; border-radius: 6px;
     background: transparent; color: var(--text); cursor: pointer; font: inherit; }

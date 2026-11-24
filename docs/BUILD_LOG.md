@@ -27701,3 +27701,52 @@ windows.
 - `docs/USER_MANUAL.md` says nothing about the Reference panel or the panel
   header, so there was nothing in it to correct. A section on reference tabs
   is not written.
+
+## 2026-11-24 — Reference tab's bar after Joel's first desktop look (#519)
+
+**Asked for.** Joel ran the branch in the desktop app and asked for two things.
+Standard icons with instant hints for Change and follow, on any panel that has
+them. And the Reference tab's bar laid out as the Verses header is: the chapter
+picker and arrows at the left (no Go to box), the reference's name in the
+middle, and text size beside follow and Change.
+
+**What changed.**
+
+- *Three shared pieces, taken out of the Verses header.* `ChapterNav.svelte`
+  ("Chapter", the picker, "of N", the arrows), `TextSizeButtons.svelte` (A−
+  A+, on a size it is given) and `FollowToggle.svelte`. `EditorHeader` uses
+  the first two and looks and behaves as before; its tests pass unchanged
+  apart from the one that read the chapter rule from its source.
+- *Reference tab's bar.* `PanelHeader` has a `lead` slot at its left; with
+  one, the title is centred in the room between the two sides. The Reference
+  panel puts `ChapterNav` there. Its picker and arrows call the caller's
+  chapter switch, the Verses header's own (`switchChapter`; from a separate
+  window, a `navigate` message with no verse, which lands on the chapter's
+  first). The panel has always shown the text's chapter, so this moves both.
+- *Text size.* `referenceTextScale`, saved as
+  `bridge.editor.referenceTextScale.v1`: one size for every reference tab,
+  apart from the verse text's. The panel sets `--verse-scale` from it, which
+  its text rule already read (it had been 1 since 2026-11-15, when the Verses
+  A− / A+ stopped sizing the side panels).
+- *Icons.* Follow is an icon switch (the arrow while following, the pin while
+  not, accent colour while on), on the Reference and Source panels. Change is
+  the folder icon, still named "Change". Every icon button in a panel bar,
+  the window tool included, is the app's `ui-icon-btn` at the Verses header's
+  28px.
+- *Narrow.* Under 520px the words "Chapter" and "of N" go (as on the Verses
+  header); under 400px the Reference bar's text size goes. Follow, Change,
+  the picker and the arrows stay.
+
+**Decided here, to be told if wrong.** One text size for all reference tabs,
+not one each. The Source panel got the follow icon only, not a text size or a
+chapter picker: neither was asked for there.
+
+**Ran, and watched pass.** `npm run check`: 0 errors, 0 warnings.
+`npm run test`: 146 files, 1,495 tests. `npm run build`. No engine or shell
+file changed, so those gates were not rerun.
+
+**Not seen.** The bar on screen. To look at, at 1366x768: the three groups on
+one row at the tab's usual widths; the name centred and cut with an ellipsis
+when short of room; the picker's grid inside the panel; the two container
+steps (520px, 400px); the same in a separate window; the Source panel's
+follow icon.

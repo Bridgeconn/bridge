@@ -1940,7 +1940,7 @@
                   {#key $project.path}
                     <ReferencePanel id={panelId} folder={$sidePanels[panelId].folder}
                       onChooseFolder={(folder) => setSidePanel(panelId, { folder })}
-                      onOpenSettings={() => openSettings("languageQa")} onSelectVerse={selectVerse} />
+                      onOpenSettings={() => openSettings("languageQa")} onSelectVerse={selectVerse} onChapterChange={switchChapter} />
                   {/key}
                 </SidePanel>
               {:else if panelId === "paratext"}

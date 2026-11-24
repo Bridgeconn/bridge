@@ -1,5 +1,6 @@
 <script lang="ts">
   import PanelHeader from "./PanelHeader.svelte";
+  import FollowToggle from "./FollowToggle.svelte";
   import { onDestroy, tick } from "svelte";
   import { alignmentRevisionByVerse, currentChapter, project, selectedVerse, verseNums } from "../stores";
   import { cachedSourceChapter, loadSourceChapter, refreshSourceVerse, staleSourceVerses } from "../sourceText";
@@ -83,7 +84,8 @@
 <aside class="source-panel" aria-label="Source text">
   <!-- #379: the shared header bar; the follow box is this panel's action. -->
   <PanelHeader id="source" title={`Source · ${source ? language : "original language"}`} label="the Source panel">
-    <label class="follow"><input type="checkbox" bind:checked={follow} /> follow</label>
+    <!-- #519: an icon switch with an instant hint, as on the Reference tabs. -->
+    <FollowToggle bind:follow />
   </PanelHeader>
   {#if error}
     <p class="note error" role="alert">{error}</p>
@@ -123,7 +125,6 @@
      --surface-2), and its content starts 12px from the edge and 10px under
      the bar: here the list's 4px plus each row's 6px 8px. */
   .source-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--surface); font-size: var(--fs-xs); }
-  .follow { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
   .note { margin: 10px 12px; font-size: var(--fs-xs); color: var(--text-3); }
   .error { color: var(--danger); }
   ol { list-style: none; margin: 0; padding: 4px; overflow-y: auto; flex: 1; min-width: 0; }

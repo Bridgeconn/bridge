@@ -100,7 +100,7 @@
   {#if open && $project}
     {#key path}
       {#if id === "source"}<SourceTextPanel onSelectVerse={verse => { void navigate(($project?.bookId || ""), $currentChapter, verse); }} />
-      {:else if id && isReferencePanel(id)}<ReferencePanel {id} folder={referenceFolder} onChooseFolder={chooseReferenceFolder} onSelectVerse={verse => { void navigate(($project?.bookId || ""), $currentChapter, verse); }} onOpenSettings={() => message("settings")} />
+      {:else if id && isReferencePanel(id)}<ReferencePanel {id} folder={referenceFolder} onChooseFolder={chooseReferenceFolder} onChapterChange={chapter => { void navigate(($project?.bookId || ""), chapter, ""); }} onSelectVerse={verse => { void navigate(($project?.bookId || ""), $currentChapter, verse); }} onOpenSettings={() => message("settings")} />
       {:else if id === "paratext"}<ParatextNotesPanel />
       {:else if id === "review"}<ReviewPanel onNavigate={navigate} />{/if}
     {/key}

@@ -135,7 +135,12 @@ describe("EditorHeader (#489)", () => {
     expect(rule(".editor-header")).toContain("top: 0");
     expect(rule(".editor-header")).toContain("flex: none");
     expect(rule(".editor-header")).not.toContain("flex-wrap");
-    expect(rule(".chapter-nav")).toContain("flex: none");
+    // #519: the chapter picker and arrows are ChapterNav, shared with a reference tab's header.
+    const nav: string = readFileSync(resolve("src/lib/components/ChapterNav.svelte"), "utf8");
+    expect(/\.chapter-nav\s*\{([^}]*)\}/.exec(nav)?.[1] ?? "").toContain("flex: none");
+    expect(nav).toMatch(/@container \(max-width: 520px\) \{ \.word \{ display: none; \} \}/);
+    expect(source).toContain("<ChapterNav {onChapterChange} />");
+    expect(source).toContain("<TextSizeButtons scale={textScale} />");
     expect(rule(".tools")).toContain("flex: none");
     // The error sits over the verses; it does not change the header's height.
     expect(rule(".goto-error")).toContain("position: absolute");

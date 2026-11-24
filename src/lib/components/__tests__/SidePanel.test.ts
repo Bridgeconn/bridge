@@ -96,6 +96,15 @@ describe("PanelHeader (#379)", () => {
     expect(screen.getByRole("button", { name: "Move to separate window" })).toBeDisabled();
   });
 
+  // #519: a reference tab puts its chapter picker at the bar's left; the title is then centred.
+  it("starts with the title, and centres it when a panel puts something at the bar's left", () => {
+    render(PanelHeader, { props: { id: "review", title: "Review" } });
+    const plain = screen.getByRole("heading", { level: 2, name: "Review" });
+    expect(plain).not.toHaveClass("centred");
+    expect(document.querySelector("[data-panel-bar='review']")?.firstElementChild).toBe(plain);
+    expect(document.querySelector(".panel-lead")).toBeNull();
+  });
+
   it("has no tool in a panel's own window: the window's title bar closes it", () => {
     tauri.__TAURI_INTERNALS__ = {};
     render(PanelHeader, { props: { id: "source", title: "Source" }, context: new Map([["panel-window", { dock: vi.fn(), close: vi.fn() }]]) });
@@ -130,8 +139,19 @@ describe("PanelHeader (#379)", () => {
     expect(bar).toMatch(/\.panel-tool \{[^}]*width: 28px; height: 28px/);
     expect(bar).not.toMatch(/OverflowMenu|panel-grip|panel-close/);
     expect(source("EditorHeader")).toMatch(/\.editor-header \{[^}]*padding: 0 10px/);
-    // The Reference panel's "follow" loses its word, not its box, when the bar is narrow.
-    expect(source("ReferencePanel")).toMatch(/@container panel-bar \(max-width: 300px\) \{ \.follow-text \{ display: none; \} \}/);
+    // Every icon button of the bar is the Verses header's: 28px, a 16px icon; a switch is accent when on.
+    expect(bar).toMatch(/\.panel-actions :global\(\.ui-icon-btn\), \.panel-tool \{ width: 28px; height: 28px; min-height: 28px; border-radius: 7px; \}/);
+    expect(bar).toMatch(/\.panel-actions :global\(\.ui-icon-btn\[aria-pressed="true"\]\)[^{]*\{ color: var\(--accent\); \}/);
+    expect(source("EditorHeader")).toMatch(/\.hdr-btn \{ width: 28px; height: 28px; min-height: 28px; border-radius: 7px; \}/);
+    // With something at its left (a reference tab's chapter picker) the title is centred.
+    expect(bar).toMatch(/\.panel-title\.centred \{ text-align: center; \}/);
+    // The Reference bar gives up its text size, not follow or Change, when it is narrow.
+    expect(source("ReferencePanel")).toMatch(/@container panel-bar \(max-width: 400px\) \{ \.size-slot \{ display: none; \} \}/);
+    // Follow is one icon switch on the two panels that have it; no ticked box and word.
+    for (const name of ["SourceTextPanel", "ReferencePanel"]) {
+      expect(source(name), name).toContain("<FollowToggle bind:follow />");
+      expect(source(name), name).not.toMatch(/type="checkbox"/);
+    }
   });
 
   // Item 6 (Benz, 2026-10-26): one body padding and type scale, one surface.
@@ -160,7 +180,7 @@ describe("PanelHeader (#379)", () => {
     }
     // Compact editor/panel headers share 36px; slotted controls remain 24px.
     expect(source("PanelHeader")).toMatch(/\.panel-bar \{[^}]*min-height: 36px/);
-    expect(source("PanelHeader")).toMatch(/\.panel-actions :global\(button:not\(\.info-btn\)\) \{[^}]*height: 24px/);
+    expect(source("PanelHeader")).toMatch(/\.panel-actions :global\(button:not\(\.info-btn\):not\(\.ui-icon-btn\)\) \{[^}]*height: 24px/);
     // Review's four tabs never vanish: each label gives way with an ellipsis and keeps its name in its title.
     expect(source("ReviewPanel")).toMatch(/\.tab-label \{[^}]*text-overflow: ellipsis/);
     expect(source("ReviewPanel")).not.toMatch(/\.tabs \{[^}]*overflow-x: auto/);

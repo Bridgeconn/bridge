@@ -314,12 +314,21 @@ export const TEXT_SCALES = [0.85, 1, 1.15, 1.3, 1.5, 1.7] as const;
 const isScale = (value: unknown): value is number => typeof value === "number" && (TEXT_SCALES as readonly number[]).includes(value);
 export const textScale = persisted<number>("bridge.editor.textScale.v1", 1, isScale);
 
-/** One step smaller (-1) or larger (+1), stopping at either end. */
-export function bumpTextScale(step: -1 | 1): void {
-  textScale.update((scale) => {
-    const at = Math.max(0, (TEXT_SCALES as readonly number[]).indexOf(scale));
+/** The reference tabs' text size (#519), their own A− / A+: the same steps as
+ * the verse text, kept apart from it, and one size for every reference tab. */
+export const referenceTextScale = persisted<number>("bridge.editor.referenceTextScale.v1", 1, isScale);
+
+/** One step smaller (-1) or larger (+1) of a text size, stopping at either end. */
+export function bumpScale(scale: Writable<number>, step: -1 | 1): void {
+  scale.update((value) => {
+    const at = Math.max(0, (TEXT_SCALES as readonly number[]).indexOf(value));
     return TEXT_SCALES[Math.min(TEXT_SCALES.length - 1, Math.max(0, at + step))];
   });
+}
+
+/** The verse text one step smaller (-1) or larger (+1). */
+export function bumpTextScale(step: -1 | 1): void {
+  bumpScale(textScale, step);
 }
 
 const isStringArray = (value: unknown): value is string[] =>
