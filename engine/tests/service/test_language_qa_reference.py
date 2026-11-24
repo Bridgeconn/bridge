@@ -149,6 +149,68 @@ def test_every_book_of_a_collection_shares_the_projects_reference_bible(tmp_path
         bridge._language_qa.unbind()
 
 
+def test_a_named_folder_is_read_for_an_added_reference_tab_and_nothing_else_changes(engine, tmp_path, monkeypatch):
+    """#519: a Reference tab a reviewer added reads its own folder. The
+    project's reference Bible, what Language QA checks against, stays."""
+    bridge, project = engine
+    folder = my_ov(tmp_path, "esv", text="In the days when the judges ruled.")
+    rebound = []
+    monkeypatch.setattr(bridge, "_bind_language_qa", lambda *a, **k: rebound.append(a))
+    result = until_ready(bridge, "languageQa.reference", projectPath=str(project), chapter="1", folder=str(folder))
+    assert result["ready"] and result["verses"] == [{"verse": "1", "text": "In the days when the judges ruled."}]
+    assert result["source"] == {"path": str(folder), "label": "esv", "origin": "viewer", "kind": "tsv"}
+    assert bridge.settings.reference_bibles == {} and rebound == []
+    assert rpc(bridge, "settings.get")["referenceBible"]["origin"] == "bundled"
+    # The project's own reference is still the bundled OV, on the same call without a folder.
+    own = until_ready(bridge, "languageQa.reference", projectPath=str(project), chapter="1")
+    assert own["source"]["origin"] == "bundled" and own["source"]["label"] == "Old Version (bundled)"
+    # folder: null is the same as no folder.
+    assert rpc(bridge, "languageQa.reference", projectPath=str(project), chapter="1", folder=None)["source"]["origin"] == "bundled"
+
+
+def test_a_named_folder_that_is_wrong_is_refused_or_reported(engine, tmp_path):
+    bridge, project = engine
+    for bad in (7, "", "   "):
+        refused = call(bridge, "languageQa.reference", {"projectPath": str(project), "chapter": "1", "folder": bad})
+        assert not refused["success"] and "folder must be a path" in refused["error"]["message"]
+    # A folder that is gone is a result, not an error: the tab still offers Change.
+    gone = rpc(bridge, "languageQa.reference", projectPath=str(project), chapter="1", folder=str(tmp_path / "nope"))
+    assert gone["configured"] is True and gone["ready"] is False and "no such folder" in gone["error"]
+    assert gone["source"]["origin"] == "viewer" and gone["source"]["label"] == "nope"
+    # One with no Scripture in it says why, as the project's own does.
+    (tmp_path / "empty").mkdir()
+    empty = until_ready(bridge, "languageQa.reference", projectPath=str(project), chapter="1", folder=str(tmp_path / "empty"))
+    assert empty["ready"] is False and "no verses.tsv" in empty["error"]
+
+
+def test_a_hub_request_cannot_name_a_folder_to_read(engine, tmp_path):
+    """The folder is on the computer the engine runs on: a device joined to a
+    hub must not read folders of the hub's computer by naming them."""
+    from greek_room_engine.protocol import EngineRequest
+    bridge, project = engine
+    folder = my_ov(tmp_path, "esv")
+    request = EngineRequest(id="1", method="languageQa.reference",
+                            params={"projectPath": str(project), "chapter": "1", "folder": str(folder)})
+    response = bridge.handle_request_as(request, {"userId": "u2", "displayName": "Reporter", "role": "reviewer"})
+    assert not response.success and "only on the computer it is on" in response.to_dict()["error"]["message"]
+    # The same request with no folder is not refused by this rule.
+    plain = EngineRequest(id="2", method="languageQa.reference", params={"projectPath": str(project), "chapter": "1"})
+    assert bridge.handle_request_as(plain, {"userId": "u2", "displayName": "Reporter", "role": "reviewer"}).success
+
+
+def test_a_reference_text_in_use_is_not_pushed_out_by_other_folders(tmp_path):
+    """#519: the loaded texts are kept by last use, so the folders opened in
+    more Reference tabs cannot evict the one Language QA keeps asking for."""
+    from tc_ai_bridge import quotation_rules
+    cache = tmp_path / "cache"
+    mine = my_ov(tmp_path, "mine")
+    held = quotation_rules.reference_holder(str(mine), "mine", cache)
+    for index in range(quotation_rules._REFERENCES_MAX + 2):
+        quotation_rules.reference_holder(str(my_ov(tmp_path, f"other-{index}")), f"other-{index}", cache)
+        assert quotation_rules.reference_holder(str(mine), "mine", cache) is held
+    assert len(quotation_rules._REFERENCES) <= quotation_rules._REFERENCES_MAX
+
+
 def test_ov_occurrences_come_from_the_reference_text(engine):
     bridge, project = engine
     until_ready(bridge, "languageQa.reference", projectPath=str(project), chapter="1")

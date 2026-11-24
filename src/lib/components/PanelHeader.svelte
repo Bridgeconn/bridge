@@ -1,85 +1,88 @@
 <script lang="ts">
   // #379 (Benz's item 7): the one header bar every editor side panel shows,
-  // with a line under it. Title on the left, the panel's own actions (follow
-  // box, Change, Pause, the (i)) in the slot, then the layout controls (#389:
-  // ◂ ▸ move the column, ⧉ undocks it into a box inside the window, ⇲ docks
-  // it back), and a ✕ Close on the right that does what the View menu's entry does.
-  // One padding, one title size, one background.
+  // with a line under it. Since #519 it is the Verses header's bar
+  // (EditorHeader): the same height, padding and icon size, the title, the
+  // panel's own actions (text size, the follow switch, Change, the open
+  // count) in the slot, then one tool, "Move to separate window", as the Word
+  // alignment tab has it. The bar has no drag handle, no tools menu and no
+  // Close: the panel's tab is what is dragged and closed (EditorTabs), and
+  // the left rail opens it again.
+  //
+  // A panel may put something at the bar's left (the `lead` slot: a reference
+  // tab's chapter picker and arrows, as on the Verses header). The title is
+  // then centred in the room between the two sides; with no lead it starts
+  // the bar.
   //
   // Each panel mounts this as its first child rather than SidePanel drawing
   // it: a Svelte 4 slot can be filled only by the component that writes the
   // markup, and the actions are bound to each panel's own state (its follow
-  // box, its Pause), which the column cannot reach. The bar is the same
-  // component in every panel, so every panel gets the same header.
+  // switch), which the column cannot reach. The bar is the same component in
+  // every panel, so every panel gets the same header.
   import { getContext } from "svelte";
   import { tooltip } from "../tooltip";
   import UiIcon from "./UiIcon.svelte";
-  import IconButton from "./IconButton.svelte";
-  import OverflowMenu from "./OverflowMenu.svelte";
-  import type { EditorDockContext } from "../editorDocking";
-  import { setSidePanel, sidePanelOrder } from "../editorPrefs";
+  import { setSidePanel } from "../editorPrefs";
   import type { SidePanelId } from "../editorPrefs";
 
   export let id: SidePanelId;
   /** The bar's text, e.g. "Source · Hebrew / Aramaic", "Review PHP 1:6". */
   export let title: string;
-  /** What the Close button closes, for its accessible name: "Close {label}". */
+  /** What the tool moves, for its hint: "Move {label} to a separate window". */
   export let label: string = title;
   /** The title's tooltip, where the bar's text is cut or stands for a path. */
   export let hint: string = "";
-  /** What Close does when it is not simply closing the column (the floating
-   *  Language QA box). Default: close the column, as the View menu does. */
-  export let onClose: (() => void) | null = null;
-  /** The ◂ ▸ / undock controls: only where the bar heads an editor column or
-   *  an undocked box, not the Language QA box of the other screens. */
-  export let layout = true;
 
-  const docking = getContext<EditorDockContext | undefined>("editor-docking");
+  // In its own window (2026-11-14) the bar has no tool: the window's title
+  // bar closes it, and it comes back as a tab.
   const native = getContext<{ dock: () => void; close: () => void } | undefined>("panel-window");
-  $: actions = native ? [] : [
-    { id: "detach", label: "Move to separate window", disabled: !("__TAURI_INTERNALS__" in window) },
-    ...(docking ? (["left", "right", "top", "bottom"] as const).map(edge => ({ id: `edge-${edge}`, label: `Dock ${edge === "top" ? "above" : edge === "bottom" ? "below" : edge + " of"}`,
-      submenu: ["editor", ...$sidePanelOrder.filter(other => other !== id)].map(target => ({ id: `dock:${target}:${edge}`, label: target === "editor" ? "Scripture editor" : target })) })) : []),
-  ];
-  function arrange(action: string) {
-    if (action === "detach") setSidePanel(id, { detached: true, open: true });
-    else if (action.startsWith("dock:")) { const [, target, edge] = action.split(":"); docking?.dock(id, target, edge as "left" | "right" | "top" | "bottom"); }
-  }
+  // A separate window is the desktop app's: in a browser the tool is there, off.
+  const desktop = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
-  function close(): void {
-    if (native) native.close();
-    else if (onClose) onClose();
-    else setSidePanel(id, { open: false });
+  function detach(): void {
+    setSidePanel(id, { detached: true, open: true });
   }
 </script>
 
-<div class="panel-bar" data-panel-bar={id}>
-    {#if docking && !native}<button type="button" class="panel-grip" aria-label={`Move ${label}`} use:tooltip={"Drag to another group, or to an edge to split; the tools menu places it by keyboard"} on:pointerdown={(event) => docking.beginMove(id, event)}><UiIcon name="grip" /></button>{/if}
-  <h2 class="panel-title" title={hint || title}>{title}</h2>
+<!-- `data-chapter-bounds`: a chapter picker in the lead places its grid inside this bar's width. -->
+<div class="panel-bar" data-panel-bar={id} data-chapter-bounds>
+  {#if $$slots.lead}
+    <div class="panel-lead"><slot name="lead" /></div>
+  {/if}
+  <h2 class="panel-title" class:centred={$$slots.lead} title={hint || title}>{title}</h2>
   {#if $$slots.default}
     <div class="panel-actions"><slot /></div>
   {/if}
-  <!-- In its own window (2026-11-14) the bar has no tools menu and no Close:
-       the window's title bar closes it, and it comes back as a tab. -->
-  {#if layout && !native}
-    <OverflowMenu label={`${label} panel tools`} {actions} on:action={(event) => arrange(event.detail.id)} />
+  {#if !native}
+    <button type="button" class="ui-icon-btn panel-tool" aria-label="Move to separate window" disabled={!desktop}
+      use:tooltip={desktop ? `Move ${label} to a separate window` : "A separate window needs the desktop app"}
+      on:click={detach}><UiIcon name="detach" /></button>
   {/if}
-  {#if !native}<button type="button" class="panel-close" on:click={close}
-    aria-label={`Close ${label}`} title="Close (its icon on the left opens it again)">✕</button>{/if}
 </div>
 
 <style>
-  /* Shared compact editor/panel height; retain comfortable icon hit targets. */
-  .panel-bar { flex-shrink: 0; display: flex; align-items: center; gap: 4px; min-width: 0; padding: 0 8px;
+  /* The Verses header's bar (EditorHeader): 36px, so the line under it meets
+     the neighbour's in a split, 10px from the edge, 8px between its parts. One
+     row that never wraps: it is a size container, so a panel hides what it can
+     spare of its own actions in a narrow group (ReferencePanel's text size),
+     and the title gives way first, with an ellipsis. */
+  .panel-bar { container: panel-bar / inline-size; flex-shrink: 0; display: flex; align-items: center; gap: 8px; min-width: 0; padding: 0 10px;
     box-sizing: border-box; height: 36px; min-height: 36px;
     border-bottom: 1px solid var(--border); background: var(--surface); color: var(--text-2); font-size: var(--fs-2xs); }
-  .panel-actions :global(button:not(.info-btn)) { box-sizing: border-box; height: 24px; padding-top: 0; padding-bottom: 0; }
-  .panel-title { flex: 1; min-width: 0; margin: 0; font-size: var(--fs-xs); font-weight: 500; text-align: center; color: var(--text);
+  .panel-lead { display: flex; align-items: center; flex: none; min-width: 0; }
+  .panel-title { flex: 1; min-width: 0; margin: 0; font-size: var(--fs-xs); font-weight: 700; text-align: left; color: var(--text);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .panel-title.centred { text-align: center; }
   .panel-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; min-width: 0; }
-  /* #389: the layout controls, the size of Close, no gap between them so the
-     bar stays one line at 260px. Plain glyphs (gotcha 9) with the action as
-     the accessible name and tooltip. */
-  .panel-grip { display: flex; align-items: center; padding: 0; width: 22px; height: 28px; border: 0; background: transparent; color: var(--text-3); cursor: move; touch-action: none; }
-  .panel-grip:focus-visible { outline: 2px solid var(--text-2); }
+  /* A worded button in the slot is 24px high; an icon button is the header's 28px. */
+  .panel-actions :global(button:not(.info-btn):not(.ui-icon-btn)) { box-sizing: border-box; height: 24px; padding-top: 0; padding-bottom: 0; }
+  /* Every icon button of the bar, the panel's own and the tool: the app's
+     icon button (index.css .ui-icon-btn) at the Verses header's size, 28px
+     with a 16px icon. */
+  .panel-actions :global(.ui-icon-btn), .panel-tool { width: 28px; height: 28px; min-height: 28px; border-radius: 7px; }
+  .panel-actions :global(.ui-icon-btn svg), .panel-tool :global(svg) { width: 16px; height: 16px; }
+  /* A switch (the follow switch), styled as the Verses header's Raw USFM: grey
+     when off, the accent colour when on, and a grey (not blue) hover, so the
+     hover never looks like "on". */
+  .panel-actions :global(.ui-icon-btn[aria-pressed]:hover:not(:disabled)) { background: var(--bg); color: var(--text); }
+  .panel-actions :global(.ui-icon-btn[aria-pressed="true"]), .panel-actions :global(.ui-icon-btn[aria-pressed="true"]:hover:not(:disabled)) { color: var(--accent); }
 </style>

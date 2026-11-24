@@ -30,6 +30,11 @@ export const EDITOR_TABS: Readonly<Record<EditorTabId, { label: string; icon: st
   editor: { label: "Verses", icon: "verses", title: "Verses: the text of this chapter" },
   source: { label: "Source", icon: "source", title: "Source: the Hebrew, Aramaic or Greek" },
   reference: { label: "Reference", icon: "open", title: "Reference: a reference Bible" },
+  // #519: a reference a reviewer added. Its tab shows the reference's own
+  // name (referenceTabs.ts `tabLabels`); this is the name before one is chosen.
+  reference2: { label: "Reference", icon: "open", title: "Reference: a reference Bible added for reading" },
+  reference3: { label: "Reference", icon: "open", title: "Reference: a reference Bible added for reading" },
+  reference4: { label: "Reference", icon: "open", title: "Reference: a reference Bible added for reading" },
   paratext: { label: "Paratext", icon: "notes", title: "Paratext: Project Notes on the selected verse" },
   review: { label: "Review", icon: "review", title: "Review: Greek Room, Core check, Language QA and AI review" },
   alignment: { label: "Word alignment", icon: "align", title: "Word alignment: align the words of one verse to the source" },

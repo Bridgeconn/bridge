@@ -11,7 +11,8 @@
     nativeChecksByVerse, aiCheckReviewsByVerse, checkStatusByVerse, alignmentStatusByVerse, localUserId, reviewerMode, resetBookState,
     focusedFindingId, selectedVerseSet, checkingProgress, alignmentRevisionByVerse, languageQaFindingsByVerse } from "../stores";
   import { languageQaChannel } from "../languageQaInline";
-  import { SIDE_PANEL_ORDER, type SidePanelId } from "../editorPrefs";
+  import { SIDE_PANEL_ORDER, isAddedReference, isReferencePanel, type SidePanelId, type SidePanels } from "../editorPrefs";
+  import { folderName, projectReferenceName } from "../referenceNames";
   import { sendPanelMessage, panelLabel, type PanelContext } from "../panelWindow";
   import { setWindowProjectPath } from "../reviewProjectGuard";
   import { answerConfirmation, confirmRequest } from "../confirmAction";
@@ -26,7 +27,16 @@
   const id = SIDE_PANEL_ORDER.includes(requested) ? requested : null;
   let open = false, path = "", error = "";
   let receiving = false;
-  const NAMES: Record<SidePanelId, string> = { source: "Source text", reference: "Reference", paratext: "Paratext notes", review: "Review" };
+  const NAMES: Record<SidePanelId, string> = { source: "Source text", reference: "Reference", reference2: "Reference", reference3: "Reference", reference4: "Reference", paratext: "Paratext notes", review: "Review" };
+  // #519: the main window's panels, for an added reference tab's folder. This
+  // window's own `sidePanels` store is not the main window's and is left alone.
+  let panels: SidePanels | null = null;
+  $: referenceFolder = id && isAddedReference(id) ? panels?.[id]?.folder : undefined;
+  // A reference window is named after its reference, as its tab is.
+  $: windowTitle = !id ? "Bridge"
+    : isReferencePanel(id) ? ((id === "reference" ? $projectReferenceName : folderName(referenceFolder)) || NAMES[id]) : NAMES[id];
+  // The folder chosen here goes to the main window, which keeps it and sends it back.
+  function chooseReferenceFolder(folder: string): void { if (id) void sendPanelMessage({ kind: "referenceFolder", id, path, folder }); }
   const message = (kind: "dock" | "close" | "settings" | "changed") => { if (id) void sendPanelMessage({ kind, id, path }); };
   function navigate(book: string, chapter: string, verse: string) { if (id) return sendPanelMessage({ kind: "navigate", id, path, book, chapter, verse }); }
   setContext("panel-window", {
@@ -45,7 +55,7 @@
         receiving = true;
         const nextPath = (value.project as ProjectInfo | null)?.path || "";
         if (nextPath !== path || !value.open) { answerConfirmation(false); if (nextPath !== path) resetBookState(); }
-        path = nextPath; open = value.open; setWindowProjectPath(path || "__no_project__");
+        path = nextPath; open = value.open; panels = value.panels; setWindowProjectPath(path || "__no_project__");
         project.set(value.project); currentChapter.set(value.chapter); selectedVerse.set(value.verse);
         chapterVerseNums.set(value.chapters); verseTexts.set(value.texts); verseDisplay.set(value.display); findingsByVerse.set(value.findings);
         nativeChecksByVerse.set(value.native); aiCheckReviewsByVerse.set(value.ai); checkStatusByVerse.set(value.checks); alignmentStatusByVerse.set(value.alignment);
@@ -85,12 +95,12 @@
 </script>
 <main class="panel-window">
   <!-- 2026-11-14 (Joel): the app's own title bar, the one Close this window has. -->
-  <WindowBar title={id ? NAMES[id] : "Bridge"} onClose={() => message("close")} />
+  <WindowBar title={windowTitle} onClose={() => message("close")} />
   {#if error}<p role="alert">{error}</p>{/if}
   {#if open && $project}
     {#key path}
       {#if id === "source"}<SourceTextPanel onSelectVerse={verse => { void navigate(($project?.bookId || ""), $currentChapter, verse); }} />
-      {:else if id === "reference"}<ReferencePanel onSelectVerse={verse => { void navigate(($project?.bookId || ""), $currentChapter, verse); }} onOpenSettings={() => message("settings")} />
+      {:else if id && isReferencePanel(id)}<ReferencePanel {id} folder={referenceFolder} onChooseFolder={chooseReferenceFolder} onChapterChange={chapter => { void navigate(($project?.bookId || ""), chapter, ""); }} onSelectVerse={verse => { void navigate(($project?.bookId || ""), $currentChapter, verse); }} onOpenSettings={() => message("settings")} />
       {:else if id === "paratext"}<ParatextNotesPanel />
       {:else if id === "review"}<ReviewPanel onNavigate={navigate} />{/if}
     {/key}

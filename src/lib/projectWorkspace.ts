@@ -2,7 +2,7 @@ import { editorTree, validEditorTree } from "./editorDocking";
 import type { LayoutNode } from "./alignmentLayout";
 import { get } from "svelte/store";
 import { currentChapter, localUserId, project as openProject, selectedVerse } from "./stores";
-import { RETIRED_PANEL_IDS, versesOpen, sidePanels, sidePanelOrder, resetPanelLayout, validPanelSnapshot, withoutRetiredPanels, type SidePanels, type SidePanelId } from "./editorPrefs";
+import { REFERENCE_EXTRA_IDS, RETIRED_PANEL_IDS, versesOpen, sidePanels, sidePanelOrder, resetPanelLayout, validPanelSnapshot, withAddedPanels, withoutRetiredPanels, type SidePanels, type SidePanelId } from "./editorPrefs";
 import { without } from "./alignmentLayout";
 import { openTabs, reconcileTabs, resetTabLayout, tabLayout, validTabLayout, type TabLayout } from "./editorTabs";
 import { alignmentOpen, crossVerseOpen, openAlignment, openCrossVerse } from "./alignmentUi";
@@ -26,8 +26,10 @@ export function savedWorkspace(p: ProjectInfo | RegisteredProject): WorkspaceSna
   const raw = read<WorkspaceSnapshot>(key("workspace", identity(p)));
   // #487: a workspace saved while Language QA was a panel keeps its place,
   // widths, order and arrangement; only the retired panel is taken out.
-  const v = raw && typeof raw === "object"
-    ? { ...raw, ...withoutRetiredPanels(raw.panels, raw.order), tree: raw.tree ? without(raw.tree, RETIRED_PANEL_IDS) : raw.tree }
+  // #519: one saved before the added reference tabs existed gains them, closed.
+  const kept = raw && typeof raw === "object" ? withoutRetiredPanels(raw.panels, raw.order) : null;
+  const v = raw && kept
+    ? { ...raw, ...withAddedPanels(kept.panels, kept.order), tree: raw.tree ? without(raw.tree, RETIRED_PANEL_IDS) : raw.tree }
     : raw;
   return v?.version === 1 && typeof v.book === "string" && typeof v.chapter === "string" && typeof v.verse === "string"
     && ["editor", "review"].includes(v.view) && Number.isFinite(v.scroll) && v.scroll >= 0
@@ -40,7 +42,15 @@ export function savedBookWorkspace(p: ProjectInfo): WorkspaceSnapshot | null {
   if (book && typeof book.chapter === "string" && typeof book.verse === "string" && Number.isFinite(book.scroll) && book.scroll >= 0 && ["editor", "review"].includes(book.view)) return { ...saved, ...book, book: p.bookId };
   return saved.book.toLowerCase() === p.bookId.toLowerCase() ? saved : null;
 }
-const initialPanels = structuredClone(get(sidePanels));
+// What a project with no saved workspace starts from: the layout the app
+// started with. The added reference tabs (#519) are a project's own, so they
+// start closed and without a folder: the last project's must not carry over.
+function withoutAddedReferences(panels: SidePanels): SidePanels {
+  const next = structuredClone(panels);
+  for (const id of REFERENCE_EXTRA_IDS) next[id] = { open: false, width: next[id].width };
+  return next;
+}
+const initialPanels = withoutAddedReferences(get(sidePanels));
 const initialOrder = [...get(sidePanelOrder)];
 let active: { project: ProjectInfo; key: string; snapshot: WorkspaceSnapshot } | null = null;
 let restoring = false;

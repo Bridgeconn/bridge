@@ -1,7 +1,8 @@
 import { beforeEach, afterEach, expect, it } from "vitest";
 import { get } from "svelte/store";
 import { localUserId } from "../stores";
-import { sidePanels, setSidePanel, resetPanelLayout } from "../editorPrefs";
+import { REFERENCE_EXTRA_IDS, sidePanels, setSidePanel, resetPanelLayout } from "../editorPrefs";
+import { leaves } from "../alignmentLayout";
 import { editorTree, defaultEditorTree } from "../editorDocking";
 import { bindWorkspace, savedWorkspace, savedBookWorkspace, rememberLocation, rememberScroll, flushWorkspace, releaseWorkspace, recordProjectOpen, recentProjects, resetWorkspaceLayout } from "../projectWorkspace";
 import type { ProjectInfo, RegisteredProject } from "../types/finding";
@@ -63,10 +64,49 @@ it("reads a workspace saved with the retired Language QA panel, keeping its plac
   old.tree = { id: "x", axis: "horizontal", ratio: .5, first: defaultEditorTree(), second: "languageQa" };
   releaseWorkspace(); localStorage.setItem(name, JSON.stringify(old));
   const saved = savedWorkspace(a);
-  expect(saved).toMatchObject({ chapter: "2", verse: "3-4", view: "review", order: ["source", "reference", "paratext", "review"] });
+  expect(saved).toMatchObject({ chapter: "2", verse: "3-4", view: "review", order: ["source", "reference", "paratext", "review", "reference2", "reference3", "reference4"] });
   expect(saved!.panels.reference).toMatchObject({ open: true, width: 410 });
   expect("languageQa" in saved!.panels).toBe(false);
   expect(saved!.tree).toEqual(defaultEditorTree());
+});
+// #519: the added reference tabs are new panel ids. A workspace saved before
+// them is validated whole, so without care its reading place would be lost.
+it("reads a workspace saved before the added reference tabs, with its place, its panels and its older arrangement", () => {
+  const a = info("A"); bindWorkspace(a); rememberLocation(a, "2", "3-4", "review");
+  setSidePanel("reference", { open: true, width: 410 }); editorTree.set(defaultEditorTree()); flushWorkspace();
+  const name = Object.keys(localStorage).find(k => k.startsWith("bridge.workspace."))!;
+  const old = JSON.parse(localStorage.getItem(name)!);
+  for (const id of REFERENCE_EXTRA_IDS) delete old.panels[id];
+  old.order = ["source", "reference", "paratext", "review"];
+  expect(leaves(old.tree).sort()).toEqual(["editor", "paratext", "reference", "review", "source"]);
+  releaseWorkspace(); localStorage.setItem(name, JSON.stringify(old));
+  const saved = savedWorkspace(a);
+  expect(saved).toMatchObject({ chapter: "2", verse: "3-4", view: "review" });
+  expect(saved!.panels.reference).toMatchObject({ open: true, width: 410 });
+  for (const id of REFERENCE_EXTRA_IDS) expect(saved!.panels[id], id).toEqual({ open: false, width: 300 });
+  expect(saved!.order).toEqual(["source", "reference", "paratext", "review", ...REFERENCE_EXTRA_IDS]);
+  expect(saved!.tree).toEqual(defaultEditorTree());
+  bindWorkspace(a);
+  expect(get(sidePanels).reference).toMatchObject({ open: true, width: 410 });
+});
+it("keeps an added reference's folder with its project, and a project with no saved workspace starts without any", () => {
+  const a = info("A"), b = info("B"), c = info("C");
+  bindWorkspace(a); rememberLocation(a, "1", "1", "editor");
+  setSidePanel("reference2", { open: true, folder: "D:/bibles/esv" });
+  setSidePanel("reference3", { folder: "D:/bibles/niv" });
+  // B has its own: A's do not follow the reviewer there.
+  bindWorkspace(b); rememberLocation(b, "1", "1", "editor");
+  expect(get(sidePanels).reference2).toMatchObject({ open: false });
+  expect(get(sidePanels).reference2.folder).toBeUndefined();
+  expect(get(sidePanels).reference3.folder).toBeUndefined();
+  setSidePanel("reference2", { open: true, folder: "D:/bibles/kjv" });
+  // Back on A, also from a sibling book of the same collection.
+  bindWorkspace(info("A", "exo"));
+  expect(get(sidePanels).reference2).toMatchObject({ open: true, folder: "D:/bibles/esv" });
+  expect(get(sidePanels).reference3).toMatchObject({ open: false, folder: "D:/bibles/niv" });
+  expect(savedWorkspace(b)!.panels.reference2.folder).toBe("D:/bibles/kjv");
+  bindWorkspace(c);
+  for (const id of REFERENCE_EXTRA_IDS) { expect(get(sidePanels)[id].open, id).toBe(false); expect(get(sidePanels)[id].folder, id).toBeUndefined(); }
 });
 it("Recent uses only this user's successful activity, filters unavailable rows and deduplicates collections", () => {
   recordProjectOpen(info("A")); recordProjectOpen(info("B"));

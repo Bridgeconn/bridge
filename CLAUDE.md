@@ -373,8 +373,13 @@ A raw Scripture import becomes a translationCore-compatible book project:
                                                 in and the client id OpenAI issued for this computer are
                                                 ordinary settings in workspace.sqlite3, not secrets
 %LOCALAPPDATA%\Bridge\data\reference-cache\    plain text of each reference Bible folder chosen in
-                                                Settings > Language QA, `<fingerprint>.json.gz`;
-                                                derived, rebuilt when the folder changes, never shipped
+                                                Settings > Language QA, and of each folder opened in an
+                                                added reference tab (#519), `<fingerprint>.json.gz`;
+                                                derived, rebuilt when the folder changes, never shipped.
+                                                Which folders the added tabs show is not here or in any
+                                                database: it is the editor's saved layout (`localStorage`,
+                                                per user and project). Language QA uses only the
+                                                project's one reference Bible (#289, DECISIONS 2026-11-24)
 %LOCALAPPDATA%\Bridge\hub\                      only when Settings > Team > Start a hub was used: the
                                                 hub's hub.sqlite3, its own engine's settings.json and
                                                 workspace, admin-join-code.txt and hub.log

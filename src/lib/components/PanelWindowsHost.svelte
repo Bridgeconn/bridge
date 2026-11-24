@@ -9,7 +9,7 @@
   import { paratextReviewQueueOpen } from "../paratextNotes";
   import { startVerseEdit, setPendingAcceptFinding } from "../verseEditor";
   import { revealFinding } from "../findingFocus";
-  import { SIDE_PANEL_ORDER, sidePanels, setSidePanel, type SidePanelId } from "../editorPrefs";
+  import { SIDE_PANEL_ORDER, isAddedReference, sidePanels, setSidePanel, type SidePanelId } from "../editorPrefs";
   import { panelWindow, panelDesktop, panelLabel, onPanelMessage, type PanelContext } from "../panelWindow";
   export let onNavigate: (book: string, chapter: string, verse: string) => void | Promise<void>;
   export let onRefresh: () => Promise<void>;
@@ -30,6 +30,10 @@
   async function synchronize(value: typeof context) {
     for (const id of SIDE_PANEL_ORDER) {
       const open = !!value.project && value.panels[id].open && !!value.panels[id].detached;
+      // #519: an added reference tab that is not in its own window, and was
+      // not just now, is sent nothing: its hidden window starts closed, and
+      // the whole context three more times on every change would be for no one.
+      if (!open && !shown.has(id) && isAddedReference(id)) continue;
       try {
         if (open && !shown.has(id)) { await panelWindow(id, "open"); shown.add(id); }
         if (value !== context) return;
@@ -51,6 +55,8 @@
       else if (message.kind === "dock") setSidePanel(message.id, { detached: false, float: null });
       else if (message.kind === "changed") void onRefresh().catch(cause => error = String(cause));
       else if (message.kind === "settings") onSettings();
+      // #519: an added reference tab, in its own window, was given a folder.
+      else if (message.kind === "referenceFolder") { if (isAddedReference(message.id) && message.folder) setSidePanel(message.id, { folder: message.folder }); }
       else if (message.kind === "reviewQueue") paratextReviewQueueOpen.set(true);
       else if (message.kind === "focus" && message.findingId) void revealFinding(message.findingId);
       else if (message.kind === "alignmentChanged" && message.chapter && message.verse) noteAlignmentChanged(verseKey(message.chapter, message.verse));

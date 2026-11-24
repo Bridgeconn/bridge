@@ -5,10 +5,13 @@
    *  verse list, on by default, and the four side panels. A click opens a
    *  pane as a tab (in the group last used) and shows it; on a tab that is
    *  open but behind another it shows it; on one that is showing it closes it. An open pane's icon is blue,
-   *  the one showing also has the tint and the bar. Language QA has no
+   *  the one showing also has the tint and the bar. Reference is the
+   *  exception (#519, ReferenceMenu): there can be four reference tabs, so
+   *  once one is open or added its button opens a list of them. Language QA has no
    *  button: it is a tab of the Review panel (#487). Check, Bookmarks and
    *  Alignment are App's, in the slot below. */
   import UiIcon from "./UiIcon.svelte";
+  import ReferenceMenu from "./ReferenceMenu.svelte";
   import { tooltip } from "../tooltip";
   import { setSidePanel, sidePanels, toggleSidePanel } from "../editorPrefs";
   import { EDITOR_TABS, closeTab, openTabs, selectTab, showTab, visibleTabs } from "../editorTabs";
@@ -43,12 +46,17 @@
 <nav class="activity-bar no-print" aria-label="Editor tools">
   <div class="group" role="group" aria-label="Panels">
     {#each ORDER as id (id)}
-      <button type="button" class="rail-btn" class:open={isOpen(id)} class:active={$visibleTabs.has(id)}
-        aria-label={EDITOR_TABS[id].label} aria-pressed={isOpen(id)}
-        use:tooltip={{ text: hint(id), side: "right" }}
-        on:click={() => choose(id)}>
-        <UiIcon name={EDITOR_TABS[id].icon} />
-      </button>
+      {#if id === "reference"}
+        <!-- #519: several reference Bibles. Its own button: a list once one is open or added. -->
+        <ReferenceMenu />
+      {:else}
+        <button type="button" class="rail-btn" class:open={isOpen(id)} class:active={$visibleTabs.has(id)}
+          aria-label={EDITOR_TABS[id].label} aria-pressed={isOpen(id)}
+          use:tooltip={{ text: hint(id), side: "right" }}
+          on:click={() => choose(id)}>
+          <UiIcon name={EDITOR_TABS[id].icon} />
+        </button>
+      {/if}
     {/each}
   </div>
   <span class="rule" aria-hidden="true" />

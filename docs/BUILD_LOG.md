@@ -27555,3 +27555,198 @@ provider.
 failed under load twice on 2026-11-24, a different test each time with the
 same shape (the list of closed threads came back empty), and passes alone.
 Not investigated; filing an issue is Joel's decision.
+
+## 2026-11-24 — Several reference tabs, a Reference list on the rail, a simpler panel header (#519)
+
+**Asked for.** The team wanted more than one reference Bible open beside the
+text, and the reference pane's header cleared of what the tab already does.
+Joel settled the details: four references at most; an added one stays in the
+list when its tab is closed; the header change on all four side panels; one
+issue, one pull request, on a branch, not merged until he has tested the
+desktop app. Built in a separate worktree from `main` after PR #518 merged.
+
+**Why it was not a small change.** The reference pane was one fixed instance
+at every layer: one tab id (`reference`), one declared window
+(`panel-reference`), and one folder per project in the engine, which is also
+what Language QA checks against (#289). A tab's id is its kind everywhere
+(`editorTabs.ts`, `editorPrefs.ts`, every saved-layout validator, the Rust
+window list), and a window cannot be made while the app runs. So the added
+references are three more fixed panel ids, `reference2` to `reference4`, not
+instances with ids of their own: every mechanism keyed by a panel id (open
+state, width, tab layout, drag, separate window, window sync) works for them
+as it is.
+
+**What changed.**
+
+- *Engine.* `languageQa.reference` takes an optional `folder`. With it, it
+  reads that folder through `quotation_rules.reference_holder` (the same
+  loader and `reference-cache` as the project's own), reports
+  `source.origin: "viewer"`, writes no setting and does not rebind Language QA.
+  A missing folder is a result with its error, so the tab still offers Change;
+  a wrong type is refused; a request that came through a hub
+  (`_request_user` set) is refused, because the folder is on the engine's
+  computer and the caller would be another device. `reference_holder`'s cache
+  was first-in-first-out with four entries, and the project's own text is the
+  first in: it now keeps by last use, eight entries (`_REFERENCES_MAX`).
+- *Panel model.* `SidePanelId` gains the three ids; `SidePanelState` gains
+  `folder` (an added tab's folder, kept when the tab is closed).
+  `withAddedPanels` fills the new ids into a workspace saved before them, and
+  `editorDocking.ts` validates the older `tree` against a fixed list of the
+  original five panes. Without those two a project's saved workspace failed
+  validation whole and lost its reading place. A project with no saved
+  workspace starts with the added tabs closed and without folders.
+  `resetPanelLayout` closes an added tab and keeps its folder.
+- *Rail.* `ReferenceMenu.svelte` is the rail's Reference button. Nothing open
+  and nothing added: a click opens the project's reference tab, as before.
+  Otherwise it opens a list like the Alignment button's: the project's
+  reference, then each added one, "open" on those whose tab or window is open,
+  a remove button on the added ones, and "Add new reference" (off at four,
+  saying why). A row shows its tab, reopens it, or brings its window forward.
+  `referenceTabs.ts` holds this; `referenceNames.ts` holds the names, apart,
+  so a panel in its own window does not load the main window's tab layout.
+- *Tabs.* A reference tab is named after its reference (`tabLabels`), on the
+  tab, its close button and Split right.
+- *Reference panel.* It takes `id`, `folder` and `onChooseFolder`. The
+  project's own is unchanged. An added one with no folder asks for one and
+  calls nothing; with one it reads it; Browse and Change hand the folder to
+  the tab and never call `languageQa.setReference`.
+- *Header, all four panels.* `PanelHeader` loses the drag handle, the tools
+  menu and Close, and gains one "Move to separate window" icon (28px, as the
+  Word alignment tab's tools). The bar takes the Verses header's padding and
+  gap, a left-aligned bold title, and is a size container; the Reference
+  panel's "follow" loses its word under 300px. `dock` is gone from the
+  `editor-docking` context: the menu was its only caller.
+- *Separate windows.* Three more declared, hidden windows
+  (`panel-reference2` to `4`), in `PANELS` and the startup skip list. A new
+  `focus` action brings a showing window forward without `reveal`'s restore of
+  saved size and place, which would move a window the user had moved. A
+  folder chosen in a separate window goes to the main window as a
+  `referenceFolder` message and comes back in the context. The host sends an
+  added reference's hidden window nothing while it is not open separately, so
+  a change is still sent to four hidden windows, not seven.
+
+**What goes away, on purpose.** Placing a panel by keyboard through the menu's
+Dock entries (a tab still drags; the strip keeps Split right). A click on the
+rail's Reference button no longer closes a showing Reference tab: the tab's
+own close does.
+
+**Ran, and watched pass.**
+
+- `npm run check`: 0 errors, 0 warnings.
+- `npm run test`: 146 files, 1,492 tests (1,474 in 145 files before this).
+- `npm run build`.
+- `cargo check`; `cargo test`: 22 passed, with the new test that
+  `tauri.conf.json`, `PANELS` and the startup skip list name the same windows.
+- Engine: `tests/service/test_language_qa_reference.py` (four new tests),
+  the two `test_quotation_rules.py` files and the cross-test-import check: 40
+  passed.
+- `scripts/build-sidecars.ps1`, then `scripts/smoke_sidecars.py` against
+  `engine/dist/bridge-engine.exe`: passed.
+- A seven-step stdio session against the frozen engine, app data redirected
+  to a temp folder: a folder is read with origin `viewer`; a missing folder is
+  reported; a wrong type is refused; the project's reference stays "none"
+  before and after.
+
+**Not run.** The full engine suite locally (three Python files changed; CI
+runs it on the pull request). The desktop app: nothing below was seen.
+
+**For Joel on the desktop, 1366x768. None of these is checked.**
+
+1. The header on Source, Reference, Paratext and Review: one row; the title is
+   cut with an ellipsis first; "follow" keeps its box and loses its word in a
+   narrow group; the icon moves the panel to its own window.
+2. A project with no reference: the icon opens the empty tab; choose a folder;
+   the tab takes the reference's name.
+3. Click the icon again: the list, the reference marked "open", "Add new
+   reference" under it. Add three; four tabs side by side; a fifth is refused
+   with its reason.
+4. Close an added tab: it stays in the list without "open" and reopens from
+   it. Remove: it goes, and its place is free.
+5. Each reference to a separate window; from the list it comes forward without
+   moving or resizing; closed from its own window it is a tab the next time; a
+   folder chosen inside a separate window is still there after it is docked.
+6. Close and reopen the project, and switch to another book of the collection:
+   the tabs and their folders are back. Another project has its own.
+7. Language QA after all of that: the quotation reference, OV occurrences and
+   related words still come from the project's own reference Bible.
+8. Start-up with three more hidden windows (0.25.0 froze on its splash over
+   startup windows, `window_state.rs`), and verse-to-verse speed with two
+   references open.
+9. Two large USFM folders read for the first time at once.
+
+**The build to test needs new sidecars.** The engine changed, so an added tab
+on the old `bridge-engine.exe` would show the project's own reference (the old
+engine ignores `folder`). Run `scripts\build-sidecars.ps1` before
+`npm run tauri dev`.
+
+**Believed, not seen.** The container query on the bar (jsdom applies none),
+the header's look, the rail list's place and size, and everything about real
+windows.
+
+**Found next to this, not changed.**
+
+- `OverflowMenu.svelte` is now used only by its own test, and
+  `IconButton.svelte` by nothing: `PanelHeader` was their last user. Left in
+  place; removing them is a separate cleanup.
+- `ReferenceHolder` writes its cache through one `.tmp` name per fingerprint,
+  so two loaders of one folder could collide. Keeping holders by last use
+  makes a second loader less likely; the shared name is still there.
+- `BridgeEngine._reference_holders` is written and never read.
+- `EditorHeader.svelte` sets `.editor-header`'s own gap and padding inside its
+  own container query (the 400px rule). A container cannot be styled by a
+  query on itself, so that rule likely never applies. To check on the desktop.
+- `QA_TEST_MATRIX.md` already records that an open Reference panel keeps the
+  old Bible after Settings > Clear until reopened. Unchanged here; the rail's
+  list does read the current name each time it opens.
+- `docs/USER_MANUAL.md` says nothing about the Reference panel or the panel
+  header, so there was nothing in it to correct. A section on reference tabs
+  is not written.
+
+## 2026-11-24 — Reference tab's bar after Joel's first desktop look (#519)
+
+**Asked for.** Joel ran the branch in the desktop app and asked for two things.
+Standard icons with instant hints for Change and follow, on any panel that has
+them. And the Reference tab's bar laid out as the Verses header is: the chapter
+picker and arrows at the left (no Go to box), the reference's name in the
+middle, and text size beside follow and Change.
+
+**What changed.**
+
+- *Three shared pieces, taken out of the Verses header.* `ChapterNav.svelte`
+  ("Chapter", the picker, "of N", the arrows), `TextSizeButtons.svelte` (A−
+  A+, on a size it is given) and `FollowToggle.svelte`. `EditorHeader` uses
+  the first two and looks and behaves as before; its tests pass unchanged
+  apart from the one that read the chapter rule from its source.
+- *Reference tab's bar.* `PanelHeader` has a `lead` slot at its left; with
+  one, the title is centred in the room between the two sides. The Reference
+  panel puts `ChapterNav` there. Its picker and arrows call the caller's
+  chapter switch, the Verses header's own (`switchChapter`; from a separate
+  window, a `navigate` message with no verse, which lands on the chapter's
+  first). The panel has always shown the text's chapter, so this moves both.
+- *Text size.* `referenceTextScale`, saved as
+  `bridge.editor.referenceTextScale.v1`: one size for every reference tab,
+  apart from the verse text's. The panel sets `--verse-scale` from it, which
+  its text rule already read (it had been 1 since 2026-11-15, when the Verses
+  A− / A+ stopped sizing the side panels).
+- *Icons.* Follow is an icon switch (the arrow while following, the pin while
+  not, accent colour while on), on the Reference and Source panels. Change is
+  the folder icon, still named "Change". Every icon button in a panel bar,
+  the window tool included, is the app's `ui-icon-btn` at the Verses header's
+  28px.
+- *Narrow.* Under 520px the words "Chapter" and "of N" go (as on the Verses
+  header); under 400px the Reference bar's text size goes. Follow, Change,
+  the picker and the arrows stay.
+
+**Decided here, to be told if wrong.** One text size for all reference tabs,
+not one each. The Source panel got the follow icon only, not a text size or a
+chapter picker: neither was asked for there.
+
+**Ran, and watched pass.** `npm run check`: 0 errors, 0 warnings.
+`npm run test`: 146 files, 1,495 tests. `npm run build`. No engine or shell
+file changed, so those gates were not rerun.
+
+**Not seen.** The bar on screen. To look at, at 1366x768: the three groups on
+one row at the tab's usual widths; the name centred and cut with an ellipsis
+when short of room; the picker's grid inside the panel; the two container
+steps (520px, 400px); the same in a separate window; the Source panel's
+follow icon.

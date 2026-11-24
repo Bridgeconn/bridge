@@ -18,6 +18,9 @@ from .language_qa import RULE_VERSION, lift_inline_usfm, rule_fields, stable_fin
 VERSION = 1
 _REFERENCE_LOCK = threading.Lock()
 _REFERENCES: dict[tuple, Any] = {}
+# Loaded reference texts kept at once, the least recently asked for going
+# first: the project's own and up to three more Reference tabs (#519), with room.
+_REFERENCES_MAX = 8
 RELATIVE_PATH = Path('.apps/translationCoreAI/language-packs/common/overrides.json')
 DEFAULTS = {
     'version': VERSION, 'enabled': True, 'referenceEnabled': True,
@@ -90,12 +93,15 @@ def reference_holder(folder: str, label: str, cache: Path) -> Any:
     kind = detect(folder)
     key = (fingerprint(folder, kind) if kind else str(Path(folder).resolve()), label, str(cache))
     with _REFERENCE_LOCK:
-        holder = _REFERENCES.get(key)
+        holder = _REFERENCES.pop(key, None)
         if holder is None:
             holder = ReferenceHolder(folder, label, cache)
-            if len(_REFERENCES) >= 4:
+            if len(_REFERENCES) >= _REFERENCES_MAX:
                 _REFERENCES.pop(next(iter(_REFERENCES)))
-            _REFERENCES[key] = holder
+        # Asked for again: the last to go (#519). The project's own text is
+        # read first and asked for on every check, so the folders a reviewer
+        # opens in more Reference tabs must not push it out.
+        _REFERENCES[key] = holder
     return holder
 
 

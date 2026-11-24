@@ -690,9 +690,11 @@ export const bridge = {
     return call("languageQa.checkerSettings.set", { projectPath, ...patch });
   },
 
-  /** One chapter of the reference Bible; `ready` is false while it loads. */
-  languageQaReference(projectPath: string, chapter: string): Promise<ReferenceChapter> {
-    return call("languageQa.reference", { projectPath, chapter });
+  /** One chapter of the reference Bible; `ready` is false while it loads.
+   *  With `folder` (#519): of that folder instead of the project's own, for a
+   *  reference tab a reviewer added. Reading only; nothing is kept or changed. */
+  languageQaReference(projectPath: string, chapter: string, folder?: string): Promise<ReferenceChapter> {
+    return call("languageQa.reference", folder ? { projectPath, chapter, folder } : { projectPath, chapter });
   },
 
   /** #289: choose (a folder) or clear (null) the open project's reference

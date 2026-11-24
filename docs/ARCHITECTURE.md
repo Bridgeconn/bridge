@@ -294,7 +294,7 @@ flowchart TB
   AR --> AM
   Editor --> RPt["ReviewPanel tabs: Greek Room / Core check (TranslationHelpsReview) / Language QA / AI review"]
   RPt --> LQP["Language QA tab: LanguageQaPanel, a tab and not a panel (#487)<br/>sections Findings, Book words, Flags, Edits, Dictionary;<br/>ScopeConfirmDialog for a chapter or book Use, with batch undo"]
-  Editor --> RefP["ReferencePanel<br/>a reference Bible folder beside the text"]
+  Editor --> RefP["ReferencePanel, one per reference tab (#519)<br/>the project's reference Bible, and up to three folders added for reading;<br/>ReferenceMenu on the left rail lists them and adds one"]
   Editor --> CVM["CrossVerseAlignmentModal (Cross-verse alignment)<br/>Align automatically; AutoAlignDialog (Align with AI) picks chapters and starts the job,<br/>which autoAlignRun owns and AutoAlignStrip shows above the text while it runs or has a result"]
   AR --> QA["AlignmentQaMode (Stage 9A)<br/>QaFindingList, QaFindingDetail, EvidenceInspector, CorrectionReviewPanel (9B)"]
   Top["TopBar. Editor: the File, View, Check, Bookmarks and Alignment menus, the project name (opens the project page), Sync.<br/>Other screens: the breadcrumb (Projects, project, screen) and Settings"]
