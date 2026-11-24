@@ -33,6 +33,7 @@ import ReviewPanel from "../ReviewPanel.svelte";
 import { currentChapter, project, selectedVerse, verseTexts, verseKey } from "../../stores";
 import { languageQaChannel } from "../../languageQaInline";
 import { setSidePanel, sidePanels } from "../../editorPrefs";
+import { closeTab } from "../../editorTabs";
 import { reviewTabRequest } from "../../stores";
 import { showLanguageQaTab } from "../../languageQaPanelUi";
 import { get } from "svelte/store";
@@ -272,9 +273,12 @@ describe("ReviewPanel folding (#236)", () => {
     expect(screen.getByRole("button", { name: "Book" })).toBeInTheDocument();
   });
 
-  it("closes its column from its header, and the choice is remembered", async () => {
+  // #519: the header has no Close of its own; the panel's tab closes it.
+  it("has no Close in its header; its tab closes the column, and the choice is remembered", async () => {
     render(ReviewPanel);
-    await fireEvent.click(screen.getByRole("button", { name: "Close the review panel" }));
+    expect(screen.queryByRole("button", { name: "Close the review panel" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Move to separate window" })).toBeInTheDocument();
+    closeTab("review");
     expect(get(sidePanels).review.open).toBe(false);
     expect(JSON.parse(localStorage.getItem("bridge.editor.sidePanels.v1") ?? "{}").review.open).toBe(false);
   });

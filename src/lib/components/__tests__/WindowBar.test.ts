@@ -13,6 +13,7 @@ vi.mock("@tauri-apps/api/window", () => ({
 }));
 
 import WindowBar from "../WindowBar.svelte";
+import { SIDE_PANEL_ORDER } from "../../editorPrefs";
 
 // Vitest runs from the repo root.
 const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
@@ -56,7 +57,10 @@ describe("the separate windows' title bar", () => {
   it("every separate window has no native title bar and may use the window buttons", () => {
     const config = JSON.parse(read("src-tauri/tauri.conf.json")) as { app: { windows: { label?: string; decorations?: boolean }[] } };
     const separate = config.app.windows.filter((entry) => entry.label && entry.label !== "splash");
-    expect(separate.map((entry) => entry.label)).toEqual(["review-queue", "alignment", "panel-source", "panel-reference", "panel-paratext", "panel-review"]);
+    // One declared window per side panel, the added reference tabs among them
+    // (#519): a panel with no declared window could not be shown separately.
+    expect(SIDE_PANEL_ORDER).toEqual(["source", "reference", "reference2", "reference3", "reference4", "paratext", "review"]);
+    expect(separate.map((entry) => entry.label)).toEqual(["review-queue", "alignment", ...SIDE_PANEL_ORDER.map((id) => `panel-${id}`)]);
     for (const entry of separate) expect(entry.decorations, entry.label).toBe(false);
     const capability = JSON.parse(read("src-tauri/capabilities/main-window-controls.json")) as { windows: string[]; permissions: string[] };
     expect(capability.windows).toEqual(expect.arrayContaining(["main", "alignment", "review-queue", "panel-*"]));

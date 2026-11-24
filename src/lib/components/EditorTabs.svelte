@@ -14,6 +14,8 @@
   import { tooltip } from "../tooltip";
   import type { EditorDockContext } from "../editorDocking";
   import { EDITOR_TABS, closeTab, selectTab, splitTab, tabLayout, type EditorTabId } from "../editorTabs";
+  // A reference tab is named after its reference ("esv"), #519; the rest keep their fixed names.
+  import { tabLabels } from "../referenceTabs";
 
   export let group: string;
 
@@ -51,17 +53,17 @@
             on:pointerdown={(event) => docking?.beginMove(id, event)}
             on:click={() => selectTab(id)} on:keydown={(event) => onKey(event, id)}
             on:auxclick={(event) => { if (event.button === 1) { event.preventDefault(); closeTab(id); } }}>
-            <UiIcon name={EDITOR_TABS[id].icon} /><span class="tab-name">{EDITOR_TABS[id].label}</span>
+            <UiIcon name={EDITOR_TABS[id].icon} /><span class="tab-name">{$tabLabels[id]}</span>
           </button>
-          <button type="button" class="tab-close" aria-label={`Close ${EDITOR_TABS[id].label}`} tabindex="-1"
-            use:tooltip={`Close ${EDITOR_TABS[id].label}`} on:click={() => closeTab(id)}><UiIcon name="close" /></button>
+          <button type="button" class="tab-close" aria-label={`Close ${$tabLabels[id]}`} tabindex="-1"
+            use:tooltip={`Close ${$tabLabels[id]}`} on:click={() => closeTab(id)}><UiIcon name="close" /></button>
         </div>
       {/each}
     </div>
     <div class="strip-tools">
       {#if tabs.length > 1 && current}
-        <button type="button" class="strip-tool" aria-label={`Split ${EDITOR_TABS[current].label} to the right`}
-          use:tooltip={`Split right: show ${EDITOR_TABS[current].label} beside the other tabs`}
+        <button type="button" class="strip-tool" aria-label={`Split ${$tabLabels[current]} to the right`}
+          use:tooltip={`Split right: show ${$tabLabels[current]} beside the other tabs`}
           on:click={() => current && splitTab(current, group, "right")}><UiIcon name="split" /></button>
       {/if}
     </div>

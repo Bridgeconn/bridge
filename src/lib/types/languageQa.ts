@@ -334,8 +334,9 @@ export interface ReferenceChapter {
   ready: boolean;
   configured: boolean;
   /** `origin` (#289): "project" when the reviewer chose this folder for the
-   *  project, "bundled" when it is the Language QA pack's own text. */
-  source: { path: string; label: string; origin?: "project" | "bundled"; kind?: "tsv" | "usfm" } | null;
+   *  project, "bundled" when it is the Language QA pack's own text, "viewer"
+   *  (#519) when it is the folder of a reference tab added for reading. */
+  source: { path: string; label: string; origin?: "project" | "bundled" | "viewer"; kind?: "tsv" | "usfm" } | null;
   verses: { verse: string; text: string }[];
   error?: string;
   /** The Language QA pack a folder would be set for (when none is configured). */

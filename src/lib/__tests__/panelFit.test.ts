@@ -12,6 +12,9 @@ function layout(open: Partial<Record<keyof SidePanels, boolean>>): SidePanels {
   return {
     source: { open: !!open.source, width: 320 },
     reference: { open: !!open.reference, width: 300 },
+    reference2: { open: !!open.reference2, width: 300 },
+    reference3: { open: !!open.reference3, width: 300 },
+    reference4: { open: !!open.reference4, width: 300 },
     paratext: { open: !!open.paratext, width: 340 },
     review: { open: !!open.review, width: 400 },
   };

@@ -14,6 +14,8 @@ vi.mock("../../api/bridgeClient", () => ({
 import ReferencePanel from "../ReferencePanel.svelte";
 import RelatedWords from "../RelatedWords.svelte";
 import { currentChapter, project, selectedVerse } from "../../stores";
+import { projectReferenceName } from "../../referenceNames";
+import { get } from "svelte/store";
 
 const READY = {
   ready: true, configured: true, source: { path: "D:/OV", label: "Old Version", kind: "tsv" },
@@ -121,6 +123,75 @@ describe("ReferencePanel", () => {
     selectedVerse.set("2");
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(scrolled).not.toHaveBeenCalled();
+  });
+});
+
+// #519: a reference tab a reviewer added. It reads the folder it is given and
+// never touches the project's reference Bible, the one Language QA uses.
+describe("ReferencePanel, an added reference tab", () => {
+  const ESV = { ready: true, configured: true, source: { path: "D:/bibles/esv", label: "esv", origin: "viewer", kind: "usfm" },
+    verses: [{ verse: "1", text: "In the days when the judges ruled" }] };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    project.set({ path: "/p", bookId: "rut" } as never);
+    currentChapter.set("1");
+    selectedVerse.set("1");
+  });
+  afterEach(() => selectedVerse.set(null));
+
+  it("with no folder yet asks for one, reads nothing, and Browse hands the folder to the tab, not to the project", async () => {
+    pickFolder.mockResolvedValue("D:/bibles/esv");
+    const onChooseFolder = vi.fn();
+    render(ReferencePanel, { props: { id: "reference2", onChooseFolder } });
+    expect(await screen.findByText("No reference Bible is chosen for this tab.")).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 2, name: "Reference" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Change" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /manage it in Settings/ })).toBeNull();
+    expect(languageQaReference).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole("button", { name: "Browse for a reference Bible on this computer" }));
+    await waitFor(() => expect(onChooseFolder).toHaveBeenCalledWith("D:/bibles/esv"));
+    expect(languageQaSetReference).not.toHaveBeenCalled();
+  });
+
+  it("reads its own folder, is named after it, and Change picks another folder for the tab only", async () => {
+    languageQaReference.mockResolvedValue(ESV);
+    pickFolder.mockResolvedValue("D:/bibles/niv");
+    const onChooseFolder = vi.fn();
+    const { component } = render(ReferencePanel, { props: { id: "reference2", folder: "D:/bibles/esv", onChooseFolder } });
+    expect(await screen.findByText("In the days when the judges ruled")).toBeTruthy();
+    expect(languageQaReference).toHaveBeenCalledWith("/p", "1", "D:/bibles/esv");
+    expect(screen.getByRole("heading", { level: 2, name: "esv" }).getAttribute("title")).toBe("D:/bibles/esv");
+    expect(document.querySelector("[data-panel-bar='reference2']")).not.toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Change" }));
+    await waitFor(() => expect(onChooseFolder).toHaveBeenCalledWith("D:/bibles/niv"));
+    expect(languageQaSetReference).not.toHaveBeenCalled();
+    // The tab keeps the folder and hands it back: the panel reads the new one.
+    languageQaReference.mockResolvedValue({ ...ESV, source: { ...ESV.source, path: "D:/bibles/niv", label: "niv" }, verses: [{ verse: "1", text: "In the days when the judges governed" }] });
+    component.$set({ folder: "D:/bibles/niv" });
+    expect(await screen.findByText("In the days when the judges governed")).toBeTruthy();
+    expect(languageQaReference).toHaveBeenLastCalledWith("/p", "1", "D:/bibles/niv");
+    expect(screen.getByRole("heading", { level: 2, name: "niv" })).toBeTruthy();
+  });
+
+  it("keeps Change beside a folder that is gone, named after the folder", async () => {
+    languageQaReference.mockResolvedValue({ ready: false, configured: true, verses: [],
+      source: { path: "E:\\gone\\esv", label: "esv", origin: "viewer" }, error: "E:\\gone\\esv: no such folder on this computer" });
+    render(ReferencePanel, { props: { id: "reference3", folder: "E:\\gone\\esv\\" } });
+    expect(await screen.findByText(/could not be read: E:\\gone\\esv: no such folder/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Change" })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 2, name: "esv" })).toBeTruthy();
+  });
+
+  it("the project's own tab still reads with no folder, and gives its name to the tab and the rail's list", async () => {
+    languageQaReference.mockResolvedValue({ ...READY, source: { path: "x", label: "Old Version (bundled)", origin: "bundled" } });
+    render(ReferencePanel);
+    expect(await screen.findByText("Built in: Old Version")).toBeTruthy();
+    expect(languageQaReference).toHaveBeenCalledWith("/p", "1");
+    expect(get(projectReferenceName)).toBe("Built in: Old Version");
+    // Another project: the name is not carried over.
+    project.set({ path: "/q", bookId: "rut" } as never);
+    expect(get(projectReferenceName)).toBe("");
   });
 });
 

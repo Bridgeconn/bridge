@@ -28,7 +28,8 @@
   import ParatextNotesPanel from "./lib/components/ParatextNotesPanel.svelte";
   import ReviewQueueHost from "./lib/components/ReviewQueueHost.svelte";
   import FindingContextMenu from "./lib/components/FindingContextMenu.svelte";
-  import { sidePanelOrder, sidePanels, toggleSidePanel } from "./lib/editorPrefs";
+  import { isReferencePanel, sidePanelOrder, sidePanels, toggleSidePanel } from "./lib/editorPrefs";
+  import { tabLabels } from "./lib/referenceTabs";
   import { verseMin, versesShown, workAreaEmpty } from "./lib/panelFit";
   import { showTab } from "./lib/editorTabs";
   import SidePanel from "./lib/components/SidePanel.svelte";
@@ -1932,10 +1933,14 @@
                 <SidePanel id="source" label="Source text">
                   {#key $project.path}<SourceTextPanel onSelectVerse={selectVerse} />{/key}
                 </SidePanel>
-              {:else if panelId === "reference"}
-                <SidePanel id="reference" label="Reference">
+              {:else if isReferencePanel(panelId)}
+                <!-- #519: the project's reference Bible, and up to three a
+                     reviewer added, each reading its own folder. -->
+                <SidePanel id={panelId} label={$tabLabels[panelId]}>
                   {#key $project.path}
-                    <ReferencePanel onOpenSettings={() => openSettings("languageQa")} onSelectVerse={selectVerse} />
+                    <ReferencePanel id={panelId} folder={$sidePanels[panelId].folder}
+                      onChooseFolder={(folder) => setSidePanel(panelId, { folder })}
+                      onOpenSettings={() => openSettings("languageQa")} onSelectVerse={selectVerse} />
                   {/key}
                 </SidePanel>
               {:else if panelId === "paratext"}

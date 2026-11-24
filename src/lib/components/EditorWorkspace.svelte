@@ -4,7 +4,7 @@
    *  the panes themselves are the slot's (the verse list and the SidePanels),
    *  each placed in its group's frame or hidden behind another tab.
    *
-   *  A tab (or a panel's grip) drags: over the middle or the strip of a group
+   *  A tab drags: over the middle or the strip of a group
    *  it joins that group; near an edge it splits the group on that side; a
    *  tinted box shows which before release. Released outside the Bridge
    *  window, a side panel opens in its own window.
@@ -17,7 +17,7 @@
   import type { EditorDockContext } from "../editorDocking";
   import type { SidePanelId } from "../editorPrefs";
   import {
-    TAB_STRIP_HEIGHT, closeGroup, focusGroup, groupOf, moveTab, paneStyle, resizeSplit, showTab, splitTab, tabLayout, type EditorTabId,
+    TAB_STRIP_HEIGHT, closeGroup, focusGroup, groupOf, moveTab, paneStyle, resizeSplit, splitTab, tabLayout, type EditorTabId,
   } from "../editorTabs";
   import UiIcon from "./UiIcon.svelte";
   import { tooltip } from "../tooltip";
@@ -47,13 +47,6 @@
   let sizing: Divider | null = null;
   let beforeResize: LayoutNode | null = null;
 
-  /** Keyboard placement (a panel's tools menu): `id` beside the pane `target`. */
-  function dock(id: SidePanelId, target: string, edge: DockEdge): void {
-    showTab(target as EditorTabId);
-    showTab(id);
-    const gid = groupOf($tabLayout, target as EditorTabId);
-    if (gid) splitTab(id, gid, edge);
-  }
   function beginMove(id: EditorTabId, event: PointerEvent): void {
     if (event.button !== 0) return;
     (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
@@ -126,7 +119,7 @@
     event.preventDefault();
     resizeSplit(d.id, event.key === "Home" ? .15 : event.key === "End" ? .85 : d.ratio + (event.key === negative ? -.02 : .02) * (event.shiftKey ? 3 : 1));
   }
-  setContext<EditorDockContext>("editor-docking", { frames, beginMove, dock, cancelMove: () => {
+  setContext<EditorDockContext>("editor-docking", { frames, beginMove, cancelMove: () => {
     if (!moving && !sizing) return false;
     cancel(); return true;
   } });

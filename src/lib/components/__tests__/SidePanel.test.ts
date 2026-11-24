@@ -21,14 +21,15 @@ async function pointer(target: HTMLElement, type: string, clientX = 0): Promise<
 
 function reset(): void {
   for (const id of ["reference", "paratext", "review"] as const) {
-    setSidePanel(id, { open: id === "review", width: SIDE_PANEL_LIMITS[id].initial, float: null });
+    setSidePanel(id, { open: id === "review", width: SIDE_PANEL_LIMITS[id].initial, float: null, detached: false });
   }
   sidePanelOrder.set([...SIDE_PANEL_ORDER]);
 }
 
 describe("SIDE_PANEL_LIMITS (#379 item 6)", () => {
   it("gives every panel one minimum width (Language QA, which kept 320, is the Review panel's tab since #487)", () => {
-    expect(SIDE_PANEL_ORDER).toEqual(["source", "reference", "paratext", "review"]);
+    // #519: reference2 to reference4 are the reference tabs a reviewer adds.
+    expect(SIDE_PANEL_ORDER).toEqual(["source", "reference", "reference2", "reference3", "reference4", "paratext", "review"]);
     for (const id of SIDE_PANEL_ORDER) {
       expect(SIDE_PANEL_LIMITS[id].min, id).toBe(PANEL_MIN);
       expect(SIDE_PANEL_LIMITS[id].initial, id).toBeGreaterThanOrEqual(SIDE_PANEL_LIMITS[id].min);
@@ -58,44 +59,48 @@ describe("SidePanel (Benz, 2026-10-09)", () => {
 
 // #379 (Benz's item 7): one header bar with a line under it on every panel.
 describe("PanelHeader (#379)", () => {
+  const tauri = window as unknown as Record<string, unknown>;
   beforeEach(reset);
-  afterEach(reset);
+  afterEach(() => { reset(); delete tauri.__TAURI_INTERNALS__; });
 
-  it("shows the title, carries the hint as its tooltip, and Close closes the column as the View menu does", async () => {
+  it("shows the title and carries the hint as its tooltip", () => {
     setSidePanel("reference", { open: true });
     render(PanelHeader, { props: { id: "reference", title: "Reference · OV", hint: "C:/bibles/ov", label: "the Reference panel" } });
     const title = screen.getByRole("heading", { level: 2, name: "Reference · OV" });
     expect(title.getAttribute("title")).toBe("C:/bibles/ov");
     expect(document.querySelector("[data-panel-bar='reference']")).not.toBeNull();
-    await fireEvent.click(screen.getByRole("button", { name: "Close the Reference panel" }));
-    expect(get(sidePanels).reference.open).toBe(false);
   });
 
-  // 2026-11-14: a panel is a tab, placed by dragging it (EditorTabs); the
-  // tools menu no longer moves a column left or right. The saved order
-  // still names every panel: it is the order new tabs are listed in.
-  it("offers no column moves in its tools menu, and a saved order that lost a panel gets it back", async () => {
+  // #519: the bar is the Verses header's. The panel's tab is what is dragged
+  // and closed, so the bar has no drag handle, no tools menu and no Close,
+  // and one tool in their place, as on the Word alignment tab.
+  it("has one tool, Move to separate window, and no drag handle, tools menu or Close", async () => {
+    tauri.__TAURI_INTERNALS__ = {};
     setSidePanel("reference", { open: true });
     render(PanelHeader, { props: { id: "reference", title: "Reference", label: "the Reference panel" } });
-    await fireEvent.click(screen.getByRole("button", { name: "the Reference panel panel tools" }));
-    expect(await screen.findByRole("menuitem", { name: "Move to separate window" })).toBeInTheDocument();
-    // The floating box inside the window is gone (2026-11-14).
-    expect(screen.queryByRole("menuitem", { name: "Float inside Bridge" })).toBeNull();
-    expect(screen.queryByRole("menuitem", { name: "Move panel left" })).toBeNull();
-    expect(screen.queryByRole("menuitem", { name: "Move panel right" })).toBeNull();
+    expect(screen.getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual(["Move to separate window"]);
+    expect(screen.queryByRole("button", { name: /^Close/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Move the Reference panel$/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /panel tools/ })).toBeNull();
+    expect(screen.queryByRole("menuitem")).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Move to separate window" }));
+    expect(get(sidePanels).reference).toMatchObject({ open: true, detached: true });
     // A saved order missing a panel (added after the save) is completed.
     sidePanelOrder.set(["review", "source"] as never);
     sidePanelOrder.update((order) => order);
     expect(get(sidePanelOrder)).toEqual(["review", "source"]);
   });
 
-  it("names Close after the title when no label is given, and defers to onClose when one is given", async () => {
-    const onClose = vi.fn();
-    setSidePanel("paratext", { open: true });
-    render(PanelHeader, { props: { id: "paratext", title: "Paratext notes", onClose } });
-    await fireEvent.click(screen.getByRole("button", { name: "Close Paratext notes" }));
-    expect(onClose).toHaveBeenCalledOnce();
-    expect(get(sidePanels).paratext.open).toBe(true);
+  it("keeps the tool off in a browser, where there is no separate window", () => {
+    render(PanelHeader, { props: { id: "paratext", title: "Paratext notes" } });
+    expect(screen.getByRole("button", { name: "Move to separate window" })).toBeDisabled();
+  });
+
+  it("has no tool in a panel's own window: the window's title bar closes it", () => {
+    tauri.__TAURI_INTERNALS__ = {};
+    render(PanelHeader, { props: { id: "source", title: "Source" }, context: new Map([["panel-window", { dock: vi.fn(), close: vi.fn() }]]) });
+    expect(screen.getByRole("heading", { level: 2, name: "Source" })).toBeInTheDocument();
+    expect(screen.queryByRole("button")).toBeNull();
   });
 
   it("is the first thing every one of the four panels draws, with the actions in its slot", () => {
@@ -103,7 +108,8 @@ describe("PanelHeader (#379)", () => {
     for (const [name, id] of [["SourceTextPanel", "source"], ["ReferencePanel", "reference"],
       ["ParatextNotesPanel", "paratext"], ["ReviewPanel", "review"]] as const) {
       const text = source(name);
-      expect(text, name).toMatch(new RegExp(`<PanelHeader id="${id}"`));
+      // The Reference panel is drawn once per reference tab (#519), each with its own id.
+      expect(text, name).toMatch(name === "ReferencePanel" ? /<PanelHeader \{id\}/ : new RegExp(`<PanelHeader id="${id}"`));
       // No panel keeps a header of its own beside the shared one.
       expect(text, name).not.toMatch(/class="(head|pt-head|head-row)"/);
     }
@@ -112,11 +118,20 @@ describe("PanelHeader (#379)", () => {
     // #488: the rail is gone; nothing mounts or imports it.
     expect(readFileSync(resolve(process.cwd(), "src/App.svelte"), "utf-8")).not.toMatch(/SideRail|editor-toolbar/);
     // One bar: one padding, one title size, one background, one line under it.
+    // #519: the Verses header's padding and gap; a size container, so a
+    // panel's own actions can give way in a narrow group; no menu, grip or Close.
     const bar = source("PanelHeader");
-    expect(bar).toContain("padding: 0 8px");
+    expect(bar).toMatch(/\.panel-bar \{[^}]*padding: 0 10px/);
+    expect(bar).toMatch(/\.panel-bar \{[^}]*gap: 8px/);
+    expect(bar).toMatch(/\.panel-bar \{[^}]*container: panel-bar \/ inline-size/);
     expect(bar).toContain("border-bottom: 1px solid var(--border)");
     expect(bar).toContain("background: var(--surface)");
     expect(bar).toMatch(/\.panel-title \{[^}]*font-size: var\(--fs-xs\)/);
+    expect(bar).toMatch(/\.panel-tool \{[^}]*width: 28px; height: 28px/);
+    expect(bar).not.toMatch(/OverflowMenu|panel-grip|panel-close/);
+    expect(source("EditorHeader")).toMatch(/\.editor-header \{[^}]*padding: 0 10px/);
+    // The Reference panel's "follow" loses its word, not its box, when the bar is narrow.
+    expect(source("ReferencePanel")).toMatch(/@container panel-bar \(max-width: 300px\) \{ \.follow-text \{ display: none; \} \}/);
   });
 
   // Item 6 (Benz, 2026-10-26): one body padding and type scale, one surface.

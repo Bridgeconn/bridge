@@ -9046,17 +9046,40 @@ class BridgeEngine:
         """The reference text of one chapter of the open book, for the panel
         beside the text. Never waits: until the folder is read, `ready` is false.
         `source.origin` says whether the folder is this project's choice or the
-        pack's bundled text (#289)."""
+        pack's bundled text (#289).
+
+        With `folder` (#519) it reads that folder instead, for a Reference tab
+        a reviewer added beside the project's own: reading only. Nothing is
+        kept (the tab remembers its folder), the project's reference Bible is
+        not changed and Language QA is not rebound; `source.origin` is
+        "viewer". Refused for a hub request, which would otherwise read a
+        folder of the hub's computer named by another device."""
         self._require_project()
         chapter = params.get("chapter")
         if not isinstance(chapter, str) or not chapter:
             raise ProjectError("chapter must be a non-empty string")
-        holder = self._reference_holder()
-        if holder is None:
-            return {"ready": False, "configured": False, "source": None, "verses": [],
-                    "pack": self._language_qa.pack_name()}
+        if "folder" in params and params["folder"] is not None:
+            folder = params["folder"]
+            if getattr(self, "_request_user", None) is not None:
+                raise ProjectError("A reference folder can be read only on the computer it is on.")
+            if not isinstance(folder, str) or not folder.strip():
+                raise ProjectError("folder must be a path")
+            folder = str(Path(folder.strip()))
+            origin = "viewer"
+            if not Path(folder).is_dir():
+                return {"ready": False, "configured": True, "verses": [],
+                        "source": {"path": folder, "label": Path(folder).name or folder, "origin": origin},
+                        "error": f"{folder}: no such folder on this computer"}
+            holder = quotation_rules.reference_holder(
+                folder, Path(folder).name or folder, self.settings.path.parent / "reference-cache")
+        else:
+            holder = self._reference_holder()
+            if holder is None:
+                return {"ready": False, "configured": False, "source": None, "verses": [],
+                        "pack": self._language_qa.pack_name()}
+            origin = holder.origin
         text, error = holder.state()
-        source = {"path": str(holder.folder), "label": holder.label, "origin": holder.origin}
+        source = {"path": str(holder.folder), "label": holder.label, "origin": origin}
         if error:
             return {"ready": False, "configured": True, "source": source, "verses": [], "error": error}
         if text is None:

@@ -17,8 +17,10 @@ export interface PanelContext {
   revisions: StoreValue<typeof stores.alignmentRevisionByVerse>; inline: StoreValue<typeof stores.languageQaFindingsByVerse>;
 }
 export const panelLabel = (id: SidePanelId) => `panel-${id}`;
-export const panelWindow = (id: SidePanelId, action: "open" | "hide") => invoke<void>("panel_window", { panel: id, action });
+/** `open` shows a panel's window at its saved size and place; `focus` brings one that is already showing to the front, where it stands. */
+export const panelWindow = (id: SidePanelId, action: "open" | "hide" | "focus") => invoke<void>("panel_window", { panel: id, action });
 export const panelDesktop = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-export interface PanelMessage { kind: "ready" | "close" | "dock" | "navigate" | "settings" | "changed" | "edit" | "alignment" | "alignmentChanged" | "reviewQueue" | "focus"; id: SidePanelId; path?: string; chapter?: string; verse?: string; book?: string; findingId?: string; caret?: { start: number; end: number } | null; acceptFindingId?: string }
+/** `referenceFolder` (#519): an added reference tab, in its own window, was given a folder (`folder`); the main window keeps it. */
+export interface PanelMessage { kind: "ready" | "close" | "dock" | "navigate" | "settings" | "changed" | "edit" | "alignment" | "alignmentChanged" | "reviewQueue" | "focus" | "referenceFolder"; id: SidePanelId; path?: string; chapter?: string; verse?: string; book?: string; findingId?: string; caret?: { start: number; end: number } | null; acceptFindingId?: string; folder?: string }
 export const sendPanelMessage = (message: PanelMessage) => emitTo("main", "panel-message", message);
 export const onPanelMessage = (handler: (message: PanelMessage) => void) => listen<PanelMessage>("panel-message", e => handler(e.payload));

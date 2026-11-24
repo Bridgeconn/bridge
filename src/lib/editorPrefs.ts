@@ -41,7 +41,22 @@ const isBoolean = (value: unknown): value is boolean => typeof value === "boolea
  * always present, so it has no id here and no saved open flag. Layouts saved
  * while it was a panel are read through `withoutRetiredPanels`.
  */
-export type SidePanelId = "source" | "reference" | "paratext" | "review";
+/**
+ * The reference tabs (#519): `reference` is the project's reference Bible,
+ * the one Language QA checks against (#289); the others are places for a
+ * reference a reviewer adds, for reading only, each with its own folder
+ * (`SidePanelState.folder`). They are fixed ids, four in all, because every
+ * layout, every saved state and every separate window is keyed by a known id
+ * (a separate window has to be declared before the app starts).
+ */
+export const REFERENCE_EXTRA_IDS = ["reference2", "reference3", "reference4"] as const;
+export const REFERENCE_PANEL_IDS = ["reference", ...REFERENCE_EXTRA_IDS] as const;
+export type AddedReferenceId = (typeof REFERENCE_EXTRA_IDS)[number];
+export type ReferencePanelId = (typeof REFERENCE_PANEL_IDS)[number];
+export const isReferencePanel = (id: string): id is ReferencePanelId => (REFERENCE_PANEL_IDS as readonly string[]).includes(id);
+export const isAddedReference = (id: string): id is AddedReferenceId => (REFERENCE_EXTRA_IDS as readonly string[]).includes(id);
+
+export type SidePanelId = "source" | ReferencePanelId | "paratext" | "review";
 /** Panel ids a saved layout may still carry. They are dropped on read. */
 export const RETIRED_PANEL_IDS: readonly string[] = ["languageQa"];
 
@@ -75,23 +90,31 @@ export interface PanelFloat { x: number; y: number; width: number; height: numbe
 /** `float` (#389): set while the panel is undocked into a box; absent or null
  * in its column. Added to the saved shape, not a new shape: a layout saved
  * before #389 is valid as it is, so nothing is migrated. */
-export interface SidePanelState { open: boolean; width: number; float?: PanelFloat | null; detached?: boolean }
+/** `folder` (#519): the reference Bible folder of an added reference tab. It
+ * stays when the tab is closed, so the tab can be opened again from the left
+ * rail's list; removing the reference from that list clears it. Never set on
+ * `reference` (the project's own is kept by the engine) or on another panel. */
+export interface SidePanelState { open: boolean; width: number; float?: PanelFloat | null; detached?: boolean; folder?: string }
 export type SidePanels = Record<SidePanelId, SidePanelState>;
 
 /** Left to right, as they stand right of the text. The source text (#67) sits
  * next to the verses it is the original of. */
 /** Paratext notes (#357) sit beside Review, where findings are decided. */
-export const SIDE_PANEL_ORDER: readonly SidePanelId[] = ["source", "reference", "paratext", "review"];
+export const SIDE_PANEL_ORDER: readonly SidePanelId[] = ["source", ...REFERENCE_PANEL_IDS, "paratext", "review"];
 /** Panels a saved layout from before they existed lacks; they start closed
  * rather than throwing the reviewer's other widths away. */
-const ADDED_LATER: readonly SidePanelId[] = ["source", "paratext"];
+const ADDED_LATER: readonly SidePanelId[] = ["source", "paratext", ...REFERENCE_EXTRA_IDS];
 /** One minimum for every panel (#379 item 6, Benz 2026-10-26): `PANEL_MIN`,
  * 260, which keeps the fold points of #324 (two panels still fit beside the
  * text at 1366x768 under 150% scaling). */
 export const PANEL_MIN = 260;
+const REFERENCE_LIMITS = { min: PANEL_MIN, max: 640, initial: 300 };
 export const SIDE_PANEL_LIMITS: Record<SidePanelId, { min: number; max: number; initial: number }> = {
   source: { min: PANEL_MIN, max: 640, initial: 320 },
-  reference: { min: PANEL_MIN, max: 640, initial: 300 },
+  reference: REFERENCE_LIMITS,
+  reference2: REFERENCE_LIMITS,
+  reference3: REFERENCE_LIMITS,
+  reference4: REFERENCE_LIMITS,
   paratext: { min: PANEL_MIN, max: 640, initial: 340 },
   review: { min: PANEL_MIN, max: 720, initial: 400 },
 };
@@ -121,6 +144,9 @@ function defaultSidePanels(): SidePanels {
     source: { open: false, width: SIDE_PANEL_LIMITS.source.initial },
     reference: { open: legacy("bridge.editor.referencePanel.v1", isBoolean) ?? false,
                  width: width === undefined ? SIDE_PANEL_LIMITS.reference.initial : clampPanelWidth("reference", width) },
+    reference2: { open: false, width: SIDE_PANEL_LIMITS.reference2.initial },
+    reference3: { open: false, width: SIDE_PANEL_LIMITS.reference3.initial },
+    reference4: { open: false, width: SIDE_PANEL_LIMITS.reference4.initial },
     paratext: { open: false, width: SIDE_PANEL_LIMITS.paratext.initial },
     review: { open: !(legacy("bridge.editor.reviewPanelCollapsed.v1", isBoolean) ?? false),
               width: SIDE_PANEL_LIMITS.review.initial },
@@ -136,8 +162,28 @@ const isPanelState = (entry: unknown): entry is SidePanelState => {
   const state = entry as Partial<SidePanelState> | undefined;
   return !!state && typeof state.open === "boolean" && isFinite(state.width)
     && (state.detached === undefined || typeof state.detached === "boolean")
+    && (state.folder === undefined || typeof state.folder === "string")
     && (state.float === undefined || state.float === null || isPanelFloat(state.float));
 };
+
+/** A saved panels map and order with the panels added since it was saved put
+ * in, closed, and named at the end of the order: what the two stores below do
+ * for their own keys, for a snapshot that is validated whole
+ * (projectWorkspace.ts). Without it a project's saved workspace from before a
+ * panel existed fails validation and its reading place goes with it. */
+export function withAddedPanels<P, O>(panels: P, order: O): { panels: P; order: O } {
+  let nextPanels = panels;
+  if (typeof panels === "object" && panels !== null) {
+    const missing = ADDED_LATER.filter((id) => (panels as Record<string, unknown>)[id] === undefined);
+    if (missing.length) {
+      nextPanels = { ...(panels as object),
+        ...Object.fromEntries(missing.map((id) => [id, { open: false, width: SIDE_PANEL_LIMITS[id].initial }])) } as P;
+    }
+  }
+  const nextOrder = Array.isArray(order) && ADDED_LATER.some((id) => !order.includes(id))
+    ? [...order, ...ADDED_LATER.filter((id) => !order.includes(id))] as O : order;
+  return { panels: nextPanels, order: nextOrder };
+}
 
 /** Every panel valid, except that one added later may be missing (it is filled
  * in below): a layout saved before #67 keeps its widths and open panels. */
@@ -210,7 +256,9 @@ export function validPanelSnapshot(panels: unknown, order: unknown): boolean {
 }
 
 export function resetPanelLayout(): void {
-  sidePanels.set(Object.fromEntries(SIDE_PANEL_ORDER.map(id => [id, { open: id === "review", width: SIDE_PANEL_LIMITS[id].initial }])) as SidePanels);
+  // An added reference's folder is not layout: its tab closes, and it stays in the rail's list (#519).
+  sidePanels.update((all) => Object.fromEntries(SIDE_PANEL_ORDER.map(id => [id, { open: id === "review", width: SIDE_PANEL_LIMITS[id].initial,
+    ...(all[id]?.folder ? { folder: all[id].folder } : {}) }])) as SidePanels);
   sidePanelOrder.set([...SIDE_PANEL_ORDER]);
   sidePanelRecency.set([]);
 }

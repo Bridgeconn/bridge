@@ -3,19 +3,22 @@ import { get } from "svelte/store";
 import { fireEvent, render, screen } from "@testing-library/svelte";
 import Fixture from "./fixtures/EditorWorkspaceFixture.svelte";
 import { editorTree } from "../../editorDocking";
-import { groupOf, resetTabLayout, selectTab, tabLayout } from "../../editorTabs";
+import { tick } from "svelte";
+import { groupOf, resetTabLayout, selectTab, splitTab, tabLayout } from "../../editorTabs";
 import { versesOpen } from "../../editorPrefs";
 import { resetPanelLayout, setSidePanel, sidePanels } from "../../editorPrefs";
 const original = document.elementsFromPoint;
 beforeEach(() => { editorTree.set(null); resetPanelLayout(); versesOpen.set(true); setSidePanel("review", { open: false }); setSidePanel("paratext", { open: true }); resetTabLayout(); selectTab("paratext"); });
 afterEach(() => { document.elementsFromPoint = original; editorTree.set(null); resetPanelLayout(); vi.unstubAllGlobals(); });
-// 2026-11-14: the tools menu's Dock places a tab beside another pane's group.
-it("docks above Scripture through the keyboard menu, as a group over the verses', without remounting its filter", async () => {
+// #519: the panel bar's tools menu, and its Dock entries, are gone; a tab is
+// placed by dragging it or with the strip's Split right. What a split must
+// still do is unchanged: a new group, its own strip, and the pane not remounted.
+it("a tab split above the verses becomes a group over them, with its own strip, without remounting its filter", async () => {
   render(Fixture); const draft = screen.getByLabelText("QA filter"); await fireEvent.input(draft, { target: { value: "keep me" } });
   expect(Object.keys(get(tabLayout).groups)).toHaveLength(1);
-  await fireEvent.click(screen.getByRole("button", { name: "Language QA panel tools" }));
-  await fireEvent.click(await screen.findByRole("menuitem", { name: "Dock above" }));
-  await fireEvent.click(await screen.findByRole("menuitem", { name: "Scripture editor" }));
+  expect(screen.queryByRole("button", { name: /panel tools/ })).toBeNull();
+  splitTab("paratext", groupOf(get(tabLayout), "editor")!, "top");
+  await tick();
   const layout = get(tabLayout);
   expect(Object.keys(layout.groups)).toHaveLength(2);
   expect(layout.tree).toMatchObject({ axis: "vertical", first: groupOf(layout, "paratext"), second: groupOf(layout, "editor") });
@@ -54,7 +57,9 @@ it("a tab dragged to the right edge of a group splits it there; dropped on anoth
 it("Escape cancels a drag without floating, closing or changing panel state", async () => {
   vi.stubGlobal("PointerEvent", MouseEvent); document.elementsFromPoint = () => [];
   render(Fixture); const before = structuredClone(get(sidePanels));
-  await fireEvent.pointerDown(screen.getByRole("button", { name: "Move Language QA" }), { button: 0, clientX: 40, clientY: 30 });
+  // The bar has no drag handle (#519): the tab is what drags.
+  expect(screen.queryByRole("button", { name: "Move Language QA" })).toBeNull();
+  await fireEvent.pointerDown(screen.getByRole("tab", { name: "Paratext" }), { button: 0, clientX: 40, clientY: 10 });
   await fireEvent.pointerMove(window, { clientX: 300, clientY: 200 });
   await fireEvent.keyDown(window, { key: "Escape" }); await fireEvent.pointerUp(window);
   expect(get(sidePanels)).toEqual(before); expect(get(editorTree)).toBeNull();

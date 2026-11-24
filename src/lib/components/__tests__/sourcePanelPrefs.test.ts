@@ -37,11 +37,34 @@ describe("the source-text column in the saved panel layout (#67)", () => {
     }));
     localStorage.setItem("bridge.editor.sidePanelOrder.v1", JSON.stringify(["review", "languageQa", "source", "reference", "paratext"]));
     const { sidePanels, sidePanelOrder, SIDE_PANEL_ORDER } = await freshPrefs();
-    expect(SIDE_PANEL_ORDER).toEqual(["source", "reference", "paratext", "review"]);
-    expect(Object.keys(get(sidePanels)).sort()).toEqual(["paratext", "reference", "review", "source"]);
+    expect(SIDE_PANEL_ORDER).toEqual(["source", "reference", "reference2", "reference3", "reference4", "paratext", "review"]);
+    // #519: the added reference tabs did not exist when this was saved; they come in closed, last in the order.
+    expect(Object.keys(get(sidePanels)).sort()).toEqual(["paratext", "reference", "reference2", "reference3", "reference4", "review", "source"]);
     expect(get(sidePanels).source).toEqual({ open: true, width: 333 });
-    expect(get(sidePanelOrder)).toEqual(["review", "source", "reference", "paratext"]);
+    expect(get(sidePanelOrder)).toEqual(["review", "source", "reference", "paratext", "reference2", "reference3", "reference4"]);
     expect(localStorage.getItem(KEY)).not.toContain("languageQa");
+  });
+
+  // #519: up to three reference tabs a reviewer adds, each with its own folder.
+  it("a layout saved before the added reference tabs gains them closed, and one saved with a folder keeps it", async () => {
+    localStorage.setItem(KEY, JSON.stringify({
+      source: { open: false, width: 320 }, reference: { open: true, width: 360 },
+      paratext: { open: false, width: 340 }, review: { open: true, width: 420 },
+    }));
+    const first = await freshPrefs();
+    expect(get(first.sidePanels).reference).toEqual({ open: true, width: 360 });
+    for (const id of first.REFERENCE_EXTRA_IDS) {
+      expect(get(first.sidePanels)[id], id).toEqual({ open: false, width: first.SIDE_PANEL_LIMITS.reference.initial });
+    }
+    first.setSidePanel("reference2", { open: true, folder: "D:/bibles/esv" });
+    const again = await freshPrefs();
+    expect(get(again.sidePanels).reference2).toMatchObject({ open: true, folder: "D:/bibles/esv" });
+    // Reset layout closes the tab; the reference stays in the rail's list.
+    again.resetPanelLayout();
+    expect(get(again.sidePanels).reference2).toEqual({ open: false, width: again.SIDE_PANEL_LIMITS.reference2.initial, folder: "D:/bibles/esv" });
+    // A folder that is not text is not a layout this version wrote: the defaults.
+    localStorage.setItem(KEY, JSON.stringify({ ...get(again.sidePanels), reference3: { open: false, width: 300, folder: 7 } }));
+    expect(get((await freshPrefs()).sidePanels).reference2.folder).toBeUndefined();
   });
 
   it("the column's open state is remembered in localStorage, like the other panels", async () => {

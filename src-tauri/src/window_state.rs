@@ -48,6 +48,19 @@ pub(crate) async fn reveal(app: &AppHandle, view: WebviewWindow) -> Result<(), S
     .map_err(|e| e.to_string())
 }
 
+/// Bring a window that is already showing to the front, where it stands: back
+/// from minimized, and focused. Unlike `reveal` it does not put the window
+/// back at its saved size and place, which the user may have changed since it
+/// was opened (the saved state is written when a window is hidden).
+pub(crate) async fn focus(app: &AppHandle, view: WebviewWindow) -> Result<(), String> {
+    on_main(app, move || -> tauri::Result<()> {
+        view.unminimize()?;
+        view.set_focus()
+    })
+    .await?
+    .map_err(|e| e.to_string())
+}
+
 /// Save every window's state, then hide this one.
 pub(crate) async fn save_and_hide(app: &AppHandle, view: WebviewWindow) -> Result<(), String> {
     let handle = app.clone();

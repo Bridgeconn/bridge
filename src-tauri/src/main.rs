@@ -57,6 +57,9 @@ fn main() {
                 .skip_initial_state(alignment_window::LABEL)
                 .skip_initial_state("panel-source")
                 .skip_initial_state("panel-reference")
+                .skip_initial_state("panel-reference2")
+                .skip_initial_state("panel-reference3")
+                .skip_initial_state("panel-reference4")
                 .skip_initial_state("panel-paratext")
                 .skip_initial_state("panel-review")
                 .build(),

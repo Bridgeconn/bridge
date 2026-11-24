@@ -83,6 +83,42 @@
         "dragDropEnabled": false
       },
       {
+        "label": "panel-reference2",
+        "decorations": false,
+        "url": "panel.html?panel=reference2",
+        "title": "Reference 2 · Bridge",
+        "width": 560,
+        "height": 640,
+        "minWidth": 360,
+        "minHeight": 320,
+        "visible": false,
+        "dragDropEnabled": false
+      },
+      {
+        "label": "panel-reference3",
+        "decorations": false,
+        "url": "panel.html?panel=reference3",
+        "title": "Reference 3 · Bridge",
+        "width": 560,
+        "height": 640,
+        "minWidth": 360,
+        "minHeight": 320,
+        "visible": false,
+        "dragDropEnabled": false
+      },
+      {
+        "label": "panel-reference4",
+        "decorations": false,
+        "url": "panel.html?panel=reference4",
+        "title": "Reference 4 · Bridge",
+        "width": 560,
+        "height": 640,
+        "minWidth": 360,
+        "minHeight": 320,
+        "visible": false,
+        "dragDropEnabled": false
+      },
+      {
         "label": "panel-paratext",
         "decorations": false,
         "url": "panel.html?panel=paratext",

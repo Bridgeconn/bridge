@@ -1,5 +1,39 @@
 # Decisions
 
+## 2026-11-24 — More reference tabs for reading; Language QA keeps the project's one reference (#519)
+
+**Decision:** the team asked to read more than one reference Bible beside the text
+(relayed by Joel, who settled the details on 2026-11-24). A reviewer can add up to
+three reference tabs beside the project's own, four in all, each showing a folder of
+its own. They are for reading only. The project's reference Bible is unchanged: one
+folder per project or collection (#289), kept by the engine, set from the first
+reference tab or Settings > Language QA, and the only one Language QA checks
+quotations against, counts OV occurrences in and builds related words from.
+**Status:** on branch `reference-tabs-519`, not merged; Joel tests the desktop app
+first.
+**How:** an added tab is a fixed panel id (`reference2` to `reference4`), because
+every saved layout and every separate window is keyed by a known id. Its folder is
+kept in the panel's saved state, in the project's workspace on this computer
+(`localStorage`), per user. The engine keeps nothing: `languageQa.reference` takes
+an optional `folder`, reads it through the same loader and disk cache as the
+project's own, writes no setting and does not rebind Language QA.
+**Because:** comparing against two versions meant changing the one folder back and
+forth, and each change also changed what Language QA checked against.
+**Rules out:** an added tab's folder reaching Language QA, the AI evidence path or
+any check; a hub request naming a folder to read (refused: the folder is on the
+engine's computer, and the caller would be another device); storing the added
+folders in the engine's settings or a database; more than four without declaring a
+window for each (a separate window cannot be made while the app runs).
+**Not decided here:** #371's second reference (a bundled English BSB kept by the
+engine, also feeding AI evidence). This stores nothing engine-side and does not block
+it. Whether the added folders should follow a user to another computer is also open;
+today they do not.
+**Also in #519, not a policy matter:** the four side panels' header loses its drag
+handle, its tools menu (Move to separate window, Dock left / right / above / below)
+and its Close, and gains one "Move to separate window" icon. Placing a panel by
+keyboard through the Dock entries goes with the menu; a tab still drags, and the tab
+strip keeps Split right. Raised here so the loss is on record.
+
 ## 2026-11-23 — Sign in with ChatGPT as an optional AI provider (#506)
 
 **Decision:** Benz asked for a ChatGPT account sign-in (relayed by Joel, 2026-11-23).
