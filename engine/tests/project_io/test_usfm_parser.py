@@ -9,7 +9,7 @@ import pytest
 
 from tc_ai_bridge.project_import import parse_scripture_file
 from tc_ai_bridge.usfm import whitespace_tokens
-from tc_ai_bridge.usfm_parser import HEADING_MARKERS, UsfmParseError, parse_usfm
+from tc_ai_bridge.usfm_parser import HEADING_MARKERS, TITLE_MARKER, UsfmParseError, opening_paragraphs, parse_usfm
 
 
 def _verses(parsed):
@@ -84,11 +84,124 @@ def test_headings_are_filed_against_the_verse_they_introduce():
         "\\id TIT\n\\c 1\n\\s Opening\n\\p\n\\v 1 a\n\\v 2 b\n\\s The work\n\\p\n\\v 3 c\n\\s Trailing\n"
         "\\c 2\n\\p\n\\v 1 d\n"
     )
+    # #507: a heading after a chapter's last verse introduces the NEXT chapter.
+    # It used to be filed a verse early, under 1:3, and was drawn above it.
     assert [(h.chapter, h.verse, h.text) for h in parsed.headings] == [
-        ("1", "1", "Opening"), ("1", "3", "The work"), ("1", "3", "Trailing"),
+        ("1", "1", "Opening"), ("1", "3", "The work"), ("2", "1", "Trailing"),
     ]
     assert _verses(parsed)[("1", "2")] == "b"
     assert _verses(parsed)[("1", "3")] == "c"
+    # Each heading knows where it sits in the source, marker to next block.
+    source = (
+        "\\id TIT\n\\c 1\n\\s Opening\n\\p\n\\v 1 a\n\\v 2 b\n\\s The work\n\\p\n\\v 3 c\n\\s Trailing\n"
+        "\\c 2\n\\p\n\\v 1 d\n"
+    )
+    assert [source[h.offset:h.end] for h in parsed.headings] == ["\\s Opening\n", "\\s The work\n", "\\s Trailing\n"]
+
+
+def test_a_heading_after_the_books_last_verse_is_filed_against_that_verse():
+    """Nothing follows it to introduce; filing it there beats losing it."""
+    parsed = parse_usfm("\\id TIT\n\\c 1\n\\p\n\\v 1 a\n\\c 2\n\\p\n\\v 1 b\n\\s At the very end\n")
+    assert [(h.chapter, h.verse, h.text) for h in parsed.headings] == [("2", "1", "At the very end")]
+    assert _verses(parsed)[("2", "1")] == "b"
+
+
+def test_a_heading_before_the_first_chapter_opens_chapter_1_and_is_not_a_header():
+    parsed = parse_usfm("\\id PSA\n\\h Psalms\n\\mt Psalms\n\\ip About.\n\\ms BOOK ONE\n\\c 1\n\\q1\n\\v 1 a\n")
+    assert [(h.chapter, h.verse, h.tag, h.text) for h in parsed.headings] == [("1", "1", "ms", "BOOK ONE")]
+    assert [h.tag for h in parsed.headers] == ["id", "h", "mt", "ip"]
+    # A header line knows its place too, so an edited introduction line can
+    # be written back there.
+    about = next(h for h in parsed.headers if h.tag == "ip")
+    assert "\\id PSA\n\\h Psalms\n\\mt Psalms\n\\ip About.\n\\ms BOOK ONE\n"[about.offset:about.end] == "\\ip About.\n"
+
+
+def test_a_title_before_verse_1_is_filed_with_that_verses_headings():
+    """#507: between `\\c` and the first `\\v` a `\\d` is in no verse, so it
+    was stored nowhere but the preserved source. After a `\\v` it stays in
+    that verse's text, as before."""
+    parsed = parse_usfm(
+        "\\id PSA\n\\c 3\n\\d A Psalm of David\n\\q1\n\\v 1 a\n\\d Inside verse one\n\\q1\n\\v 2 b\n"
+        "\\c 4\n\\s A heading\n\\d To the choirmaster\n\\q1\n\\v 1 c\n"
+    )
+    assert [(h.chapter, h.verse, h.tag, h.text) for h in parsed.headings] == [
+        ("3", "1", TITLE_MARKER, "A Psalm of David"),
+        ("4", "1", "s", "A heading"), ("4", "1", TITLE_MARKER, "To the choirmaster"),
+    ]
+    assert _verses(parsed)[("3", "1")] == "a\n\\d Inside verse one\n\\q1"
+    assert TITLE_MARKER not in HEADING_MARKERS
+    # The title is not the paragraph verse 1 opens in.
+    assert opening_paragraphs(
+        "\\id PSA\n\\c 3\n\\d A Psalm of David\n\\q1\n\\v 1 a\n\\c 4\n\\d Only a title\n\\v 1 c\n", "3", ["1"],
+    ) == {"1": "q1"}
+    assert opening_paragraphs(
+        "\\id PSA\n\\c 3\n\\d A Psalm of David\n\\q1\n\\v 1 a\n\\c 4\n\\d Only a title\n\\v 1 c\n", "4", ["1"],
+    ) == {}
+
+
+_POETRY = (
+    "\\id PSA\n\\h Psalms\n"
+    "\\c 3\n\\d A Psalm of David\n\\q1\n\\v 1 Lord, how\n\\q2 many are they\n\\q1\n"
+    "\\v 2 Many say\n\\b\n\\q1\n\\v 3 But you\n\\s The Lord answers\n\\r (Ps 4)\n\\q1\n"
+    "\\v 4 I cried\n\\q2 and he heard\n\\s Prose now\n\\p\n\\v 5 I lay down\n"
+    "\\c 4\n\\q1 \\v 1 mid-line verse\n\\q2 second\n\\p \\v 2 prose\n\\v 3-4 bridge\n\\s Late\n\\q1\n\\v 5a lettered\n"
+    "\\c 5\n\\s Heading only\n\\v 1 no paragraph marker\n"
+)
+
+
+def test_opening_paragraphs_reads_what_no_stored_verse_holds():
+    """#507: the marker before a chapter's first verse, and the one after a
+    section heading, are outside every verse's stored text."""
+    assert opening_paragraphs(_POETRY, "3", ["1", "4", "5"]) == {"1": "q1", "4": "q1", "5": "p"}
+    # A verse no heading precedes is left to the reader's carry-forward, even
+    # when asked for: its opener is the last marker of the verse before it,
+    # which an edit can change.
+    assert opening_paragraphs(_POETRY, "3", ["1", "2", "3", "4", "5"]) == {"1": "q1", "4": "q1", "5": "p"}
+    assert opening_paragraphs(_POETRY, "3", ["4"]) == {"4": "q1"}
+
+
+def test_opening_paragraphs_agrees_with_the_whole_book_parse():
+    parsed = parse_usfm(_POETRY)
+    full = {
+        (item.chapter, item.verse): item.marker
+        for item in parsed.structure
+        if item.kind == "para" and item.verse and item.marker not in HEADING_MARKERS
+    }
+    assert opening_paragraphs(_POETRY, "4", ["1", "5a"]) == {"1": full[("4", "1")], "5a": full[("4", "5a")]}
+    assert full[("4", "1")] == "q1" and full[("4", "5a")] == "q1"
+
+
+def test_opening_paragraphs_leaves_out_what_the_source_does_not_say():
+    # A heading with no paragraph marker after it, a chapter that is not in
+    # the book, a verse that is not in the chapter, and no verses at all.
+    assert opening_paragraphs(_POETRY, "5", ["1"]) == {}
+    assert opening_paragraphs(_POETRY, "9", ["1"]) == {}
+    assert opening_paragraphs(_POETRY, "3", ["99"]) == {}
+    assert opening_paragraphs(_POETRY, "3", []) == {}
+
+
+def test_opening_paragraphs_on_a_real_book_matches_the_whole_book_parse(tamil_luk_usfm):
+    source = tamil_luk_usfm.read_text(encoding="utf-8-sig").replace("\r\n", "\n")
+    parsed = parse_usfm(source)
+    full = {
+        (item.chapter, item.verse): item.marker
+        for item in parsed.structure
+        if item.kind == "para" and item.verse and item.marker not in HEADING_MARKERS
+    }
+    first_verse: dict[str, str] = {}
+    for verse in parsed.verses:
+        first_verse.setdefault(verse.chapter, verse.verse)
+    headed: dict[str, list[str]] = {}
+    for heading in parsed.headings:
+        headed.setdefault(heading.chapter, []).append(heading.verse)
+    found = 0
+    for chapter, first in first_verse.items():
+        openers = opening_paragraphs(source, chapter, [first, *headed.get(chapter, [])])
+        assert openers.get(first) == full[(chapter, first)]
+        for verse, marker in openers.items():
+            assert marker == full[(chapter, verse)], (chapter, verse)
+        found += len(openers)
+    assert found > 100
 
 
 def test_descriptive_title_stays_in_the_verse():

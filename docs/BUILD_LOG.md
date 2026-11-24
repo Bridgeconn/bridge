@@ -26383,6 +26383,256 @@ at hand; Joel will check on the installed build). The QA matrix's manual desktop
 for the new editor layout and alignment tabs beyond what Joel tested by hand during
 the pass.
 
+## 2026-11-23 — #507 part 1: poetry lines, Selah, `\r` and an in-verse `\d` in the reader
+
+Branch `usfm-editor-507`, cut from `main` at 6ea7d40 on Joel's instruction. #507 asks
+for display and editing of `\s \ms \ms1 \r \d \q \q1-3 \qs \k \is \ip \iot \io1`. This
+is the first of its six parts: display of what is inside a verse. It writes nothing.
+
+**What was wrong.** `display` had no paragraph field, so the reader could not tell
+`\q1` from `\q2`. The line break survived in `display.plain` as `\n` and the reader's
+CSS collapsed it, so poetry read as prose. `\r` looked exactly like `\s`, and because
+every heading sticks at the same place, a stuck `\r` covered the `\s` above it.
+
+**Engine.**
+- `usfm_verse.lift_verse` records each paragraph marker inside a verse in `paras`
+  (`[{marker, position}]`, `position` a code point into `plain` where that paragraph's
+  content starts). `PARAGRAPH_MARKERS` is the one list. A marker with nothing after it
+  is recorded too: the `\q1` a stored verse ends with is the paragraph the next verse
+  opens in. `display` gains `paras`; nothing else in it changed.
+- Two paragraph markers are in no stored verse string: the one before a chapter's
+  first verse, and the one after a section heading (#180 cuts the heading out of the
+  verse before it, and the bare `\q1` line goes with it).
+  `usfm_parser.opening_paragraphs` reads those from the preserved `<book>.usfm`. It
+  parses only the text between the previous `\v` (or the `\c`) and each wanted verse,
+  as one small document through `parse_usfm`, so the cost does not grow with the book.
+  `chapter.verseData` returns them as `openers` (`{verse: marker}`); `{}` when the
+  project has no preserved source.
+- Measured on the Tamil IRV Luke: 135 openers over 24 chapters in 84 ms (3.5 ms a
+  chapter), every one equal to what the whole-book parse says.
+
+**Frontend.**
+- `utils/verseLines.ts`: `openingParas` carries the last paragraph marker down the
+  chapter, the engine's `openers` winning where it has one; `splitIntoLines` groups a
+  verse's pieces into lines. No character is added, dropped or moved, because every
+  selection and finding offset counts characters of the verse body.
+- `VerseLineWrap.svelte` puts one block per line, classed `pl-q1`, `pl-q2`, `pl-d` ...
+  A verse that is one line of ordinary prose gets no wrapper at all, so its DOM is what
+  it was.
+- `\qs` floats to the end of its line. `\r`, `\mr`, `\sr` headings are lighter, italic
+  and do not stick. The change-history and Paratext marks moved inside the last line,
+  so they stay on it.
+- New store `paraOpenersByVerse`, filled from `chapter.verseData` and cleared on a book
+  switch.
+
+**A bug the new tests caught before commit.** Svelte kept template whitespace between
+pieces as a space once the inner `{#each}` no longer had whitespace around it, which
+would have shifted every selection offset in a poetry verse by one per piece. The
+pieces loop is now written with no whitespace inside it, and a test reads the verse's
+text back and compares it with the engine's `plain`.
+
+**Run and watched (2026-11-23, Windows, Python 3.12).**
+- Engine, `pytest -n auto --basetemp=C:/t507/bt`: 5,961 passed, 14 failed, 4 skipped,
+  3 xfailed. Of the 14: 12 are `tests/semantic/test_semantic_mapping_stage3.py`, which
+  need the git-ignored Stage 3 database (absent on this machine). One was this change:
+  `test_correction_case_c_production.py` pins the exact key set of `display`; it now
+  lists `paras` and passes. One, `test_paratext_decided_policy_protocol.py::
+  test_a_verified_paratext_resolve_closes_...`, failed in the parallel run and passed
+  run alone; it touches nothing here. Reported, not fixed.
+- A first run without `--basetemp` gave 39 failures, the path-limit ones of #504 among
+  them.
+- New engine tests: `paras` against usfmtc's own paragraphs for every verse of both
+  IRV fixtures (50 of Luke's verses carry one), `opening_paragraphs` against the
+  whole-book parse on Luke, and `chapter.verseData` through a real import.
+- Frontend: `npm run check` 0 errors 0 warnings; `npm run test` 140 files, 1,378
+  passed; `npm run build` completed.
+
+**Not run.** `scripts/build-sidecars.ps1` and `scripts/smoke_sidecars.py`: the frozen
+pair has not been rebuilt, so the frozen engine is not proven to send `paras` or
+`openers`. `cargo check` / `cargo test`: no Rust file changed. The desktop app.
+
+**Not verified (jsdom does not lay out). For Joel at 1366x768:** the indent of `\q1`,
+`\q2`, `\q3` and the deeper continuation of a wrapped line; "Selah" at the far end of
+its line, and where it goes when the line is full; the `\r` line scrolling away while
+its `\s` stays stuck; the ↺ and PT marks on the last line of a poetry verse; a
+right-to-left project.
+
+**Known gaps, left for the later parts of #507.** A `\d` before verse 1, a `\ms` before
+a `\c`, and the book introduction are still not shown. `AlignmentModal`,
+`TranslationHelpsReview` and `VerseHistoryPopover` show `display.plain` and do not draw
+lines. A project with no preserved source draws a chapter's first verse and each verse
+after a heading as prose.
+
+## 2026-11-23 — #507 part 2: a marker toolbar in the verse edit box (`\k`, `\qs`, poetry lines)
+
+Same branch, on top of e1c5313. The second of #507's six parts, and the only editing
+part that needs no decision: it adds no writer. The edit box still holds the raw
+stored string and still saves through `verse.edit`.
+
+**What it does.** A toolbar over the edit box: Keyword, Selah, `\q` `\q1` `\q2` `\q3`,
+Break line, Join line.
+- Keyword and Selah wrap the selection in `\k … \k*` or `\qs … \qs*`. The same button
+  takes the mark off when the selection or the cursor is inside one.
+- A level button changes the marker of the line the cursor is on.
+- Break line starts a line at the cursor, at the level of the line it is on. At the
+  end of the verse it adds the marker the next verse opens in.
+- Join line removes the marker of the cursor's line, so it runs on from the line above.
+
+**Why the engine does it.** Finding a marker in a verse string is `usfm_verse`'s job
+(gotcha 14), so the edits are `toggle_style`, `set_line_level`, `break_line` and
+`join_line` there, behind one new RPC, `verse.markup {text, action, marker, start, end,
+opening}`. It takes the editor's unsaved string and answers `{text, start, end,
+changed, reason}`. It reads no project and writes nothing; it is classified `READ` in
+`authorization.METHOD_ACTIONS`. `ParaMark` gained `raw_start`/`raw_end` (not in the
+payload) so the edits know where each marker token is.
+
+**The one rule.** No marker edit changes the verse's words. Every result is compared
+with the input by its plain text (`_same_words`) and refused with a reason if it
+differs. Refusals a reviewer will meet:
+- A level or a join on the verse's first line. That line has no marker of its own: its
+  level is the marker that ends the verse before it. To change it, put the cursor on
+  that verse's last line and press a level. The first verse of a chapter, and a verse
+  after a heading, take theirs from the preserved source and cannot be changed here.
+- A break inside a word, inside a marker or a note, or where a line already starts.
+- A style over a selection that has a marker or a note in it, or inside another style
+  (that needs the nested `\+k` form, which this does not write).
+
+**Frontend.** `verseEditor.applyVerseMarkup` converts the textarea's UTF-16 selection
+to code points, calls the engine, puts the answer in the textarea and restores the
+selection. An answer for text that was typed over meanwhile is dropped. A refusal shows
+the engine's reason under the edit box. `mousedown` on a tool is cancelled so a click
+does not take the selection out of the textarea.
+
+**Run and watched (2026-11-23, Windows, Python 3.12).**
+- Engine, `pytest -n auto --basetemp=C:/t507/bt5`: 5,977 passed, 12 failed, 4 skipped,
+  3 xfailed. All 12 are `tests/semantic/test_semantic_mapping_stage3.py`, which need
+  the git-ignored Stage 3 database (absent on this machine). The Paratext test that
+  failed once in the part 1 run passed here.
+- New engine tests: each edit and each refusal by hand; a sweep over every 12th verse
+  of both IRV fixtures asserting that no edit at any of three cursor positions changes
+  the words, leaves a selection out of range, or adds a reader warning; `verse.markup`
+  through the dispatcher with and without an open project;
+  `test_every_engine_method_is_classified` covers the new method.
+- Frontend: `npm run check` 0 errors 0 warnings; `npm run test` 140 files, 1,387
+  passed; `npm run build` completed.
+
+**Not run.** The frozen sidecars (`build-sidecars.ps1`, `smoke_sidecars.py`); `cargo`
+(no Rust file changed: `verse.markup` answers in milliseconds, so it needs no timeout
+arm in `sidecar.rs`); the desktop app.
+
+**Not verified. For Joel at 1366x768:** that the toolbar wraps cleanly over a narrow
+edit box; that a click on a tool keeps the selection in the textarea in the real
+WebView; that the edit box grows after Break line.
+
+**Known limits.** A marker edit replaces the textarea's text from code, which empties
+the browser's own Ctrl+Z history for that box; each tool is undone by its opposite
+(Keyword twice, Break then Join) or by Cancel. The first line's level cannot be set
+from the verse itself, as above.
+
+**Still open in #507.** Part 3 (showing a `\d` before verse 1, a `\ms` before a `\c`
+and the book introduction) and parts 4 to 6 (editing headings, the Psalm title and the
+introduction). Parts 4 to 6 each need the maintainer's decision first: a heading edit
+from the editor is a new caller of `apply_heading_edit`, an introduction edit is a new
+writer, and a `\d` before verse 1 is a Scripture-write question.
+
+## 2026-11-23 — #507 parts 3 to 6: headings, psalm titles and the introduction, shown and edited
+
+Same branch, on top of 374d754. Joel took the three decisions these parts needed, for
+the team, while the maintainer was on leave (`docs/DECISIONS.md` 2026-11-23). With this
+every marker #507 lists is both shown and editable in the editor.
+
+**Parser (`usfm_parser.py`).**
+- A heading after a chapter's last verse stays pending and is filed against the next
+  chapter's first verse. It used to be filed a verse early, which drew `\ms BOOK TWO`
+  above the last verse of Psalm 41. Only a heading after the book's last verse is still
+  filed against that verse.
+- A heading before the first `\c` is a heading of chapter 1's first verse, not a header
+  line. `\ms BOOK ONE` over Psalm 1 was in `headers.json` and was never drawn.
+- A `\d` between `\c` and the chapter's first `\v` is filed with that verse's headings
+  under tag `d` (`TITLE_MARKER`). It was in no verse and no heading: kept only in the
+  preserved source, not shown, not editable. A `\d` after a `\v` is unchanged.
+- `UsfmHeading` and `UsfmHeader` carry their place in the source (`offset`, `end`), so
+  an export can write an edited one back.
+- `opening_paragraphs` no longer counts a title before verse 1 as the paragraph that
+  verse opens in. `INTRODUCTION_MARKERS` is the one list of introduction paragraphs.
+
+**Engine.**
+- `heading.edit {chapter, verse, index, newText, expectedOldText}`: the text of one
+  heading or title, through the existing `apply_heading_edit`. Language QA's scan of the
+  chapter is invalidated, because it reads headings.
+- `book.introduction`: the introduction lines from `headers.json`, each with the same
+  `display` payload a verse has. A project with no `headers.json` is read from its
+  preserved source by `identify_usfm`.
+- `book.introduction.edit {index, newText, expectedOldText}`: one line's text, through
+  the new `TranslationCoreProject.apply_header_edit` (a backup, a journal transaction
+  with the before and after, rollback on failure, refusal on a stale text). Introduction
+  markers only.
+- Both edits collapse whitespace as the import does and refuse a text holding a marker
+  that would start a new block (`\c`, `\v`, `\p`, `\q1`, `\s`, `\ip` ...). Unbalanced
+  inline markers are reported with the save and do not block it, as for a verse.
+- Export (`_source_preserving_usfm`): a heading, title or introduction line that
+  differs from the source is written back in its own place, keeping the blank lines the
+  block ended with. This also fixes headings changed through the Paratext review queue,
+  which Bridge's own export used to drop. A verse whose stored headings do not match
+  the source by count is left as the source has it.
+- `heading.edit` and `book.introduction.edit` are `WRITE`, `book.introduction` is `READ`.
+
+**Frontend.**
+- `HeadingRow.svelte` draws each heading (it took the heading styles from `VerseList`)
+  and edits it in place: a pencil, a one-line box, Enter to save, Esc to cancel. The
+  heading's accessible name is its text alone (`aria-labelledby`), so the button inside
+  it is not read as part of the heading. A title (`\d`) is italic at the verse's size
+  and, like `\r`, does not stick.
+- `BookIntroduction.svelte` shows the introduction above the book's first chapter:
+  titles, headings, paragraphs and the outline's levels, with the character styles the
+  engine reports and a callout for a footnote. It folds away (remembered, open by
+  default). A line is edited as its stored string, like a verse; Ctrl+Enter saves.
+
+**Run and watched (2026-11-23, Windows, Python 3.12).**
+- Engine, `pytest -n auto --basetemp=C:/t507/bt8`: 5,993 passed, 12 failed, 4 skipped,
+  3 xfailed. All 12 are `tests/semantic/test_semantic_mapping_stage3.py` (the absent
+  Stage 3 database). Neither golden moved.
+- One existing test was changed on purpose:
+  `test_headings_are_filed_against_the_verse_they_introduce` pinned the old
+  "a verse early" filing and now pins the new one.
+- New engine tests: `tests/service/test_heading_and_introduction_edit.py` (13, through a
+  real import and the dispatcher), among them an untouched book exporting byte for byte
+  and eight edits exported with nothing else moved; four new parser tests.
+- Frontend: `npm run check` 0 errors 0 warnings; `npm run test` 142 files, 1,410
+  passed; `npm run build` completed.
+- Frozen: `scripts/build-sidecars.ps1`, then `scripts/smoke_sidecars.py
+  engine/dist/bridge-engine.exe` passed. The smoke test does not call anything new, so
+  the frozen `bridge-engine.exe` was also driven over stdio by hand with a small Psalms
+  import: `verse.markup`, `display.paras`, `openers`, the title and `\ms` filing,
+  `book.introduction`, `heading.edit` on a heading and on a title,
+  `book.introduction.edit`, a refused block marker, and an export compared with the
+  expected file. 12 of 12 passed. This covers parts 1 and 2 as well, which had not been
+  run frozen.
+
+**Not run.** `cargo check` / `cargo test` (no Rust file changed; none of the new calls
+is slow enough to need a timeout arm). The desktop app: a dev app started at 15:15 from
+other work was still running with the old engine and was left alone.
+
+**Not verified. For Joel at 1366x768:** the pencil on a heading (faint, clear on hover)
+and the edit box in its place; a title above verse 1; `\ms` at the top of the chapter it
+opens; the introduction's indents, its fold, and its edit box growing with the text; a
+right-to-left project.
+
+**What a reviewer will notice.**
+- A project imported before this build must be imported again to get the title before
+  verse 1 and the new `\ms` placement. The introduction, the poetry lines and the edits
+  work on an existing project.
+- The Paratext review queue's introduction region is unchanged: it still writes to
+  Paratext only and does not touch `headers.json`. A heading that sits before a `\c` may
+  no longer be found by a Paratext heading proposal anchored at the verse before it,
+  which then becomes review-only. Read from the code, not tried against a host.
+
+**Left out of #507, on purpose.** Adding or removing a heading, a title or an
+introduction line, and changing a marker (the issue's open question; the decision covers
+text only). Poetry lines in `AlignmentModal`, `TranslationHelpsReview` and
+`VerseHistoryPopover`, which still show `display.plain`. `\cl` and `\cd` between `\c`
+and verse 1, which were not asked for.
+
 ## 2026-11-23 — Sign in with ChatGPT, step A: a test script, no app change (#506)
 
 Branch `chatgpt-signin`, not `main`: Joel asked for this work on a branch, merged
@@ -26738,3 +26988,50 @@ after a sign-in made with the editor open, Cancel); which items he ran was not
 itemised. Two cases cannot be produced at will and should be read as still
 unconfirmed unless he says otherwise: the plan's limit actually being reached, and
 a sign-in renewed after sitting unused for hours.
+
+## 2026-11-24 — #509 merged to main; main merged into `chatgpt-signin` (#506, PR #508)
+
+**PR #509 (the editor work, #507) was merged into `main`** as 733402d, with a merge
+commit, on Joel's instruction after he had the team's approval. Its CI was not
+green at the time: `frontend` had passed, and `engine` shows as cancelled. That was
+not a test failure. The job has `timeout-minutes: 60` and was cut off at exactly
+sixty minutes; the PR records the suite passing locally (5,993 passed, the 12
+Stage 3 database tests failing). Issue #507 closed with the merge and its board
+card is on Done.
+
+**A restore point.** Joel asked for a copy of `main` before the next merge:
+`copyMain` (local and on GitHub) is `main` at 733402d, after #509 and before #508.
+`main` before #509 is the `v0.26.0` tag, 6ea7d40.
+
+**`main` was then merged into `chatgpt-signin`**, so that PR #508 merges without a
+conflict. Both branches had changed eight files (`CLAUDE.md`, this file,
+`docs/DECISIONS.md`, `bridge_service.py`, `authorization.py`, `App.svelte`,
+`bridgeClient.ts`, `types/finding.ts`). Seven merged as text with both sides'
+additions present; that was read, not assumed, for the three that are lists both
+sides add to (the method table in `authorization.py`, the `EngineMethod` union,
+the `Methods` constants and dispatch arms). The one conflict was this file, where
+both branches had appended entries at the end: both sets are kept, `main`'s #507
+entries first as they stand on `main`, then this branch's #506 entries. Nothing
+that is on `main` was removed.
+
+**Run, on the merged tree, before the merge was committed.**
+
+- Engine, `pytest -n auto` with a short `--basetemp`: 6,046 passed, 12 failed, 4
+  skipped, 3 xfailed. All 12 are `tests/semantic/test_semantic_mapping_stage3.py`,
+  which need the git-ignored Stage 3 database absent on this machine. The suite ran
+  on an otherwise idle machine and nothing else failed.
+- Frontend: `npm run check` 0 errors 0 warnings; `npm run build` passed;
+  `npm run test` 142 files, 1,421 passed.
+
+**Not run, not verified.**
+
+- `cargo check` / `cargo test`: neither branch changes a Rust file.
+- The two features together in the desktop app: the ChatGPT sign-in beside the #507
+  editor (headings, psalm titles, poetry lines, the marker toolbar).
+
+**Noticed, not fixed: the CI engine job is at its time limit.** `ci.yml` gives the
+serial engine suite 60 minutes. On PR #508 it took 50 minutes, then 59 minutes 10
+seconds; on PR #509 it was cancelled at 60. Each merge adds tests, so the job will
+now time out more often than it finishes, and a cancelled job reads as a red PR
+whatever the tests would have said. Raising `timeout-minutes` is a one-line change
+outside this task; raised with Joel.

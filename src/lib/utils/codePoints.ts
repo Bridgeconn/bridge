@@ -13,3 +13,8 @@ export function codePointToUtf16(text: string, codePointOffset: number): number 
   }
   return units;
 }
+
+/** The inverse: a UTF-16 index (a textarea's selectionStart) as a code-point offset. */
+export function utf16ToCodePoint(text: string, utf16Offset: number): number {
+  return Array.from(text.slice(0, Math.max(0, utf16Offset))).length;
+}

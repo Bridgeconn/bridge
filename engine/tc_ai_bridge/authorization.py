@@ -151,7 +151,7 @@ _READ = (
     "languageQa.reference", "languageQa.related",
     "checks.status",
     "team.roles",
-    "verse.get", "verse.history", "check.listForVerse", "check.validateSelection", "check.loadChapterFindings",
+    "verse.get", "verse.history", "verse.markup", "book.introduction", "check.listForVerse", "check.validateSelection", "check.loadChapterFindings",
     "alignment.get", "alignment.getRange", "alignment.gapScan", "alignment.crossVerse.propose",
     "alignment.autoAlign.verdict", "alignment.autoAlign.status", "alignment.autoAlign.estimate",
     "alignment.status", "alignment.backups", "alignment.resetStatus", "alignment.resetChapter.status", "alignment.resetChapter.preview",
@@ -211,6 +211,8 @@ _WRITE = (
     # #80: a sync pass writes pulled rows; settling a conflict is a decision.
     "hub.syncNow", "hub.resolveConflict",
     "verse.decide", "verse.edit", "check.saveSelection", "check.clearSelection",
+    # #507: the text of a heading, a psalm title before verse 1, an introduction line.
+    "heading.edit", "book.introduction.edit",
     "alignment.crossVerse.link", "alignment.crossVerse.unlink", "alignment.null.set", "alignment.null.clear",
     "alignment.autoAlign.revert", "alignment.realign", "alignment.unalign", "alignment.save",
     "alignment.resetChapter.start", "alignment.resetChapter.step", "alignment.resetChapter.cancel",

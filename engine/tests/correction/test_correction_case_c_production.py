@@ -146,4 +146,5 @@ def test_real_case_c_survives_help_resource_revision_and_affected_reanalysis(
     canonical = result_metadata["canonicalEdit"]
     assert canonical["newText"] == project.target_verse_text("1", "6")
     assert canonical["display"]["plain"].startswith(f"{CORRECTED_WORD} remembrance")
-    assert set(canonical["display"]) == {"plain", "notes", "removed", "styles", "warnings"}
+    # `paras` (#507): the paragraph and poetry markers inside the verse.
+    assert set(canonical["display"]) == {"plain", "notes", "removed", "styles", "warnings", "paras"}

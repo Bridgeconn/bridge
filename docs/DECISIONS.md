@@ -1659,3 +1659,89 @@ so the confirmation is its only guard there.
 **Revisit when:** another model is approved as the review default; the approved
 name is in two places (`DEFAULT_REVIEW_MODEL`, `APPROVED_REVIEW_MODEL` in
 `SettingsModal.svelte`) and the confirmation quotes the #469 figures.
+
+## 2026-11-23 — Headings, psalm titles and the introduction are edited from the editor (Joel, for the team, #507)
+
+**Who decided, and its standing.** Joel, with the team, while the maintainer
+(Revant) was on long leave. CLAUDE.md lists each of the three points below under
+"Stop and ask before writing any code" and names the maintainer as the one to
+ask. He could not be asked, so this is the team's decision in his absence, and
+he should look at it again when he is back.
+
+**Decision:** three things, all for #507 (every listed marker is both shown and
+editable in the editor).
+
+1. **A heading's text is edited from the editor.** `heading.edit` is a new
+   caller of `TranslationCoreProject.apply_heading_edit`, which until now only
+   the Paratext review queue called. It covers `\s`, `\ms`, `\ms1`, `\r` and
+   their kin. Text only: the marker is not changed and no heading is added or
+   removed.
+2. **A psalm title before verse 1 is kept, shown and edited.** A `\d` between
+   `\c` and the chapter's first `\v` is in no verse; it was stored nowhere but
+   the preserved source and could not be seen. The parser now files it with the
+   first verse's headings under tag `d`, and it is edited through the same
+   `heading.edit`. A `\d` after a `\v` is unchanged: it stays in that verse's
+   text, as #180 decided.
+3. **Bridge shows and edits the book's introduction.** `book.introduction`
+   reads the introduction lines (`\imt`, `\is`, `\ip`, `\iot`, `\io1` ...) from
+   `<book>/headers.json`, which the import has always written and nothing read.
+   `book.introduction.edit` changes the text of one line through a new writer,
+   `apply_header_edit`: journalled with a backup and the before and after,
+   refused when the line changed meanwhile, introduction markers only, no
+   marker change, no line added or removed.
+
+Two things follow from these and are part of the decision:
+
+- **Where a heading is filed.** A heading after a chapter's last verse now
+  introduces the next chapter's first verse, and a heading before the first
+  `\c` introduces chapter 1's. So `\ms BOOK TWO` before `\c 42` is drawn at the
+  top of Psalm 42, not above the last verse of Psalm 41, and `\ms BOOK ONE`
+  before `\c 1` is drawn at all.
+- **Export writes these edits.** `_source_preserving_usfm` used to copy every
+  heading and introduction line from the preserved source, so a heading changed
+  in Bridge (through the Paratext review queue, until now) was missing from
+  Bridge's own export. A heading, title or introduction line that differs from
+  the source is now written back in its own place. One that was not changed is
+  not touched: an unedited book still exports byte for byte.
+
+**Because:** the requirement is that a reviewer can read and correct these in
+the editor. A psalm's title and a book's introduction are the team's translated
+text; before this they were invisible in Bridge and could be changed only by
+editing the USFM file outside it. Poetry and titles are most of what a reviewer
+looks at in Psalms.
+
+**Reverses:**
+- #180's "a heading after a chapter's last verse is filed a verse early".
+- The part of the 2026-11-03 entry that says the introduction is Paratext-only
+  because "Bridge keeps no copy" of it. Bridge does keep a copy and now edits
+  it. The Paratext review queue's introduction region is **not** changed by
+  this: it still writes to Paratext only and does not touch `headers.json`.
+  Making the two agree is a separate question.
+- CLAUDE.md's "`\d` is deliberately NOT split out", for the one position where
+  there is no verse to keep it in.
+
+**Rules out:**
+- A second Scripture writer. A verse's text is still written only by
+  `apply_scripture_edit`. A title before verse 1 is the translation's own text,
+  but it is in no verse: its words were not alignable target words before and
+  are not now, and no check that reads verse text reads it.
+- Changing a marker, or adding or removing a heading or an introduction line,
+  from the editor.
+- Anything automatic. Each change is a reviewer's own save on text they see.
+
+**Costs, known when this was taken:**
+- A project imported before this keeps its old filing: a title before verse 1
+  is not shown, and a heading before a `\c` is still drawn a verse early, until
+  the book is imported again. Nothing is migrated (pre-release amendment,
+  CLAUDE.md).
+- For such a project, export leaves alone any verse whose stored headings do
+  not line up with the source by count, so it cannot write the wrong heading.
+- A Paratext heading proposal is looked up among the headings of the note's
+  verse. For a heading that sits before a `\c`, that lookup may now miss
+  Bridge's copy and the proposal becomes review-only. Read from the code; not
+  tried against a Paratext host.
+
+**Revisit when:** the maintainer is back; when Bridge has its first real user
+(re-import is then no longer free, and the heading filing needs a migration);
+and if a team wants the words of a title before verse 1 aligned to the source,
+which this deliberately does not do.

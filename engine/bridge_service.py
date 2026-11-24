@@ -144,8 +144,13 @@ from tc_ai_bridge.secret_store import AppSettings
 from tc_ai_bridge.workspace_repository import WorkspaceRepository, project_path_key, WorkspaceError
 from tc_ai_bridge.resource_materializer import materialize_book_checks
 from tc_ai_bridge.usfm import strip_usfm, whitespace_tokens
-from tc_ai_bridge.usfm_verse import WHITESPACE_TOKEN_TRIM_CHARS, lift_verse
-from tc_ai_bridge.usfm_parser import UsfmParseError, parse_usfm, read_usfm_text
+from tc_ai_bridge.usfm_verse import (
+    PARAGRAPH_MARKERS, WHITESPACE_TOKEN_TRIM_CHARS, edit_markup, lift_verse, marker_balance_issues, marker_names,
+)
+from tc_ai_bridge.usfm_parser import (
+    HEADING_MARKERS, INTRODUCTION_MARKERS, TITLE_MARKER, UsfmParseError, identify_usfm, opening_paragraphs,
+    parse_usfm, read_usfm_text,
+)
 from tc_ai_bridge import versification as versification_tool
 from tc_ai_bridge import alignment_gaps
 from tc_ai_bridge import alignment_null_decisions as null_decisions_tool
@@ -295,11 +300,40 @@ def _stable_finding_id(*, chapter: str, verse: str, engine: str,
     return hashlib.sha1(key.encode("utf-8")).hexdigest()[:20]
 
 
+# Markers that start something other than a run of text inside one paragraph:
+# a chapter, a verse, another paragraph, a heading, a line of the header or the
+# introduction. None may be typed into a heading or an introduction line.
+_BLOCK_MARKERS = (
+    PARAGRAPH_MARKERS | HEADING_MARKERS | INTRODUCTION_MARKERS
+    | {"c", "v", "id", "ide", "usfm", "h", "toc1", "toc2", "toc3", "toca1", "toca2", "toca3",
+       "mt", "mt1", "mt2", "mt3", "mt4", "mte", "mte1", "mte2", "cl", "cd", "rem", "sts"}
+)
+
+
+def _one_paragraph(text: Any, what: str) -> str:
+    """The text of one heading or one introduction line as it may be stored
+    (#507): whitespace runs collapsed, as the import stores it, and refused
+    when it holds a marker that would start a new block. Inline markers
+    (`\\k`, `\\bk`, `\\ior`, a footnote) are left to the reviewer; their
+    balance is reported with the save, as it is for a verse."""
+    if not isinstance(text, str):
+        raise ProjectError("newText must be the new text")
+    cleaned = " ".join(text.split())
+    if not cleaned:
+        raise ProjectError(f"{what} may not be left empty.")
+    for name in marker_names(cleaned):
+        if name.lower() in _BLOCK_MARKERS:
+            raise ProjectError(
+                f"{what} is one paragraph: it cannot hold \\{name}. Nothing was written."
+            )
+    return cleaned
+
+
 def verse_display(text: str) -> dict[str, Any]:
     """The display payload for one stored verse string (#91 Phase 2):
-    `{plain, notes, removed, styles, warnings}` from the fragment reader, all
-    offsets in code points. Attached wherever the protocol hands the frontend
-    a verse's text, so the frontend never parses USFM."""
+    `{plain, notes, removed, styles, warnings, paras}` from the fragment
+    reader, all offsets in code points. Attached wherever the protocol hands
+    the frontend a verse's text, so the frontend never parses USFM."""
     return lift_verse(text).to_dict()
 
 
@@ -593,6 +627,16 @@ class Methods:
     VERSE_DECIDE = "verse.decide"
     VERSE_EDIT = "verse.edit"
     VERSE_HISTORY = "verse.history"
+    # #507: one marker edit (\k, \qs, a poetry line) on the string the verse
+    # editor holds. Writes nothing; the editor saves through verse.edit.
+    VERSE_MARKUP = "verse.markup"
+    # #507 (decided 2026-11-23, DECISIONS.md): the text of a heading or of a
+    # psalm title before verse 1, through tc_project.apply_heading_edit.
+    HEADING_EDIT = "heading.edit"
+    # #507: the book's introduction (\is, \ip, \iot, \io1 ...), read from
+    # headers.json; and the text of one of its lines (apply_header_edit).
+    BOOK_INTRODUCTION = "book.introduction"
+    BOOK_INTRODUCTION_EDIT = "book.introduction.edit"
 
     CHECK_LIST_FOR_VERSE = "check.listForVerse"
     # #272: the chapter's stored findings, when still current.
@@ -805,6 +849,9 @@ class BridgeEngine:
         self._connector_installer = paratext_install.ConnectorInstaller()
         self.greek_room = GreekRoomEngine()
         self.project: Optional[TranslationCoreProject] = None
+        # #507: the last preserved `<book>.usfm` decoded for `_paragraph_openers`,
+        # as ((path, mtime_ns, size), text). One book; replaced on a different key.
+        self._preserved_source_cache: Optional[tuple[tuple[str, int, int], str]] = None
         # #112 step two: project.open returns before the PassageSemanticRuntime
         # exists and a worker builds it. `passage_semantic_runtime` is a
         # property that waits for that build, so every path that needs the
@@ -2761,13 +2808,192 @@ class BridgeEngine:
         # this call exists precisely to avoid a second round trip (#180). Keyed
         # by the verse each heading introduces; `{}` for a project imported
         # before #180 or a book with no headings.
+        headings = self.project.chapter_headings(chapter)
         return {
             "chapter": chapter, "verses": out,
-            "headings": self.project.chapter_headings(chapter),
+            "headings": headings,
+            # verse -> the paragraph marker it opens in ("q1", "p" ...), for
+            # the verses whose stored neighbours cannot say: the chapter's
+            # first verse and each verse a heading introduces (#507).
+            "openers": self._paragraph_openers(chapter, verses, headings),
             # verse -> recorded edits, for the change-history mark. A directory
             # listing per edited verse; no record is read here.
             "editCounts": self.project.verse_edit_counts(chapter),
         }
+
+    def _paragraph_openers(
+        self, chapter: str, verses: list[str], headings: dict[str, Any],
+    ) -> dict[str, str]:
+        """The paragraph each verse opens in, where only the preserved source
+        knows it (#507). Every verse's `display.paras` lists the paragraph
+        markers inside its own stored text, and the last of them is the
+        paragraph the next verse opens in, so the reader carries that forward.
+        The marker before a chapter's first verse, and the one after a section
+        heading, are in no stored verse; `usfm_parser.opening_paragraphs` reads
+        those from `<book>.usfm`. `{}` when the project has no preserved source
+        or it cannot be read: the reader then draws those verses as prose,
+        which is what it drew before."""
+        if not verses:
+            return {}
+        source_path = self.project.usfm_path()
+        if source_path is None:
+            return {}
+        known = set(verses)
+        wanted = [verses[0], *(verse for verse in headings if verse in known and verse != verses[0])]
+        try:
+            return opening_paragraphs(self._preserved_source_text(source_path), chapter, wanted)
+        except (OSError, UsfmParseError):
+            return {}
+
+    def _preserved_source_text(self, source_path: Path) -> str:
+        """The decoded `<book>.usfm`, kept for the next read of the same file.
+        One book; replaced when another book or a changed file is read."""
+        stat = source_path.stat()
+        key = (str(source_path), stat.st_mtime_ns, stat.st_size)
+        cached = self._preserved_source_cache
+        if cached is None or cached[0] != key:
+            cached = (key, read_usfm_text(source_path))
+            self._preserved_source_cache = cached
+        return cached[1]
+
+    # -- headings and the book's introduction (#507) ----------------------
+    #
+    # Decided 2026-11-23 (DECISIONS.md), by Joel with the team while the
+    # maintainer was on leave: a reviewer may change the text of a heading, of
+    # a psalm title that stands before verse 1, and of a line of the book's
+    # introduction, from the editor. None of the three is a verse's text, and
+    # none goes through the Scripture writer: headings and titles through
+    # tc_project.apply_heading_edit (the one writer of headings.json), the
+    # introduction through tc_project.apply_header_edit (the one writer of
+    # headers.json after import). Both are journalled with a backup and the
+    # before and after, and both refuse a text that changed since the edit was
+    # started. A marker is never changed here and no line is added or removed.
+
+    def _reviewer_name(self) -> str:
+        return self.settings.reviewer_name or "Bridge Reviewer"
+
+    def edit_heading(self, params: dict[str, Any]) -> dict[str, Any]:
+        """heading.edit: the text of one heading the verse introduces."""
+        self._require_project()
+        chapter, verse = str(params.get("chapter") or ""), str(params.get("verse") or "")
+        try:
+            index = int(params.get("index"))
+        except (TypeError, ValueError):
+            raise ProjectError("index must be the heading's place among the verse's headings") from None
+        headings = self._verse_headings(chapter, verse)
+        if not 0 <= index < len(headings):
+            raise ProjectError(f"Verse {chapter}:{verse} has no heading {index}; nothing was written.")
+        current = headings[index]
+        what = "A psalm title" if str(current.get("tag") or "") == TITLE_MARKER else "A heading"
+        new_text = _one_paragraph(params.get("newText"), what)
+        result = self.project.apply_heading_edit(
+            chapter, verse, index, new_text,
+            expected_old_text=str(params.get("expectedOldText", current.get("text") or "")),
+            username=self._reviewer_name(),
+        )
+        # Language QA reads headings (language_qa_headings), so its scan of
+        # this chapter is out of date.
+        self._language_qa.invalidate(chapter)
+        return {
+            "chapter": chapter, "verse": verse, "index": index,
+            "headings": self._verse_headings(chapter, verse),
+            "warnings": marker_balance_issues(new_text),
+            "journalTransactionId": str(result.get("journalTransactionId") or ""),
+        }
+
+    def _book_header_lines(self) -> tuple[list[dict[str, str]], bool]:
+        """The book's header and introduction lines, and whether they came from
+        `headers.json`. A project with no such file is read from its preserved
+        source instead, by the same parser the import uses."""
+        stored = self.project.book_headers()
+        if stored is not None:
+            return stored, True
+        source_path = self.project.usfm_path()
+        if source_path is None:
+            return [], False
+        try:
+            headers = identify_usfm(self._preserved_source_text(source_path)).headers
+        except (OSError, UsfmParseError):
+            return [], False
+        return [{"tag": item.tag, "content": item.content} for item in headers], False
+
+    @staticmethod
+    def _introduction_entry(index: int, line: dict[str, str]) -> dict[str, Any]:
+        text = str(line.get("content") or "")
+        return {
+            # `index` is the line's place in headers.json, not among the
+            # introduction's lines: it is what book.introduction.edit takes.
+            "index": index, "tag": str(line.get("tag") or "").lower(), "text": text,
+            # An introduction line is a fragment like a verse: the same reader
+            # says what it shows (\ior, \bk, \k spans; notes lifted out).
+            "display": verse_display(text),
+        }
+
+    def book_introduction(self) -> dict[str, Any]:
+        """book.introduction: the introduction's lines in order, each with the
+        display payload a verse has. Empty for a book with none."""
+        self._require_project()
+        lines, _stored = self._book_header_lines()
+        return {
+            "bookId": self.project.book_id,
+            "entries": [
+                self._introduction_entry(index, line) for index, line in enumerate(lines)
+                # A line with no text (\ib, \ie) shows nothing and holds
+                # nothing to edit.
+                if str(line.get("tag") or "").lower() in INTRODUCTION_MARKERS
+                and str(line.get("content") or "").strip()
+            ],
+        }
+
+    def edit_introduction(self, params: dict[str, Any]) -> dict[str, Any]:
+        """book.introduction.edit: the text of one line of the introduction."""
+        self._require_project()
+        try:
+            index = int(params.get("index"))
+        except (TypeError, ValueError):
+            raise ProjectError("index must be the line's place in the book's headers") from None
+        lines, stored = self._book_header_lines()
+        if not 0 <= index < len(lines) or str(lines[index].get("tag") or "").lower() not in INTRODUCTION_MARKERS:
+            raise ProjectError("That line is not part of the book's introduction; nothing was written.")
+        new_text = _one_paragraph(params.get("newText"), "A line of the introduction")
+        result = self.project.apply_header_edit(
+            index, new_text,
+            expected_old_text=str(params.get("expectedOldText", lines[index].get("content") or "")),
+            username=self._reviewer_name(),
+            headers=None if stored else lines,
+        )
+        saved = (self.project.book_headers() or [])[index]
+        return {
+            "entry": self._introduction_entry(index, saved),
+            "warnings": marker_balance_issues(new_text),
+            "journalTransactionId": str(result.get("journalTransactionId") or ""),
+        }
+
+    def verse_markup(self, params: dict[str, Any]) -> dict[str, Any]:
+        """verse.markup (#507): one marker edit on the string the verse editor
+        holds -- `style` (switch `\\k` or `\\qs` on a selection), `level` (a
+        line's poetry level), `break` (start a line at the cursor), `join`
+        (run a line on from the one above). `text` is the editor's unsaved
+        string, and `start`/`end` its selection in code points. The answer is
+        the new string, the selection in it, whether anything changed, and the
+        reason when nothing did.
+
+        Nothing is written and no project is read: the reviewer sees the
+        result in the editor and saves it, or not, through `verse.edit`. It is
+        an RPC because finding a marker in a verse string is the engine's job
+        (gotcha 14); the frontend never parses USFM."""
+        text = params.get("text")
+        if not isinstance(text, str):
+            raise ProjectError("text must be the verse string being edited")
+        try:
+            start = int(params.get("start", 0))
+            end = int(params.get("end", start))
+        except (TypeError, ValueError):
+            raise ProjectError("start and end must be code-point offsets") from None
+        return edit_markup(
+            text, str(params.get("action") or ""), start=start, end=end,
+            marker=str(params.get("marker") or ""), opening=str(params.get("opening") or ""),
+        ).to_dict()
 
     VERSE_HISTORY_LIMIT = 500
 
@@ -9231,15 +9457,87 @@ class BridgeEngine:
 
         if not replacements:
             return None
+        # #507: a heading, a psalm title or an introduction line whose text
+        # (or, for a heading, marker) is no longer what the source says is
+        # written back in its own place. One that was not changed is not
+        # touched, so the rest of the file stays as written.
+        replacements.extend(self._changed_heading_blocks(source, parsed, available_chapters))
+        replacements.extend(self._changed_introduction_blocks(source, parsed))
         replacements.sort()
         pieces: list[str] = []
         cursor = 0
         for start, end, replacement in replacements:
+            if start < cursor:
+                continue  # never write two things over the same source text
             pieces.extend((source[cursor:start], replacement))
             cursor = end
         pieces.append(source[cursor:])
         rendered = "".join(pieces)
         return rendered if rendered.endswith("\n") else rendered + "\n"
+
+    @staticmethod
+    def _rewritten_block(source: str, offset: int, end: int, tag: str, text: str) -> tuple[int, int, str]:
+        """`\\tag text` over source[offset:end], keeping the blank lines the
+        block ended with."""
+        block = source[offset:end]
+        trailing = block[len(block.rstrip()):] or "\n"
+        return (offset, end, f"\\{tag} {text}{trailing}")
+
+    def _changed_heading_blocks(
+        self, source: str, parsed: Any, available_chapters: set[str],
+    ) -> list[tuple[int, int, str]]:
+        """Replacements for the headings (and psalm titles before verse 1)
+        that differ from the preserved source. The stored headings of a verse
+        are matched to the source's by order; a verse whose count differs --
+        a project imported before #507, when a heading before a `\\c` was filed
+        a verse early -- is left exactly as the source has it."""
+        in_source: dict[tuple[str, str], list[Any]] = {}
+        for heading in parsed.headings:
+            in_source.setdefault((heading.chapter, heading.verse), []).append(heading)
+        stored_by_chapter: dict[str, dict[str, list[dict[str, str]]]] = {}
+        out: list[tuple[int, int, str]] = []
+        for (chapter, verse), originals in in_source.items():
+            if chapter not in available_chapters:
+                continue
+            stored = stored_by_chapter.setdefault(chapter, self.project.chapter_headings(chapter))
+            current = stored.get(verse) or []
+            if len(current) != len(originals):
+                continue
+            for original, now in zip(originals, current):
+                tag = str(now.get("tag") or original.tag)
+                text = " ".join(str(now.get("text") or "").split())
+                if original.offset < 0 or not text or (tag == original.tag and text == original.text):
+                    continue
+                if tag != original.tag and text != original.text and len(originals) > 1:
+                    # Both differ and there are several: not surely the same heading.
+                    continue
+                out.append(self._rewritten_block(source, original.offset, original.end, tag, text))
+        return out
+
+    def _changed_introduction_blocks(self, source: str, parsed: Any) -> list[tuple[int, int, str]]:
+        """Replacements for the introduction lines that differ from the
+        preserved source. `headers.json` is matched to the source's header
+        lines by order and marker; if they do not line up, nothing is
+        replaced."""
+        stored = self.project.book_headers()
+        if stored is None:
+            return []
+        # A project imported before #507 kept a heading before the first `\c`
+        # among its headers; the parser now files it with chapter 1's headings.
+        current = [line for line in stored if str(line.get("tag") or "").lower() not in HEADING_MARKERS]
+        originals = list(parsed.headers)
+        if len(current) != len(originals) or any(
+            str(now.get("tag") or "").lower() != original.tag.lower() for original, now in zip(originals, current)
+        ):
+            return []
+        out: list[tuple[int, int, str]] = []
+        for original, now in zip(originals, current):
+            text = " ".join(str(now.get("content") or "").split())
+            if (original.tag.lower() not in INTRODUCTION_MARKERS or original.offset < 0 or original.end < 0
+                    or not text or text == original.content):
+                continue
+            out.append(self._rewritten_block(source, original.offset, original.end, original.tag, text))
+        return out
 
     def _export_gate(self, kind: str, output_path: str, override: bool) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
         """(refusal, gate). The one publication gate (reporting.publication_gate,
@@ -10139,6 +10437,14 @@ class BridgeEngine:
                 return EngineResponse.ok(request.id, result=result)
             if m == Methods.VERSE_HISTORY:
                 return EngineResponse.ok(request.id, result=self.verse_history(p))
+            if m == Methods.VERSE_MARKUP:
+                return EngineResponse.ok(request.id, result=self.verse_markup(p))
+            if m == Methods.HEADING_EDIT:
+                return EngineResponse.ok(request.id, result=self.edit_heading(p))
+            if m == Methods.BOOK_INTRODUCTION:
+                return EngineResponse.ok(request.id, result=self.book_introduction())
+            if m == Methods.BOOK_INTRODUCTION_EDIT:
+                return EngineResponse.ok(request.id, result=self.edit_introduction(p))
             if m == Methods.CHECK_LOAD_CHAPTER_FINDINGS:
                 return EngineResponse.ok(request.id, result=self.load_chapter_findings(str(p["chapter"])))
             if m == Methods.CHECK_LIST_FOR_VERSE:

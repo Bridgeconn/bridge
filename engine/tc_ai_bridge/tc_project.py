@@ -623,6 +623,74 @@ class TranslationCoreProject:
         self._forget_chapter_files()
         return {'journalTransactionId': journal_tx.transaction_id, 'before': current, 'after': updated}
 
+    def book_headers(self) -> list[dict[str, str]] | None:
+        """The book's header and introduction lines as the import stored them
+        (`<book>/headers.json`, `[{tag, content}]` in source order): `\\h`,
+        `\\toc1`, `\\mt`, then `\\is`, `\\ip`, `\\iot`, `\\io1` ... None when the
+        project has no such file, which is not the same as an empty list."""
+        path = self.book_dir / 'headers.json'
+        if not path.exists():
+            return None
+        data = _read_json(path)
+        if not isinstance(data, list):
+            return None
+        return [
+            {'tag': str(item.get('tag') or ''), 'content': str(item.get('content') or '')}
+            for item in data if isinstance(item, dict)
+        ]
+
+    def apply_header_edit(self, index: int, new_text: str, *, expected_old_text: str,
+                          username: str = 'AI Bridge Reviewer',
+                          headers: list[dict[str, str]] | None = None) -> dict[str, Any]:
+        """Change the text of one line of the book's introduction (#507,
+        decided 2026-11-23, DECISIONS.md). The introduction is not Scripture;
+        it lives in `<book>/headers.json`, and this is that file's one writer
+        after import. It is journalled like `apply_heading_edit` (a backup, a
+        transaction record with the before and after, rollback on failure) and
+        refused unless the line still reads exactly `expected_old_text`. The
+        marker of the line is never changed, and no line is added or removed.
+
+        `headers` is the list to start from when the project has no
+        `headers.json` yet (a project imported before the file was written):
+        the caller reads it from the preserved source, and the whole list is
+        written with the one line changed."""
+        path = self.book_dir / 'headers.json'
+        stored = self.book_headers()
+        items = [dict(item) for item in (stored if stored is not None else (headers or []))]
+        if not 0 <= int(index) < len(items):
+            raise ProjectError(f'The book has no header line {index}; nothing was written.')
+        current = dict(items[int(index)])
+        if str(current.get('content') or '') != expected_old_text:
+            raise ProjectError('REVISION_CONFLICT: this line was changed after the edit was started; nothing was written.')
+        new_text = str(new_text)
+        if not new_text.strip():
+            raise ProjectError('A line of the introduction may not be left empty.')
+        if new_text == current.get('content'):
+            raise ProjectError('No change detected.')
+        updated = {**current, 'content': new_text}
+        items[int(index)] = updated
+        tx_paths = [path]
+        existed = {str(path.resolve()): path.exists()}
+        backup = self._backup_paths(tx_paths, 'headerEdit')
+        journal_tx = self.journal.begin('headerEdit', tx_paths)
+        self.journal.mark_writing(journal_tx)
+        try:
+            _write_json_atomic(path, items)
+        except Exception as e:
+            try:
+                self._rollback_paths(backup, tx_paths, existed)
+            finally:
+                try:
+                    self.journal.rollback(journal_tx, str(e))
+                except Exception:
+                    pass
+            raise
+        self.journal.commit(journal_tx, {
+            'operation': 'headerEdit', 'index': int(index),
+            'before': current, 'after': updated, 'username': username,
+        })
+        return {'journalTransactionId': journal_tx.transaction_id, 'before': current, 'after': updated}
+
     def usfm_path(self) -> Path | None:
         candidates = list(self.path.glob('*.usfm')) + list(self.path.glob('*.USFM')) + list(self.path.glob('*.sfm')) + list(self.path.glob('*.SFM'))
         return candidates[0] if candidates else None

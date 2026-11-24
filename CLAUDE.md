@@ -279,8 +279,29 @@ A raw Scripture import becomes a translationCore-compatible book project:
                                                 each key as a verse number, and out of the verse TEXT
                                                 because a heading is not a translation of any source
                                                 word — its words must never become alignable targets.
-                                                \d is deliberately NOT split out: a Psalm
-                                                superscription is translated content.
+                                                A heading after a chapter's last verse introduces the
+                                                NEXT chapter's first verse, and one before the first \c
+                                                introduces chapter 1's (#507; it used to be filed a
+                                                verse early, or kept as a header line). \d after a \v
+                                                is deliberately NOT split out: a Psalm superscription
+                                                is translated content and stays in that verse's text.
+                                                A \d between \c and the chapter's first \v is in no
+                                                verse, so since #507 it is kept here under tag "d",
+                                                with the first verse's headings. Readers tell it from
+                                                an editorial heading by the tag. One writer after
+                                                import: `apply_heading_edit` (the Paratext review
+                                                queue, and since 2026-11-23 `heading.edit` from the
+                                                editor: text only, never the marker).
+<project>/<book>/headers.json                   the book's header and introduction lines before the
+                                                first \c, `[{tag, content}]` in source order: \h,
+                                                \toc1, \mt, then \is, \ip, \iot, \io1 ... Written at
+                                                import. Read by `book.introduction` (the introduction
+                                                markers only, `usfm_parser.INTRODUCTION_MARKERS`),
+                                                shown above chapter 1. One writer after import:
+                                                `apply_header_edit` (`book.introduction.edit`, #507,
+                                                2026-11-23): the text of one introduction line,
+                                                journalled like a heading edit; no marker change, no
+                                                line added or removed. Not Scripture.
 <project>/.apps/translationCore/alignmentData/<book>/<chapter>.json
 <project>/.apps/translationCore/index/{translationNotes,translationWords}/<book>/
 <project>/.bridge/import.json                   SHA-256 provenance + per-tool capability status
@@ -699,7 +720,15 @@ change. **This is scheduled work, not accepted behaviour.**
     parses only the first book; it opens an implicit `\p` after a `\c` with no
     paragraph marker, reported at the chapter's position, which the parser
     drops. A new USFM edge case is fixed in one of these two modules, with a
-    parity or snapshot test, never with a regex elsewhere.
+    parity or snapshot test, never with a regex elsewhere. The same holds for
+    *changing* markers (#507): the verse editor's toolbar (`\k`, `\qs`, a
+    poetry line's level, break, join) asks `usfm_verse.edit_markup` through
+    `verse.markup`, which works on the editor's unsaved string, writes nothing,
+    and refuses any edit that would change the verse's words. `display.paras`
+    (the paragraph markers inside a verse) and `chapter.verseData`'s `openers`
+    (the paragraph a chapter's first verse, or a verse after a heading, opens
+    in, read from the preserved source by `usfm_parser.opening_paragraphs`) are
+    what the reader draws poetry lines from.
 
 ## Working in this repo
 
@@ -793,6 +822,18 @@ between external closure and Stage 9B's `CORRECTED`. These capabilities are appr
 policy. The merged implementation supports body-text writes and linked closure;
 see `docs/PARATEXT_HOST_ACCEPTANCE_CHECKLIST.md` for verified scope and remaining
 work. Other new writers and auto-apply changes still need a decision below.
+
+**Decided for the editor (2026-11-23, #507, `docs/DECISIONS.md`):** taken by Joel
+for the team while the maintainer was on leave, and to be looked at again on his
+return. A reviewer may change, from the editor, the text of a heading, of a psalm
+title that stands before verse 1, and of a line of the book's introduction. None
+of the three is a verse's text and none goes through the Scripture writer:
+headings and titles through `apply_heading_edit`, the introduction through
+`apply_header_edit`. Both are a human's explicit save, journalled, and refused
+when the text changed meanwhile. What this does **not** decide: changing a
+marker, adding or removing a heading or a line, any automatic edit of these, and
+the Paratext review queue's introduction region (still Paratext-only). Each of
+those is still a question.
 
 These are cheap to start and expensive to undo. If a task appears to require one,
 raise it as a question in the issue rather than deciding it in a commit:

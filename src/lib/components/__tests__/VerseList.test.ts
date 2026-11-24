@@ -7,7 +7,10 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { get } from "svelte/store";
 import { tick } from "svelte";
 
-const { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRecord, housestyleSetState, languageQaLearnedForget, languageQaScopeFind, verseHistory, languageQaWordsAdd, languageQaOccurrences, paratextNotesForChapter } = vi.hoisted(() => ({
+const { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRecord, housestyleSetState, languageQaLearnedForget, languageQaScopeFind, verseHistory, languageQaWordsAdd, languageQaOccurrences, paratextNotesForChapter, verseMarkup, editHeading, bookIntroduction } = vi.hoisted(() => ({
+  verseMarkup: vi.fn(),
+  editHeading: vi.fn(),
+  bookIntroduction: vi.fn(),
   paratextNotesForChapter: vi.fn(),
   languageQaWordsAdd: vi.fn(),
   languageQaOccurrences: vi.fn(),
@@ -23,11 +26,12 @@ const { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRec
 }));
 
 vi.mock("../../api/bridgeClient", () => ({
-  bridge: { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRecord, housestyleSetState, languageQaLearnedForget, languageQaScopeFind, verseHistory, languageQaWordsAdd, languageQaOccurrences, paratextNotesForChapter },
+  bridge: { decideVerse, editVerse, runVerseChecks, languageQaHistory, housestyleRecord, housestyleSetState, languageQaLearnedForget, languageQaScopeFind, verseHistory, languageQaWordsAdd, languageQaOccurrences, paratextNotesForChapter, verseMarkup, editHeading, bookIntroduction },
 }));
 import { lqaFinding } from "./languageQaFixture";
 import { scopeDialog } from "../../scopedApply";
 import { displayFor } from "./verseDisplayFixtures";
+import { selectionInVerse } from "../../utils/selection";
 import type { LanguageQaSuggestion } from "../../types/languageQa";
 
 import VerseList from "../VerseList.svelte";
@@ -43,6 +47,7 @@ import {
   nativeChecksByVerse,
   aiCheckReviewsByVerse,
   headingsByVerse,
+  paraOpenersByVerse,
   selectedVerse,
   verseKey,
   languageQaFindingsByVerse,
@@ -104,6 +109,7 @@ function seed(text: string, findings: QaFinding[] = []): void {
   // fixtures are the engine's own output for these strings.
   verseDisplay.set({ [verseKey("1", "6")]: displayFor(text) });
   headingsByVerse.set({});
+  paraOpenersByVerse.set({});
   findingsByVerse.set({ [verseKey("1", "6")]: findings });
   checkStatusByVerse.set({});
   checkGroupsByVerse.set({});
@@ -126,6 +132,8 @@ function seed(text: string, findings: QaFinding[] = []): void {
   decideVerse.mockResolvedValue(undefined);
   editVerse.mockResolvedValue({ issueResolutionsNeedingRecheck: 0 });
   runVerseChecks.mockResolvedValue([]);
+  // #507: the list reads the open book's introduction; most tests have none.
+  bookIntroduction.mockResolvedValue({ bookId: "php", entries: [] });
 }
 
 /** The one verse row seed() renders, addressed the way the component keys it. */
@@ -1727,5 +1735,282 @@ describe("VerseList Paratext note key (#426)", () => {
     paratextNoteRequest.set(null);
     await fireEvent.keyDown(row, { key: "n", ctrlKey: true });
     expect(get(paratextNoteRequest)).toBeNull();
+  });
+});
+
+// #507: paragraph and poetry lines, Selah, a psalm title inside a verse, and
+// the reference line under a heading. jsdom does not lay out, so these check
+// structure and classes; the indents themselves need the desktop app.
+describe("VerseList paragraph and poetry lines (#507)", () => {
+  // The engine's own displays for these strings (verseDisplayFixtures.ts).
+  const PSALM_3_1 = "Lord, how\n\\q2 many are they \\qs Selah\\qs*\n\\q1";
+  const WITH_NOTE = "But you\n\\q2 are a shield\\f + \\ft a note\\f*\n\\q1 my glory";
+  const TITLE = "a\n\\d A Psalm of David\n\\q1";
+  const key = verseKey("1", "6");
+
+  afterEach(() => {
+    paraOpenersByVerse.set({});
+    historyCountByVerse.set({});
+    headingsByVerse.set({});
+    rawView.set(false);
+  });
+
+  /** The verse's own text as the selection helpers read it: no button labels. */
+  function ownText(root: Element): string {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: (node) => (node.parentElement?.closest("button") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+    });
+    let text = "";
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) text += node.nodeValue ?? "";
+    return text;
+  }
+
+  /** Every offset into the verse counts characters from its start, so the
+   *  text must begin with exactly the plain text. The template leaves one
+   *  space after the last piece, as it did before there were lines. */
+  function expectOwnText(plain: string): void {
+    const text = ownText(verseRow().querySelector(".vtext") as HTMLElement);
+    expect(text.slice(0, plain.length)).toBe(plain);
+    expect(text.slice(plain.length).trim()).toBe("");
+  }
+
+  const lines = () => Array.from(verseRow().querySelectorAll<HTMLElement>(".vline"));
+
+  it("draws each poetry line as its own line, classed by its marker", () => {
+    seed(PSALM_3_1);
+    paraOpenersByVerse.set({ [key]: "q1" });
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    expect(verseRow().querySelector(".vbody")?.classList.contains("structured")).toBe(true);
+    expect(lines().map((line) => [line.classList.contains("pl-q1"), line.classList.contains("pl-q2"), line.textContent?.trim()]))
+      .toEqual([[true, false, "Lord, how"], [false, true, "many are they Selah"]]);
+    // No marker is shown, and Selah is styled inside its own line.
+    expect(verseRow().querySelector(".vtext")?.textContent).not.toContain("\\");
+    expect(lines()[1].querySelector(".st-qs")?.textContent).toBe("Selah");
+  });
+
+  it("adds, drops and moves no character: the text read back is the engine's plain text", () => {
+    for (const raw of [PSALM_3_1, WITH_NOTE, TITLE]) {
+      seed(raw);
+      paraOpenersByVerse.set({ [key]: "q1" });
+      render(VerseList, { props: { onSelect: vi.fn() } });
+      expectOwnText(displayFor(raw).plain);
+      cleanup();
+    }
+  });
+
+  it("maps a selection on the second line to the same plain offsets as before", () => {
+    seed(PSALM_3_1);
+    paraOpenersByVerse.set({ [key]: "q1" });
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    const vtext = verseRow().querySelector(".vtext") as HTMLElement;
+    const walker = document.createTreeWalker(lines()[1], NodeFilter.SHOW_TEXT);
+    const node = walker.nextNode() as Text;
+    expect(node.nodeValue?.startsWith("many")).toBe(true);
+    const range = { startContainer: node, endContainer: node, startOffset: 0, endOffset: 4 };
+    const original = window.getSelection;
+    window.getSelection = (() => ({ rangeCount: 1, isCollapsed: false, getRangeAt: () => range })) as unknown as typeof window.getSelection;
+    try {
+      const plain = displayFor(PSALM_3_1).plain;
+      expect(selectionInVerse(vtext)).toEqual({ start: plain.indexOf("many"), end: plain.indexOf("many") + 4 });
+    } finally {
+      window.getSelection = original;
+    }
+  });
+
+  it("keeps a footnote callout on its own line", () => {
+    seed(WITH_NOTE);
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    expect(lines().map((line) => line.querySelectorAll(".note-btn").length)).toEqual([0, 1, 0]);
+    expect(lines().map((line) => line.className.split(" ").filter((name) => name.startsWith("pl-")))).toEqual([[], ["pl-q2"], ["pl-q1"]]);
+  });
+
+  it("draws a psalm title inside a verse as a title line", () => {
+    seed(TITLE);
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    const title = verseRow().querySelector(".vline.pl-d") as HTMLElement;
+    expect(title.textContent?.trim()).toBe("A Psalm of David");
+  });
+
+  it("leaves a verse of ordinary prose exactly as it was: no line element at all", () => {
+    seed("alpha beta");
+    paraOpenersByVerse.set({ [key]: "p" });
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    const body = verseRow().querySelector(".vbody") as HTMLElement;
+    expect(body.classList.contains("structured")).toBe(false);
+    expect(lines()).toHaveLength(0);
+    expect((body.firstChild as Text).nodeValue).toBe("alpha beta");
+  });
+
+  it("opens a verse in the paragraph the verse before it ended with", () => {
+    seed(PSALM_3_1);
+    chapterVerseNums.set({ "1": ["6", "7"] });
+    verseTexts.update((texts) => ({ ...texts, [verseKey("1", "7")]: "gamma delta" }));
+    verseDisplay.update((display) => ({ ...display, [verseKey("1", "7")]: displayFor("gamma delta") }));
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    // Verse 6 ends with \q1 and verse 7 has no marker of its own.
+    const next = document.querySelector('[data-verse-key="1:7"]') as HTMLElement;
+    const [line] = Array.from(next.querySelectorAll<HTMLElement>(".vline"));
+    expect(line.classList.contains("pl-q1")).toBe(true);
+    expect(line.textContent?.trim()).toBe("gamma delta");
+  });
+
+  it("shows the stored string with its markers in Raw view, as one block", () => {
+    seed(PSALM_3_1);
+    paraOpenersByVerse.set({ [key]: "q1" });
+    rawView.set(true);
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    expect(lines()).toHaveLength(0);
+    expect(verseRow().querySelector(".vtext")?.textContent).toContain("\\q2 many are they \\qs Selah\\qs*");
+  });
+
+  it("keeps the change-history mark on the verse's last line, and where it was for prose", () => {
+    seed(PSALM_3_1);
+    paraOpenersByVerse.set({ [key]: "q1" });
+    historyCountByVerse.set({ [key]: 2 });
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    expect(lines()[0].querySelector(".history-btn")).toBeNull();
+    expect(lines()[1].querySelector(".history-btn")?.textContent).toBe("↺2");
+    cleanup();
+
+    seed("alpha beta");
+    historyCountByVerse.set({ [key]: 1 });
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    expect(verseRow().querySelectorAll(".vtext .history-btn")).toHaveLength(1);
+    expectOwnText("alpha beta");
+  });
+
+  describe("the marker toolbar over the edit box", () => {
+    async function openEditor(raw: string): Promise<HTMLTextAreaElement> {
+      seed(raw);
+      paraOpenersByVerse.set({ [key]: "q1" });
+      render(VerseList, { props: { onSelect: vi.fn() } });
+      await fireEvent.click(screen.getByLabelText("Edit verse 6"));
+      return verseRow().querySelector("textarea") as HTMLTextAreaElement;
+    }
+    const tool = (name: string) => verseRow().querySelector(`.vedit-tools [data-markup="${name}"]`) as HTMLButtonElement;
+
+    it("is shown only while a verse is edited, with a button for each marker edit", async () => {
+      seed(PSALM_3_1);
+      render(VerseList, { props: { onSelect: vi.fn() } });
+      expect(document.querySelector(".vedit-tools")).toBeNull();
+      await fireEvent.click(screen.getByLabelText("Edit verse 6"));
+      const toolbar = screen.getByRole("toolbar", { name: "USFM markers for verse 6" });
+      expect(Array.from(toolbar.querySelectorAll("button")).map((button) => button.textContent))
+        .toEqual(["Keyword", "Selah", "\\q", "\\q1", "\\q2", "\\q3", "Break line", "Join line"]);
+      // The edit box still holds the stored string, markers and all.
+      expect((verseRow().querySelector("textarea") as HTMLTextAreaElement).value).toBe(PSALM_3_1);
+    });
+
+    it("sends the textarea's selection to the engine and shows the string it answers with", async () => {
+      const raw = "Lord, how\n\\q2 many are they Selah";
+      const area = await openEditor(raw);
+      const from = raw.indexOf("Selah");
+      area.setSelectionRange(from, from + 5);
+      const marked = "Lord, how\n\\q2 many are they \\qs Selah\\qs*";
+      verseMarkup.mockResolvedValue({ text: marked, start: from + 4, end: from + 9, changed: true, reason: "" });
+      await fireEvent.click(tool("qs"));
+      await waitFor(() => expect(area.value).toBe(marked));
+      expect(verseMarkup).toHaveBeenCalledWith({ text: raw, action: "style", marker: "qs", start: from, end: from + 5, opening: "" });
+      expect(area.value.slice(area.selectionStart, area.selectionEnd)).toBe("Selah");
+      // Nothing is saved until the reviewer saves.
+      expect(editVerse).not.toHaveBeenCalled();
+    });
+
+    it("sends a level with the cursor's place, and a break with the level the verse opens at", async () => {
+      const raw = "Lord, how\n\\q2 many are they";
+      const area = await openEditor(raw);
+      area.setSelectionRange(raw.indexOf("many"), raw.indexOf("many"));
+      verseMarkup.mockResolvedValue({ text: raw, start: 0, end: 0, changed: false, reason: "" });
+      await fireEvent.click(tool("q3"));
+      await waitFor(() => expect(verseMarkup).toHaveBeenCalledTimes(1));
+      expect(verseMarkup).toHaveBeenLastCalledWith({ text: raw, action: "level", marker: "q3", start: raw.indexOf("many"), end: raw.indexOf("many"), opening: "" });
+      area.setSelectionRange(5, 5);
+      await fireEvent.click(tool("break"));
+      await waitFor(() => expect(verseMarkup).toHaveBeenCalledTimes(2));
+      expect(verseMarkup).toHaveBeenLastCalledWith({ text: raw, action: "break", marker: "", start: 5, end: 5, opening: "q1" });
+      await fireEvent.click(tool("join"));
+      await waitFor(() => expect(verseMarkup).toHaveBeenCalledTimes(3));
+      expect(verseMarkup).toHaveBeenLastCalledWith({ text: raw, action: "join", marker: "", start: 5, end: 5, opening: "" });
+    });
+
+    it("says why when the engine changes nothing, and keeps the selection in the textarea on a press", async () => {
+      const area = await openEditor("Lord, how\n\\q2 many");
+      area.setSelectionRange(2, 2);
+      verseMarkup.mockResolvedValue({ text: area.value, start: 2, end: 2, changed: false, reason: "The first line takes its level from the verse before it." });
+      // A mouse press on a tool must not move focus out of the textarea.
+      const press = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+      tool("q2").dispatchEvent(press);
+      expect(press.defaultPrevented).toBe(true);
+      await fireEvent.click(tool("q2"));
+      expect(await screen.findByText("The first line takes its level from the verse before it.")).toBeInTheDocument();
+      expect(area.value).toBe("Lord, how\n\\q2 many");
+    });
+  });
+
+  describe("what stands outside the verses", () => {
+    afterEach(() => project.set(null));
+
+    it("draws a psalm title above verse 1 as a title, not as a verse line or a sticky heading", () => {
+      seed(PSALM_3_1);
+      headingsByVerse.set({ [key]: [{ tag: "d", text: "A Psalm of David, when he fled." }] });
+      render(VerseList, { props: { onSelect: vi.fn() } });
+      const title = screen.getByRole("heading", { name: "A Psalm of David, when he fled." });
+      expect(title.classList.contains("title")).toBe(true);
+      expect(title.classList.contains("unstuck")).toBe(true);
+      // Above the verse row, and not in the verse's own text.
+      expect(title.compareDocumentPosition(verseRow())).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      expect(verseRow().textContent).not.toContain("A Psalm of David");
+    });
+
+    it("edits a heading in place and shows the headings the engine stored", async () => {
+      seed("alpha beta");
+      headingsByVerse.set({ [key]: [{ tag: "ms", text: "BOOK TWO" }, { tag: "s", text: "The Lord answers" }] });
+      const onSelect = vi.fn();
+      render(VerseList, { props: { onSelect } });
+      await fireEvent.click(screen.getByLabelText("Edit the heading: The Lord answers"));
+      const input = screen.getByLabelText("Text of the heading") as HTMLInputElement;
+      editHeading.mockResolvedValue({ chapter: "1", verse: "6", index: 1, warnings: [],
+        headings: [{ tag: "ms", text: "BOOK TWO" }, { tag: "s", text: "The Lord replies" }] });
+      await fireEvent.input(input, { target: { value: "The Lord replies" } });
+      await fireEvent.keyDown(input, { key: "Enter" });
+      expect(await screen.findByRole("heading", { name: "The Lord replies" })).toBeInTheDocument();
+      // The chapter and verse the list is showing, and this heading's place among that verse's headings.
+      expect(editHeading).toHaveBeenCalledWith("1", "6", 1, "The Lord replies", "The Lord answers");
+      // The major heading beside it is untouched, and editing a heading selects no verse.
+      expect(screen.getByRole("heading", { name: "BOOK TWO" }).classList.contains("major")).toBe(true);
+      expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    it("shows the book's introduction above the first chapter's verses", async () => {
+      seed("alpha beta");
+      bookIntroduction.mockResolvedValue({ bookId: "psa", entries: [
+        { index: 4, tag: "is", text: "Introduction", display: displayFor("Introduction") },
+        { index: 5, tag: "ip", text: "About the book.", display: displayFor("About the book.") },
+      ] });
+      project.set({ path: "C:/p/psa", bookId: "psa", bookName: "Psalms", targetLanguage: "English",
+                    tcVersion: "", chapters: ["1", "2"], checkTypes: {} });
+      render(VerseList, { props: { onSelect: vi.fn() } });
+      const intro = await screen.findByRole("region", { name: "Book introduction" });
+      expect(Array.from(intro.querySelectorAll(".intro-text")).map((line) => line.textContent)).toEqual(["Introduction", "About the book."]);
+      expect(intro.compareDocumentPosition(verseRow())).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      // Not on a later chapter.
+      cleanup();
+      currentChapter.set("2");
+      chapterVerseNums.set({ "2": ["6"] });
+      render(VerseList, { props: { onSelect: vi.fn() } });
+      await waitFor(() => expect(bookIntroduction).toHaveBeenCalledTimes(2));
+      expect(screen.queryByRole("region", { name: "Book introduction" })).toBeNull();
+    });
+  });
+
+  it("marks a reference line (\\r) under a heading, and only it", () => {
+    seed("alpha beta");
+    headingsByVerse.set({ [key]: [{ tag: "s", text: "John the Baptist" }, { tag: "r", text: "(Mark 1:1-8)" }, { tag: "ms", text: "Book Two" }] });
+    render(VerseList, { props: { onSelect: vi.fn() } });
+    const classOf = (name: string) => screen.getByRole("heading", { name }).classList;
+    expect(classOf("(Mark 1:1-8)").contains("reference")).toBe(true);
+    expect(classOf("John the Baptist").contains("reference")).toBe(false);
+    expect(classOf("Book Two").contains("reference")).toBe(false);
+    expect(classOf("Book Two").contains("major")).toBe(true);
   });
 });

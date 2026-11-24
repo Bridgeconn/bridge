@@ -86,8 +86,11 @@ import type {
   UsersList,
   WorkspaceUser,
   VerseAlignment,
+  IntroEntry,
   VerseData,
   VerseHeading,
+  VerseMarkupAction,
+  VerseMarkupResult,
   QaFinding,
   SettingsData,
   ChatGptModel,
@@ -511,6 +514,10 @@ export type EngineMethod =
   | "verse.decide"
   | "verse.edit"
   | "verse.history"
+  | "verse.markup"
+  | "heading.edit"
+  | "book.introduction"
+  | "book.introduction.edit"
   | "verse.get"
   | "verse.runChecks";
 
@@ -1083,6 +1090,10 @@ export const bridge = {
     headings: Record<string, VerseHeading[]>;
     /** verse -> recorded edits (verse.history); absent from an older engine. */
     editCounts?: Record<string, number>;
+    /** verse -> the paragraph marker it opens in ("q1", "p" ...), only for the
+     *  verses whose neighbours' text cannot say: the chapter's first verse and
+     *  each verse a heading introduces (#507). Absent from an older engine. */
+    openers?: Record<string, string>;
   }> {
     return call("chapter.verseData", { chapter });
   },
@@ -1091,6 +1102,50 @@ export const bridge = {
   verseHistory(params: { chapter?: string; verse?: string; limit?: number } = {}): Promise<
     import("../types/finding").VerseHistory> {
     return call("verse.history", params);
+  },
+
+  /** #507: one marker edit on the string the verse editor holds. `style`
+   *  switches `\k` or `\qs` on the selection, `level` sets the poetry level of
+   *  the cursor's line, `break` starts a line at the cursor, `join` runs the
+   *  cursor's line on from the one above. Offsets are code points. Nothing is
+   *  written: the answer is the new string, to be saved through editVerse.
+   *  The engine does this because the frontend never parses USFM. */
+  verseMarkup(params: {
+    text: string; action: VerseMarkupAction; start: number; end?: number;
+    /** `k` or `qs` for `style`; `q`, `q1`, `q2` or `q3` for `level`. */
+    marker?: string;
+    /** The level the verse's first line is at, which the string does not hold. */
+    opening?: string;
+  }): Promise<VerseMarkupResult> {
+    return call("verse.markup", params);
+  },
+
+  /** #507: the text of one heading a verse introduces -- a section heading
+   *  (`\s`), a major one (`\ms`), a reference line (`\r`) or a psalm title
+   *  before verse 1 (`\d`). `index` is its place among that verse's headings.
+   *  The engine writes nothing unless the heading still reads
+   *  `expectedOldText`. The answer is the verse's headings after the save. */
+  editHeading(chapter: string, verse: string, index: number, newText: string, expectedOldText: string): Promise<{
+    chapter: string; verse: string; index: number;
+    headings: VerseHeading[];
+    /** Marker problems in the saved text; never blocking (the save happened). */
+    warnings: string[];
+  }> {
+    return call("heading.edit", { chapter, verse, index, newText, expectedOldText });
+  },
+
+  /** #507: the open book's introduction, in order. Empty for a book with none. */
+  bookIntroduction(): Promise<{ bookId: string; entries: IntroEntry[] }> {
+    return call("book.introduction", {});
+  },
+
+  /** #507: the text of one introduction line; `index` is the entry's own.
+   *  Refused unless the line still reads `expectedOldText`. */
+  editIntroduction(index: number, newText: string, expectedOldText: string): Promise<{
+    entry: IntroEntry;
+    warnings: string[];
+  }> {
+    return call("book.introduction.edit", { index, newText, expectedOldText });
   },
 
   getVerse(chapter: string, verse: string): Promise<VerseData> {
