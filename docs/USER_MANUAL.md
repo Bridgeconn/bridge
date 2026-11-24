@@ -411,8 +411,12 @@ and each AI result includes its evidence and justification.
   to your AI provider. If you skip it, the issue stays marked for a recheck
   and **Run AI recheck** runs it later. A pass closes it as **Resolved after
   recheck**; a remaining problem becomes **Issue remains after recheck**.
-  Uncertain, cancelled, or failed reviews remain open and retryable. The result,
-  evidence, confidence, and lifecycle audit persist after restart.
+  An uncertain result stays open for human review. A cancelled review leaves
+  the issue exactly as it was before the run: a resolved issue stays resolved,
+  and an issue waiting for a recheck is still waiting. A failed review does not
+  reopen a resolved issue either; the card shows that the latest recheck failed
+  and **Run AI recheck** runs it again. The result, evidence, confidence, and
+  lifecycle audit persist after restart.
 
 ### 6.7 Settings
 

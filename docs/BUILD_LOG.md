@@ -27320,3 +27320,85 @@ issue is not. Read in the code, not reproduced.
 - A trace line, `project.open ... semantic_runtime FAILED no such table:
   alignment_cross_verse_links`, appears at the end of some test runs. No test
   fails on it; not investigated.
+
+## 2026-11-24 — PR #514 merged: a cancel leaves the verse as it was (#513)
+
+Joel tested `ai-review-cancel-513` in the desktop app and reported that
+everything works as expected (his report, not a per-check list; I did not run
+the desktop app). CI on the PR was green, the engine job included, which is
+where the twelve Stage 3 tests that cannot run on this machine did run. Merged
+with a merge commit (`32a4df8`); #513 closed with it and its board card is
+Done.
+
+## 2026-11-24 — Saved issue: a cancelled or failed AI review no longer reopens a resolved issue (#515)
+
+**Decided** by Joel on 2026-11-24 (recorded in #515). A cancelled review puts a
+saved issue back exactly as it was before the run. A failed review does not
+reopen a resolved issue; the card still shows that the latest recheck failed.
+Both follow #513: a run that reached no conclusion changes nothing.
+
+**What was wrong.** `mark_issue_resolutions_recheck` (`tc_project.py`) set a
+resolved issue back to open on `cancelled` and on `failed`. A resolved issue
+only reaches a run with its verse unchanged, because an edit has already made
+it `stale` and open, so the reopening was never about new text. For an issue
+closed from Paratext it was permanent: the link is closed once.
+
+**What changed.**
+
+- `running` keeps what the issue looked like on the record
+  (`recheck.beforeRun`: status and recheck result). No schema change; it is
+  part of the row's JSON payload and is gone again in every later state.
+- `cancelled` restores status and recheck from that snapshot. Nothing on the
+  record says "cancelled" any more. If the issue is not `running` when the
+  cancel arrives (cancelled before the verse was marked, or the verse was
+  edited while the review ran and the issue is now `stale` and open), nothing
+  is restored: a cancel must never bring back a resolution an edit took away.
+- `failed` leaves the status alone and records the failure on the recheck.
+- Every state still appends its event to the record's history and to the
+  change_log. The restore puts the visible state back; the audit trail says a
+  run was started and cancelled. The events carry `restoredStatus`, never a
+  `status` key: the panel names how an issue was resolved from the newest
+  event that has one (`resolved_from_paratext`).
+- `bridge_service.py`: a failure before the review is stored, with a cancel
+  pending, is recorded as the cancelled run it is (single-verse handler and the
+  window run's `failed`). It was recorded as neither, which left the issue
+  reading "rechecking" with no run behind it; this was the first of the two
+  "found beside the task" items in the #513 entry above. A failure after the
+  review is stored is recorded as failed whether or not a cancel is pending.
+- `TranslationHelpsReview.svelte`: a resolved issue whose latest recheck failed
+  is labelled "Resolved (latest recheck failed)". An issue closed from Paratext
+  keeps "Resolved, following Paratext", with the failure in the detail below.
+- `docs/USER_MANUAL.md` section 6.6.
+
+**Ran and watched.**
+
+- Red, then green: with the engine change set aside, the six new tests in
+  `tests/connectors/test_issue_resolution.py` failed; with it all fourteen in
+  the file pass, the existing
+  `test_problem_reflags_and_failed_retry_never_restores_a_previous_pass` among
+  them, unchanged.
+- Three new tests in `tests/service/test_ai_review_cancel.py` drive a real job
+  with a saved issue on the verse: cancelled, refused by the provider after the
+  cancel, and failed.
+- Every engine test file that mentions saved issues or the AI review job (20
+  files, `-n auto`): 135 passed, 3 skipped.
+- Frontend: `npm run check` 0 errors 0 warnings; `npm run test` 143 files,
+  1,438 passed (three new in `TranslationHelpsReview.test.ts`); `npm run build`
+  passed.
+
+**Not run.** The full engine suite: four Python files changed, under the five
+that call for it here; CI runs it on the pull request. `cargo check`,
+`cargo test`: no Rust file changed.
+
+**Not verified: the desktop app.** For Joel at 1366x768:
+
+1. A verse with a resolved saved issue: run the AI review, cancel it. The issue
+   still reads as resolved, with no "Recheck cancelled".
+2. A verse with an issue waiting for a recheck: run, cancel. It still reads
+   "Correction needs recheck".
+3. A failed run (the AI provider unreachable) on a verse with a resolved issue:
+   it stays resolved and the failure is shown.
+
+**Known and left.** A run that is marked `cancelled` twice in a race (cancel
+seen as the verse is begun, then again when it is reported) appends two
+`recheck_cancelled` events. The record's state is right either way.

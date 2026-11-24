@@ -5305,12 +5305,17 @@ class BridgeEngine:
                 spent, spent_cost = client.usage_since(usage_mark)
                 if spent.calls:
                     self.settings.record_ai_usage(spent.total_tokens, spent_cost)
-            if isinstance(exc, AIReviewCancelled):
+            # #515: no review was stored, so a saved issue on the verse is
+            # either put back as it was (the run was cancelled) or told the
+            # recheck failed. A provider error that arrives after Cancel was
+            # pressed is a cancelled run; it used to be recorded as neither,
+            # which left the issue at "rechecking".
+            if isinstance(exc, AIReviewCancelled) or cancel_event.is_set():
                 project.mark_issue_resolutions_recheck(
                     chapter, verse, "cancelled",
                     reason="AI review was cancelled; no lifecycle conclusion was accepted.",
                 )
-            elif not cancel_event.is_set():
+            else:
                 project.mark_issue_resolutions_recheck(
                     chapter, verse, "failed",
                     reason="Automatic AI recheck failed.", error=str(exc),
@@ -5326,11 +5331,13 @@ class BridgeEngine:
                 reviews, issues, summary, meta, progress_callback,
             )
         except Exception as exc:
-            if not cancel_event.is_set():
-                project.mark_issue_resolutions_recheck(
-                    chapter, verse, "failed",
-                    reason="Automatic AI recheck failed.", error=str(exc),
-                )
+            # A failure here is not the cancel: the review was stored and the
+            # verse could not be finished. Recorded whether or not a cancel is
+            # pending (#515), so the issue is never left at "rechecking".
+            project.mark_issue_resolutions_recheck(
+                chapter, verse, "failed",
+                reason="Automatic AI recheck failed.", error=str(exc),
+            )
             raise
 
     def _begin_ai_review_verse(
@@ -5474,11 +5481,12 @@ class BridgeEngine:
                 except Exception as exc:
                     # The verse's usage reached the lifetime counter at the
                     # top of `_finish_ai_review_verse`; it is not counted again.
-                    if not cancel_event.is_set():
-                        project.mark_issue_resolutions_recheck(
-                            chapter, verse, "failed",
-                            reason="Automatic AI recheck failed.", error=str(exc),
-                        )
+                    # A failure, not the cancel, whether or not one is pending
+                    # (#515): the review was stored and could not be finished.
+                    project.mark_issue_resolutions_recheck(
+                        chapter, verse, "failed",
+                        reason="Automatic AI recheck failed.", error=str(exc),
+                    )
                     report.result(verse, error=str(exc))
                     return
                 payload["batch"] = meta.get("batch")
@@ -5488,7 +5496,15 @@ class BridgeEngine:
                 # #476: what a failed verse spent is billed all the same.
                 if getattr(usage, "calls", 0):
                     engine.settings.record_ai_usage(usage.total_tokens, cost)
-                if not cancel_event.is_set():
+                # #515: nothing was stored for this verse. With a cancel
+                # pending it is a cancelled run and a saved issue goes back as
+                # it was; it used to be recorded as neither.
+                if cancel_event.is_set():
+                    project.mark_issue_resolutions_recheck(
+                        chapter, verse, "cancelled",
+                        reason="AI review was cancelled; no lifecycle conclusion was accepted.",
+                    )
+                else:
                     project.mark_issue_resolutions_recheck(
                         chapter, verse, "failed",
                         reason="Automatic AI recheck failed.", error=str(error),
