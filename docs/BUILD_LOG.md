@@ -27035,3 +27035,29 @@ seconds; on PR #509 it was cancelled at 60. Each merge adds tests, so the job wi
 now time out more often than it finishes, and a cancelled job reads as a red PR
 whatever the tests would have said. Raising `timeout-minutes` is a one-line change
 outside this task; raised with Joel.
+
+## 2026-11-24 — CI: the engine job's limit raised from 60 to 90 minutes (#510)
+
+Joel asked for the timeout noted above to be filed as an issue (#510) and fixed on
+this branch, so it reaches `main` with PR #508.
+
+**Measured first.** The entry above guessed from whole-job times. The "Run the
+Python suite" step on the six most recent CI runs, read from the runs themselves:
+38, 45, 45, 48 and 54 minutes, and cut off at 58 on `usfm-editor-507` (run
+45207853955), where the job reached its 60. The same code differs by twenty
+minutes between runs, so the spread is the runner, and "more often than it
+finishes" overstated it: five of six finished. After #509's merge the run on `main`
+(733402d) passed, 45 minutes; so did the run on this branch's merge commit
+(5ebcbe6), 48 minutes.
+
+**Changed.** `.github/workflows/ci.yml`: `timeout-minutes: 90` on the `engine` job,
+and its comment now carries these numbers and points at #82 (share the Stage 5-8
+setup) as the answer if the suite outgrows 90 as well. Nothing else in the
+workflow changed.
+
+**Run.** The file parses, and reads back `engine: 90`, `frontend: 15`, `rust: 30`
+with the same six jobs. A pull request's CI uses the workflow file from the pull
+request, so the run this push starts is the first under the new limit.
+
+**Not run.** Engine, frontend and Rust gates: no code, test or build input changed.
+Whether 90 is enough is only shown over time.
