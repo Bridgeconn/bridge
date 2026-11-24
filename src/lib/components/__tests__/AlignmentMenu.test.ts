@@ -20,20 +20,20 @@ function hintOf(element: Element): string {
 }
 
 function mount(props: Record<string, unknown> = {}) {
-  const actions = { onWordAlignment: vi.fn(), onAlignmentReview: vi.fn(), onCrossVerse: vi.fn(), onAlignChapter: vi.fn() };
-  render(AlignmentMenu, { props: { ...actions, alignChapterTitle: "Align this chapter automatically", ...props } });
+  const actions = { onWordAlignment: vi.fn(), onAlignmentReview: vi.fn(), onCrossVerse: vi.fn(), onAlignWithAI: vi.fn() };
+  render(AlignmentMenu, { props: { ...actions, alignAITitle: "Align one chapter, several, or the whole book automatically", ...props } });
   return actions;
 }
 
 describe("AlignmentMenu (#488)", () => {
   // 2026-11-16 (Joel): Word alignment is in the menu, first; then the order
   // of the work itself; each entry has its icon.
-  it("holds Word alignment, Cross-verse alignment, Alignment Review and Align chapter with AI, in that order", async () => {
+  it("holds Word alignment, Cross-verse alignment, Alignment Review and Align with AI, in that order", async () => {
     mount();
     expect(screen.queryByRole("menu")).toBeNull();
     await fireEvent.click(trigger());
     expect(screen.getAllByRole("menuitem").map((item) => item.querySelector(".entry")?.textContent?.trim()))
-      .toEqual(["Word alignment", "Cross-verse alignment", "Alignment Review", "Align chapter with AI"]);
+      .toEqual(["Word alignment", "Cross-verse alignment", "Alignment Review", "Align with AI"]);
     for (const item of screen.getAllByRole("menuitem")) expect(item.querySelector("svg")).not.toBeNull();
   });
 
@@ -75,24 +75,24 @@ describe("AlignmentMenu (#488)", () => {
     await fireEvent.click(entry(/Cross-verse alignment/));
     expect(actions.onCrossVerse).toHaveBeenCalledOnce();
     await fireEvent.click(trigger());
-    await fireEvent.click(entry("Align chapter with AI"));
-    expect(actions.onAlignChapter).toHaveBeenCalledOnce();
+    await fireEvent.click(entry("Align with AI"));
+    expect(actions.onAlignWithAI).toHaveBeenCalledOnce();
   });
 
   it("keeps the buttons' disabled states and tooltips", async () => {
-    const actions = mount({ crossVerseDisabled: true, alignChapterDisabled: true,
-      alignChapterTitle: "Add an API key or sign in with ChatGPT in Settings to align automatically" });
+    const actions = mount({ crossVerseDisabled: true, alignAIDisabled: true,
+      alignAITitle: "Add an API key or sign in with ChatGPT in Settings to align automatically" });
     await fireEvent.click(trigger());
     const cross = entry(/Cross-verse alignment/);
     expect(cross).toBeDisabled();
     expect(hintOf(cross)).toBe("Align several verses of this chapter side by side (Ctrl-click or Shift-click verses to pick them first)");
-    const auto = entry("Align chapter with AI");
+    const auto = entry("Align with AI");
     expect(auto).toBeDisabled();
     expect(hintOf(auto)).toBe("Add an API key or sign in with ChatGPT in Settings to align automatically");
     await fireEvent.click(cross);
     await fireEvent.click(auto);
     expect(actions.onCrossVerse).not.toHaveBeenCalled();
-    expect(actions.onAlignChapter).not.toHaveBeenCalled();
+    expect(actions.onAlignWithAI).not.toHaveBeenCalled();
     expect(entry("Alignment Review")).toBeEnabled();
   });
 
@@ -104,10 +104,25 @@ describe("AlignmentMenu (#488)", () => {
     expect(hintOf(cross)).toBe("Open the 3 selected verses side by side");
   });
 
-  it("shows the estimate being read on its entry", async () => {
-    mount({ alignChapterLabel: "Working out the cost…", alignChapterDisabled: true });
+  // 2026-11-24: the entry opens a dialog, so it no longer changes its label
+  // while a cost is worked out. A run under way is said on the entry, which
+  // stays enabled: choosing it shows the run's progress.
+  it("says a run is under way on its entry, and still opens", async () => {
+    const actions = mount({ alignAIRunning: true, alignAITitle: "An automatic alignment is running. Click to see its progress" });
     await fireEvent.click(trigger());
-    expect(entry("Working out the cost…")).toBeDisabled();
+    const auto = entry(/Align with AI/);
+    expect(auto).toBeEnabled();
+    expect(auto).toHaveTextContent("running");
+    expect(auto.querySelector(".entry")?.textContent).toBe("Align with AI");
+    expect(hintOf(auto)).toBe("An automatic alignment is running. Click to see its progress");
+    await fireEvent.click(auto);
+    expect(actions.onAlignWithAI).toHaveBeenCalledOnce();
+  });
+
+  it("shows no running mark when nothing runs", async () => {
+    mount();
+    await fireEvent.click(trigger());
+    expect(entry("Align with AI")).not.toHaveTextContent("running");
   });
 
   it("is keyboard operable: arrows skip a disabled entry, Escape closes and returns focus", async () => {
@@ -119,7 +134,7 @@ describe("AlignmentMenu (#488)", () => {
     await fireEvent.keyDown(screen.getByRole("menu"), { key: "ArrowDown" });
     expect(document.activeElement).toBe(entry("Alignment Review"));
     await fireEvent.keyDown(screen.getByRole("menu"), { key: "ArrowDown" });
-    expect(document.activeElement).toBe(entry("Align chapter with AI"));
+    expect(document.activeElement).toBe(entry("Align with AI"));
     await fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("menu")).toBeNull();
     expect(document.activeElement).toBe(trigger());
@@ -136,7 +151,10 @@ describe("AlignmentMenu (#488)", () => {
     expect(app).not.toContain('slot="menus"');
     expect(app).not.toContain("editor-toolbar");
     expect(app).not.toContain("whole-book-btn");
-    // "Align chapter with AI" is still AutoAlignChapterButton's job, as a strip.
-    expect(app).toMatch(/<AutoAlignChapterButton\s+strip/);
+    // "Align with AI" opens the dialog; its run shows as a strip above the text.
+    expect(app).toMatch(/<AutoAlignStrip\s/);
+    expect(app).toMatch(/<AutoAlignDialog\s/);
+    expect(app).toContain("onAlignWithAI={() => (autoAlignDialogOpen = true)}");
+    expect(app).not.toContain("AutoAlignChapterButton");
   });
 });

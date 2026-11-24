@@ -179,7 +179,10 @@ passes agree on is written. That covers tC same-verse groups, cross-verse link
 groups and reasoned null decisions, each with `origin: "ai-auto"`. A
 single-pass claim is a suggestion. A word neither pass placed is a *possible*
 omission or addition and is never forced. A reviewer's existing alignment is
-never written over.
+never written over. Since 2026-11-24 (Joel, for the team, DECISIONS.md) one
+Start of the editor's "Align with AI" may cover several chapters or the whole
+book, chosen in a dialog that shows the cost first; the gate and everything
+else in this paragraph are unchanged.
 
 The third (#423, Benz's decision 2026-11-02, DECISIONS.md) is **closure on a
 Paratext resolve**: when the notes index shows a linked Paratext thread resolved,
@@ -853,7 +856,9 @@ raise it as a question in the issue rather than deciding it in a commit:
   (#146) and for the two-pass window alignment of tC groups, links and null
   decisions (#219), each on an agreement-between-two-methods gate. Widening it —
   to Scripture, to findings, to a single pass, or to any single-score threshold —
-  is a fresh question, not a precedent already set
+  is a fresh question, not a precedent already set. (How many chapters one click
+  of "Align with AI" covers was decided on 2026-11-24: that is scope, not the
+  gate, and starting a run without a click is still a question)
 - A second Scripture writer, or an alternative path for applying corrections to
   the text — Stage 9B.3b's authorized write behind an explicit human confirmation
   is deliberately the only one. (A scoped Language QA correction, 2026-10-07,

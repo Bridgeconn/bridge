@@ -4831,7 +4831,10 @@ class BridgeEngine:
                 chapter, verses, apply=spec.apply, job_id=job_id, report=report, cancelled=cancelled,
             )
         try:
-            return self._auto_align_jobs.start(spec, run_window=run_window)
+            # The same stop the AI review job has (#506): a run over several
+            # chapters must not send, and fail, every window left after a
+            # ChatGPT plan's limit was reached.
+            return self._auto_align_jobs.start(spec, run_window=run_window, halt=self._ai_halt_reason)
         except auto_align_jobs.AutoAlignJobConflict as exc:
             raise ProjectError(str(exc)) from exc
 

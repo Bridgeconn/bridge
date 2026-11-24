@@ -38,9 +38,11 @@
   import AlignmentReview from "./lib/components/AlignmentReview.svelte";
   import AlignmentHost from "./lib/components/AlignmentHost.svelte";
   import AlignmentTabPane from "./lib/components/AlignmentTabPane.svelte";
-  import AutoAlignChapterButton from "./lib/components/AutoAlignChapterButton.svelte";
+  import AutoAlignDialog from "./lib/components/AutoAlignDialog.svelte";
+  import AutoAlignStrip from "./lib/components/AutoAlignStrip.svelte";
+  import { attachRun, autoAlignFinished, autoAlignReady, autoAlignRun, refreshAutoAlignReady } from "./lib/autoAlignRun";
   import {
-    alignmentOpen, closeCrossVerse, crossVerseAnchor, crossVerseInitialVerses, crossVerseOpen, crossVerseRequest, openAlignment, openCrossVerse, showAlignmentTab,
+    alignmentOpen, closeCrossVerse, crossVerseAnchor, crossVerseInitialVerses, crossVerseOpen, crossVerseRequest, openAlignment, openCrossVerse, requestCrossVerse, showAlignmentTab,
   } from "./lib/alignmentUi";
   import { resetReviewState } from "./lib/reviewStores";
   import SettingsModal from "./lib/components/SettingsModal.svelte";
@@ -108,11 +110,31 @@
   // Alignment Review is a top-level surface alongside the editor, not a
   // replacement for ReviewPanel's per-verse alignment modal.
   let showingAlignmentReview = false;
-  // #488: the Alignment menu entry for AutoAlignChapterButton (its phase and
-  // whether an API key is saved are the component's; these only mirror them).
-  let autoAlign: AutoAlignChapterButton | undefined;
-  let autoAlignPhase: "idle" | "estimating" | "confirm" | "running" | "finished" = "idle";
-  let autoAlignHasKey: boolean | undefined = undefined;
+  // "Align with AI" (2026-11-24): the run is `autoAlignRun`'s, so it outlives
+  // the dialog and the editor screen; this only says whether the dialog shows.
+  let autoAlignDialogOpen = false;
+  // Settings is where a key is saved or a ChatGPT sign-in made: ask again
+  // when it closes, or the entry stays disabled until the app is restarted.
+  let autoAlignSettingsWasOpen = false;
+  $: {
+    if (autoAlignSettingsWasOpen && !$settingsOpen) void refreshAutoAlignReady();
+    autoAlignSettingsWasOpen = $settingsOpen;
+  }
+  // A finished run wrote alignment. The open chapter is read again when the
+  // run covered it, and only then: a run over other chapters must not reload
+  // the one the reviewer is working in.
+  let autoAlignFinishedSeen = 0;
+  $: if ($autoAlignFinished && $autoAlignFinished.seq !== autoAlignFinishedSeen) {
+    autoAlignFinishedSeen = $autoAlignFinished.seq;
+    if ($autoAlignFinished.projectPath === ($project?.path ?? "") && $autoAlignFinished.chapters.includes($currentChapter)) {
+      void activateChapter($currentChapter);
+    }
+  }
+  /** Open review, from the dialog or the strip: the verses may be in another
+   *  chapter, so it goes the way a finding's request does (#118). */
+  function openAutoAlignReview(chapter: string, verses: string[]): void {
+    requestCrossVerse(chapter, verses);
+  }
   let bookProgress: BookProgressEntry[] = [];
   let dashboardLoading = false;
   let dashboardError = "";
@@ -552,6 +574,10 @@
   }
 
   onMount(() => {
+    // Whether an AI request could be sent, and a run the engine may still
+    // have from before this page was loaded.
+    void refreshAutoAlignReady();
+    void attachRun();
     let unlistenLog: (() => void) | null = null;
     let unlistenRespawn: (() => void) | null = null;
     let unlistenStage: (() => void) | null = null;
@@ -1832,8 +1858,8 @@
       />
       <button type="button" class="rail-btn" aria-label="Bookmarks" aria-haspopup="menu" aria-expanded={Boolean(placesMenu)}
         use:tooltip={{ text: placesMenu ? "" : "Bookmarks and recent chapters", side: "right" }} on:click={openPlacesMenu}><UiIcon name="bookmark" /></button>
-      <!-- "Align chapter with AI" is AutoAlignChapterButton's (mounted in
-           the editor below): the entry reads its phase and key, and starts it. -->
+      <!-- "Align with AI" opens AutoAlignDialog; its run is autoAlignRun's
+           and shows in AutoAlignStrip (mounted in the editor below). -->
       <!-- 2026-11-16 (Joel): Word alignment is here too. A tab that is open
            already is shown, not opened again; picked verses still open the
            cross-verse page on them. -->
@@ -1846,14 +1872,16 @@
         onCrossVerse={() => { if ($crossVerseOpen && $selectedVerseSet.length < 2) showAlignmentTab("cross"); else openCrossVerse($selectedVerse ?? "", $selectedVerseSet); }}
         crossVerseDisabled={!$selectedVerse}
         selectedCount={$selectedVerseSet.length}
-        onAlignChapter={() => autoAlign?.ask()}
-        alignChapterDisabled={Boolean(activeJobId) || !autoAlignHasKey || autoAlignPhase !== "idle"}
-        alignChapterTitle={autoAlignHasKey === false
-          ? "Add an API key or sign in with ChatGPT in Settings to align automatically"
-          : autoAlignPhase === "idle" || autoAlignPhase === "estimating"
-            ? "Align this chapter automatically: three verses at a time, each asked twice. Shows the cost before anything is sent."
-            : "An automatic alignment of this chapter is open in the strip above the text"}
-        alignChapterLabel={autoAlignPhase === "estimating" ? "Working out the cost…" : "Align chapter with AI"}
+        onAlignWithAI={() => (autoAlignDialogOpen = true)}
+        alignAIRunning={$autoAlignRun.phase === "running"}
+        alignAIDisabled={$autoAlignRun.phase === "idle" && (Boolean(activeJobId) || !$autoAlignReady)}
+        alignAITitle={$autoAlignRun.phase === "running"
+          ? "An automatic alignment is running. Click to see its progress"
+          : $autoAlignRun.phase === "finished"
+            ? "The last automatic alignment has finished. Click to see what it did"
+            : $autoAlignReady === false
+              ? "Add an API key or sign in with ChatGPT in Settings to align automatically"
+              : "Align one chapter, several, or the whole book automatically. Shows the cost before anything is sent."}
       />
       </ActivityBar>
       <div class="work-col">
@@ -1862,18 +1890,13 @@
           <p class="role-banner" role="status">You are a reporter on this project: you can read, report and export, and changes are refused.</p>
         {/if}
         <!-- #488: no second bar. Alignment Review, Cross-verse alignment and
-             Align chapter with AI are the top bar's Alignment menu. This
-             draws nothing while idle; the estimate to confirm, the progress
-             and the result of an automatic alignment show as one strip. -->
-        <AutoAlignChapterButton
-          strip
-          bind:this={autoAlign}
-          bind:phase={autoAlignPhase}
-          bind:hasKey={autoAlignHasKey}
-          chapter={$currentChapter}
-          disabled={Boolean(activeJobId)}
-          onOpenReview={(verse, verses) => openCrossVerse(verse, verses)}
-          onFinished={() => { void activateChapter($currentChapter); }}
+             Align with AI are the rail's Alignment menu. This draws nothing
+             while idle; the progress and the result of an automatic
+             alignment show as one strip. Choosing chapters and the cost are
+             the dialog's. -->
+        <AutoAlignStrip
+          onOpen={() => (autoAlignDialogOpen = true)}
+          onOpenReview={openAutoAlignReview}
         />
         <!-- The text, then the side-panel columns (Benz, 2026-10-09): each
              shown from the View menu, resized or closed by dragging its left
@@ -1982,6 +2005,14 @@
 
   {#if $settingsOpen}
     <SettingsModal initialPane={settingsInitialPane} onClose={() => settingsOpen.set(false)} />
+  {/if}
+
+  {#if autoAlignDialogOpen && $project}
+    <AutoAlignDialog
+      onClose={() => (autoAlignDialogOpen = false)}
+      onOpenChapter={(chapter) => { void switchChapter(chapter); }}
+      onOpenReview={openAutoAlignReview}
+    />
   {/if}
 
   <!-- #372: the in-app confirmation (chapter/book AI review, Remove key).

@@ -3,9 +3,13 @@
    *  only buttons on the editor's second bar, and since 2026-11-16 (Joel)
    *  Word alignment too, which could only be opened from a verse's own icon.
    *  In order: Word alignment, Cross-verse alignment, Alignment Review, Align
-   *  chapter with AI, each with its icon. The two tabs say when they are
-   *  already open; choosing one then shows it. The caller owns the actions
-   *  and the disabled states. Choosing an entry closes the menu. */
+   *  with AI, each with its icon. The two tabs say when they are already
+   *  open; choosing one then shows it. The caller owns the actions and the
+   *  disabled states. Choosing an entry closes the menu.
+   *
+   *  Align with AI (2026-11-24) opens a dialog to choose chapters; it was
+   *  "Align chapter with AI" and took only the chapter that was open. While a
+   *  run is under way the entry says so and opens the dialog on its progress. */
   import { onDestroy, tick } from "svelte";
   import UiIcon from "./UiIcon.svelte";
   import { tooltip } from "../tooltip";
@@ -26,11 +30,11 @@
   export let crossVerseDisabled = false;
   /** How many verses are picked (Ctrl-click or Shift-click); shown from two up. */
   export let selectedCount = 0;
-  export let onAlignChapter: () => void = () => {};
-  export let alignChapterDisabled = false;
-  export let alignChapterTitle = "";
-  /** "Working out the cost…" while the estimate is read. */
-  export let alignChapterLabel = "Align chapter with AI";
+  export let onAlignWithAI: () => void = () => {};
+  export let alignAIDisabled = false;
+  export let alignAITitle = "";
+  /** A run is under way: the entry says so, and opens its progress. */
+  export let alignAIRunning = false;
 
   let open = false;
   let root: HTMLElement;
@@ -86,12 +90,12 @@
 <span class="alignment-menu" class:rail bind:this={root}>
   {#if rail}
     <button type="button" class="rail-btn" bind:this={trigger} aria-label="Alignment" aria-haspopup="menu" aria-expanded={open}
-      use:tooltip={{ text: open ? "" : "Alignment: word alignment, cross-verse alignment, Alignment Review, align this chapter with AI", side: "right" }}
+      use:tooltip={{ text: open ? "" : "Alignment: word alignment, cross-verse alignment, Alignment Review, align with AI", side: "right" }}
       on:click={() => (open ? close(false) : void show())}
       on:keydown={(event) => { if (event.key === "ArrowDown" && !open) { event.preventDefault(); void show(); } }}><UiIcon name="alignMenu" /></button>
   {:else}
   <button type="button" class="menu-btn" bind:this={trigger} aria-haspopup="menu" aria-expanded={open}
-    title="Alignment Review, cross-verse alignment and automatic alignment of this chapter"
+    title="Alignment Review, cross-verse alignment and automatic alignment with AI"
     on:click={() => (open ? close(false) : void show())}
     on:keydown={(event) => { if (event.key === "ArrowDown" && !open) { event.preventDefault(); void show(); } }}>Alignment ▾</button>
   {/if}
@@ -110,8 +114,8 @@
         on:click={() => { if (!crossVerseDisabled) choose(onCrossVerse); }}><UiIcon name="link" /><span class="entry">Cross-verse alignment{#if selectedCount > 1}&nbsp;({selectedCount}){/if}</span>{#if crossOpen}<span class="is-open">open</span>{/if}</button>
       <button type="button" role="menuitem" use:tooltip={{ side: "right", text: "Review the alignment of the whole book, verse by verse" }}
         on:click={() => choose(onAlignmentReview)}><UiIcon name="review" /><span class="entry">Alignment Review</span></button>
-      <button type="button" role="menuitem" disabled={alignChapterDisabled} use:tooltip={{ side: "right", text: alignChapterTitle }}
-        on:click={() => { if (!alignChapterDisabled) choose(onAlignChapter); }}><UiIcon name="sparkle" /><span class="entry">{alignChapterLabel}</span></button>
+      <button type="button" role="menuitem" disabled={alignAIDisabled} use:tooltip={{ side: "right", text: alignAITitle }}
+        on:click={() => { if (!alignAIDisabled) choose(onAlignWithAI); }}><UiIcon name="sparkle" /><span class="entry">Align with AI</span>{#if alignAIRunning}<span class="is-open">running</span>{/if}</button>
     </div>
   {/if}
 </span>

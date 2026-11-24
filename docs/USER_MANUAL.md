@@ -353,9 +353,32 @@ pass. Each verse gets a card in the strip at the top:
 - **· Not aligned yet**.
 
 **Undo a verse** puts a verse back as it was before the last pass, leaving alone
-anything you changed since. **Align chapter with AI** in the editor toolbar
-does the whole chapter three verses at a time, and shows the number of requests
-and an approximate cost before anything is sent.
+anything you changed since.
+
+**Align with AI**, in the editor's Alignment menu, does the same for whole
+chapters, three verses at a time:
+
+1. It opens a dialog with the book's chapters as boxes. The chapter that is
+   open is selected to begin with. Click a box to select or deselect it,
+   Shift+click to select a range, or use **This chapter**, **Select all** and
+   **Clear**.
+2. The dialog shows the number of requests, the tokens and an approximate cost
+   for what you selected (or "uses your ChatGPT plan allowance"). Nothing is
+   sent before you press **Start**.
+3. After **Start** the boxes show progress: waiting, in progress, aligned, needs
+   review, had failures. You can close the dialog and keep working; the run
+   continues in the background, a line above the text shows where it is, and
+   **Align with AI** in the menu opens the dialog again.
+4. Once a run has started, **Start** becomes **Cancel**. It stops after the
+   request that is on its way. Chapters that
+   were already finished keep their alignment, and **Resume** continues with
+   what is left.
+5. When the run ends, a box opens its chapter, and **Open review** goes to the
+   first verses that need a look.
+
+Every selected chapter is sent, including one that is already fully aligned;
+your own alignment in it is never changed, but the requests are still used.
+Only one automatic alignment runs at a time.
 
 translationCore's own status is unchanged by any of this. A verse with a
 cross-verse link or a grammatical word still reads as not complete there,
