@@ -27532,3 +27532,26 @@ rewrites a notes file and reads it back; not investigated.
 
 **Not part of this, said in #517.** Skipping or marking chapters that are
 already fully aligned; a guard between the align job and the AI review job.
+
+## 2026-11-24 — PR #518 merged: "Align with AI" is on main (#517)
+
+**What happened.** Joel tested `align-with-ai-517` in the desktop app and
+reported that everything works as expected. PR #518 was merged with a merge
+commit (`f374454`); #517 closed with it and its board card is Done. No code
+changed between his test and the merge.
+
+**Verified, and by whom.** The desktop app: by Joel, who ran it (his report was
+"all works as expected", not a per-check list; I did not run the desktop app).
+CI on the PR: `frontend`, `engine` and `ci-ok` passed; `rust` and
+`golden-notice` were skipped because no file of theirs changed. The engine job
+is where the twelve Stage 3 tests that cannot run on this machine did run.
+
+**Still not tried by anyone.** A long run over many chapters against a live
+provider (how long it takes, the cost against the estimate), and the plan-limit
+stop on a real ChatGPT plan. Both are covered only by tests with a fake
+provider.
+
+**Open, with no issue of its own.** `test_paratext_decided_policy_protocol.py`
+failed under load twice on 2026-11-24, a different test each time with the
+same shape (the list of closed threads came back empty), and passes alone.
+Not investigated; filing an issue is Joel's decision.
