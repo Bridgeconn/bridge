@@ -545,8 +545,8 @@ Since 2026-10-23 the desktop can also *host* one (Settings > Team > Start a
 hub, a child of the engine alive only while Bridge is open); that changes
 packaging, not this rule.
 The optional AI can also authenticate with a **ChatGPT sign-in** instead of an
-API key (#506, 2026-11-23, DECISIONS.md; on the `chatgpt-signin` branch until the
-maintainer agrees). It is the same optional, human-invoked `ai_client.py` path
+API key (#506, DECISIONS.md 2026-11-23; merged to `main` 2026-11-24 in PR #508).
+It is the same optional, human-invoked `ai_client.py` path
 with a different credential: `chatgpt_signin.py` (the protocol),
 `chatgpt_session.py` (what is kept, token renewal, the pause after a plan limit)
 and `chatgpt_plan_client.py` (the request differences). Nothing on the import,
@@ -842,9 +842,9 @@ raise it as a question in the issue rather than deciding it in a commit:
   runtime path a translator hits. Decided 2026-10-12 for the hub only
   (`docs/DECISIONS.md`; #46, architecture review in #227 before #79): the team
   hub is an optional sync peer the desktop never waits on. A ChatGPT sign-in as
-  the optional AI's credential was asked for by Benz on 2026-11-23 (#506) and is
-  built on a branch; it does not land on `main` without the maintainer's
-  agreement. Any other network
+  the optional AI's credential was asked for by Benz on 2026-11-23 (#506) and
+  merged on 2026-11-24 (PR #508) once the maintainer's agreement was confirmed;
+  that covers this one credential and nothing else. Any other network
   dependency — an account, a login, a hosted service, a call on the import,
   check or open path — is still a question
 - Re-baselining either golden

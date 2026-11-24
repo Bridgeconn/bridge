@@ -27061,3 +27061,34 @@ request, so the run this push starts is the first under the new limit.
 
 **Not run.** Engine, frontend and Rust gates: no code, test or build input changed.
 Whether 90 is enough is only shown over time.
+
+## 2026-11-24 — PR #508 merged: the ChatGPT sign-in is on main (#506, #510)
+
+**Merged.** PR #508 went into `main` as e7d88e8, with a merge commit, on Joel's
+instruction. Before merging he was asked whether the maintainer had agreed to the
+login, because `CLAUDE.md` and DECISIONS made that the condition; he answered that
+Revant had. The pull request carries no review, so that answer is the record.
+Issues #506 and #510 closed with the merge and both board cards are on Done.
+
+**State at the merge.** No conflicts; `main` had not moved since it was merged into
+the branch. On the last commit (2848213, the CI limit and a build log entry only)
+`frontend` and `rust` had passed and `engine` was still running. The commit before
+it (5ebcbe6), with the same code, had passed all three.
+
+**Tested by Joel in the desktop app** before the merge: the sign-in and an AI
+review, alone and together with the #507 editor.
+
+**Changed in this commit, docs only.** `CLAUDE.md` (two places) and
+`docs/DECISIONS.md` said the sign-in was waiting on a branch for the maintainer;
+they now say it is merged and how the agreement was confirmed.
+
+**Restore points.** `copyMain` is `main` before this merge (733402d); the `v0.26.0`
+tag is `main` before #509 (6ea7d40).
+
+**Found while testing, not fixed here: #511.** An open Word alignment tab is not
+refreshed after an AI review writes an alignment; the AI explanation is lost on a
+verse change; two actions spend AI requests without asking; two pieces of wording
+do not match the code. All of it was on `main` before this work. Joel chose to fix
+it on its own branch after this merge.
+
+**Not run.** No gate: this commit changes documentation only.

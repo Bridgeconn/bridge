@@ -7,8 +7,10 @@ Settings > AI provider gains "ChatGPT account": a browser sign-in on OpenAI's ow
 (its flow for open-source apps that run locally: PKCE, a loopback redirect, a one-time
 client registration), after which Bridge's existing AI requests run on that person's
 ChatGPT Plus or Pro plan instead of an API key. The API key providers are unchanged.
-**Status:** built on the `chatgpt-signin` branch. A login is a stop-and-ask item; the
-maintainer's agreement is still owed and is the condition for merging to `main`.
+**Status:** merged to `main` on 2026-11-24 (PR #508, merge commit e7d88e8). A login is
+a stop-and-ask item, so it waited on a branch for the maintainer's agreement; Joel
+confirmed that agreement before the merge. It is not recorded on the pull request
+itself, which carries no review.
 **Because:** a team member who already pays for ChatGPT paid again per request through
 an API key (about $5.40 a chapter of tN/tW review). A live test showed Bridge's strict
 JSON review format is accepted under plan usage on the default model (BUILD_LOG,
