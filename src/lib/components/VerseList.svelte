@@ -3,20 +3,24 @@
   import { tooltip } from "../tooltip";
   import { savedBookWorkspace, rememberScroll, flushWorkspace } from "../projectWorkspace";
   import { onDestroy, tick } from "svelte";
-  import { verseNums, verseTexts, verseDisplay, headingsByVerse, findingsByVerse, checkStatusByVerse, alignmentStatusByVerse, selectedVerse, selectedVerseSet, currentChapter, verseKey, nativeChecksByVerse, aiCheckReviewsByVerse, checkingProgress, languageQaFindingsByVerse, project, flagsByVerse, historyCountByVerse, paratextNoteCountsByVerse, focusedFindingId, checkGroupsByVerse, targetLang, targetDir, reviewTabRequest } from "../stores";
+  import { verseNums, verseTexts, verseDisplay, headingsByVerse, paraOpenersByVerse, findingsByVerse, checkStatusByVerse, alignmentStatusByVerse, selectedVerse, selectedVerseSet, currentChapter, verseKey, nativeChecksByVerse, aiCheckReviewsByVerse, checkingProgress, languageQaFindingsByVerse, project, flagsByVerse, historyCountByVerse, paratextNoteCountsByVerse, focusedFindingId, checkGroupsByVerse, targetLang, targetDir, reviewTabRequest } from "../stores";
   import { checksRunNote } from "../checkSelection";
   import { alignmentStatusLabel, isAlignmentComplete } from "../alignmentStatus";
   import { rangeBetween } from "../crossVerseRange";
   import { unionInChapterOrder } from "../crossVerseSuggest";
   import { buildSegments } from "../utils/highlight";
-  import { withNoteMarkers, type VerseNote, type VerseNoteKind } from "../utils/usfmNotes";
+  import { withNoteMarkers, type VerseNote, type VerseNoteKind, type VersePiece } from "../utils/usfmNotes";
   import { styleClasses, withStyleSpans, type StyleRange } from "../utils/verseStyles";
+  import { isStructured, lineClass, lineStartsForLayout, openingParas, splitIntoLines, type VerseLine, type VerseOpening } from "../utils/verseLines";
   import { identityDisplay, plainToUtf16, rawOffsetFromPlain, utf16Offset } from "../utils/verseDisplay";
   import { selectionInVerse } from "../utils/selection";
   import { addFlag } from "../flags";
   import FlagDialog from "./FlagDialog.svelte";
   import FlagPopover from "./FlagPopover.svelte";
   import VerseHistoryPopover from "./VerseHistoryPopover.svelte";
+  import VerseLineWrap from "./VerseLineWrap.svelte";
+  import HeadingRow from "./HeadingRow.svelte";
+  import BookIntroduction from "./BookIntroduction.svelte";
   import { rawView, revealSidePanel, textScale } from "../editorPrefs";
   import { openIssueSummary } from "../verseIssues";
   import { loadParatextNoteCounts, noteCountFor, requestParatextNote } from "../paratextNotes";
@@ -40,6 +44,7 @@
   import {
     applySuggestedFindingFix, applyLanguageQaSuggestedFix, editingChapter, editingVerse, editText, editSaving,
     editError, editWarnings, saveVerseEdit, cancelVerseEdit, startVerseEdit, recheckingKey, editWithSelection,
+    applyVerseMarkup, editMarkupBusy, editMarkupNote,
   } from "../verseEditor";
   import { findingSpan, pendingReveal, revealFinding } from "../findingFocus";
   import { openAlignment } from "../alignmentUi";
@@ -91,6 +96,32 @@
   function shownDisplay(key: string, raw: boolean, displays: Record<string, VerseDisplay>, texts: Record<string, string>): VerseDisplay {
     return raw ? identityDisplay(texts[key] ?? "") : displays[key] ?? identityDisplay(texts[key] ?? "");
   }
+
+  // #507: the paragraph each verse opens in ("q1", "p" ...), carried down the
+  // chapter from the paragraph markers the verses before it hold.
+  $: verseOpenings = openingParas(
+    $verseNums.map((v) => verseKey($currentChapter, v)), $verseDisplay, $paraOpenersByVerse,
+  );
+  const NO_OPENING: VerseOpening = { marker: "", gap: false };
+
+  /** A verse's pieces as paragraph and poetry lines. Raw view shows the stored
+   *  string with its markers, so it is one line there. */
+  function verseLines(pieces: VersePiece[], display: VerseDisplay, opening: VerseOpening | undefined, raw: boolean): VerseLine[] {
+    return raw
+      ? [{ marker: "", gap: false, pieces }]
+      : splitIntoLines(pieces, lineStartsForLayout(display), opening ?? NO_OPENING);
+  }
+
+  // #507: the marker toolbar over the verse edit box. Only one verse is edited
+  // at a time, so one reference to its textarea is enough.
+  let editArea: HTMLTextAreaElement | null = null;
+  const LINE_LEVELS = ["q", "q1", "q2", "q3"];
+  const LEVEL_HINT: Record<string, string> = {
+    q: "Poetry line (\\q): set the level of the line the cursor is on",
+    q1: "First-level poetry line (\\q1): set the level of the line the cursor is on",
+    q2: "Second-level poetry line (\\q2): set the level of the line the cursor is on",
+    q3: "Third-level poetry line (\\q3): set the level of the line the cursor is on",
+  };
   // The verse whose Language QA decision history is open (verse menu).
   let historyFor: { projectPath: string; chapter: string; verse: string } | null = null;
   // Which underlined finding Left/Right last landed on, scoped to one verse
@@ -1055,7 +1086,9 @@
     // The section heading above this verse sticks to the top of the list:
     // stop the verse below it, not under it.
     let heading: HTMLElement | null = null;
-    for (const item of scrollContainer.querySelectorAll<HTMLElement>(".section-heading")) {
+    // A reference line (\r) and a psalm title (\d) do not stick, so they
+    // never cover the verse (HeadingRow marks them `unstuck`).
+    for (const item of scrollContainer.querySelectorAll<HTMLElement>(".section-heading:not(.unstuck)")) {
       if (item.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING) heading = item;
       else break;
     }
@@ -1198,16 +1231,18 @@
 <div class="editor-scroll" bind:this={scrollContainer} lang={$targetLang} on:scroll={saveReadingPosition}
   style:--verse-scale={$textScale} style:--num-ch={numberDigits}>
 
+  <!-- #507: the book's introduction, above its first chapter only. -->
+  <BookIntroduction />
 
   {#each $verseNums as v}
     {@const key = verseKey($currentChapter, v)}
     {@const headings = $headingsByVerse[key] ?? []}
-    {#each headings as heading}
+    {#each headings as heading, headingIndex}
       <!-- Rendered above the verse it introduces, not as part of the previous
            verse's text where it used to live (#180). Not selectable, not
            checkable and never alignable: it is not a translation of any source
-           word. -->
-      <h3 class="section-heading" class:major={heading.tag.startsWith("ms")}>{heading.text}</h3>
+           word. HeadingRow draws it and, since #507, edits its text. -->
+      <HeadingRow chapter={$currentChapter} verse={v} index={headingIndex} {heading} />
     {/each}
     {@const findings = $findingsByVerse[key] ?? []}
     {@const checkStatus = $checkStatusByVerse[key]}
@@ -1264,6 +1299,8 @@
         {/if}
       </div>
       {#if isEditingThis}
+        <!-- #507: the level this verse's first line is at, for "Break line". -->
+        {@const opening = verseOpenings[key]?.marker ?? ""}
         <div
           class="vedit"
           on:click|stopPropagation
@@ -1272,8 +1309,34 @@
           on:contextmenu|stopPropagation
           role="presentation"
         >
+          <!-- #507: marker edits without typing USFM. The engine makes each
+               change on the text below (the frontend never parses USFM) and
+               nothing is saved until ✓. mousedown is cancelled so a click here
+               does not take the selection out of the textarea. Text labels,
+               not an icon font (gotcha 9). -->
+          <div class="vedit-tools" role="toolbar" aria-label={`USFM markers for verse ${v}`}>
+            <button type="button" class="ui-btn small" data-markup="k" disabled={$editSaving || $editMarkupBusy}
+              use:tooltip={"Keyword (\\k): mark the selected words, or take the mark off"}
+              on:mousedown|preventDefault on:click={() => void applyVerseMarkup(editArea, "style", "k")}>Keyword</button>
+            <button type="button" class="ui-btn small" data-markup="qs" disabled={$editSaving || $editMarkupBusy}
+              use:tooltip={"Selah (\\qs): mark the selected word, or take the mark off"}
+              on:mousedown|preventDefault on:click={() => void applyVerseMarkup(editArea, "style", "qs")}>Selah</button>
+            <span class="tools-sep" aria-hidden="true"></span>
+            <span class="tools-label">Line</span>
+            {#each LINE_LEVELS as level}
+              <button type="button" class="ui-btn small level" data-markup={level} disabled={$editSaving || $editMarkupBusy}
+                use:tooltip={LEVEL_HINT[level]} aria-label={LEVEL_HINT[level]}
+                on:mousedown|preventDefault on:click={() => void applyVerseMarkup(editArea, "level", level)}>{"\\" + level}</button>
+            {/each}
+            <button type="button" class="ui-btn small" data-markup="break" disabled={$editSaving || $editMarkupBusy}
+              use:tooltip={"Start a new line at the cursor, at the level of the line it is on"}
+              on:mousedown|preventDefault on:click={() => void applyVerseMarkup(editArea, "break", "", opening)}>Break line</button>
+            <button type="button" class="ui-btn small" data-markup="join" disabled={$editSaving || $editMarkupBusy}
+              use:tooltip={"Join the line the cursor is on to the line above it"}
+              on:mousedown|preventDefault on:click={() => void applyVerseMarkup(editArea, "join")}>Join line</button>
+          </div>
           <div class="vedit-row">
-            <textarea use:autosize bind:value={$editText} disabled={$editSaving} dir={$targetDir} lang={$targetLang} />
+            <textarea use:autosize bind:this={editArea} bind:value={$editText} disabled={$editSaving} dir={$targetDir} lang={$targetLang} />
             <div class="edit-actions">
               <button
                 class="icon-btn save" on:click={() => void saveVerseEdit()}
@@ -1283,9 +1346,14 @@
               <button class="icon-btn cancel" on:click={cancelVerseEdit} disabled={$editSaving} title="Cancel">✕</button>
             </div>
           </div>
+          {#if $editMarkupNote}<p class="edit-note" role="status">{$editMarkupNote}</p>{/if}
           {#if $editError}<p class="edit-error">{$editError}</p>{/if}
         </div>
       {:else}
+        <!-- #507: the verse's pieces as paragraph and poetry lines. A verse of
+             one ordinary line is not wrapped at all (VerseLineWrap). -->
+        {@const lines = verseLines(withNoteMarkers(segments, notesForLayout(display), flagMarkers($flagsByVerse[key] ?? [], display)), display, verseOpenings[key], $rawView)}
+        {@const structured = isStructured(lines)}
         <!-- #323: the project's direction on the text block too, so an RTL
              verse's lines start at the right, not only its runs reordered.
              The mouse handlers only time a word selection (#260); the row
@@ -1295,9 +1363,11 @@
           on:mousedown={() => beginWordSelect(v)}
           on:mouseup={(event) => endWordSelect(event, v)}
           on:dblclick={trimSelectedWord}>
-          <span class="vbody" dir={$targetDir} lang={$targetLang}>
-          {#each withNoteMarkers(segments, notesForLayout(display), flagMarkers($flagsByVerse[key] ?? [], display)) as piece}
-            {#if piece.kind === "flag"}<button
+          <span class="vbody" class:structured dir={$targetDir} lang={$targetLang}>
+          <!-- No whitespace may sit between these tags and the pieces: Svelte
+               keeps it as a space in the text, and every selection and finding
+               offset counts the characters of this element. -->
+          {#each lines as line, lineIndex}<VerseLineWrap wrap={structured} marker={line.marker} gap={line.gap}>{#each line.pieces as piece}{#if piece.kind === "flag"}<button
                 type="button"
                 class="flag-btn"
                 class:resolved={piece.flag.status === "resolved"}
@@ -1326,9 +1396,9 @@
                 title={piece.seg.title}
                 on:click={(event) => focusMarkFromClick(event, piece.seg.findingIds, v)}
                 on:contextmenu={(event) => onMarkContextMenu(event, piece.seg.findingIds, findings, langFindings, v)}
-              >{piece.seg.text}</mark>{#if piece.seg.numbers.length}<sup class="finding-num">{piece.seg.numbers.join(",")}</sup>{/if}{:else if piece.seg.styles?.length}<span class={styleClasses(piece.seg.styles)}>{piece.seg.text}</span>{#if piece.seg.numbers.length}<sup class="finding-num">{piece.seg.numbers.join(",")}</sup>{/if}{:else}{piece.seg.text}{#if piece.seg.numbers.length}<sup class="finding-num">{piece.seg.numbers.join(",")}</sup>{/if}{/if}
-          {/each}
-          </span>{#if $historyCountByVerse[key]}<button
+              >{piece.seg.text}</mark>{#if piece.seg.numbers.length}<sup class="finding-num">{piece.seg.numbers.join(",")}</sup>{/if}{:else if piece.seg.styles?.length}<span class={styleClasses(piece.seg.styles)}>{piece.seg.text}</span>{#if piece.seg.numbers.length}<sup class="finding-num">{piece.seg.numbers.join(",")}</sup>{/if}{:else}{piece.seg.text}{#if piece.seg.numbers.length}<sup class="finding-num">{piece.seg.numbers.join(",")}</sup>{/if}{/if}{/each}{#if lineIndex === lines.length - 1}<!-- The change-history and
+              Paratext marks follow the text of the last line, so they stay on
+              it when the verse is drawn as separate lines. -->{#if $historyCountByVerse[key]}<button
               type="button"
               class="history-btn"
               on:dblclick|stopPropagation
@@ -1346,7 +1416,8 @@
               on:click|stopPropagation={() => { onSelect(v); revealSidePanel("paratext"); }}
               title={`${pt} open Paratext note${pt === 1 ? "" : "s"}: show them`}
               aria-label={`Paratext notes on verse ${v}: ${pt} open`}
-            >PT {pt}</button>{/if}
+            >PT {pt}</button>{/if}{/if}</VerseLineWrap>{/each}
+          </span>
           {#if $editWarnings?.key === key}
             <p class="edit-warning" role="status">Saved, but check the markers: {$editWarnings.warnings.join("; ")}</p>
           {/if}
@@ -1499,27 +1570,8 @@
   .editor-scroll { flex: 1; overflow-y: auto; scrollbar-gutter: stable; padding: 0 4px 18px 12px; background: var(--surface); container-type: inline-size; }
   .editor-scroll > :first-child { margin-top: 8px; }
 
-  /* A heading is the team's text, so it uses --font-target like the verses, but
-     it is editorial rather than Scripture: no hover, no selection, no findings.
-     The extra top margin is what separates one section from the last verse of
-     the previous one. */
-  .section-heading {
-    font-family: var(--font-target);
-    font-size: var(--fs-lg);
-    font-weight: 700;
-    color: var(--text-2, var(--text-3));
-    margin: 12px 0 4px;
-    padding: 2px 8px;
-    line-height: 1.6;
-    /* 2026-11-15 (Joel): the heading of the section being read stays at the
-       top of the list. Every heading sticks at the same place and a later one
-       is drawn over an earlier one, so the next heading replaces it scrolling
-       down and the previous one returns scrolling up. */
-    position: sticky; top: 0; z-index: 1;
-    background: var(--surface);
-    box-shadow: 0 1px 0 color-mix(in srgb, var(--border) 55%, transparent);
-  }
-  .section-heading.major { font-size: var(--fs-xl); text-align: center; }
+  /* The headings between verses are drawn by HeadingRow.svelte, which holds
+     their styles. */
   /* --row-line is the height of the text's first line: the number, the
      issue count and the two actions are centred on it. */
   .verse { --row-line: calc(var(--fs-xl) * var(--verse-scale, 1) * 1.85); position: relative; display: flex; gap: 10px; padding: 3px 8px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; }
@@ -1561,6 +1613,10 @@
   .vbody .st-wj { color: var(--wj); }
   .vbody .st-sup { vertical-align: super; font-size: 0.72em; line-height: 1; }
   .vbody .st-no { font-style: normal; font-weight: 400; font-variant-caps: normal; }
+  /* \qs (#507): "Selah" goes to the far end of the line it closes, as a
+     printed Psalter sets it. A float, so it stays on that line when there is
+     room and drops below it when there is not. Raw view has no styles. */
+  .vbody .st-qs { float: inline-end; margin-inline-start: 1.5em; text-indent: 0; }
   .finding-num { font-size: var(--fs-2xs); font-weight: 700; color: var(--accent); margin-left: 1px; }
   /* Where Shift+F10 would open the menu. A visible ring, not colour alone:
      the underline classes already carry the finding's source colour. It is
@@ -1657,6 +1713,14 @@
   .vedit textarea:focus { outline: none; border-color: var(--text-3); }
   .vedit textarea:disabled { opacity: .6; }
   .edit-error { color: var(--danger); font-size: var(--fs-xs); margin: 6px 0 0; line-height: 1.4; }
+  /* #507: the marker toolbar over the edit box. It wraps rather than scrolls:
+     the editor column is narrow at 1366x768. */
+  .vedit-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 0 0 6px; font-family: var(--font-ui); }
+  .vedit-tools .level { font-family: var(--font-mono, ui-monospace, monospace); padding-inline: 7px; }
+  .tools-sep { width: 1px; align-self: stretch; margin: 2px 4px; background: var(--border-strong); }
+  .tools-label { font-size: var(--fs-3xs); font-weight: 600; color: var(--text-3); margin-inline-end: 2px; }
+  /* Why a marker edit changed nothing. Not an error: nothing went wrong. */
+  .edit-note { color: var(--text-2); font-family: var(--font-ui); font-size: var(--fs-xs); margin: 6px 0 0; line-height: 1.4; }
   .edit-actions { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
   .icon-btn {
     width: 32px; height: 32px; padding: 0; font-size: var(--fs-xl); font-weight: 800; border-radius: 7px;

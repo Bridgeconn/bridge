@@ -48,7 +48,7 @@ import io
 import re
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterable
 
 # Section headings and their kin. A heading between two verses is an editorial
 # navigation aid, not a translation of any source word, so it is never part of
@@ -61,6 +61,17 @@ HEADING_MARKERS = frozenset({
     "s", "s1", "s2", "s3", "s4", "s5",
     "ms", "ms1", "ms2", "ms3",
     "mr", "r", "sr", "sp",
+})
+
+# The paragraphs of a book's introduction (USFM 3.0), which sit before the
+# first `\c` with the book's headers (`\h`, `\toc1`, `\mt`). These are the ones
+# Bridge shows above chapter 1 and lets a reviewer edit (#507); identification
+# and title lines are not.
+INTRODUCTION_MARKERS = frozenset({
+    "imt", "imt1", "imt2", "imt3", "imt4", "imte", "imte1", "imte2",
+    "is", "is1", "is2", "ip", "ipi", "im", "imi", "ipq", "imq", "ipr",
+    "iq", "iq1", "iq2", "iq3", "ib", "ili", "ili1", "ili2",
+    "iot", "io", "io1", "io2", "io3", "io4", "iex", "ie",
 })
 
 # Elements that start a new block of the document. A heading runs from its own
@@ -85,6 +96,7 @@ class UsfmHeader:
     tag: str
     content: str
     offset: int = -1  # code-point offset of the marker in the source; -1 when unknown
+    end: int = -1     # where the next block starts: [offset, end) is this whole paragraph
 
 
 @dataclass(frozen=True)
@@ -93,6 +105,20 @@ class UsfmHeading:
     verse: str  # the verse this heading introduces
     tag: str
     text: str
+    # Where the heading sits in the parsed source, marker to the start of the
+    # next block, so an export can write an edited heading back in the same
+    # place (#507). -1 when unknown.
+    offset: int = -1
+    end: int = -1
+
+
+# A descriptive title (`\d`, a Psalm's superscription). After a `\v` it is part
+# of that verse's text (see HEADING_MARKERS above). Between `\c` and the
+# chapter's first `\v` it is in no verse at all, so it is filed with the
+# headings of that first verse, under its own tag, where it can be shown and
+# edited (#507). It is still the translation's text, not an editorial heading:
+# readers of headings tell it apart by the tag.
+TITLE_MARKER = "d"
 
 
 @dataclass(frozen=True)
@@ -333,14 +359,22 @@ def parse_usfm(text: str) -> ParsedUsfm:
                 # not structure (#91 Phase 3c).
                 continue
             if not seen_chapter:
-                headers.append(UsfmHeader(marker.group("tag") if marker else style, "", at))
-                events.append(("header", at, str(len(headers) - 1)))
+                if style.lower() in HEADING_MARKERS:
+                    # A heading before the first `\c` (`\ms BOOK ONE` over
+                    # Psalm 1) introduces chapter 1's first verse; it is not a
+                    # line of the book's header or introduction (#507).
+                    events.append(("h", at, style.lower()))
+                else:
+                    headers.append(UsfmHeader(marker.group("tag") if marker else style, "", at))
+                    events.append(("header", at, str(len(headers) - 1)))
             else:
                 # Every paragraph-level marker in the body is structure; the
                 # heading ones are also cut out of verse text (the "h" event).
                 events.append(("p", at, style.lower()))
                 if style.lower() in HEADING_MARKERS:
                     events.append(("h", at, style.lower()))
+                elif style.lower() == TITLE_MARKER:
+                    events.append(("d", at, style.lower()))
 
     blocks.sort()
     events.sort(key=lambda item: item[1])
@@ -357,7 +391,7 @@ def parse_usfm(text: str) -> ParsedUsfm:
     for kind, at, value in events:
         if kind == "header":
             index = int(value)
-            headers[index] = UsfmHeader(headers[index].tag, marker_content(at), at)
+            headers[index] = UsfmHeader(headers[index].tag, marker_content(at), at, block_end(at))
 
     chapters: list[str] = []
     verses: list[UsfmVerse] = []
@@ -369,8 +403,8 @@ def parse_usfm(text: str) -> ParsedUsfm:
     open_structure: list[int] = []
     chapter = ""
     # Headings seen since the last verse opened, waiting to learn which verse
-    # they introduce.
-    pending: list[tuple[str, str]] = []
+    # they introduce: (tag, text, offset in the source).
+    pending: list[tuple[str, str, int]] = []
     current: dict[str, Any] | None = None
     # Bridge's own reports about what it did with input usfmtc only warned on.
     bridge_warnings: list[str] = []
@@ -430,9 +464,12 @@ def parse_usfm(text: str) -> ParsedUsfm:
         ))
         current = None
 
-    def file_pending(verse: str) -> None:
-        for tag, heading_text in pending:
-            headings.append(UsfmHeading(chapter, verse, tag, heading_text))
+    def file_pending(verse: str, in_chapter: str | None = None) -> None:
+        for tag, heading_text, heading_at in pending:
+            headings.append(UsfmHeading(
+                chapter if in_chapter is None else in_chapter, verse, tag, heading_text,
+                heading_at, block_end(heading_at),
+            ))
         pending.clear()
 
     def resolve_open_structure(verse: str) -> None:
@@ -444,11 +481,10 @@ def parse_usfm(text: str) -> ParsedUsfm:
     for kind, at, value in events:
         if kind == "c":
             close_verse(at)
-            if pending and verses and verses[-1].chapter == chapter:
-                # A heading after a chapter's last verse has no next verse to
-                # introduce; filing it a verse early beats losing it.
-                file_pending(verses[-1].verse)
-            pending.clear()
+            # A heading after a chapter's last verse (`\ms BOOK TWO` before
+            # `\c 42`) introduces the NEXT chapter: it stays pending and is
+            # filed against that chapter's first verse (#507). It used to be
+            # filed a verse early, which drew it above the wrong verse.
             open_structure.clear()  # nothing after a chapter's last verse introduces one
             chapter = value
             if value not in chapters:
@@ -489,12 +525,21 @@ def parse_usfm(text: str) -> ParsedUsfm:
         elif kind == "h":
             heading_text = marker_content(at)
             if heading_text:
-                pending.append((value, heading_text))
+                pending.append((value, heading_text, at))
             if current is not None:
                 current["headings"].append(at)
+        elif kind == "d":
+            # Only before the chapter's first verse: after a `\v` the title is
+            # part of that verse's text and is left there.
+            if current is None and chapter:
+                heading_text = marker_content(at)
+                if heading_text:
+                    pending.append((value, heading_text, at))
     close_verse(len(text))
-    if pending and verses and verses[-1].chapter == chapter:
-        file_pending(verses[-1].verse)
+    if pending and verses:
+        # Headings after the book's last verse have no verse to introduce;
+        # filing them against it beats losing them.
+        file_pending(verses[-1].verse, verses[-1].chapter)
 
     return ParsedUsfm(
         book_code=book_code,
@@ -506,3 +551,92 @@ def parse_usfm(text: str) -> ParsedUsfm:
         warnings=tuple(bridge_warnings) + tuple(_warning_text(error) for error in errors),
         structure=tuple(structure),
     )
+
+
+_CHAPTER_NUMBER_LINE = re.compile(r"^[ \t]*\\c[ \t]+(?P<number>\S+)", re.MULTILINE)
+_VERSE_NUMBER_ANYWHERE = re.compile(r"\\v\s+(?P<number>\S+)")
+
+
+def opening_paragraphs(text: str, chapter: str, verses: Iterable[str]) -> dict[str, str]:
+    """The paragraph marker some verses of `chapter` open in, read from the
+    preserved source: `{verse: "q1"}` (#507).
+
+    A stored verse string keeps its own paragraph markers, and the one it ends
+    with is the paragraph the next verse opens in, so a reader can carry that
+    forward. Two places are in no stored verse string, and only the source
+    knows them:
+
+    - before a chapter's first verse (`\\c 3`, `\\d A Psalm`, `\\q1`, `\\v 1`);
+    - after a section heading. The heading is cut out of the verse before it
+      (#180), and the bare `\\q1` or `\\p` line between it and the next `\\v`
+      goes with it.
+
+    Both sit outside every verse's text, so no edit can change them and an
+    export writes them back as they are. This reads exactly those two places
+    and nothing else: for the chapter's first verse, the last paragraph marker
+    before its `\\v`; for any other verse in `verses`, the last one after the
+    last heading before its `\\v`. A verse with no such marker is left out, and
+    so is a verse the caller named that no heading precedes.
+
+    Only the text between the previous `\\v` (or the `\\c`) and each wanted
+    verse is parsed, as one small document through :func:`parse_usfm`, so the
+    cost does not grow with the size of the book or the chapter.
+    """
+    text = text.lstrip("\ufeff")
+    wanted = {str(verse) for verse in verses}
+    if not wanted:
+        return {}
+    chapter_lines = list(_CHAPTER_NUMBER_LINE.finditer(text))
+    chunk = None
+    for index, line in enumerate(chapter_lines):
+        if line.group("number") == str(chapter):
+            end = chapter_lines[index + 1].start() if index + 1 < len(chapter_lines) else len(text)
+            chunk = text[line.start():end]
+            break
+    if chunk is None:
+        return {}
+    marks = [(match.start(), match.group("number")) for match in _VERSE_NUMBER_ANYWHERE.finditer(chunk)]
+    if not marks:
+        return {}
+
+    # One small document: the chapter's lead-in, then the stretch before each
+    # wanted verse, each closed by that verse's own `\v` so the parser files
+    # the paragraph markers against it.
+    parts = ["\\id XXX\n"]
+    if marks[0][1] not in wanted:
+        parts.append("\\c 1\n")
+    length = sum(len(part) for part in parts)
+    regions: list[tuple[str, int, int, bool]] = []  # verse, start, end, first of the chapter
+    seen: set[str] = set()
+    for index, (at, number) in enumerate(marks):
+        if number not in wanted or number in seen:
+            continue
+        seen.add(number)
+        piece = chunk[0 if index == 0 else marks[index - 1][0]:at]
+        closer = f"\\v {number} x\n"
+        regions.append((number, length, length + len(piece), index == 0))
+        parts.extend((piece, closer))
+        length += len(piece) + len(closer)
+    if not regions:
+        return {}
+    try:
+        parsed = parse_usfm("".join(parts))
+    except UsfmParseError:
+        return {}
+
+    paragraphs = [item for item in parsed.structure if item.kind == "para"]
+    out: dict[str, str] = {}
+    for number, start, end, first in regions:
+        inside = [item for item in paragraphs if start <= item.offset < end]
+        # A title before the chapter's first verse is filed with its headings
+        # (TITLE_MARKER), so it is not the paragraph that verse opens in.
+        apart = HEADING_MARKERS | {TITLE_MARKER} if first else HEADING_MARKERS
+        last_heading = max(
+            (index for index, item in enumerate(inside) if item.marker in apart), default=-1,
+        )
+        if last_heading < 0 and not first:
+            continue
+        after = [item.marker for item in inside[last_heading + 1:] if item.marker not in apart]
+        if after:
+            out[number] = after[-1]
+    return out

@@ -59,7 +59,7 @@
   import { isTriageUnavailable } from "./lib/types/report";
   import type { TriageOverrideVerdict } from "./lib/types/finding";
   import {
-    project, currentChapter, chapterVerseNums, verseTexts, verseDisplay, headingsByVerse, findingsByVerse, historyCountByVerse,
+    project, currentChapter, chapterVerseNums, verseTexts, verseDisplay, headingsByVerse, paraOpenersByVerse, findingsByVerse, historyCountByVerse,
     checkStatusByVerse, alignmentStatusByVerse, loadedChapters, selectedVerse, selectedVerseSet, checkingProgress, approvedCount, verseNums,
     verseKey, settingsOpen, exportOpen, bookApprovedSummary, resetBookState, reviewerMode,
     aiCheckReviewsByVerse, engineLog, appendEngineLog, navigationStatus,
@@ -1165,7 +1165,7 @@
       knownVerses.every((verse) => Object.prototype.hasOwnProperty.call($verseTexts, verseKey(chapter, verse)))
     ) return;
     const expectedPath = $project?.path;
-    const { verses, headings, editCounts } = await bridge.chapterVerseData(chapter);
+    const { verses, headings, editCounts, openers } = await bridge.chapterVerseData(chapter);
     if (expectedPath !== $project?.path) return;
     const verseIds = Object.keys(verses);
     chapterVerseNums.update((m) => ({ ...m, [chapter]: verseIds }));
@@ -1185,9 +1185,18 @@
     for (const [v, rows] of Object.entries(headings ?? {})) {
       headingRows[verseKey(chapter, v)] = rows;
     }
+    // #507: the paragraph a verse opens in, where only the source knows it.
+    // The chapter's old entries go first: a reload must not keep one the
+    // engine no longer sends.
+    const openerRows: Record<string, string> = {};
+    for (const [v, marker] of Object.entries(openers ?? {})) openerRows[verseKey(chapter, v)] = marker;
+    const chapterKeys = new Set(verseIds.map((v) => verseKey(chapter, v)));
     verseTexts.update((t) => ({ ...t, ...texts }));
     verseDisplay.update((d) => ({ ...d, ...displays }));
     headingsByVerse.update((h) => ({ ...h, ...headingRows }));
+    paraOpenersByVerse.update((existing) => ({
+      ...Object.fromEntries(Object.entries(existing).filter(([key]) => !chapterKeys.has(key))), ...openerRows,
+    }));
     alignmentStatusByVerse.update((existing) => ({ ...existing, ...alignmentStatuses }));
     const counts: Record<string, number> = {};
     for (const [v, n] of Object.entries(editCounts ?? {})) counts[verseKey(chapter, v)] = n;

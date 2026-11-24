@@ -53,6 +53,11 @@ export const verseDisplay = writable<Record<string, VerseDisplay>>({});
 /** Section headings keyed by the verse they INTRODUCE, so a heading renders
  *  above that verse rather than glued to the end of the previous one (#180). */
 export const headingsByVerse = writable<Record<string, VerseHeading[]>>({});
+/** The paragraph marker a verse opens in ("q1", "p" ...), for the verses whose
+ *  neighbours' text cannot say: a chapter's first verse and each verse a
+ *  heading introduces (#507). Every other verse opens in the last paragraph
+ *  the verses before it started (utils/verseLines.ts openingParas). */
+export const paraOpenersByVerse = writable<Record<string, string>>({});
 export const findingsByVerse = writable<Record<string, QaFinding[]>>({});
 export type CheckStatus = "pending" | "succeeded" | "failed" | "cancelled";
 export const checkStatusByVerse = writable<Record<string, CheckStatus>>({});
@@ -167,6 +172,7 @@ export function resetBookState(): void {
   verseTexts.set({});
   verseDisplay.set({});
   headingsByVerse.set({});
+  paraOpenersByVerse.set({});
   findingsByVerse.set({});
   checkStatusByVerse.set({});
   checkGroupsByVerse.set({});

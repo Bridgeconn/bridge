@@ -1161,6 +1161,14 @@ export interface StyleSpan {
   end: number;
 }
 
+/** A paragraph marker inside the verse (`\q1`, `\q2`, `\p`, `\d`, `\b` …):
+ *  its content starts at `plain[position]`, code points (#507). One with
+ *  nothing after it is the paragraph the next verse opens in. */
+export interface ParaMark {
+  marker: string;
+  position: number;
+}
+
 /**
  * What the reader shows for one verse, computed by the engine's fragment
  * reader (`usfm_verse.lift_verse`, #91) next to the text it describes. The
@@ -1176,6 +1184,23 @@ export interface VerseDisplay {
   removed: [number, number][];
   styles: StyleSpan[];
   warnings: string[];
+  /** Paragraph and poetry markers inside the verse, in order (#507). Absent
+   *  from an older engine, which is the same as none. */
+  paras?: ParaMark[];
+}
+
+/** The marker edits the verse editor's toolbar asks the engine for (#507). */
+export type VerseMarkupAction = "style" | "level" | "break" | "join";
+
+/** The engine's answer to one marker edit (`verse.markup`): the new verse
+ *  string and the selection in it, in code points. `reason` says why nothing
+ *  changed when `changed` is false. */
+export interface VerseMarkupResult {
+  text: string;
+  start: number;
+  end: number;
+  changed: boolean;
+  reason: string;
 }
 
 export interface VerseData {
@@ -1230,6 +1255,17 @@ export interface VerseHistory {
 export interface VerseHeading {
   tag: string;
   text: string;
+}
+
+/** One line of the book's introduction (`\is`, `\ip`, `\iot`, `\io1` ...),
+ *  from `book.introduction` (#507). `index` is the line's place in the book's
+ *  stored headers and is what an edit names; `text` is the raw stored string
+ *  an edit works on; `display` is what the reader shows, as for a verse. */
+export interface IntroEntry {
+  index: number;
+  tag: string;
+  text: string;
+  display: VerseDisplay;
 }
 
 export type NativeCheckTool = "translationNotes" | "translationWords";

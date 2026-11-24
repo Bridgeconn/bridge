@@ -8,13 +8,13 @@
 import { get, writable } from "svelte/store";
 import { tick } from "svelte";
 import { bridge } from "./api/bridgeClient";
-import { codePointToUtf16 } from "./utils/codePoints";
+import { codePointToUtf16, utf16ToCodePoint } from "./utils/codePoints";
 import { findingSpan, type FindingSpan } from "./findingFocus";
 import { decideLanguageQaFinding } from "./findingActions";
 import { nudgeLanguageQa } from "./languageQaInline";
 import { editorCheckList } from "./checkSelection";
 import { recheckVerse } from "./verseChecks";
-import type { QaFinding, VerseData, VerseDisplay } from "./types/finding";
+import type { QaFinding, VerseData, VerseDisplay, VerseMarkupAction } from "./types/finding";
 import type { LanguageQaFinding, LanguageQaSuggestion } from "./types/languageQa";
 import type { CorrectionApplicationIntent } from "./types/correctionReview";
 import {
@@ -97,6 +97,11 @@ export const editErrorKey = writable("");
 export const editWarnings = writable<{ key: string; warnings: string[] } | null>(null);
 export const recheckingKey = writable("");
 export const recheckedKey = writable("");
+/** Why the last toolbar marker edit changed nothing, in the engine's words
+ *  (#507). Cleared by the next one and when the edit opens or closes. */
+export const editMarkupNote = writable("");
+/** A toolbar marker edit is with the engine: the toolbar waits for it. */
+export const editMarkupBusy = writable(false);
 
 let onSaved:
   | ((info: {
@@ -157,9 +162,54 @@ export function startVerseEdit(chapter: string, verse: string, caret: FindingSpa
   editError.set("");
   editErrorKey.set("");
   editWarnings.set(null);
+  editMarkupNote.set("");
   pendingAcceptFindingId = "";
   if (caret) void placeCaret(verseKey(chapter, verse), caret);
   return true;
+}
+
+/**
+ * One toolbar marker edit on the open verse (#507): mark the selection as a
+ * keyword (`\k`) or Selah (`\qs`), set the poetry level of the cursor's line,
+ * break a line at the cursor, or join the cursor's line to the one above.
+ *
+ * The engine makes the change (the frontend never parses USFM) on the string
+ * the textarea holds, and this puts its answer back in the textarea with the
+ * selection where the engine says. Nothing is saved: the reviewer still saves
+ * or cancels. A refusal leaves the text alone and shows the engine's reason.
+ * `opening` is the level the verse's first line is at, which the string does
+ * not hold.
+ */
+export async function applyVerseMarkup(
+  area: HTMLTextAreaElement | null, action: VerseMarkupAction, marker = "", opening = "",
+): Promise<void> {
+  if (!area || get(editSaving) || get(editMarkupBusy)) return;
+  const text = get(editText);
+  const start = utf16ToCodePoint(text, area.selectionStart ?? 0);
+  const end = utf16ToCodePoint(text, area.selectionEnd ?? area.selectionStart ?? 0);
+  editMarkupBusy.set(true);
+  editMarkupNote.set("");
+  try {
+    const result = await bridge.verseMarkup({ text, action, marker, start, end, opening });
+    // Typed in, saved or closed while the engine worked: its answer is for
+    // a string the textarea no longer holds.
+    if (get(editText) !== text || !get(editingVerse)) return;
+    if (!result.changed) {
+      editMarkupNote.set(result.reason);
+      area.focus();
+      return;
+    }
+    editText.set(result.text);
+    await tick();
+    // The textarea grows with its text on "input" (VerseList's autosize).
+    area.dispatchEvent(new Event("input", { bubbles: true }));
+    area.focus();
+    area.setSelectionRange(codePointToUtf16(result.text, result.start), codePointToUtf16(result.text, result.end));
+  } catch (error) {
+    editMarkupNote.set(error instanceof Error ? error.message : String(error));
+  } finally {
+    editMarkupBusy.set(false);
+  }
 }
 
 async function placeCaret(key: string, caret: FindingSpan): Promise<void> {
@@ -193,6 +243,7 @@ export async function revertVerseTo(chapter: string, verse: string, text: string
 export function cancelVerseEdit(): void {
   editingChapter.set("");
   editingVerse.set("");
+  editMarkupNote.set("");
   pendingAcceptFindingId = "";
   editBaseText = undefined;
 }
