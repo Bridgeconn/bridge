@@ -113,7 +113,7 @@ from tc_ai_bridge.aligned_usfm import (
 from tc_ai_bridge.alignment_reliability import (
     alignment_fingerprint, compile_link_proposal, structural_issues, target_token_fingerprint,
 )
-from tc_ai_bridge.ai_client import AIError, OpenAIResponsesClient, Transport
+from tc_ai_bridge.ai_client import AIError, AIReviewCancelled, OpenAIResponsesClient, Transport
 from tc_ai_bridge.chatgpt_plan_client import ChatGPTPlanClient
 from tc_ai_bridge.chatgpt_session import SIGNED_OUT_MESSAGE, ChatGPTSession
 from tc_ai_bridge.chatgpt_signin import SignInError
@@ -5287,25 +5287,45 @@ class BridgeEngine:
             with self._checker_lock:
                 self._ensure_resource_indexes(project)
             client = self._ai_client()
+            # #513: asked once, just before the review is stored.
+            client.cancel_check = cancel_event.is_set
             usage_mark = client.usage_mark()
             alignment = project.load_verse_alignment(chapter, verse)
             proposal, review_alignment, reviews, issues, summary, meta = client.prepare_verse_review(
                 project, chapter, verse, alignment, progress_callback=progress_callback,
-            )
-            return self._finish_ai_review_verse(
-                project, chapter, verse, client, alignment, proposal, review_alignment,
-                reviews, issues, summary, meta, progress_callback, cancel_event,
             )
         except Exception as exc:
             # #476: what the failed verse already spent -- a mapping or gap-fill
             # call that was answered, or a call that was sent and never
             # answered -- is billed all the same, so it reaches the lifetime
             # counter here; before, a verse that failed after its first call
-            # counted as free.
+            # counted as free. #513: a cancelled verse's calls are counted the
+            # same way, and only here: nothing below this handler runs for it.
             if client is not None:
                 spent, spent_cost = client.usage_since(usage_mark)
                 if spent.calls:
                     self.settings.record_ai_usage(spent.total_tokens, spent_cost)
+            if isinstance(exc, AIReviewCancelled):
+                project.mark_issue_resolutions_recheck(
+                    chapter, verse, "cancelled",
+                    reason="AI review was cancelled; no lifecycle conclusion was accepted.",
+                )
+            elif not cancel_event.is_set():
+                project.mark_issue_resolutions_recheck(
+                    chapter, verse, "failed",
+                    reason="Automatic AI recheck failed.", error=str(exc),
+                )
+            raise
+        # #513: outside the handler above on purpose. `_finish_ai_review_verse`
+        # adds the verse's usage to the lifetime counter as its first step; a
+        # failure after that used to land in the handler, which added the same
+        # calls a second time. The window run has always been shaped this way.
+        try:
+            return self._finish_ai_review_verse(
+                project, chapter, verse, client, alignment, proposal, review_alignment,
+                reviews, issues, summary, meta, progress_callback,
+            )
+        except Exception as exc:
             if not cancel_event.is_set():
                 project.mark_issue_resolutions_recheck(
                     chapter, verse, "failed",
@@ -5340,23 +5360,22 @@ class BridgeEngine:
         summary: str,
         meta: dict[str, Any],
         progress_callback: Callable[[int, str], None],
-        cancel_event: threading.Event,
     ) -> dict[str, Any]:
         """Everything after a verse's review is stored: the usage counter, the
         gap-fill alignment, the safe selections and the issue lifecycle. One
         body for the single-verse run and the window run (#502), so a verse
-        is finished the same way whichever request reviewed it."""
+        is finished the same way whichever request reviewed it.
+
+        A cancel is not looked at here (#513). It is looked at once, before the
+        review is stored; a verse that reaches this point has a new stored
+        review and is finished, so the review, the alignment and the
+        selections never disagree. It used to be checked here, after the
+        store: the new answer had already replaced the earlier review, and
+        was then marked cancelled."""
         # #476: the sum of the verse's calls (mapping, gap-fill, review).
         total_tokens = int(meta.get("total_tokens_for_prepare", 0) or 0)
         cost = float(meta.get("estimated_cost_usd", 0.0) or 0.0)
         self.settings.record_ai_usage(total_tokens, cost)
-        if cancel_event.is_set():
-            project.mark_ai_review_incomplete(chapter, verse, "cancelled")
-            project.mark_issue_resolutions_recheck(
-                chapter, verse, "cancelled",
-                reason="AI review was cancelled; no lifecycle conclusion was accepted.",
-            )
-            raise AIError("AI review cancelled; the completed model result was not automatically applied.")
         if proposal is not None and review_alignment.to_dict() != alignment.to_dict():
             progress_callback(90, "Saving AI-filled alignment gaps")
             try:
@@ -5450,7 +5469,7 @@ class BridgeEngine:
                     payload = engine._finish_ai_review_verse(
                         project, chapter, verse, client, prepared.alignment, prepared.proposal,
                         prepared.review_alignment, reviews, issues, summary, meta,
-                        lambda percent, text: report.stage(verse, percent, text), cancel_event,
+                        lambda percent, text: report.stage(verse, percent, text),
                     )
                 except Exception as exc:
                     # The verse's usage reached the lifetime counter at the
@@ -5476,10 +5495,15 @@ class BridgeEngine:
                     )
                 report.result(verse, error=str(error))
 
-            def cancelled(self, verse: str) -> None:
+            def cancelled(self, verse: str, usage: Any = None, cost: float = 0.0) -> None:
+                # #513: a cancelled verse stores nothing, but what it already
+                # sent (its mapping and gap-fill calls, its share of a window
+                # that was answered) is billed all the same.
+                if getattr(usage, "calls", 0):
+                    engine.settings.record_ai_usage(usage.total_tokens, cost)
                 project.mark_issue_resolutions_recheck(
                     chapter, verse, "cancelled",
-                    reason="AI review was cancelled before this verse was sent.",
+                    reason="AI review was cancelled before this verse's review was stored.",
                 )
 
         WindowReviewSession(client, project, chapter, verses, window_settings).run(

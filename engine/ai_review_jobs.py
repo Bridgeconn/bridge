@@ -4,7 +4,11 @@ The worker is deliberately local to Bridge rather than using a provider's
 remote background mode.  This keeps OpenAI-compatible providers working and
 lets the sidecar remain responsive while a chapter or book is processed.
 Cancellation is cooperative between verses and model calls; a request already
-in flight is allowed to finish, then its result is discarded if cancelled.
+in flight is allowed to finish. Since #513 the worker looks at the cancel once
+per verse, immediately before it stores that verse's review: seen there,
+nothing is stored and the verse keeps the review it had. A verse the worker
+reports as done was stored and finished, so the job keeps its result even when
+the cancel arrived in between.
 """
 from __future__ import annotations
 
@@ -170,9 +174,10 @@ class _JobReport:
                 self._job.current_stage = "AI reviewing Notes, Words and whole verse"
 
     def result(self, verse: str, payload: Optional[dict[str, Any]] = None, error: Optional[str] = None) -> None:
-        # A result that arrives after cancellation is not retained, as in the
-        # single-verse loop.
-        if self._job.cancel_event.is_set():
+        # After a cancel, an error is the cancellation and not a failed verse.
+        # A payload is a verse that was stored and finished before the cancel
+        # was seen (#513), and is kept, as in the single-verse loop.
+        if error is not None and self._job.cancel_event.is_set():
             return
         key = f"{self._chapter}:{verse}"
         result = _verse_result(self._chapter, str(verse), payload, error)
@@ -325,8 +330,10 @@ class AIReviewJobManager:
                         job.current_stage = "Preparing AI review"
                     try:
                         payload = run_verse(chapter, verse, job.spec.mode, progress, job.cancel_event)
-                        if self._cancelled(job):
-                            return
+                        # #513: a payload means the verse's review was stored
+                        # and finished. It is kept even if a cancel arrived
+                        # meanwhile; the cancel takes effect before the next
+                        # verse.
                         result = {
                             "summary": "", "checkReviews": [], "qaIssues": [],
                             "alignmentProposal": None, "alignmentWasAIProposed": False,
@@ -335,10 +342,10 @@ class AIReviewJobManager:
                         result.update(copy.deepcopy(payload))
                         result.update({"chapter": chapter, "verse": verse, "status": "succeeded", "error": None})
                     except Exception as exc:  # one bad verse must not discard a chapter/book pass
-                        # A cooperative worker may notice cancellation after its
-                        # provider request returns and raise instead of returning
-                        # a payload. That is still cancellation, not a failed
-                        # verse, and no completed model result may be retained.
+                        # A cooperative worker notices cancellation after its
+                        # provider request returns and raises instead of
+                        # returning a payload. That is cancellation, not a
+                        # failed verse; it stored nothing.
                         if self._cancelled(job):
                             return
                         result = {
@@ -394,6 +401,16 @@ class AIReviewJobManager:
         if not job.cancel_event.is_set():
             return False
         with job.lock:
+            # #513: a cancel that arrives when every verse already has its
+            # outcome has nothing left to stop. The job ends as what it is,
+            # succeeded or failed, not as a cancelled job with all its work done.
+            wanted = [
+                f"{chapter}:{verse}"
+                for chapter in job.spec.chapters
+                for verse in job.spec.chapter_verses.get(chapter, [])
+            ]
+            if wanted and all(key in job.results for key in wanted):
+                return False
             job.state = "cancelled"
             job.current_stage = "Cancelled"
             job.current_chapter = None

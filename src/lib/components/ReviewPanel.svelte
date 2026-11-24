@@ -337,6 +337,13 @@
       if (["queued", "running", "cancelling"].includes(snapshot.state)) {
         aiPollTimer = setTimeout(() => void pollAIJob(jobId, sequence), 650);
       } else {
+        // #513: a cancelled verse review leaves the verse as it was before
+        // the run (the engine stored nothing), so the panel goes back to
+        // where it started: no "Cancelled" card and no Retry, and the refresh
+        // below puts back the review the verse had, or nothing. Chapter and
+        // Book keep their card: it says how far the run got, and Retry
+        // resumes the rest.
+        if (snapshot.state === "cancelled" && snapshot.scope === "verse") aiJob = null;
         if ($selectedVerse && aiJobAppliesToReference(
           snapshot, $project?.path ?? "", $currentChapter, $selectedVerse,
         )) {
@@ -972,7 +979,7 @@
                 {#if !aiExplainRestored}<span class="ai-cost">{aiUsageLine(aiExplainResult.usage)}</span>{/if}
               </div>
               {#if aiExplainStale}
-                <p class="ai-stale" role="status" data-ai-stale>This review is out of date: the verse, its alignment or its checks changed after it ran, or the run was cancelled. Run it for the verse above for a current one.</p>
+                <p class="ai-stale" role="status" data-ai-stale>This review is out of date: the verse, its alignment or its checks changed after it ran. Run it for the verse above for a current one.</p>
               {/if}
               <p class="ai-summary">{aiExplainResult.summary}</p>
               {#each aiExplainResult.checkReviews as review}

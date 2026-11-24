@@ -27205,3 +27205,118 @@ above (a cancel after a re-run replaces the stored review; the model and
 provider are not part of what makes a review current; a possible double count
 of usage on a late cancel). #511 is closed, so they have no open issue of their
 own yet; filing one is Joel's decision.
+
+## 2026-11-24 — AI review: a cancel leaves the verse as it was; usage counted once (#513)
+
+**Decided** by Joel on 2026-11-24 after talking with the team (recorded on
+#513). A cancelled verse review leaves the verse as it was before the run: a
+verse that had a review keeps it, a verse that had none goes back to the
+starting screen, a run that finishes shows the new review. No "Cancelled" label
+and no Retry for the Verse button; Chapter and Whole book keep their card with
+Retry. A model or provider change does not make reviews out of date (no code).
+The usage double count is fixed.
+
+**What was wrong.**
+
+- *Cancel.* The engine stored the new answer first (`run_full_review`,
+  `ai_client.py`) and looked at the cancel afterwards (`_finish_ai_review_verse`,
+  `bridge_service.py`), which then marked the stored row cancelled. So a
+  cancelled re-run replaced a finished review with one that read as out of
+  date, and a cancelled first run left a review behind.
+- *Usage.* `_finish_ai_review_verse` adds the verse's usage to the lifetime
+  counter as its first step. On the single-verse path it was called inside the
+  `try` whose handler adds everything spent since the verse started, so any
+  failure after that first step counted the verse twice. Not only a late
+  cancel: a failure applying selections or reconciling the issue lifecycle did
+  the same. The window path was already shaped correctly.
+
+**What changed.**
+
+- The cancel is looked at once per verse, immediately before the review is
+  stored. Single-verse path: `OpenAIResponsesClient.cancel_check`, set by the
+  job to its cancel flag, asked in `run_full_review` before the first
+  `record_ai_review_result`; it raises the new `AIReviewCancelled`. An
+  attribute and not a parameter, as `review_options` is, because tests replace
+  `prepare_verse_review` with their own signature. Window path: the same check
+  in `WindowReviewSession._send`, per verse, before `_record`.
+- `_finish_ai_review_verse` no longer takes or reads the cancel flag. A verse
+  that reaches it has a new stored review and is finished, so the review, the
+  gap-fill alignment and the selections cannot disagree.
+- `_run_ai_review_for_project`: the finish call is outside the handler that
+  counts usage, with its own handler that only marks the issue recheck failed.
+- A cancelled window verse reports what it spent (`Reporter.cancelled(verse,
+  usage, cost)`). This also counts a verse that was prepared (its mapping and
+  gap-fill calls sent) but whose window was never sent, which was counted
+  nowhere before.
+- `ai_review_jobs.py`: a payload returned by the worker is a stored, finished
+  verse and is kept even if a cancel arrived meanwhile; an error after a cancel
+  is still the cancel. A cancel that arrives when every verse already has its
+  outcome ends the job as succeeded or failed, not cancelled.
+- `tc_project.py`: `mark_ai_review_incomplete` removed (its one caller is
+  gone; grepped across the repo). `ai_review_cache_status` still reads
+  `batchState`, so a review an earlier build marked cancelled does not start
+  counting as current.
+- `ReviewPanel.svelte`: a cancelled verse-scope job drops its card; the read
+  that already follows a finished job puts back the stored review or nothing.
+  The out-of-date note no longer says "or the run was cancelled".
+- `docs/USER_MANUAL.md` section 6.6: what a cancel leaves behind.
+
+**Ran and watched.**
+
+- Red, then green. With the engine change set aside, all six tests of the new
+  `tests/service/test_ai_review_cancel.py` failed; the usage one read 5,200
+  tokens where the transport had answered 2,600. With the change, all pass.
+  The two new panel tests fail without the `ReviewPanel.svelte` change and
+  pass with it.
+- One existing test was rewritten, not just added to:
+  `test_cancel_waits_for_inflight_request_and_discards_automatic_result`
+  (`tests/jobs/test_ai_review_jobs.py`) asserted the old rule, that a payload
+  returned after a cancel is thrown away. It is now
+  `..._keeps_a_verse_the_worker_finished`, with the reason in its docstring.
+- AI review files together (jobs, cancel, window jobs, protocol, auto-align,
+  stale-after-apply, issue resolution): 215 passed.
+- Full engine suite, `pytest -n auto --basetemp C:/t/e513`: 6,052 passed, 14
+  failed, 4 skipped, 3 xfailed. Twelve are the Stage 3 semantic source database
+  ones (#504, the database is not in this checkout). The other two,
+  `test_language_qa.py::test_continuous_foreground_polling_does_not_starve_worker`
+  and `test_paratext_decided_policy_protocol.py::test_a_verified_paratext_resolve_closes_...`,
+  passed when rerun alone. The sidecar build was running beside the suite.
+- Frontend: `npm run check` 0 errors 0 warnings; `npm run test` 143 files,
+  1,435 passed; `npm run build` passed.
+- Sidecars rebuilt with `scripts/build-sidecars.ps1`;
+  `scripts/smoke_sidecars.py engine/dist/bridge-engine.exe` passed.
+
+**Not run.** `cargo check`, `cargo test`: no Rust file changed.
+
+**Not verified: the desktop app.** For Joel at 1366x768:
+
+1. A verse with a review: Verse, confirm, Cancel while it runs. The earlier
+   review is back; no "Cancelled", no Retry.
+2. A verse with no review: Verse, Cancel. The starting screen.
+3. A verse review left to finish shows the new review.
+4. Chapter, cancelled partway: the card stays, says how far it got, offers Retry.
+5. Settings: the AI usage counter rises after a cancelled run, and not by double.
+
+**Left as it is, for a decision.** A verse with a saved issue that is already
+*resolved*: starting a review marks its recheck "running", and a cancel marks
+it "cancelled", which reopens the issue (`mark_issue_resolutions_recheck`,
+`tc_project.py`). That is the issue's own lifecycle record, with history, and
+is older than this work; the cancelled review itself is left as it was, the
+issue is not. Read in the code, not reproduced.
+
+**Found beside the task, not changed.**
+
+- A failure that is not the cancel itself, while a cancel is pending (a
+  provider error after Cancel was pressed), leaves the issue recheck state at
+  "running": the handler marks nothing in that case. Read in the code, not
+  reproduced.
+- `run_full_review` stores the review, and `prepare_verse_review` can still
+  raise after it ("Verse/project data changed before AI review could be
+  recorded"). The stored row then stays although the verse is reported failed.
+  Read in the code, not reproduced.
+- `test_paratext_decided_policy_protocol.py::test_a_verified_paratext_resolve_closes_...`
+  failed once under load with `set() == {'N1', 'R1'}` and passes alone. It
+  rewrites a notes file and reads it back; not investigated.
+- A trace line, `project.open ... semantic_runtime FAILED no such table:
+  alignment_cross_verse_links`, appears at the end of some test runs. No test
+  fails on it; not investigated.

@@ -851,6 +851,9 @@ class TranslationCoreProject:
         saved = self.load_ai_review_result(chapter, verse)
         if not saved:
             return 'missing'
+        # Written by nothing since #513 (a cancelled run stores nothing and so
+        # has nothing to mark). Still read: a review an earlier build marked
+        # cancelled must not start counting as current.
         if str(saved.get('batchState') or 'complete') != 'complete':
             return 'stale'
         saved_fp = str(saved.get('inputFingerprint') or '')
@@ -861,17 +864,6 @@ class TranslationCoreProject:
         except Exception:
             return 'stale'
 
-    def mark_ai_review_incomplete(
-        self, chapter: str | int, verse: str | int, state: str = 'cancelled'
-    ) -> None:
-        """Prevent a cancelled in-flight result from being treated as resumably complete."""
-        d = self.load_ai_review_result(chapter, verse)
-        if d is None:
-            return
-        d['batchState'] = str(state or 'incomplete')
-        d['batchStateTimestamp'] = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
-        self._write_ai_review_payload(chapter, verse, d)
-
     def _write_ai_review_payload(
         self, chapter: str | int, verse: str | int, payload: dict[str, Any],
     ) -> str:
@@ -879,8 +871,8 @@ class TranslationCoreProject:
 
         One result per verse, so `(book, chapter, verse)` is the natural key --
         the same thing the one-file-per-verse layout encoded in its path. The
-        read-modify-write callers around this (cancellation, fingerprint
-        rebasing, selection outcomes) rewrite the whole payload rather than
+        read-modify-write callers around this (fingerprint rebasing,
+        selection outcomes) rewrite the whole payload rather than
         appending to what they read, which is what keeps a re-run idempotent.
         """
         identity = self.workbench_identity
