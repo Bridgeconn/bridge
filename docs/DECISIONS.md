@@ -1747,3 +1747,55 @@ looks at in Psalms.
 (re-import is then no longer free, and the heading filing needs a migration);
 and if a team wants the words of a title before verse 1 aligned to the source,
 which this deliberately does not do.
+
+## 2026-11-24 — One click of "Align with AI" may cover several chapters or the whole book (Joel, for the team, #517)
+
+**Decision:** Joel asked for the editor's "Align chapter with AI" to become "Align
+with AI": a dialog where the reviewer picks one, several or all chapters of the
+open book and presses Start. Taken by Joel for the team on 2026-11-24, while the
+maintainer was on leave, and to be looked at again on his return.
+
+CLAUDE.md lists a change to the auto-apply behaviour as a question to ask first.
+This one was asked and answered before any code: the rule for what is written is
+the #219 decision above, unchanged, and what grows is how much one click covers.
+
+**What stays exactly as #219 decided:**
+- Only what two passes agree on is written, each with `origin: "ai-auto"`. A
+  single-pass claim is a suggestion. A word neither pass placed is reported and
+  never forced.
+- A reviewer's alignment, link or null decision is never written over.
+- It runs only on the reviewer's explicit Start, and the number of requests and
+  the cost (or "uses your ChatGPT plan allowance") are shown before anything is
+  sent.
+- Nothing about Scripture text or findings.
+
+**What changes:**
+- One Start may write alignment for many chapters instead of one. The engine
+  already accepted a list of chapters and a `book` scope (#221); only the UI
+  held it to the open chapter.
+- The run is watched from one store and survives the dialog being closed and
+  the editor screen being left, so a long run is never out of sight.
+- Cancel stops after the request in flight; chapters already finished keep what
+  was written. Resume runs what is left.
+- On a ChatGPT sign-in the job stops when the plan's limit is reached, as the AI
+  review job does, instead of sending and failing every remaining request.
+
+**Rules out:**
+- Writing on one pass's say-so, at any confidence.
+- Starting a run without the reviewer's click, or without the cost shown first.
+- Treating this as a precedent for Scripture text or findings.
+
+**Costs, known when this was taken:**
+- A larger amount is written before a reviewer has looked at any of it. The
+  agreement of two passes is correlated and uncalibrated
+  (`two-pass-agreement-v1`), and its precision has not been measured (#131). A
+  wrong agreed link in a whole-book run is one of many, and is found only when
+  that verse is reviewed. Each verse keeps its verdict and **Undo a verse**.
+- Every selected chapter is sent, including one that is already fully aligned.
+  A reviewer's work is protected word by word, but the requests are paid for.
+  Skipping or marking aligned chapters is not part of this.
+- A whole book is hundreds of requests. The dialog says the count and the cost;
+  it does not say how long it will take.
+
+**Revisit when:** the maintainer is back; when #131 gives a measured precision
+for two-pass agreement; and before any run is allowed to start without a click.

@@ -126,6 +126,12 @@ class _AutoAlignJob:
             return {
                 "jobId": self.id, "scope": self.spec.scope, "apply": self.spec.apply,
                 "state": self.state, "stage": self.stage, "chapters": list(self.spec.chapters),
+                # How many windows this job runs in each chapter, so a run over
+                # several chapters can show each one's progress. A resumed job
+                # counts only what it still has to run.
+                "chapterWindows": {
+                    chapter: len(self.spec.windows.get(chapter, [])) for chapter in self.spec.chapters
+                },
                 "windowsTotal": total, "windowsDone": done,
                 "windowsFailed": sum(1 for r in self.results.values() if r.get("status") == "failed"),
                 "percent": 100 if self.state == "succeeded" else (round(done / total * 100) if total else 0),
@@ -150,7 +156,16 @@ class AutoAlignJobManager:
         self._active: Optional[str] = None
         self._lock = threading.RLock()
 
-    def start(self, spec: AutoAlignJobSpec, *, run_window: RunWindow) -> dict[str, Any]:
+    def start(
+        self, spec: AutoAlignJobSpec, *, run_window: RunWindow,
+        halt: Optional[Callable[[], str]] = None,
+    ) -> dict[str, Any]:
+        """`halt` is asked before each window, as the AI review job asks it
+        (#506). A non-empty answer means the provider will accept nothing more
+        for now (a ChatGPT plan's limit, a lapsed sign-in): the job ends there
+        as failed with that message, and the windows not yet run are left
+        without a result, so a retry resumes with them. Without it a run over
+        a whole book sent, and failed, every remaining window in turn."""
         if spec.scope not in {"chapter", "book", "window"}:
             raise AutoAlignJobError("Automatic alignment runs on a window, a chapter or a book.")
         with self._lock:
@@ -161,7 +176,7 @@ class AutoAlignJobManager:
             self._jobs[job.id] = job
             self._active = job.id
         threading.Thread(
-            target=self._run, args=(job, run_window), name=f"bridge-auto-align-{job.id[-8:]}", daemon=True,
+            target=self._run, args=(job, run_window, halt), name=f"bridge-auto-align-{job.id[-8:]}", daemon=True,
         ).start()
         return job.snapshot()
 
@@ -199,13 +214,17 @@ class AutoAlignJobManager:
             raise AutoAlignJobNotFound(f"Unknown automatic alignment job '{resolved}'.")
         return job
 
-    def _run(self, job: _AutoAlignJob, run_window: RunWindow) -> None:
+    def _run(
+        self, job: _AutoAlignJob, run_window: RunWindow, halt: Optional[Callable[[], str]] = None,
+    ) -> None:
         with job.lock:
             job.state = "running"
         try:
             for chapter in job.spec.chapters:
                 for window in job.spec.windows.get(chapter, []):
                     if self._cancelled(job):
+                        return
+                    if self._halted(job, halt):
                         return
                     key = _key(chapter, window)
                     label = f"{chapter}:{window[0]}-{window[-1]}"
@@ -287,6 +306,20 @@ class AutoAlignJobManager:
                 job.error = str(exc)
                 job.stage = "Failed"
                 job.finished_at = _now()
+
+    @staticmethod
+    def _halted(job: _AutoAlignJob, halt: Optional[Callable[[], str]]) -> bool:
+        reason = halt() if halt is not None else ""
+        if not reason:
+            return False
+        with job.lock:
+            job.state = "failed"
+            job.error = reason
+            job.stage = "Stopped"
+            job.current = None
+            job.current_pass = None
+            job.finished_at = _now()
+        return True
 
     @staticmethod
     def _cancelled(job: _AutoAlignJob) -> bool:

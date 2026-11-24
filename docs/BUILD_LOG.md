@@ -27402,3 +27402,133 @@ that call for it here; CI runs it on the pull request. `cargo check`,
 **Known and left.** A run that is marked `cancelled` twice in a race (cancel
 seen as the verse is begun, then again when it is reported) appends two
 `recheck_cancelled` events. The record's state is right either way.
+
+## 2026-11-24 — PR #516 merged: a cancelled or failed review no longer reopens a resolved issue (#515)
+
+Joel tested `issue-recheck-restore-515` in the desktop app and reported that
+everything works as expected (his report; I did not run the desktop app). CI on
+the PR was green, the engine job included. Merged with a merge commit
+(`2f648c9`); #515 closed with it and its board card is Done.
+
+## 2026-11-24 — "Align with AI": one, several or all chapters, chosen in a dialog (#517)
+
+**Asked for** by Joel on 2026-11-24: the editor's "Align chapter with AI" becomes
+"Align with AI" and opens a dialog with the book's chapters as boxes; the
+reviewer picks one, several or all and presses Start.
+
+**Decided** by Joel the same day, before any code (DECISIONS.md, the 2026-11-24
+entry): one Start may cover several chapters or the whole book; after Start the
+dialog shows progress and can be closed; the align job gets the AI review's stop
+at a ChatGPT plan limit. What is written does not change: #219's two-pass
+agreement, on an explicit click, the cost shown first, never over a reviewer's
+work.
+
+**What the code already had.** `alignment.autoAlign.start` took a list of
+chapters and a `book` scope from the day it was written (#221), and
+`alignment.autoAlign.retry` existed with no caller. Only the UI held the job to
+the open chapter. No test ran more than one chapter.
+
+**What changed.**
+
+- `src/lib/autoAlignRun.ts` (new) owns the run: a store, the polling, start,
+  cancel, resume (`autoAlignRetry`), dismiss, and `attachRun()`, which adopts a
+  job the engine is still running when the page has none. The run used to live
+  in `AutoAlignChapterButton.svelte`; leaving the editor screen unmounted it and
+  the app never found the job again. A verdict is announced to the alignment
+  views (`noteAlignmentChanged`) as it arrives, not only when the job ends, and
+  only for the project the run was started in. A failed status read no longer
+  ends the watching: it goes on through five in a row, then says the run can no
+  longer be followed and keeps the last figures.
+- `src/lib/components/AutoAlignDialog.svelte` (new): the native `<dialog>` with
+  the `use:modal` pattern of `AddBooksDialog`. Choose (boxes, Shift+click range,
+  This chapter / Select all / Clear, arrow keys, Ctrl+A), then the progress map
+  of the run's chapters, then the result with Resume, Open review and a box
+  that opens its chapter. The cost is worked out one chapter at a time
+  (`autoAlignEstimate("chapter", [ch])`) and remembered, so a whole book shows a
+  running total and never waits on one long estimate call.
+- `src/lib/components/AutoAlignStrip.svelte` (new) replaces the old strip: the
+  run's progress and result above the text, Show / Cancel / Open review /
+  Details / dismiss. The estimate and its confirmation are the dialog's.
+- `AutoAlignChapterButton.svelte` and its test are deleted. Grepped the
+  basename first: `App.svelte`, `AlignmentMenu.test.ts`, `docs/ARCHITECTURE.md`
+  and `docs/QA_TEST_MATRIX.md` named it and are updated; older BUILD_LOG
+  entries name it as history and are left.
+- `AlignmentMenu.svelte`: the entry is "Align with AI". Props renamed
+  (`onAlignWithAI`, `alignAIDisabled`, `alignAITitle`, `alignAIRunning`); a run
+  under way shows a "running" pill and the entry stays enabled.
+- `App.svelte`: mounts the dialog and the strip, reads AI readiness on mount and
+  when Settings closes, calls `attachRun()`, and reloads the open chapter after
+  a run only when the run covered it. Open review goes through
+  `requestCrossVerse` (#118), since the verses may be in another chapter.
+- Engine, `alignment_auto_align_jobs.py`: `start(..., halt=)` and `_halted`,
+  asked before each window, as `AIReviewJobManager` does;
+  `_start_auto_align` passes `self._ai_halt_reason`. The snapshot gains
+  `chapterWindows` (windows per chapter), which the progress map needs.
+- Docs: `DECISIONS.md`, `CLAUDE.md` (the #219 paragraph and the stop-and-ask
+  bullet), `USER_MANUAL.md`, `ARCHITECTURE.md`, `QA_TEST_MATRIX.md` (A117, M57).
+
+**Ran and watched.**
+
+- Engine, red then green: with the engine change set aside, the four new tests
+  in `tests/service/test_auto_align_jobs.py` failed; the plan-limit one showed
+  the old job going on to "2 window(s) failed." With the change all thirteen in
+  the two align-job files pass: a job over two chapters, `scope: "book"`, cancel
+  in the second chapter then retry of only the rest, and the plan-limit stop
+  with no further request sent.
+- Full engine suite, `pytest -n auto --basetemp C:/t/e517`: 6,065 passed, 14
+  failed, 4 skipped, 3 xfailed. Twelve are the Stage 3 source database ones
+  (#504). `test_language_qa.py::test_continuous_foreground_polling_does_not_starve_worker`
+  and `test_paratext_decided_policy_protocol.py::test_a_resolve_bridge_sent_is_closed_as_bridge_origin_not_as_an_external_resolution`
+  passed when rerun alone; frontend tests were running beside the suite.
+- Frontend, after the review changes: `npm run check` 0 errors 0 warnings;
+  `npm run test` 145 files, 1,474 passed; `npm run build` passed. New: 13 in `autoAlignRun.test.ts`, 22
+  in `AutoAlignDialog.test.ts`, 9 in `AutoAlignStrip.test.ts`; 11 in
+  `AlignmentMenu.test.ts` (two replace the "Working out the cost…" label test).
+- Sidecars rebuilt; `scripts/smoke_sidecars.py engine/dist/bridge-engine.exe`
+  passed.
+- Rust: `cargo check` passed and `cargo test` passed (21 tests). Run with
+  `CARGO_TARGET_DIR` pointing at a separate folder, because the app was open
+  and a running sidecar blocks the usual build folder (CLAUDE.md gotcha 13).
+
+**Joel's review in the app, the same day, and what it changed.** He looked at
+the dialog twice while it was being built:
+
+- The colours did not match the app. The first cut used the AI purple
+  (`--ai`) for the selected boxes, the icon and the main button, to set it
+  apart from the blue chapter navigator. It is now the app's accent throughout,
+  with the standard `.ui-btn.primary` and `.ui-btn.danger`; `--ai` is used
+  nowhere in these files.
+- One main button. Cancel beside Start is gone (the x closes the dialog), and
+  once a run is on, Start's place is taken by Cancel. The running view's Close
+  button is gone for the same reason.
+- The x has the hover of the app's other dialogs (`AddBooksDialog`): quiet,
+  red when pointed at.
+- Less text: the header is one sentence, the hint under the boxes is
+  "Shift+click selects a range.", and the footer note is gone from the choose
+  view.
+
+**Not verified: the desktop app.** Joel's two looks were at the choose view.
+Nobody has watched a run in the dialog. For Joel at 1366x768:
+
+1. Alignment menu shows **Align with AI**; it opens the dialog with the open
+   chapter selected.
+2. Select several chapters, Select all, Clear; the total updates; in a narrow
+   window the boxes reflow and nothing is clipped; with a long book (Psalms) the
+   boxes scroll and the buttons stay in view.
+3. Start on two short chapters: the boxes show progress; close the dialog; the
+   strip shows progress; reopen from the menu.
+4. Go to the dashboard and back during a run: progress is still shown.
+5. Cancel partway: finished chapters keep their alignment; Resume continues.
+6. A box that needs review opens its chapter; Open review opens the verses.
+
+**Not verified at all:** a real run over many chapters against a live provider
+(time taken, cost against the estimate), and the plan-limit stop on a real
+ChatGPT plan. The tests use a fake transport.
+
+**Seen again, not changed.** `test_paratext_decided_policy_protocol.py` failed
+under load a second time, a different test of the same file with the same
+shape (the list of closed threads came back empty). It passes alone. It
+rewrites a notes file and reads it back; not investigated.
+
+**Not part of this, said in #517.** Skipping or marking chapters that are
+already fully aligned; a guard between the align job and the AI review job.

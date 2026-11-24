@@ -545,6 +545,10 @@ export interface AutoAlignJobStatus {
   state: "queued" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled";
   stage: string;
   chapters: string[];
+  /** How many windows this job runs in each chapter; a resumed job counts
+   * only what it still has to run. Absent from an engine before the "Align
+   * with AI" dialog. */
+  chapterWindows?: Record<string, number>;
   windowsTotal: number;
   windowsDone: number;
   windowsFailed: number;
