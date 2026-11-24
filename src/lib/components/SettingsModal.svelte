@@ -796,7 +796,7 @@
         <DiagnosticsPanel embedded />
       {:else if activePane === "ai"}
         <h3>AI provider</h3>
-        <p class="desc">Used only for optional "Explain with AI." Core QA (Greek Room, local checks) never requires this and works fully offline.</p>
+        <p class="desc">Used only by the optional AI features: tN/tW review, alignment suggestions, finding triage and correction wording. Core QA (Greek Room, local checks) never requires this and works fully offline.</p>
 
         <div class="field">
           <label for="provider">Provider</label>
@@ -1278,7 +1278,7 @@
         <TeamPane />
       {:else if activePane === "security"}
         <h3>Security & privacy</h3>
-        <p class="desc">Project data and Greek Room findings never leave this machine unless you explicitly use AI explain.</p>
+        <p class="desc">Project data and Greek Room findings never leave this machine unless you use one of the AI features, which send the verses they work on to the provider you set up.</p>
         <div class="kv"><span>API key storage</span><span>OS secure storage (DPAPI on Windows)</span></div>
       {/if}
     </div>

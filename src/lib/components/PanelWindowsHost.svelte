@@ -3,7 +3,7 @@
   import { emitTo } from "@tauri-apps/api/event";
   import { project, currentChapter, selectedVerse, chapterVerseNums, verseTexts, verseDisplay, findingsByVerse,
     nativeChecksByVerse, aiCheckReviewsByVerse, checkStatusByVerse, alignmentStatusByVerse, localUserId, reviewerMode,
-    focusedFindingId, selectedVerseSet, checkingProgress, alignmentRevisionByVerse, languageQaFindingsByVerse } from "../stores";
+    focusedFindingId, selectedVerseSet, checkingProgress, alignmentRevisionByVerse, languageQaFindingsByVerse, noteAlignmentChanged, verseKey } from "../stores";
   import { languageQaChannel, nudgeLanguageQa } from "../languageQaInline";
   import { openAlignment } from "../alignmentUi";
   import { paratextReviewQueueOpen } from "../paratextNotes";
@@ -53,6 +53,7 @@
       else if (message.kind === "settings") onSettings();
       else if (message.kind === "reviewQueue") paratextReviewQueueOpen.set(true);
       else if (message.kind === "focus" && message.findingId) void revealFinding(message.findingId);
+      else if (message.kind === "alignmentChanged" && message.chapter && message.verse) noteAlignmentChanged(verseKey(message.chapter, message.verse));
       else if (message.kind === "alignment") openAlignment(message.chapter || $currentChapter, message.verse || $selectedVerse || "");
       else if (message.kind === "edit") void (async () => {
         await onNavigate(message.book || $project!.bookId, message.chapter || $currentChapter, message.verse || "");

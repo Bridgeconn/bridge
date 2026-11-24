@@ -27092,3 +27092,94 @@ do not match the code. All of it was on `main` before this work. Joel chose to f
 it on its own branch after this merge.
 
 **Not run.** No gate: this commit changes documentation only.
+
+## 2026-11-24 — AI review: refresh the screens, keep the explanation, ask before spending, fix the wording (#511)
+
+Branch `ai-review-refresh-511`, from `main` after #508. Joel found the first of
+these while testing the sign-in with the #507 editor, and chose to have all four
+fixed together in their own pull request. All four were on `main` before the
+sign-in work. Frontend and docs only; no engine file changed.
+
+**What a review does by itself, read from the engine before anything was changed**
+(`_finish_ai_review_verse` and `prepare_verse_review`): it may ask for a gap-fill
+alignment when the verse has unaligned words and **writes it** through
+`_save_alignment(..., "ai_review_auto_align")`; it applies the tN/tW selections
+that pass the safety gate; it updates saved issue resolutions. `gap_fill` keeps
+every existing group (`validate_preparation_proposal`): a group may gain a word,
+never lose one. This happens whatever "Allow manual override" is set to, on
+purpose (the comment above `_apply_safe_ai_selections`).
+
+**A. The rest of the app is told.** `ReviewPanel.svelte`'s job handling refreshed
+only the Translation helps cards. `syncAIJobResult` now calls
+`refreshAfterAIReview` for each verse that newly succeeds: `noteAlignmentChanged`
+(what makes an open Word alignment tab, the Cross-verse page and the source text
+panel reload), then, for a verse whose chapter is loaded, the verse's alignment
+status from `alignment.get` and the alignment findings through `recheckVerse`,
+the pattern of `AlignmentModal.refreshChecks`. It is driven from
+`snapshot.results`, not `latestResult`, which carries only the newest verse and
+misses verses a chapter or book job finishes between two polls. Not for a failed
+verse, and not for a job of another project.
+
+A Review panel in its own window keeps its own copies of the stores, so the
+signal did not reach the main window, where the alignment tabs are. One new
+panel message, `alignmentChanged` (`panelWindow.ts`, sent from `PanelWindow.svelte`
+through the panel context, handled in `PanelWindowsHost.svelte`).
+
+**B. The explanation is put back.** It lived only in the panel and was cleared on
+a verse change. `check.listForVerse` already returned the stored review
+(`aiSummary`, `aiQaIssues`, `aiReviews`, `aiReviewState`); nothing read the first
+two. `TranslationHelpsReview.svelte` reads the verse's checks on every selection,
+so it now hands that to its parent (`onReviewLoaded`), with no extra request, and
+`ReviewPanel` rebuilds the explanation from it. A restored one shows no usage
+line (there are no figures for it), and says so when it is out of date. A run in
+progress, or one that has just finished and is on screen with its own figures, is
+not replaced by the stored copy.
+
+**C. Two questions before sending.** The Verse button asks when the stored review
+is `current` (Chapter and Book already skip those); it asks nothing when the
+review is missing or out of date. The review that used to start by itself after a
+verse edit with a saved issue resolution now asks, "Not now" leaving the issue
+marked for a recheck as a failed run does. With no AI set up it does not ask: the
+start is left to fail as before, since that error is what tells the reviewer why
+the issue stays open. What the AI may apply is unchanged.
+
+**D. Wording.** `SettingsModal.svelte` said the provider was "Used only for
+optional 'Explain with AI.'" and spoke of "AI explain"; no such feature exists.
+`docs/USER_MANUAL.md` described Basic and Advanced as apply versus propose, and
+said neither mode touches alignment groups; it now says what the code does, and
+describes A to C. The Settings "Quality engine" pane already had it right.
+
+**Run.**
+
+- New `ReviewPanelAiRefresh.test.ts`, 11 tests: the signal, status and recheck
+  once per succeeded verse; every verse finished between two polls, none for a
+  failed one or another project's job; the stored summary back after a verse
+  change, without usage, marked when out of date, and not replacing a run just
+  finished; the Verse question on an up-to-date review only; the after-edit
+  question, "Not now", and no question with no AI set up.
+- `npm run check` 0 errors 0 warnings; `npm run build` passed; `npm run test` 143
+  files, 1,432 passed, on an idle machine.
+
+**Not run.** The engine suite, `cargo check` and `cargo test`: no Python or Rust
+file changed. The frozen sidecars were not rebuilt (nothing in them changed).
+
+**Not verified: the desktop app.** jsdom shows the signal sent and the stores
+updated, not a tab redrawing. For Joel at 1366x768:
+
+1. Word alignment tab open on a verse with unaligned words; run the AI review for
+   that verse from the Review tab: the tab, the verse list's alignment badge and
+   the Cross-verse page update without reopening.
+2. The same with the Review panel in its own window.
+3. Select another verse and come back: the AI summary is shown again.
+4. Verse on a reviewed verse: Bridge asks first.
+5. Edit a verse that has a saved issue: Bridge asks before the review.
+
+**One commit, not one per part.** The plan said a commit per part; A, B and C are
+interleaved in `ReviewPanel.svelte` and cannot be staged apart without
+interactive staging.
+
+**Found at the same time, not changed, listed in #511 for a decision:** a cancel
+after a re-run replaces the stored review with one marked cancelled; the model
+and provider are not part of what makes a review current; usage may be counted
+twice when a cancel lands after the answer on the single-verse path (read in the
+code, not verified).

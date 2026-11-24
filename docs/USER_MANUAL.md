@@ -38,11 +38,15 @@ the original Hebrew or Greek source text.
   Hebrew/Greek source.
 - Export a clean, checked project.
 
-**What Bridge will never do:** silently change your translation text or
-alignment. In Basic mode, Bridge AI may automatically record only
-high-confidence, evidence-grounded tN/tW review selections; uncertain items
-remain open. Advanced mode leaves AI selections as proposals until you apply
-or edit them. Neither mode rewrites Scripture or alignment groups.
+**What Bridge will never do:** silently change your translation text, or
+take apart an alignment you made. An AI review does two things by itself:
+it records the tN/tW selections that are high-confidence and grounded in the
+displayed evidence, and it fills in alignment for words that were still
+unaligned (your existing groups are kept; the change is backed up and can be
+undone from the verse's alignment history). Uncertain items remain open.
+This is the same with **Allow manual override** on or off: that setting
+decides whether you can hand-correct a selection afterwards, not whether the
+AI may make it.
 
 ---
 
@@ -78,7 +82,7 @@ scope:
 | Runs | Electron app, online-resource-dependent by default | Fully offline-first desktop app; all core checks and source data are bundled, no network needed |
 | Checking engines | Its own built-in checking tools | translationCore's own alignment/project logic **plus** [Greek Room](https://github.com/BibleNLP/greek-room) (Wildebeest spelling/consistency, USFM structural checker, versification, name-transliteration consistency) in one unified review flow |
 | Review model | Per-tool screens (translationNotes tool, translationWords tool, alignment tool, etc., navigated separately) | One inline verse-by-verse view with all finding types color-coded together, plus a focused review panel |
-| AI assistance | Not built in | Optional: AI-generated explanations and alignment proposals, plus evidence-grounded automatic tN/tW review. Basic mode safely applies high-confidence review selections; Advanced mode proposes them for human approval. Scripture text is never silently changed. |
+| AI assistance | Not built in | Optional: AI-generated explanations and alignment proposals, plus evidence-grounded automatic tN/tW review. High-confidence, evidence-grounded review selections are applied automatically and the rest are left for you; "Allow manual override" adds an editor for correcting them. Scripture text is never silently changed. |
 | Corpus statistics | Not built in | Alignment corpus statistics (co-occurrence, translation probability, PMI) computed from your own project's completed alignments (backend feature, no dedicated screen yet) |
 | Live tool connectors | N/A | Identity-gated Paratext Project Note handoff; one-shot Logos navigation connector (see the Developer Guide for current verification status) |
 | Project files | translationCore project format | **The same format.** A Bridge-exported project (aligned mode) is re-importable into translationCore or any other USFM 3 tool. |
@@ -363,10 +367,21 @@ A focused, occurrence-aware view for working through translationNotes and
 translationWords. Distinct colors connect cards to inline verse highlights,
 and each AI result includes its evidence and justification.
 
-- **Basic mode** automatically records only safe, high-confidence selections
-  grounded in the displayed tN/tW evidence. Uncertain checks remain open.
-- **Advanced mode** prepares exact-word proposals but waits for you to apply,
-  edit, or clear each selection.
+- The review automatically records only safe, high-confidence selections
+  grounded in the displayed tN/tW evidence. Uncertain checks remain open. A
+  selection you made, or one that was imported, is never overwritten.
+- It also fills in alignment for words of the verse that were still unaligned.
+  Existing alignment groups are kept. Every screen showing that verse's
+  alignment updates when the review finishes.
+- With **Allow manual override** on (Settings > Quality engine) you can edit or
+  clear a selection the review made. The review applies its safe selections
+  either way.
+- The **Verse** button asks before running again on a verse whose review is
+  still up to date, because that sends new requests for no new information.
+  **Chapter** and **Whole book** skip up-to-date verses.
+- The AI summary for a verse is shown again when you come back to the verse. If
+  the verse, its alignment or its checks changed after the review, it is marked
+  as out of date.
 - Run the review for **This verse**, **Chapter**, or **Whole book**. It runs in
   the background, can be cancelled, and Retry resumes only failed or unfinished
   verses while preserving completed current results.
@@ -383,8 +398,10 @@ and each AI result includes its evidence and justification.
   and reviewer note before sending a Project Note. Offline handoffs remain
   queued and retryable; Bridge sends only to the explicitly confirmed active
   Paratext project.
-- When you edit a verse that has a saved resolution, Bridge automatically starts
-  a new evidence-grounded verse review. A pass closes it as **Resolved after
+- When you edit a verse that has a saved resolution, Bridge offers to run a
+  new evidence-grounded verse review, and asks first because it sends requests
+  to your AI provider. If you skip it, the issue stays marked for a recheck
+  and **Run AI recheck** runs it later. A pass closes it as **Resolved after
   recheck**; a remaining problem becomes **Issue remains after recheck**.
   Uncertain, cancelled, or failed reviews remain open and retryable. The result,
   evidence, confidence, and lifecycle audit persist after restart.
@@ -396,8 +413,9 @@ A modal (not a separate screen), opened via the **Settings** button:
 - **AI provider** — Provider, API base URL (blank = OpenAI's default),
   Model, API key. Works with any endpoint that speaks the OpenAI Responses
   API shape — not necessarily every provider's own native format.
-- **Quality engine** — **Basic** safely applies strong, evidence-grounded tN/tW
-  selections; **Advanced** keeps AI selections as editable proposals.
+- **Quality engine** — **Allow manual override** adds an editor for correcting
+  the target text a check selected. The AI applies its strong,
+  evidence-grounded tN/tW selections whether it is on or off.
 - **Resources & licenses** — what's bundled offline and under what license.
 - **Security** — how your API key is stored: session-only in memory,
   DPAPI-protected on Windows, never written to disk in plaintext.

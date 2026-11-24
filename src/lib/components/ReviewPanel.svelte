@@ -14,7 +14,8 @@
   import {
     selectedVerse, selectedFindings, currentChapter,
     checkingProgress, verseKey, checkGroupsByVerse,
-    aiCheckReviewsByVerse, nativeChecksByVerse, project, reviewerMode, reviewTabRequest
+    aiCheckReviewsByVerse, nativeChecksByVerse, project, reviewerMode, reviewTabRequest,
+    alignmentStatusByVerse, noteAlignmentChanged,
   } from "../stores";
   import {
     editingChapter, editingVerse, editText, editSaving, editError, editErrorKey,
@@ -23,11 +24,15 @@
   } from "../verseEditor";
   import { findingSpan, revealFinding } from "../findingFocus";
   import { askConfirmation } from "../confirmAction";
-  import { greekRoomChapterSummary, greekRoomVerseRunning, runVerseGreekRoom } from "../verseChecks";
+  import { greekRoomChapterSummary, greekRoomVerseRunning, recheckVerse, runVerseGreekRoom } from "../verseChecks";
   import { aiReviewRequest, aiJobActive, aiWindowLabel } from "../aiReviewUi";
   import { setSidePanel } from "../editorPrefs";
   import type { ReviewTab } from "../verseIssues";
-  import type { AiExplainResult, AIReviewJobSnapshot, FindingStatus, QaFinding } from "../types/finding";
+  import type { AiCheckReview, AiExplainResult, AiQaIssue, AIReviewJobSnapshot, FindingStatus, NativeCheckListResponse, QaFinding } from "../types/finding";
+
+  // #511: in a separate Review window the stores are that window's own copies.
+  // The alignment tabs live in the main window, which is told through this.
+  const panelWindow = getSvelteContext<{ alignmentChanged?: (chapter: string, verse: string) => void } | undefined>("panel-window");
 
   $: openFindingCount = $selectedFindings.filter((f) => f.status === "open").length;
   type DecisionSaveState = "saving" | "saved" | "error";
@@ -93,6 +98,14 @@
   let aiExplainErrorReference = "";
   let aiExplainResult: AiExplainResult | null = null;
   let aiExplainKey = "";
+  // #511: the explanation on screen was rebuilt from the verse's stored review,
+  // not from a run that has just finished. It has no usage figures, and it may
+  // be out of date (the verse, its alignment or its checks changed since).
+  let aiExplainRestored = false;
+  let aiExplainStale = false;
+  type StoredAIReviewState = NativeCheckListResponse["aiReviewState"];
+  // How each verse's stored review stands, as Translation helps last read it.
+  let storedAIReviewState: Record<string, StoredAIReviewState> = {};
   let aiJob: AIReviewJobSnapshot | null = null;
   let visibleAIJob: AIReviewJobSnapshot | null = null;
   let aiJobBusy = false;
@@ -144,6 +157,8 @@
 
   function nativeCheckStateChanged(): void {
     aiExplainResult = null;
+    aiExplainRestored = false;
+    aiExplainStale = false;
     aiExplainError = "";
     aiExplainErrorJobId = "";
     aiExplainErrorReference = "";
@@ -180,6 +195,69 @@
     }
   }
 
+  /** #511: a verse's review can write its alignment (it fills the gaps) and
+   *  its tN/tW selections. Every other alignment writer says so and rechecks
+   *  the verse. Without this an open Word alignment tab, the Cross-verse page,
+   *  the verse list's alignment badge and the verse's alignment findings kept
+   *  showing what was there before the review. */
+  async function refreshAfterAIReview(
+    chapter: string, verse: string, expectedProjectPath: string,
+  ): Promise<void> {
+    if (($project?.path ?? "") !== expectedProjectPath) return;
+    const key = verseKey(chapter, verse);
+    noteAlignmentChanged(key);
+    panelWindow?.alignmentChanged?.(chapter, verse);
+    // Status and findings only for a verse whose chapter is loaded: a book run
+    // also finishes verses of chapters that are read fresh when opened.
+    if (!(key in getStore(alignmentStatusByVerse))) return;
+    try {
+      const context = await bridge.getAlignment(chapter, verse);
+      if (($project?.path ?? "") !== expectedProjectPath) return;
+      if (context?.status) {
+        alignmentStatusByVerse.update((values) => ({ ...values, [key]: context.status }));
+      }
+      await recheckVerse(chapter, verse, ["alignment"], { expectedPath: expectedProjectPath });
+    } catch (error) {
+      console.error(`Could not refresh ${chapter}:${verse} after its AI review`, error);
+    }
+  }
+
+  /** #511: Translation helps has read the selected verse's checks, and with
+   *  them the verse's stored AI review. The explanation used to live only in
+   *  this panel and was gone after a verse change, although the engine kept
+   *  it; it is put back from what the engine returns. */
+  function storedAIReviewLoaded(loaded: {
+    key: string; state: StoredAIReviewState; summary: string;
+    qaIssues: AiQaIssue[]; reviews: AiCheckReview[];
+  }): void {
+    storedAIReviewState = { ...storedAIReviewState, [loaded.key]: loaded.state };
+    if (!$selectedVerse || loaded.key !== verseKey($currentChapter, $selectedVerse)) return;
+    // A run for this verse is under way: its result replaces whatever is stored.
+    if (visibleAIJob && isAIReviewJobActive(visibleAIJob)) return;
+    // A run that has just finished is on screen with its own usage figures.
+    if (aiExplainResult && aiExplainKey === loaded.key && !aiExplainRestored) return;
+    const hasContent = Boolean(loaded.summary) || loaded.qaIssues.length > 0 || loaded.reviews.length > 0;
+    if (loaded.state === "missing" || !hasContent) {
+      if (aiExplainRestored && aiExplainKey === loaded.key) {
+        aiExplainResult = null;
+        aiExplainRestored = false;
+        aiExplainStale = false;
+      }
+      return;
+    }
+    aiExplainKey = loaded.key;
+    aiExplainRestored = true;
+    aiExplainStale = loaded.state === "stale";
+    aiExplainResult = {
+      summary: loaded.summary,
+      checkReviews: loaded.reviews,
+      qaIssues: loaded.qaIssues,
+      alignmentProposal: null,
+      alignmentWasAIProposed: false,
+      usage: { totalTokens: 0, estimatedCostUSD: 0 },
+    };
+  }
+
   function syncAIJobResult(snapshot: AIReviewJobSnapshot): void {
     for (const [key, resultStatus] of Object.entries(snapshot.results)) {
       if (resultStatus.status !== "succeeded") continue;
@@ -187,6 +265,9 @@
       if (!processedAIResults.has(resultIdentity)) {
         processedAIResults = new Set([...processedAIResults, resultIdentity]);
         void hydrateCompletedAIReview(
+          resultStatus.chapter, resultStatus.verse, snapshot.projectPath,
+        );
+        void refreshAfterAIReview(
           resultStatus.chapter, resultStatus.verse, snapshot.projectPath,
         );
         if ($selectedVerse && key === verseKey($currentChapter, $selectedVerse)) {
@@ -203,6 +284,9 @@
         aiExplainError = "";
         aiExplainErrorJobId = "";
         aiExplainErrorReference = "";
+        aiExplainRestored = false;
+        aiExplainStale = false;
+        storedAIReviewState = { ...storedAIReviewState, [key]: "current" };
         aiExplainResult = {
           summary: result.summary,
           checkReviews: result.checkReviews,
@@ -292,12 +376,23 @@
       body: "Each verse may use one or two model requests and incur API charges.",
       confirmLabel: `Run for the ${scope}`,
     }))) return;
+    // #511: Chapter and Book skip a verse whose review is up to date; the
+    // Verse button ran it again without a word. Asked only when the stored
+    // review is current: a missing or out-of-date one is what the button is for.
+    if (scope === "verse" && (await aiReviewStateOf(chapter, verse)) === "current" && !(await askConfirmation({
+      title: "Run the AI review again for this verse?",
+      body: "This verse's AI review is up to date: nothing it depends on has changed since it ran. Running it again sends new requests to the AI provider and replaces the stored result.",
+      confirmLabel: "Run again",
+      cancelLabel: "Keep this review",
+    }))) return;
     if (aiJobBusy) return;
     aiExplainError = "";
     aiPollFailed = false;
     aiExplainErrorJobId = "";
     aiExplainErrorReference = "";
     aiExplainResult = null;
+    aiExplainRestored = false;
+    aiExplainStale = false;
     try {
       const snapshot = await bridge.startAIReview(scope, chapter, verse, $reviewerMode);
       aiJob = snapshot;
@@ -309,6 +404,45 @@
       aiExplainErrorJobId = "";
       aiExplainErrorReference = requestedReference;
     }
+  }
+
+  /** How a verse's stored review stands: what Translation helps last read for
+   *  it, or asked of the engine for a verse that is not the selected one (the
+   *  verse list's right-click menu). Unknown counts as missing: no question. */
+  async function aiReviewStateOf(chapter: string, verse: string): Promise<StoredAIReviewState> {
+    const key = verseKey(chapter, verse);
+    if (storedAIReviewState[key]) return storedAIReviewState[key];
+    try {
+      const result = await bridge.listChecksForVerse(chapter, verse);
+      return result?.aiReviewState ?? "missing";
+    } catch {
+      return "missing";
+    }
+  }
+
+  /** #511: a saved issue can only close against the edited text, so the
+   *  verse's review used to start by itself after the save, with no question.
+   *  It sends requests to the AI provider, so it now asks first. With no AI
+   *  set up nothing can be sent: the start is left to fail as it always has,
+   *  which is what tells the reviewer why the issue stays open. */
+  async function reviewAfterEdit(chapter: string, verse: string, issues: number): Promise<void> {
+    let ready = false;
+    try {
+      const settings = await bridge.getSettings();
+      ready = Boolean(settings?.aiReady ?? settings?.hasApiKey);
+    } catch {
+      ready = false;
+    }
+    if (ready && !(await askConfirmation({
+      title: `Run the AI review for ${chapter}:${verse} now?`,
+      body: `${issues === 1 ? "A saved issue" : `${issues} saved issues`} on this verse can only be closed against the new text. The review sends requests to the AI provider. If you skip it, ${issues === 1 ? "the issue stays" : "the issues stay"} marked for a recheck and you can run it later from Translation helps.`,
+      confirmLabel: "Run AI review",
+      cancelLabel: "Not now",
+    }))) return;
+    // The edit has made the stored review out of date, so the verse run asks
+    // nothing further.
+    storedAIReviewState = { ...storedAIReviewState, [verseKey(chapter, verse)]: "stale" };
+    await startAIReview("verse", chapter, verse);
   }
 
   // The verse-row context menu (issue #69) requests a scope this way instead
@@ -431,10 +565,11 @@
         if (acceptFindingId) void decide(acceptFindingId, "accepted");
       }
       if (issueResolutionsNeedingRecheck > 0) {
-        // A saved issue can only close against the edited text. Start the
-        // evidence-grounded verse review automatically; failures remain visibly
-        // stale/retryable and never restore the previous resolved state.
-        void startAIReview("verse", chapter, verse);
+        // A saved issue can only close against the edited text. The
+        // evidence-grounded verse review is offered at once (#511: it asks
+        // first); a skipped or failed one stays visibly stale and retryable,
+        // and never restores the previous resolved state.
+        void reviewAfterEdit(chapter, verse, issueResolutionsNeedingRecheck);
       }
     });
   });
@@ -570,6 +705,7 @@
           chapter={$currentChapter}
           verse={$selectedVerse}
           onStateChanged={nativeCheckStateChanged}
+          onReviewLoaded={storedAIReviewLoaded}
           onRerunAIReview={() => void startAIReview("verse")}
           aiReviewBusy={$checkingProgress.running || aiJobBusy}
         />
@@ -833,8 +969,11 @@
             <div class="section ai-explain-section">
               <div class="section-title">
                 AI explanation
-                <span class="ai-cost">{aiUsageLine(aiExplainResult.usage)}</span>
+                {#if !aiExplainRestored}<span class="ai-cost">{aiUsageLine(aiExplainResult.usage)}</span>{/if}
               </div>
+              {#if aiExplainStale}
+                <p class="ai-stale" role="status" data-ai-stale>This review is out of date: the verse, its alignment or its checks changed after it ran, or the run was cancelled. Run it for the verse above for a current one.</p>
+              {/if}
               <p class="ai-summary">{aiExplainResult.summary}</p>
               {#each aiExplainResult.checkReviews as review}
                 <div class="finding ai-check-review">
@@ -996,6 +1135,7 @@
   .ai-cost { margin-left: auto; font-size: var(--fs-2xs); font-weight: 400; color: var(--text-3); }
   .ai-summary { font-size: var(--fs-sm); color: var(--text); line-height: 1.5; margin: 0 0 10px; }
   .ai-error { font-size: var(--fs-sm); color: var(--danger); line-height: 1.5; margin: 0; }
+  .ai-stale { font-size: var(--fs-xs); color: var(--warning); line-height: 1.5; margin: 0 0 8px; }
   .ai-suggestion { font-size: var(--fs-xs); color: var(--accent); margin: -4px 0 8px; }
   .ai-review-controls { border-color: var(--accent); }
   .ai-job-actions button { padding: 6px; font-size: var(--fs-2xs); font-weight: 700; border-radius: 6px; border: 1px solid var(--border-strong); color: var(--accent); background: var(--surface); cursor: pointer; }

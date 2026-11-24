@@ -29,7 +29,12 @@
   const NAMES: Record<SidePanelId, string> = { source: "Source text", reference: "Reference", paratext: "Paratext notes", review: "Review" };
   const message = (kind: "dock" | "close" | "settings" | "changed") => { if (id) void sendPanelMessage({ kind, id, path }); };
   function navigate(book: string, chapter: string, verse: string) { if (id) return sendPanelMessage({ kind: "navigate", id, path, book, chapter, verse }); }
-  setContext("panel-window", { dock: () => message("dock"), close: () => message("close") });
+  setContext("panel-window", {
+    dock: () => message("dock"), close: () => message("close"),
+    // #511: this window's stores are its own copies; the alignment tabs are in
+    // the main window, which reloads a verse only when it is told it changed.
+    alignmentChanged: (chapter: string, verse: string) => { if (id) void sendPanelMessage({ kind: "alignmentChanged", id, path, chapter, verse }); },
+  });
   onMount(() => {
     observePanelMutations(() => message("changed"));
     let disposed = false; const stops: (() => void)[] = [];

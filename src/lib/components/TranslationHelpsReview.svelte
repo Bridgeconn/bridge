@@ -16,6 +16,11 @@
   export let chapter: string;
   export let verse: string;
   export let onStateChanged: () => void = () => {};
+  /** #511: the verse's stored AI review, each time its checks are read. */
+  export let onReviewLoaded: (loaded: {
+    key: string; state: NativeCheckListResponse["aiReviewState"]; summary: string;
+    qaIssues: NativeCheckListResponse["aiQaIssues"]; reviews: NativeCheckListResponse["aiReviews"];
+  }) => void = () => {};
   export let onRerunAIReview: () => void = () => {};
   export let aiReviewBusy = false;
 
@@ -338,6 +343,10 @@
       nativeChecksByVerse.update((values) => ({ ...values, [refreshKey]: result.checks }));
       aiCheckReviewsByVerse.update((values) => ({ ...values, [refreshKey]: result.aiReviews ?? [] }));
       aiReviewState = result.aiReviewState ?? "missing";
+      onReviewLoaded({
+        key: refreshKey, state: aiReviewState, summary: result.aiSummary ?? "",
+        qaIssues: result.aiQaIssues ?? [], reviews: result.aiReviews ?? [],
+      });
     } catch (error) {
       if (sequence !== loadSequence || refreshKey !== key) return;
       loadError = error instanceof Error ? error.message : String(error);
