@@ -27750,3 +27750,31 @@ one row at the tab's usual widths; the name centred and cut with an ellipsis
 when short of room; the picker's grid inside the panel; the two container
 steps (520px, 400px); the same in a separate window; the Source panel's
 follow icon.
+
+## 2026-11-24 — PR #520 merged: several reference tabs are on main (#519)
+
+**What happened.** Joel tested `reference-tabs-519` in the desktop app, run
+from the branch's worktree with rebuilt sidecars, in two rounds. After the
+first he asked for the icon buttons and the Verses-style bar (the entry above);
+after the second he reported that all works as expected and asked for the
+merge. PR #520 was merged with a merge commit (`d3bbfa8`); #519 closed with it
+and its board card is Done. No code changed between his second test and the
+merge.
+
+**Verified, and by whom.** The desktop app: by Joel, who ran it (his report was
+"all works as expected", not a per-check list; I started the app for him and
+saw only its processes and the engine log, never the screen). CI on the PR's
+last commit: `frontend`, `engine`, `rust` and `ci-ok` passed; `golden-notice`
+was skipped because no golden moved. The engine job is where the full engine
+suite ran; locally only the reference and quotation-rules tests did.
+
+**Still not tried by anyone, as far as is recorded.** Start-up time and verse
+navigation speed measured with the three more hidden windows; two large USFM
+folders read for the first time at once; the bar's two narrow steps (520px,
+400px) checked one by one; a release build, as opposed to `tauri dev`.
+
+**Open, with no issue of their own** (listed in the two entries above; filing
+is Joel's decision): `OverflowMenu.svelte` and `IconButton.svelte` are unused;
+`ReferenceHolder`'s shared `.tmp` name; `BridgeEngine._reference_holders` is
+written and never read; `EditorHeader.svelte`'s 400px rule styles its own
+container and likely never applies.

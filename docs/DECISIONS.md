@@ -9,8 +9,8 @@ its own. They are for reading only. The project's reference Bible is unchanged: 
 folder per project or collection (#289), kept by the engine, set from the first
 reference tab or Settings > Language QA, and the only one Language QA checks
 quotations against, counts OV occurrences in and builds related words from.
-**Status:** on branch `reference-tabs-519`, not merged; Joel tests the desktop app
-first.
+**Status:** merged to `main` on 2026-11-24 (PR #520, merge commit d3bbfa8), after
+Joel tested the desktop app.
 **How:** an added tab is a fixed panel id (`reference2` to `reference4`), because
 every saved layout and every separate window is keyed by a known id. Its folder is
 kept in the panel's saved state, in the project's workspace on this computer
