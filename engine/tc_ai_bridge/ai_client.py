@@ -46,6 +46,11 @@ class AIPlanLimitError(AIError):
     meets it stops instead of failing each remaining verse in turn."""
 
 
+class AIReviewCancelled(AIError):
+    """The reviewer cancelled before this verse's review was stored (#513).
+    Nothing was written: the verse keeps the review it had, or none."""
+
+
 _QUOTED_TEXT = re.compile(
     r'"([^"\r\n]+)"|\'([^\'\r\n]+)\'|“([^”\r\n]+)”|‘([^’\r\n]+)’'
 )
@@ -430,6 +435,10 @@ def default_transport(url: str, headers: dict[str, str], body: bytes, timeout: f
 class OpenAIResponsesClient:
     ENDPOINT = 'https://api.openai.com/v1/responses'
     MODELS_ENDPOINT = 'https://api.openai.com/v1/models'
+    # #513: set by the review job to its cancel flag. It is asked once per
+    # verse, immediately before the review is stored (`run_full_review`): a
+    # cancel seen there stores nothing, and a review that was stored is finished.
+    cancel_check: Callable[[], bool] | None = None
 
     def __init__(self, api_key: str, model: str = DEFAULT_REVIEW_MODEL, transport: Transport = default_transport, timeout: float = 240.0, reasoning_effort: str = 'medium', base_url: str = ''):
         if not api_key.strip():
@@ -1250,6 +1259,11 @@ class OpenAIResponsesClient:
         )
         if expected_input_fingerprint is not None and project.review_input_fingerprint(chapter, verse) != expected_input_fingerprint:
             raise AIError('Verse/project data changed while AI was working; stale AI review was discarded.')
+        # #513: the one place a cancel is looked at for this verse. The write
+        # below replaces the verse's stored review, so a cancel must be seen
+        # before it or not at all.
+        if self.cancel_check is not None and self.cancel_check():
+            raise AIReviewCancelled('AI review cancelled; the verse keeps the review it had.')
         saved = project.record_ai_review_result(chapter, verse, {
             'summary': summary,
             'model': self.model,

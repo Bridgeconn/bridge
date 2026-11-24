@@ -8,6 +8,8 @@
  * - the Verse button ran an up-to-date review again without a word;
  * - saving an edit to a verse with a saved issue started a review by itself.
  *
+ * And #513, the last block: what the panel shows after a cancelled run.
+ *
  * jsdom shows the signals sent, the stores updated and the questions asked.
  * That the alignment tab then redraws on screen needs the desktop app.
  */
@@ -294,6 +296,71 @@ describe("ReviewPanel after an AI review (#511)", () => {
       await waitFor(() => expect(startAIReview).toHaveBeenCalledWith("verse", "1", "1", "basic"));
       expect(get(confirmRequest)).toBeNull();
       expect(await screen.findAllByText(/No OpenAI-compatible API key is configured/)).not.toHaveLength(0);
+    });
+  });
+
+  // #513, decided 2026-11-24: a cancelled verse review leaves the verse as it
+  // was before the run. The engine stores nothing for it; the panel shows the
+  // review the verse had, or the starting screen, with no "Cancelled" and no
+  // Retry. Chapter and Book keep their card.
+  describe("after a cancelled run (#513)", () => {
+    const cancelled = (overrides: Partial<AIReviewJobSnapshot> = {}) => snapshot({
+      state: "cancelled", currentStage: "Cancelled", currentChapter: null, currentVerse: null, ...overrides,
+    });
+
+    it("a cancelled re-run of a verse shows the earlier review again, with no card and no Retry", async () => {
+      listChecksForVerse.mockResolvedValue(stored("current", "The earlier review."));
+      aiReviewStatus.mockResolvedValue(cancelled());
+      render(ReviewPanel);
+      await fireEvent.click(screen.getByRole("tab", { name: /AI review/ }));
+      await screen.findByText("The earlier review.");
+
+      await fireEvent.click(screen.getByRole("button", { name: "Verse" }));
+      await waitFor(() => expect(get(confirmRequest)).not.toBeNull());
+      answerConfirmation(true);
+      await waitFor(() => expect(aiReviewStatus).toHaveBeenCalled());
+
+      // Starting the run cleared the explanation; the cancel puts it back.
+      expect(await screen.findByText("The earlier review.")).toBeInTheDocument();
+      await waitFor(() => expect(document.querySelector(".ai-job-status")).toBeNull());
+      expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+      expect(screen.queryByText("Cancelled")).toBeNull();
+      // Still the up-to-date review it was: not marked out of date.
+      expect(document.querySelector("[data-ai-stale]")).toBeNull();
+      expect(screen.getByRole("button", { name: "Verse" })).not.toBeDisabled();
+    });
+
+    it("a cancelled first run of a verse goes back to the starting screen", async () => {
+      aiReviewStatus.mockResolvedValue(cancelled());
+      render(ReviewPanel);
+      await fireEvent.click(screen.getByRole("tab", { name: /AI review/ }));
+      await fireEvent.click(screen.getByRole("button", { name: "Verse" }));
+      await waitFor(() => expect(aiReviewStatus).toHaveBeenCalled());
+
+      expect(await screen.findByText(/No AI explanation yet for this verse/)).toBeInTheDocument();
+      await waitFor(() => expect(document.querySelector(".ai-job-status")).toBeNull());
+      expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+      expect(screen.queryByText("Cancelled")).toBeNull();
+      expect(screen.getByRole("button", { name: "Verse" })).not.toBeDisabled();
+    });
+
+    it("a cancelled chapter run keeps its card, how far it got, and Retry", async () => {
+      startAIReview.mockResolvedValue(snapshot({
+        scope: "chapter", chapterVerses: { "1": ["1", "2", "3"] }, totalVerses: 3,
+      }));
+      aiReviewStatus.mockResolvedValue(cancelled({
+        scope: "chapter", chapterVerses: { "1": ["1", "2", "3"] }, totalVerses: 3, completedVerses: 1,
+        percent: 33, results: { "1:1": verseResult("1", "1") },
+      }));
+      render(ReviewPanel);
+      await fireEvent.click(screen.getByRole("tab", { name: /AI review/ }));
+      await fireEvent.click(screen.getByRole("button", { name: "Chapter" }));
+      await waitFor(() => expect(get(confirmRequest)).not.toBeNull());
+      answerConfirmation(true);
+
+      expect(await screen.findByRole("button", { name: "Retry" })).toBeInTheDocument();
+      expect(document.querySelector(".ai-job-status")).toHaveTextContent("1/3 verses");
+      expect(screen.getByText("Cancelled")).toBeInTheDocument();
     });
   });
 });

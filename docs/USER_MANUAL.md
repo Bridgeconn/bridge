@@ -383,8 +383,16 @@ and each AI result includes its evidence and justification.
   the verse, its alignment or its checks changed after the review, it is marked
   as out of date.
 - Run the review for **This verse**, **Chapter**, or **Whole book**. It runs in
-  the background, can be cancelled, and Retry resumes only failed or unfinished
-  verses while preserving completed current results.
+  the background and can be cancelled.
+- **Cancelling leaves a verse as it was before the run.** A verse that already
+  had a review keeps that review, unchanged; a verse that had none goes back to
+  the starting screen. A verse whose new review was already saved when you
+  pressed Cancel is finished and shows the new review. Requests that were
+  already sent are still charged by the provider and are still counted in the
+  AI usage counter in Settings.
+- After a cancelled **Chapter** or **Whole book** run, the progress card stays
+  and shows how far the run got. **Retry** resumes only the failed or unfinished
+  verses and preserves the completed ones.
 - Results and selection provenance persist with the project. Imported or human
   selections are not overwritten, and editing a verse makes its prior AI review
   stale. Bridge shows an explicit warning; choose **Run AI review again** to

@@ -683,8 +683,10 @@ class WindowReviewSession:
         attributed) is retried once at half the size and then verse by verse
         (#474 section 4); a one-verse window that fails is a failed verse."""
         if cancel_event.is_set():
+            # Not sent. What each verse spent preparing (its mapping and
+            # gap-fill calls) still reaches the counter (#513).
             for p in window:
-                reporter.cancelled(p.verse)
+                reporter.cancelled(p.verse, p.usage, p.cost)
             return
         client = self.client
         reporter.window([p.verse for p in window])
@@ -741,6 +743,13 @@ class WindowReviewSession:
                 'share': round(p.block_chars / total_weight, 6),
                 'windowUsage': usage_dict(usage), 'windowEstimatedCostUSD': cost,
             }
+            # #513: the one place a cancel is looked at for a verse whose
+            # window was answered, immediately before its review is stored.
+            # Seen here, nothing is written and the verse keeps the review it
+            # had; a verse stored before the cancel arrived stays finished.
+            if cancel_event.is_set():
+                reporter.cancelled(p.verse, p.usage, p.cost)
+                continue
             try:
                 verse_rows = rows[p.verse]
                 reviews, issues, suppressed, summary = client.parse_review_rows(
