@@ -27183,3 +27183,25 @@ after a re-run replaces the stored review with one marked cancelled; the model
 and provider are not part of what makes a review current; usage may be counted
 twice when a cancel lands after the answer on the single-verse path (read in the
 code, not verified).
+
+## 2026-11-24 — PR #512 merged: the AI review fixes are on main (#511)
+
+**What happened.** Joel tested `ai-review-refresh-511` in the desktop app and
+reported that everything works as expected. PR #512 was merged with a merge
+commit (`450125d`); #511 closed with it and its board card is Done. No code
+changed between the review and the merge.
+
+**Verified, and by whom.** The desktop app: by Joel, who ran it (the checks
+listed in the entry above were his to run; his report was "all works as
+expected", not a per-check list). CI on the PR: `frontend` and `ci-ok` passed;
+`engine`, `rust` and `golden-notice` were skipped because no file of theirs
+changed.
+
+**Not run by me.** The desktop app, the engine suite, `cargo check` and
+`cargo test`.
+
+**Still open, noted on #511 after it closed.** The three items in the entry
+above (a cancel after a re-run replaces the stored review; the model and
+provider are not part of what makes a review current; a possible double count
+of usage on a late cancel). #511 is closed, so they have no open issue of their
+own yet; filing one is Joel's decision.
