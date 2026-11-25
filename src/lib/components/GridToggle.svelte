@@ -20,17 +20,25 @@
   export let onToggle: (value: string) => void = () => {};
 
   const MAX_COLUMNS = 8;
+  const MIN_WIDTH = 176;
   let columns = MAX_COLUMNS;
   let open = false, place = "", active = 0;
   let trigger: HTMLButtonElement, grid: HTMLElement | undefined;
   $: partial = selected.length < options.length;
+  // 2026-11-25 (Joel): the open grid says what it is showing and what a click
+  // does, in a line above the numbers. Every number of the range is on until
+  // one is switched off here, and the grid alone did not say so. A line, not
+  // a hint on each number: the grid moves the keyboard focus to a number when
+  // it opens, and a hint shown for that would cover the row under it.
+  $: caption = `${partial ? `${selected.length} of ${options.length}` : `All ${options.length}`} ${item}${options.length === 1 ? "" : "s"} shown. Click a number to hide or show it.`;
 
   async function show(): Promise<void> {
     if (!options.length || disabled) return;
     const rect = trigger.getBoundingClientRect();
     const room = Math.max(0, window.innerWidth - 12);
     columns = Math.max(2, Math.min(MAX_COLUMNS, options.length, Math.floor((room - 26 + 4) / 38)));
-    const width = columns * 38 - 4 + 26;
+    // At least wide enough for the caption to read in two or three lines.
+    const width = Math.min(room, Math.max(MIN_WIDTH, columns * 38 - 4 + 26));
     const left = Math.max(6, Math.min(rect.right - width, window.innerWidth - 6 - width));
     place = `left:${left}px;top:${rect.bottom + 4}px;width:${width}px;max-height:${Math.max(140, window.innerHeight - rect.bottom - 16)}px`;
     active = Math.max(0, options.findIndex((option) => selected.includes(option)));
@@ -79,11 +87,12 @@
 </script>
 
 <button type="button" class="trigger" class:open class:partial bind:this={trigger} {disabled} aria-label={label} aria-haspopup="true" aria-expanded={open}
-  use:tooltip={open ? "" : `${label}: ${selected.length} of ${options.length}. Choose which ${item}s of the range to show`}
+  use:tooltip={open ? "" : `${label}: ${partial ? `${selected.length} of ${options.length}` : `all ${options.length}`}. Choose which ${item}s of the range to show`}
   on:click={() => (open ? hide(false) : void show())}><UiIcon name="filter" /></button>
 {#if open}
   <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
   <div class="panel" style={place} role="group" aria-label={label} tabindex="-1" bind:this={grid} use:portal on:keydown={onGridKey}>
+    <p class="caption" role="status">{caption}</p>
     {#each options as option, index (option)}
       <button type="button" class="cell" class:current={selected.includes(option)} aria-pressed={selected.includes(option)}
         aria-label={`${item[0].toUpperCase()}${item.slice(1)} ${option}`} data-index={index} tabindex={index === active ? 0 : -1}
@@ -103,6 +112,7 @@
   /* The chapter picker's grid and cells (EditorHeader.svelte, GridPicker.svelte), value for value. */
   .panel { position: fixed; z-index: var(--z-dropdown); box-sizing: border-box; display: grid; grid-template-columns: repeat(auto-fill, 34px); gap: 4px; align-content: start; justify-content: center;
     padding: 8px 4px 8px 8px; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface); box-shadow: 0 12px 32px rgba(0,0,0,.16); }
+  .caption { grid-column: 1 / -1; margin: 0 4px 2px 0; color: var(--text-3); font-size: var(--fs-3xs); font-weight: 500; line-height: 1.4; }
   .cell { position: relative; display: grid; place-items: center; width: 34px; height: 30px; padding: 0; border: 0; border-radius: 6px; background: transparent;
     color: var(--text-3); font: inherit; font-size: var(--fs-2xs); font-weight: 600; cursor: pointer; }
   .cell:hover, .cell:focus-visible { background: var(--accent-bg); color: var(--accent); outline: none; }

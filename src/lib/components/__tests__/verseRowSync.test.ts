@@ -52,6 +52,31 @@ describe("verseRowSync (#495)", () => {
     expect(rows[0].title.style.minHeight).toBe("");
   });
 
+  // 2026-11-25 (Joel): a drop on verse 2 left the panel on verse 1. While the
+  // heights are cleared a column is only as tall as its own words, and the
+  // browser moves a panel scrolled past that back up as soon as it is
+  // measured. jsdom does not lay out, so that move is made here by hand, in
+  // the measurement; the real thing was watched in headless Edge (BUILD_LOG).
+  it("puts each panel back where it was scrolled after the pass", () => {
+    const { root, rows } = page([
+      { left: 0, top: 0, rows: { "1": 400, "2": 400 } },
+      { left: 410, top: 0, rows: { "1": 40, "2": 40 } },
+    ]);
+    const panels = [0, 1].map((index) => {
+      const body = document.createElement("div");
+      body.setAttribute("data-panel-body", index ? "target" : "source");
+      body.appendChild(root.children[0]);
+      root.appendChild(body);
+      body.scrollTop = 700;
+      return body;
+    });
+    const measure = rows[1]["2"].getBoundingClientRect.bind(rows[1]["2"]);
+    rows[1]["2"].getBoundingClientRect = () => { panels[1].scrollTop = 0; return measure(); };
+    levelVerseRows(root);
+    expect(rows[1]["2"].style.minHeight).toBe("400px");
+    expect(panels.map((body) => body.scrollTop)).toEqual([700, 700]);
+  });
+
   it("clears the heights when the columns are stacked, and leaves an unpaired verse alone", () => {
     const { root, rows } = page([
       { left: 0, top: 0, rows: { "7": 300, "9": 50 } },

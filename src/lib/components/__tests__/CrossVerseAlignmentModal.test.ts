@@ -950,6 +950,99 @@ describe("CrossVerseAlignmentModal, the page as three panels", () => {
     expect(screen.queryByRole("group", { name: "Verses shown" })).toBeNull();
   });
 
+  // 2026-11-25 (Joel): the open grid says what it shows; nothing is hidden by default.
+  it("says in the open grid how many verses are shown and what a click does", async () => {
+    await renderPage("2");
+    const button = within(screen.getByRole("region", { name: "Verses" })).getByRole("button", { name: "Verses shown" });
+    expect(hintOf(button)).toBe("Verses shown: all 3. Choose which verses of the range to show");
+    await fireEvent.click(button);
+    const grid = screen.getByRole("group", { name: "Verses shown" });
+    expect(grid).toHaveTextContent("All 3 verses shown. Click a number to hide or show it.");
+    await fireEvent.click(within(grid).getByRole("button", { name: "Verse 3-4" }));
+    await waitFor(() => expect(screen.getByRole("group", { name: "Verses shown" })).toHaveTextContent("2 of 3 verses shown."));
+    await fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(hintOf(button)).toBe("Verses shown: 2 of 3. Choose which verses of the range to show"));
+  });
+
+  // 2026-11-25 (Joel): a refused drop stayed over the foot of the tab until
+  // it was closed. It goes after ten seconds, as in the Verses panel.
+  it("clears an error by itself after ten seconds, held while it is pointed at", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      realignWords.mockRejectedValue(new Error("ἦν in 1:2 is marked grammatical; clear that before aligning it."));
+      await renderPage("2");
+      const drop = async () => {
+        await pickUp("was", "2");
+        await fireEvent.click(screen.getByLabelText(/Align picked-up word to ἦν in verse 2/));
+        return screen.findByRole("alert");
+      };
+      expect(await drop()).toHaveTextContent("ἦν in 1:2 is marked grammatical");
+      await vi.advanceTimersByTimeAsync(9000);
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+      await vi.advanceTimersByTimeAsync(1500);
+      await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+
+      const held = await drop();
+      await fireEvent.mouseEnter(held);
+      await vi.advanceTimersByTimeAsync(15000);
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+      await fireEvent.mouseLeave(held);
+      await vi.advanceTimersByTimeAsync(10500);
+      await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+
+      await drop();
+      await fireEvent.click(screen.getByRole("button", { name: "Dismiss this message" }));
+      expect(screen.queryByRole("alert")).toBeNull();
+    } finally { vi.useRealTimers(); realignWords.mockReset(); }
+  });
+
+  // 2026-11-25 (Joel): the explanation was a line inside the card and made
+  // the card as wide as the panel. The card is the reason and who decided it.
+  it("draws a 'no counterpart' decision as a small chip, with its explanation in the hint", async () => {
+    const note = "The location in hope is carried by the ending on the next word.";
+    const decided: AlignmentContext = { ...V2, nullDecisions: { target: [], source: [
+      { id: "H002", decisionId: "n1", word: "ἦν", reason: "GRAMMATICAL", note, origin: "ai-auto", state: "active", stale: false },
+    ] } };
+    getAlignmentRange.mockImplementation(async (_chapter: string, verses: string[]) => rangeFor(verses, { "1": V1, "2": decided, "3-4": V34 }));
+    await renderPage("2");
+    const cell = screen.getByLabelText(/Target words aligned to ἦν in verse 2/);
+    const card = cell.querySelector<HTMLElement>(".null-card")!;
+    expect(card).toHaveTextContent(/^grammatical\s*ai$/);
+    expect(cell).not.toHaveTextContent("carried by the ending");
+    expect(hintOf(card)).toBe(`Both passes agree this word has no separate target word: ${note}`);
+    // The card is a row, and that rule outranks `.token`'s column.
+    expect(crossPageSource).toMatch(/\n  \.token\.null-card \{ flex-direction: row;/);
+  });
+
+  // 2026-11-25 (Joel): the card stood as four things one under another,
+  // because `.token` (a column) outranked the card's own grid.
+  it("draws a suggestion as two lines with its accept and dismiss beside them", async () => {
+    const sig = (w: string) => `${w}␟1␟1`;
+    const v2 = { ...V2, autoAlign: { verdict: "NEEDS_REVIEW" as const, runId: "aa-1", createdAt: "", stale: false, issues: 0, suggestions: 1 } };
+    getAlignmentRange.mockImplementation(async (_chapter: string, verses: string[]) => rangeFor(verses, { "1": V1, "2": v2, "3-4": V34 }));
+    autoAlignVerdict.mockResolvedValue({ verdict: {
+      chapter: "1", verse: "2", verdict: "NEEDS_REVIEW", runId: "aa-1", applyRequested: true, issues: [], applied: { groups: [], links: [], nulls: [] },
+      window: ["1", "2", "3-4"], createdAt: "", usage: null,
+      suggestions: [{ kind: "null", status: "UNCERTAIN", votes: { "source-first": true, "target-first": false }, source: null, target: null,
+        token: { side: "source", chapter: "1", verse: "2", signature: sig("ἦν"), word: "ἦν", id: "H002" }, reason: "GRAMMATICAL", note: "the ending carries it", confidence: 60 }],
+    } });
+    nullSet.mockResolvedValue({ decision: {}, context: V2 });
+    await renderPage("2");
+    const accept = await screen.findByRole("button", { name: "Accept grammatical for ἦν" });
+    const card = accept.closest<HTMLElement>(".suggest-card")!;
+    expect(card).toHaveTextContent(/grammatical \?\s*passes disagree/);
+    // Both buttons are the card's own children, which is what the grid places.
+    const dismiss = within(card).getByRole("button", { name: "Dismiss this suggestion" });
+    expect(accept.parentElement).toBe(card);
+    expect(dismiss.parentElement).toBe(card);
+    expect(hintOf(accept)).toBe("Accept: mark ἦν grammatical");
+    expect(hintOf(dismiss)).toBe("Dismiss this suggestion");
+    expect(crossPageSource).toMatch(/\n  \.token\.suggest-card \{ display: inline-grid; grid-template-columns: minmax\(0, 1fr\) auto auto;/);
+    await fireEvent.click(accept);
+    await waitFor(() => expect(nullSet).toHaveBeenCalledWith("1", "2", "source", "H002", "GRAMMATICAL", "the ending carries it"));
+    autoAlignVerdict.mockReset();
+  });
+
   it("picks several words of one verse and places them together; a pick in another verse starts again", async () => {
     realignWords.mockResolvedValue(V34);
     await renderPage("2");

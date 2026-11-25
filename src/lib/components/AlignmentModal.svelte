@@ -84,10 +84,23 @@
   let notice = "";
   // 2026-11-16 (Joel): "saved" is a note over the foot of the tab that goes
   // by itself; it was a row above the verse, which pushed the page down and
-  // stayed. An error stays until it is closed.
+  // stayed.
   let noticeTimer: ReturnType<typeof setTimeout> | undefined;
   $: { clearTimeout(noticeTimer); if (notice) noticeTimer = setTimeout(() => (notice = ""), 4000); }
   onDestroy(() => clearTimeout(noticeTimer));
+  // 2026-11-25 (Joel): an error goes by itself too, as in the Verses panel
+  // and on the Cross-verse tab: after ten seconds, held while it is pointed
+  // at, and its close button clears it at once. It stayed until it was
+  // closed. One shown in place of the verse (it could not be read) stays.
+  const ERROR_MS = 10000;
+  let errorTimer: ReturnType<typeof setTimeout> | undefined;
+  function holdError(): void { clearTimeout(errorTimer); errorTimer = undefined; }
+  function scheduleErrorClear(text: string, verseShown: boolean): void {
+    holdError();
+    if (text && verseShown) errorTimer = setTimeout(() => (error = ""), ERROR_MS);
+  }
+  $: scheduleErrorClear(error, Boolean(context));
+  onDestroy(holdError);
 
   // Interlinear drag/click-to-align state. `picked` is the click-based
   // accessible alternative to dragging: click a target word to pick it up,
@@ -839,7 +852,8 @@
   {#if context && (notice || error)}
     <div class="toasts">
       {#if error}
-        <div class="toast bad" role="alert"><span>{error}</span>
+        <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+        <div class="toast bad" role="alert" on:mouseenter={holdError} on:mouseleave={() => scheduleErrorClear(error, Boolean(context))}><span>{error}</span>
           <button type="button" class="toast-close" aria-label="Dismiss this message" on:click={() => (error = "")}><UiIcon name="close" /></button></div>
       {/if}
       {#if notice}<div class="toast ok" role="status">✓ {notice}</div>{/if}

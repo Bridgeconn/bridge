@@ -27778,3 +27778,96 @@ is Joel's decision): `OverflowMenu.svelte` and `IconButton.svelte` are unused;
 `ReferenceHolder`'s shared `.tmp` name; `BridgeEngine._reference_holders` is
 written and never read; `EditorHeader.svelte`'s 400px rule styles its own
 container and likely never applies.
+
+## 2026-11-25 — Cross-verse tab after Joel's desktop test: the scroll jump, errors that stayed, the "no counterpart" and suggestion cards (#521)
+
+**What Joel reported**, testing `main` at `62344e1` in `tauri dev`, with seven
+screenshots: (1) a drop on verse 2 scrolls the Cross-verse tab back to verse 1;
+(2) an error ("καὶ in 1:4 is marked grammatical; clear that before aligning
+it.") never goes; (3) what the verses filter shows by default is not said;
+(4) a "grammatical" / "implicit" card is as wide as the panel, because its
+explanation is written inside it; (5) a "grammatical ? / passes disagree" card
+stands as four things one under another. He also said the page sometimes
+"refreshes": back to the top, with From, To and the filter changed.
+
+**Causes, as found in the code.**
+
+- *The scroll jump* is `verseRowSync.ts` (#495). Each pass clears every
+  `min-height` it wrote, measures, and writes them again. Between the two the
+  Target words column is only as tall as its own words, usually less than its
+  panel, and measuring lays the page out, so the browser moves a panel scrolled
+  past that height back to 0. The pass runs after every change to the page
+  (MutationObserver), so after every drop, accept and clear. Watched in
+  headless Edge 1366x768 on a small page built around the committed
+  `levelVerseRows`: both panels at 700px, one card added, pass run: target at
+  0. With the fix: 700 and 700.
+- *The stacked suggestion card* and the null card's shape are one cascade
+  mistake in `CrossVerseAlignmentModal.svelte`: `.suggest-card { display:
+  inline-grid }` is written before `.token { display: inline-flex;
+  flex-direction: column }`, the two have the same weight, and the later one
+  wins. The grid the card was designed with never applied.
+- *The wide card*: the decision's note was a `nowrap` line inside the card, and
+  a row is as wide as its widest child, up to the panel.
+- *Errors* were never timed; only notes were ("An error stays until it is
+  closed", 2026-11-16).
+
+**What changed.**
+
+- `verseRowSync.ts`: `levelVerseRows` reads the scroll position of every panel
+  body and of the page before the pass and puts it back after.
+- `CrossVerseAlignmentModal.svelte`: a "no counterpart" decision is a chip the
+  height of a target word: the reason, then `ai` or `you`; the explanation is
+  in the hint only (it was also printed as "… · ai", and "ai · ai" with no
+  note). A suggestion is a two-line card with a 22px accept and dismiss beside
+  the lines, each with a hint, hover, press and focus states; both use
+  `.token.<card>` so the rule outranks `.token`. An error clears itself after
+  10 s, is held while pointed at, and keeps its close button, as the Verses
+  panel's notice does (`NOTICE_ERROR_MS`). Two kinds stay: one with "Show
+  details", and one shown when no verse could be read.
+- `AlignmentModal.svelte`: the same 10 s for the Word alignment tab's error.
+- `GridToggle.svelte`: the open grid has a line above the numbers ("All 3
+  verses shown. Click a number to hide or show it."), and is at least 176px
+  wide for it; the button's hint says "all 3" or "2 of 3". The button already
+  had a hint; it is hidden while the grid is open, since it would cover it.
+
+**Joel's question, answered from the code.** The page opens on the editor's
+selected verse and the verse on each side (`defaultRange`), or on the verses
+selected in the editor or named by a finding. It then adds any verse the last
+Stage 6B analysis marked cross-verse (`suggestCrossVerseRange`), and says so
+("widened with v. …"). The verses filter starts with every verse of the range
+shown; "show only what is left" on a verse is off.
+
+**Run and watched.** `npm run check`: 0 errors, 0 warnings. `npm run test`: 146
+files, 1501 tests passed. `npm run build`: built. The new scroll test fails
+against the committed `verseRowSync.ts` (`[700, 0]`) and passes with the fix.
+The two cards were drawn in headless Edge from the built stylesheet and looked
+at: three chips ("grammatical ai", "implicit ai", "grammatical you") and three
+suggestion cards, each two lines with its buttons at the right.
+
+**Not run.** The engine suite and the Rust gates: no Python or Rust file
+changed. The desktop app: none of this was seen in Bridge itself.
+
+**For Joel to check in the desktop app (1366x768).** A drop, an accept, a
+clear and an unlink on a verse far down a long range leave both panels where
+they were; the same with the panels stacked and in three columns; the chip and
+the suggestion card inside a narrow source column and at a larger panel text
+size; a right-to-left source (an OT book); the error leaving after ten seconds
+and staying while pointed at, on both tabs; the grid's line with one, three and
+twenty or more verses.
+
+**Found beside the task, not changed.**
+
+- The Word alignment tab has no row levelling and replaces nothing on a save,
+  so by reading it has no such jump. Not seen in the app either way.
+- The page is rebuilt (range, filter and scroll reset) whenever the editor's
+  selected verse changes while it is not pinned: `AlignmentTabPane.svelte`
+  keys it on `path:chapter:verse`. That is the 2026-11-16 "follow the editor"
+  design, and a click on a verse in the Verses, Source or Reference panel does
+  it. No action inside the Cross-verse tab was found that changes the selected
+  verse.
+- One automatic path does: `App.svelte:131`. When an "Align with AI" run that
+  covered the open chapter finishes, it calls `activateChapter($currentChapter)`
+  with no verse, which selects the chapter's first verse; an unpinned
+  Cross-verse or Word alignment tab then moves to verse 1. The Refresh handler
+  (`App.svelte:1701`) passes `$selectedVerse` to the same call. Not fixed in
+  this entry's commit: filed as #522, the next entry.

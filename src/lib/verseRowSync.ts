@@ -29,9 +29,32 @@ export function sideBySide(a: Box, b: Box): boolean {
 const frameOf = (col: HTMLElement): HTMLElement => col.closest<HTMLElement>("[data-word-panel]") ?? col;
 const zoomOf = (el: HTMLElement): number => (el as HTMLElement & { currentCSSZoom?: number }).currentCSSZoom || 1;
 
-/** One pass: clear what the last pass set, measure, and level each pair. */
+/** The elements a column scrolls in: its panel's body, and the page. */
+function scrollersOf(root: HTMLElement): HTMLElement[] {
+  const found = new Set<HTMLElement>([root]);
+  for (const col of root.querySelectorAll<HTMLElement>(`[${COL_ATTR}]`)) {
+    const body = col.closest<HTMLElement>("[data-panel-body]");
+    if (body) found.add(body);
+  }
+  return [...found];
+}
+
+/** One pass: clear what the last pass set, measure, and level each pair.
+ *
+ * 2026-11-25 (Joel): the pass keeps every panel where it was scrolled. For
+ * the moment between clearing the heights and writing them again a column is
+ * only as tall as its own words, which for the Target words is often less
+ * than its panel; measuring lays the page out, and the browser then moves a
+ * panel scrolled further down than that back to the top. So a drop on verse 2
+ * left the panel on verse 1. The position is read first and put back last. */
 export function levelVerseRows(root: HTMLElement): void {
   const rows = Array.from(root.querySelectorAll<HTMLElement>(`[${ROW_ATTR}]`));
+  const scrolled = scrollersOf(root).map((el) => [el, el.scrollTop] as const);
+  levelRows(rows);
+  for (const [el, top] of scrolled) if (el.scrollTop !== top) el.scrollTop = top;
+}
+
+function levelRows(rows: HTMLElement[]): void {
   for (const row of rows) row.style.minHeight = "";
   const byKey = new Map<string, HTMLElement[]>();
   for (const row of rows) {

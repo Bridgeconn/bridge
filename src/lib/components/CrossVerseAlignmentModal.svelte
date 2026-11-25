@@ -104,6 +104,22 @@
   let noticeTimer: ReturnType<typeof setTimeout> | undefined;
   $: { clearTimeout(noticeTimer); if (notice) noticeTimer = setTimeout(() => (notice = ""), 5000); }
   onDestroy(() => clearTimeout(noticeTimer));
+  // 2026-11-25 (Joel): an error goes by itself too, as in the Verses panel:
+  // after ten seconds, held while it is pointed at, and its close button
+  // clears it at once. It stayed until it was closed, so a refused drop
+  // ("... is marked grammatical; clear that before aligning it") sat over the
+  // foot of the tab for the rest of the session. Two kinds still stay: one
+  // with "Show details" to open, and one that is all the page has to show
+  // (the range could not be read).
+  const ERROR_MS = 10000;
+  let errorTimer: ReturnType<typeof setTimeout> | undefined;
+  function holdError(): void { clearTimeout(errorTimer); errorTimer = undefined; }
+  function scheduleErrorClear(text: string, pageShown: boolean, detail: { message: string; raw: string } | null): void {
+    holdError();
+    if (text && pageShown && detail?.message !== text) errorTimer = setTimeout(() => (error = ""), ERROR_MS);
+  }
+  $: scheduleErrorClear(error, ordered.length > 0, errorDetail);
+  onDestroy(holdError);
   const crossTree = crossPanelLayout.tree;
   /** When set, both columns show only that verse's gaps. */
   let gapFilterVerse: string | null = null;
@@ -1285,10 +1301,14 @@
                       {#if nullFor(context, "source", src.id)}
                         {@const decision = nullFor(context, "source", src.id)}
                         {#if decision}
+                          <!-- 2026-11-25 (Joel): a small chip, the reason and who
+                               decided it. The explanation was a line inside
+                               the card, which made the card as wide as the
+                               panel; it is in the hint, in full. -->
                           <span class="token null-card" class:invalid={decision.state === "invalid" || decision.stale}
-                            use:tooltip={decision.origin === "ai-auto" ? `Both passes agree this word has no separate target word: ${decision.note}` : `Marked by you: ${decision.note || decision.reason.toLowerCase()}`}>
+                            use:tooltip={decision.origin === "ai-auto" ? `Both passes agree this word has no separate target word: ${decision.note || decision.reason.toLowerCase()}` : `Marked by you: ${decision.note || decision.reason.toLowerCase()}`}>
                             <span class="null-reason">{decision.reason.toLowerCase()}</span>
-                            <small>{decision.note || (decision.origin === "ai-auto" ? "ai" : "you")}{decision.origin === "ai-auto" ? " · ai" : ""}</small>
+                            <small class:ai={decision.origin === "ai-auto"}>{decision.origin === "ai-auto" ? "ai" : "you"}</small>
                             <span class="card-tools"><button type="button" class="card-btn unalign-x" on:click|stopPropagation={() => clearNull(v, decision)} disabled={busy}
                               aria-label={`Clear ${decision.reason.toLowerCase()} on ${src.word}`} use:tooltip={"Clear this decision"}><UiIcon name="close" /></button></span>
                           </span>
@@ -1309,8 +1329,10 @@
                             <span class="null-reason">{s.reason.toLowerCase()} ?</span>
                             <small>passes disagree</small>
                           {/if}
-                          <button type="button" class="accept-x" on:click|stopPropagation={() => acceptSuggestion(s)} disabled={busy} aria-label={`Accept ${s.kind === "link" ? s.target?.word : s.reason.toLowerCase()} for ${src.word}`}>✓</button>
-                          <button type="button" class="unalign-x" on:click|stopPropagation={() => dismissSuggestion(s)} disabled={busy} aria-label="Dismiss this suggestion">×</button>
+                          <button type="button" class="accept-x" on:click|stopPropagation={() => acceptSuggestion(s)} disabled={busy} aria-label={`Accept ${s.kind === "link" ? s.target?.word : s.reason.toLowerCase()} for ${src.word}`}
+                            use:tooltip={s.kind === "link" ? `Accept: align ${s.target?.word ?? "this word"} here` : `Accept: mark ${src.word} ${s.reason.toLowerCase()}`}><UiIcon name="check" /></button>
+                          <button type="button" class="unalign-x" on:click|stopPropagation={() => dismissSuggestion(s)} disabled={busy} aria-label="Dismiss this suggestion"
+                            use:tooltip={"Dismiss this suggestion"}><UiIcon name="close" /></button>
                         </span>
                       {/each}
                       {#each corpusFor(visibleProposals, v, src.id) as proposal (proposalKey(proposal))}
@@ -1318,9 +1340,11 @@
                           <span class="word">{proposal.target.word} ?</span>
                           <small>v.{proposal.target.verse} · {proposal.status === "AMBIGUOUS" ? "ambiguous" : "corpus"}</small>
                           {#if proposal.status === "PROPOSED"}
-                            <button type="button" class="accept-x" on:click|stopPropagation={() => acceptProposal(proposal)} disabled={busy || proposalsBusy} aria-label={`Accept ${proposal.target.word} for ${src.word}`}>✓</button>
+                            <button type="button" class="accept-x" on:click|stopPropagation={() => acceptProposal(proposal)} disabled={busy || proposalsBusy} aria-label={`Accept ${proposal.target.word} for ${src.word}`}
+                              use:tooltip={`Accept: link ${proposal.target.word} from verse ${proposal.target.verse} here`}><UiIcon name="check" /></button>
                           {/if}
-                          <button type="button" class="unalign-x" on:click|stopPropagation={() => dismissProposal(proposal)} disabled={busy} aria-label="Dismiss this suggestion">×</button>
+                          <button type="button" class="unalign-x" on:click|stopPropagation={() => dismissProposal(proposal)} disabled={busy} aria-label="Dismiss this suggestion"
+                            use:tooltip={"Dismiss this suggestion"}><UiIcon name="close" /></button>
                         </span>
                       {/each}
                       {#if alignedTargetsFor(context, src.id).length === 0 && linksForSource(context, src.id).length === 0
@@ -1443,7 +1467,8 @@
   {#if notice || error}
     <div class="toasts">
       {#if error}
-        <div class="toast bad" role="alert">
+        <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+        <div class="toast bad" role="alert" on:mouseenter={holdError} on:mouseleave={() => scheduleErrorClear(error, ordered.length > 0, errorDetail)}>
           <span>{error}
             {#if errorDetail?.message === error}
               <details class="error-detail"><summary>Show details</summary><code>{errorDetail.raw}</code></details>
@@ -1696,11 +1721,35 @@
   .null-card { border: 1px dashed var(--border-strong); background: var(--surface-2); color: var(--text-2); }
   .null-card.invalid { border-color: var(--danger); }
   .null-card small { color: var(--text-3); font-weight: 400; }
-  .null-reason { font-family: var(--font-ui); font-size: var(--fs-2xs); font-weight: 700; }
-  .suggest-card { border: 1px dotted var(--accent); background: var(--surface); grid-template-columns: minmax(0, 1fr) auto auto; }
+  .null-reason { font-family: var(--font-ui); font-size: var(--fs-2xs); font-weight: 700; white-space: nowrap; }
+  /* 2026-11-25 (Joel): a "no counterpart" decision is a chip the height of a
+     target word, centred in the cell like one: the reason, then who decided
+     it ("ai" in the accent colour, as on an aligned card). `.token.` in the
+     selector because `.token`, further down, is a column for every card. */
+  .token.null-card { flex-direction: row; align-items: center; justify-content: center; gap: 5px; box-sizing: border-box; min-width: 0; min-height: 2rem; padding: .1rem .55rem; border-radius: 6px; }
+  .null-card > small.ai { color: var(--accent); font-weight: 700; }
+  .suggest-card { border: 1px dotted var(--accent); background: var(--surface); }
   .suggest-card.disputed { border-color: var(--warning); }
   .suggest-card small { color: var(--text-3); }
-  .suggest-card > button { grid-row: 1 / span 2; }
+  /* 2026-11-25 (Joel): a suggestion is two short lines with its accept and
+     dismiss beside them. It was meant to be this grid from the start, but
+     `.token` (a column, further down, same weight) won, so the card stood as
+     four things one under another. The two buttons are 22px round targets
+     that show the pointer, the press and the keyboard focus. */
+  .token.suggest-card { display: inline-grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-rows: auto auto; column-gap: 2px; row-gap: 0;
+    align-items: center; justify-items: start; box-sizing: border-box; min-height: 2rem; padding: 2px 3px 2px 8px; border-radius: 6px; }
+  .suggest-card > .word, .suggest-card > .null-reason { grid-column: 1; grid-row: 1; }
+  .suggest-card > small { grid-column: 1; grid-row: 2; }
+  .suggest-card > button { grid-row: 1 / span 2; display: grid; place-items: center; flex: none; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; background: transparent;
+    transition: background-color .12s, transform .08s; }
+  .suggest-card > button :global(svg) { width: 13px; height: 13px; stroke-width: 2.6; }
+  .suggest-card > .accept-x { color: var(--success); }
+  .suggest-card > .unalign-x { color: var(--text-2); }
+  .suggest-card > .accept-x:hover:not(:disabled), .suggest-card > .accept-x:focus-visible { background: var(--success-bg); }
+  .suggest-card > .unalign-x:hover:not(:disabled), .suggest-card > .unalign-x:focus-visible { color: var(--danger); background: var(--danger-bg); }
+  .suggest-card > button:active:not(:disabled) { transform: scale(.9); }
+  .suggest-card > button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  @media (prefers-reduced-motion: reduce) { .suggest-card > button { transition: none; } }
   .accept-x { border: 0; background: none; padding: 0; width: 16px; height: 16px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; color: var(--success); font-size: var(--fs-sm); font-weight: 800; }
   .accept-x:hover:not(:disabled) { background: #EAF7EF; }
   .issue-badge { display: inline-flex; align-items: center; gap: 4px; border-radius: 999px; padding: 1px 8px; font-size: var(--fs-2xs); font-weight: 700; white-space: nowrap; color: #8A4B05; background: var(--warning-bg); }
@@ -1815,9 +1864,6 @@
   .linked-card small, .accounted small { font-size: var(--fs-3xs); color: var(--accent); font-weight: 700; white-space: nowrap; }
   .linked-card.invalid { border-color: var(--danger); background: var(--danger-bg); }
   .linked-card.invalid small { color: var(--danger); }
-  /* A suggestion's dismiss, beside its accept. */
-  .suggest-card > .unalign-x { border: 0; background: none; padding: 0; width: 16px; height: 16px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; color: var(--text-2); font-size: var(--fs-md); flex-shrink: 0; }
-  .suggest-card > .unalign-x:hover:not(:disabled) { color: var(--danger); background: var(--danger-bg); }
   .bank { display: flex; flex-wrap: wrap; gap: 6px; min-height: 44px; align-content: flex-start; border-radius: 6px; padding: 12px 6px 6px; }
   .drag-ghost { position: fixed; z-index: var(--z-popover); transform: translate(-50%, -130%); pointer-events: none; background: var(--accent); color: white; font-family: var(--font-target); font-size: var(--fs-sm); font-weight: 700; border-radius: 7px; padding: 6px 10px; box-shadow: 0 8px 20px rgba(0,0,0,.28); }
   .empty { color: var(--text-3); font-size: var(--fs-xs); margin: 6px 10px; }

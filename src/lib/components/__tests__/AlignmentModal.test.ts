@@ -357,6 +357,39 @@ describe("AlignmentModal", () => {
     } finally { vi.useRealTimers(); }
   });
 
+  // 2026-11-25 (Joel): a refused save stayed over the foot of the tab until
+  // it was closed. It goes after ten seconds, as in the Verses panel.
+  it("clears an error by itself after ten seconds, and at once from its close button", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      realignWords.mockRejectedValue(new Error("בָּרָא in 1:1 is marked grammatical; clear that before aligning it."));
+      await open();
+      const drop = async () => {
+        await fireEvent.click(screen.getByRole("button", { name: "में" }));
+        await fireEvent.click(screen.getByLabelText("Align picked-up word to בָּרָא"));
+        return screen.findByRole("alert");
+      };
+      expect(await drop()).toHaveTextContent("is marked grammatical");
+      await vi.advanceTimersByTimeAsync(9000);
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+      await vi.advanceTimersByTimeAsync(1500);
+      await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+
+      // Pointed at, it is held; the timer starts again when the pointer leaves.
+      const held = await drop();
+      await fireEvent.mouseEnter(held);
+      await vi.advanceTimersByTimeAsync(15000);
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+      await fireEvent.mouseLeave(held);
+      await vi.advanceTimersByTimeAsync(10500);
+      await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+
+      await drop();
+      await fireEvent.click(screen.getByRole("button", { name: "Dismiss this message" }));
+      expect(screen.queryByRole("alert")).toBeNull();
+    } finally { vi.useRealTimers(); }
+  });
+
   it("clears the picked words on a click on empty space in the target words panel", async () => {
     await open();
     const first = screen.getByRole("button", { name: "में" });
