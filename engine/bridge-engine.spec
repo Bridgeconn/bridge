@@ -63,6 +63,13 @@ a = Analysis(
         # invisible to import analysis, like versification. ~0.6 MB of Python;
         # its dictionaries are pack data outside the exe (language_packs/).
         ('vendor/indic-qa', 'vendor/indic-qa'),
+        # #505: the proofreading toolkit (Benz's bible-qa-universal), Bridge-owned
+        # code, not a vendor tree. Its tools are command-line scripts run one per
+        # process through `--proofread-tool` (proofread_tool_main.py) with runpy,
+        # so they are data here, like the USFM checker's script in its own spec.
+        # ~0.1 MB. `openpyxl` (deliver.py, report.py) is named below for the
+        # same reason: analysis cannot see an import inside a runpy'd script.
+        ('proofreading_toolkit', 'proofreading_toolkit'),
         # The Language QA packs (engine/language_packs) are deliberately NOT
         # here any more: like 'resources' above, a onefile archive re-extracts
         # every data file on every launch, and a pack carries a lexicon. They
@@ -94,6 +101,12 @@ a = Analysis(
         'uvicorn.logging', 'uvicorn.loops.auto', 'uvicorn.protocols.http.auto',
         'uvicorn.protocols.http.h11_impl', 'uvicorn.protocols.websockets.auto',
         'uvicorn.lifespan.on', 'uvicorn.lifespan.off', 'fastapi.staticfiles',
+        # #505: what the proofreading tools import. They are loaded with runpy
+        # from data files, so every module they use is named, the standard
+        # library ones too (the checker spec does the same for its script). The
+        # frozen smoke's --proofread-tool step is the proof this list is complete.
+        'proofread_tool_main', 'openpyxl', 'openpyxl.styles', 'pickle', 'statistics', 'glob', 'html',
+        'random', 'csv', 'hashlib', 'collections', 'unicodedata', 'importlib.util', 'datetime',
     ],
     hookspath=[],
     hooksconfig={},

@@ -1,0 +1,52 @@
+{
+ "code": "generic",
+ "name": "Any language (generic profile)",
+ "script": "auto",
+ "status": "Generic, language-independent checks only. Run make_profile.py to create a profile for the detected language, then have it reviewed by a native linguist.",
+ "word_chars": "",
+ "verse_end_ok": "[.?!”’»«:,;—\\u0964\\u0965\\u3002\\u061f\\u06d4\\uff1f\\uff01]$",
+ "quote_pairs": [
+  [
+   "“",
+   "”"
+  ],
+  [
+   "‘",
+   "’"
+  ],
+  [
+   "«",
+   "»"
+  ]
+ ],
+ "digits": {
+  "native": "",
+  "policy": "either"
+ },
+ "exceptions": [],
+ "minority_forms": [],
+ "lead_patterns": {},
+ "rules": {
+  "how_to_fill": [
+   "Run make_profile.py: it measures the script, punctuation, quotation marks and digits the project actually uses, and lists candidate minority spellings (rare variants of common words).",
+   "Claude drafts spelling, grammar, sandhi, register and punctuation rules for the language from its own knowledge and the project's style guide, if one is supplied.",
+   "A native linguist approves or edits every rule before the profile is used for a publishing check; the status field records that review."
+  ]
+ },
+ "figures_of_speech": [
+  "Idioms translated literally",
+  "Rhetorical questions",
+  "Euphemisms",
+  "Metonymy / synecdoche",
+  "Simile vs metaphor",
+  "Personification",
+  "Hyperbole",
+  "Litotes",
+  "Merism (heaven and earth = everything)",
+  "Hendiadys",
+  "Anthropomorphism for God",
+  "Passive voice hiding the actor (divine passive)",
+  "Kinship and honorific terms",
+  "Measures, money and time units"
+ ]
+}

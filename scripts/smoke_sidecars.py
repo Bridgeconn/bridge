@@ -156,6 +156,64 @@ def _smoke_hub(engine: Path) -> None:
         print(f"Frozen hub answered /health in {elapsed:.2f}s.")
 
 
+def _smoke_proofread_tools(engine: Path) -> None:
+    """The frozen exe runs the bundled proofreading toolkit (#505): proof that
+    the spec carries the tools as data and every module they import, openpyxl
+    included, which a source test cannot show. One book is staged and taken
+    through leads, the findings file, `build`, `deliver` and `report`; the text
+    is Tamil, so a tool that printed in the console's own encoding would fail
+    here as it did from source before the runner set UTF-8."""
+    verse = "ஆதியிலே தேவன் வானத்தையும்  பூமியையும் படைத்தார்."
+    with tempfile.TemporaryDirectory(prefix="bridge-frozen-proofread-") as temp:
+        root = Path(temp)
+        for name in ("target", "reference", "out", "work/rows"):
+            (root / name).mkdir(parents=True)
+        (root / "target" / "GEN.usfm").write_text(f"\\id GEN\n\\c 1\n\\p\n\\v 1 {verse}\n", encoding="utf-8")
+        (root / "reference" / "GEN.usfm").write_text(
+            "\\id GEN\n\\c 1\n\\p\n\\v 1 In the beginning, God created the heavens and the earth.\n", encoding="utf-8")
+        _write_json(root / "config.json", {
+            "target_dir": (root / "target").as_posix(), "reference_dir": (root / "reference").as_posix(),
+            "reference_name": "Reference", "language": "ta", "notes_user": "Smoke", "notes_language_tag": "ta",
+            "output_dir": (root / "out").as_posix(), "work_dir": (root / "work").as_posix(), "model": "none",
+        })
+        (root / "work" / "rows" / "rows_gen.py").write_text(
+            f"ROWS = [(1, 1, 'Possible typo', 'Typo', 'Low', 'Medium', {'தேவன்'!r}, '', 'Smoke.', 'GEN 1:1', 'No')]\n"
+            "TYPE_NOTES = {}\nREVIEWED = 'smoke'\nREJECTED = []\n", encoding="utf-8")
+        env = {**os.environ, "QA_CONFIG": str(root / "config.json")}
+        started = time.monotonic()
+
+        def tool(*args: str, expect: int = 0) -> str:
+            done = subprocess.run([str(engine), "--proofread-tool", *args], stdin=subprocess.DEVNULL,
+                                  capture_output=True, timeout=180, env=env, check=False)
+            out, err = done.stdout.decode("utf-8", "replace"), done.stderr.decode("utf-8", "replace")
+            if done.returncode != expect:
+                raise SystemExit(f"Frozen --proofread-tool {' '.join(args)} exited {done.returncode}:\n{out}\n{err}")
+            return out
+
+        if "bridge-proofread-tool" not in tool("--version"):
+            raise SystemExit("Frozen --proofread-tool --version did not answer")
+        if "double spaces: 1" not in tool("sweep", "GEN"):
+            raise SystemExit("Frozen sweep did not report the staged double space")
+        # `dump both` prints the verse without markup and with single spaces.
+        if " ".join(verse.split()) not in tool("dump", "GEN", "both", "1"):
+            raise SystemExit("Frozen dump did not print the staged Tamil verse as UTF-8")
+        tool("queue", "start", "GEN", "--new")
+        built = tool("build", "GEN")
+        if "'fail': 0" not in built:
+            raise SystemExit(f"Frozen build did not verify the staged finding:\n{built}")
+        tool("deliver", "GEN")  # CSV, the Excel workbook (openpyxl) and the Paratext notes
+        tool("merge_notes")
+        tool("queue", "done", "GEN")
+        tool("report")
+        for name in ("GEN/GEN_QA_Issues.csv", "GEN/GEN_QA_Report.xlsx", "GEN/GEN_notes_only.xml",
+                     "QA_Run_Report.xlsx", "RUN_REPORT.md"):
+            if not (root / "out" / name).is_file():
+                raise SystemExit(f"Frozen proofreading tools did not write {name}")
+        if (root / "work" / "rows" / "__pycache__").exists():
+            raise SystemExit("A frozen tool run left compiled bytecode beside the findings file")
+        print(f"Frozen proofreading toolkit: 10 tool calls in {time.monotonic() - started:.2f}s.")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("engine", type=Path, help="Path to frozen bridge-engine executable")
@@ -853,6 +911,7 @@ def main() -> int:
                 process.communicate(timeout=5)
 
     _smoke_hub(engine)
+    _smoke_proofread_tools(engine)
     print(
         "Frozen sidecar smoke test passed: real Wildebeest/Uroman loaded; "
         "pinned UGNT source tokens, versification, names/transliteration, "

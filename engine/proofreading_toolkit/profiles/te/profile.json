@@ -1,0 +1,121 @@
+{
+ "code": "te",
+ "name": "Telugu",
+ "script": "Telugu",
+ "status": "Built from the full Round 2 check of the Telugu IRV (66 books, Nov 2026). Rules confirmed against whole-Bible counts; native-reader review still recommended.",
+ "word_chars": "\\u0c00-\\u0c7f\\u200c\\u200d",
+ "verse_end_ok": "[.?!”’:,;—]$",
+ "quote_pairs": [
+  [
+   "“",
+   "”"
+  ],
+  [
+   "‘",
+   "’"
+  ]
+ ],
+ "digits": {
+  "native": "\\u0c66-\\u0c6f",
+  "policy": "ascii"
+ },
+ "exceptions": [
+  "మీకు",
+  "నీకు",
+  "మాకు",
+  "మీను"
+ ],
+ "minority_module": "minority.py",
+ "lead_patterns": {
+  "doubled vowel sign": "[\\u0c3e-\\u0c4c\\u0c55\\u0c56][\\u0c3e-\\u0c4c\\u0c55\\u0c56]",
+  "vowel sign on independent vowel": "[\\u0c05-\\u0c14][\\u0c3e-\\u0c4c\\u0c55\\u0c56]",
+  "virama + vowel sign": "\\u0c4d[\\u0c3e-\\u0c4c\\u0c55\\u0c56]",
+  "doubled virama": "\\u0c4d\\u0c4d",
+  "doubled anusvara": "\\u0c02\\u0c02",
+  "Telugu digit": "[\\u0c66-\\u0c6f]",
+  "archaic letter": "[\\u0c01\\u0c31\\u0c58-\\u0c5a\\u0c60\\u0c61]",
+  "word-final pollu": "\\u0c4d(?![\\u0c00-\\u0c7f\\u200c])",
+  "literary మరియు": "మరియు",
+  "literary యొక్క": "యొక్క",
+  "literary -చున్న-": "చున్న",
+  "క్రు for కృ": "క్రు",
+  "కు after ఇ-stem": "\\S*[\\u0c3f\\u0c40\\u0c48]కు(?![\\u0c00-\\u0c7f\\u200c])",
+  "ను after ఇ-stem": "\\S*[\\u0c3f\\u0c40]ను(?![\\u0c00-\\u0c7f\\u200c])",
+  "aspirate ర్ధ (check ర్థ)": "\\S*ర్ధ\\S*",
+  "వృధా": "వృధా",
+  "short కూడ": "కూడ ",
+  "దగ్గరకు": "దగ్గరక[ుే]",
+  "-టానికి": "\\S*టానికి",
+  "చూసా / చూచా": "చూ[సచ]ా\\S*",
+  "బ్రతి-/బ్రతు-": "బ్రత[ిుక]\\S*",
+  "doubled long ా (ఉండకుండాా)": "ాా",
+  "పండుకు- for పడుకు-": "పండుకు",
+  "స్థంభ for స్తంభ": "స్థంభ",
+  "గోదుమ": "గోదుమ",
+  "అడివి": "అడివి",
+  "దుఖ (no visarga)": "దుఖ",
+  "ద్ది for ద్ధి": "\\S*[ృు]ద్ది\\S*",
+  "ఆ/అ slip (ఆజ్ఞాన)": "ఆజ్ఞాన",
+  "యెరుషలేము": "యెరుషలేము|యోరుషలేము|యేరుషలేము",
+  "యోహోవా": "యోహోవా",
+  "ఈజిప్టు": "ఈజిప్టు"
+ },
+ "rules": {
+  "script_and_encoding": [
+   "Text is NFC.",
+   "No doubled or misplaced vowel signs (ాా, ిె).",
+   "No virama or anusvara in an impossible position; no word-final pollu.",
+   "No ZWJ/ZWNJ, zero-width or non-breaking spaces unless the project uses them deliberately.",
+   "Arabic digits (the edition does not use Telugu digits); no Latin letters in verse text.",
+   "Visarga ః is not a colon; no archaic letters (ఱ, ఁ, ౘ, ౙ)."
+  ],
+  "spelling": [
+   "Short and long vowels (అది/ఆది, అజ్ఞానం/ఆజ్ఞ).",
+   "Aspirate pairs థ/ధ (అర్థం, స్వార్థం, వృథా, యథార్థ, వ్యర్థం, సామర్థ్యం), ట/ఠ, బ/భ, ద/ధ (వృద్ధి, బుద్ధి).",
+   "శ/ష/స (చూశారు not చూసారు).",
+   "ల/ళ; న/ణ; ళ్ళ not ళ్ల.",
+   "Missing or extra ఒత్తు (నిర్లక్ష్యం, సాక్ష్యం).",
+   "కృ not క్రు.",
+   "Visarga in దుఃఖం.",
+   "Minority spellings against a strongly dominant form are listed in minority.py and counted live."
+  ],
+  "sandhi_word_division": [
+   "Case suffixes joined to the noun (పట్టణంలో, not పట్టణం లో).",
+   "Postpositions and auxiliaries by the edition's dominant form (వరకు, కోసం, బట్టి, వల్ల, పాటు; కలిగి ఉండి).",
+   "Negative and prohibitive endings joined (చేయవద్దు, విడిచిపెట్టలేని).",
+   "Compound verbs (తెలుసుకొను, పాతిపెట్టు) one word."
+  ],
+  "grammar_and_case": [
+   "కి/కు and ని/ను by the stem vowel (మీకు, నీకు, మాకు are correct).",
+   "Verb agrees with subject in gender, number, person; human vs non-human plural (వారు/అవి).",
+   "Human numerals (ఇద్దరు, ముగ్గురు).",
+   "Both members of a pair lengthened (…డానికీ …డానికీ; గానీ … గానీ).",
+   "Genitive before గురించి/గూర్చి in headings (X గురించి, not Xలు గురించి)."
+  ],
+  "register": [
+   "Modern standard Telugu; no literary forms (-చున్న-, మరియు, యొక్క, -ము endings, సెలవిచ్చు is accepted).",
+   "One form of each pronoun per speaker (నీవు/నువ్వు; వారు/వాళ్ళు).",
+   "Consistent honorifics for God and Christ."
+  ],
+  "punctuation": [
+   "Curly quotes “ ” and ‘ ’, paired, nested and continued across verses.",
+   "No space before punctuation; one space after; no double spaces.",
+   "A full stop at the end of every sentence; no full stop in the middle of a poetic sentence.",
+   "Numbers: no space after a thousands comma (2,300 not 2, 300)."
+  ],
+  "names_and_terms": [
+   "Names as in the dominant whole-Bible form: యెరూషలేము, ఐగుప్తు, యెహోవా, షోమ్రోను (OT).",
+   "Book names and abbreviations as in BookNames.xml (Acts = అపొ.కా.).",
+   "Team's Biblical Terms renderings (TermRenderings.xml)."
+  ]
+ },
+ "figures_of_speech": [
+  "Idioms rendered word for word where Telugu needs the sense (e.g. 'gird up the loins').",
+  "Rhetorical questions that a Telugu reader may take as real questions — check the expected answer is clear.",
+  "Euphemisms (knew = had relations; slept with his fathers = died).",
+  "Metonymy and synecdoche (the cup = suffering; flesh = humanity).",
+  "Similes kept as similes (like / as → లాగా/వలె), not turned into metaphors, and the reverse.",
+  "Passive divine actions ('it was given') — who acts must remain clear.",
+  "Kinship and honorific terms (brother, son of) not narrowed or widened."
+ ]
+}

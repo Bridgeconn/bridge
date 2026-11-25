@@ -29,6 +29,11 @@ dependencies = [
     # Pure-Python offline Hunspell lookup for the seven additional spelling
     # packs (#414). Existing indic-qa and Tamil paths remain independent.
     "spylls==0.1.7",
+    # #505: the bundled proofreading toolkit's deliver.py and report.py write
+    # their Excel workbooks with it. It was a dev-only tool before (it still
+    # reads indic-qa's reviewer workbooks in scripts/import_indic_qa_labels.py);
+    # it is in the frozen sidecar since the proofreading run needs it there.
+    "openpyxl>=3.1",
     # "greekroom" left commented — OWL/UAlign not wired up yet (see
     # docs/BUILD_LOG.md's Phase 4-6 status). USFM, versification,
     # and Smart Edit Distance are all vendored separately instead — none
@@ -45,9 +50,6 @@ dev = [
     # workers -- separate interpreters -- do not share. See #74.
     "pytest-xdist>=3.5",
     "pyinstaller>=6.0",
-    # Reads indic-qa's reviewer workbooks (scripts/import_indic_qa_labels.py).
-    # Tooling only: the engine never imports it, so the frozen build lacks it.
-    "openpyxl>=3.1",
     # The hub's HTTP transport under test (tests/service/test_bridge_server.py
     # skips without them). Never in the desktop sidecar: bridge-engine.spec
     # excludes them, and bridge_service.py never imports them.
