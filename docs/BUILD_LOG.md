@@ -27871,3 +27871,31 @@ twenty or more verses.
   Cross-verse or Word alignment tab then moves to verse 1. The Refresh handler
   (`App.svelte:1701`) passes `$selectedVerse` to the same call. Not fixed in
   this entry's commit: filed as #522, the next entry.
+
+## 2026-11-25 — "Align with AI" finishing on the open chapter no longer selects its first verse (#522)
+
+**What was wrong.** `App.svelte`'s statement on `autoAlignFinished` (#517)
+called `activateChapter($currentChapter)` with no verse, and `activateChapter`
+then selects the chapter's first verse. Both alignment tabs are keyed on
+`path:chapter:verse` (`AlignmentTabPane.svelte`), so an unpinned Cross-verse
+tab was rebuilt on verse 1 with its range, filter and scroll reset. Found by
+reading the code while working on #521; Joel asked for the fix the same day.
+
+**What changed.** The call passes the selected verse:
+`activateChapter($currentChapter, get(selectedVerse) ?? undefined)`. It is read
+with `get()`, not `$selectedVerse`, so that a verse change does not run the
+statement. `src/__tests__/appNavigationReference.test.ts` pins the call in the
+source, as it does `navigationReference`: jsdom cannot mount `App.svelte`.
+
+**Run and watched.** `npm run check`, `npm run test` and `npm run build`, once
+for #521 and #522 together, after both changes: 0 errors and 0 warnings;
+146 files, 1502 tests passed; built. The new test passes.
+
+**Not verified.** The behaviour itself. Nobody has watched a run finish on the
+open chapter with a verse other than the first selected; that needs an AI
+provider. The test proves only that the call is written as intended.
+
+**For Joel to check in the desktop app.** With verse 5 selected and the
+Cross-verse tab open and scrolled, run "Align with AI" on the open chapter:
+when it finishes, verse 5 is still selected, the tab keeps its range and
+place, and the Verses panel shows the chapter's new alignment state.

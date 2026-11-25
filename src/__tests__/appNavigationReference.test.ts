@@ -17,3 +17,16 @@ describe("App.svelte publishes Bridge's verse to Paratext and Logos (#110)", () 
     }
   });
 });
+
+describe("App.svelte re-reads the open chapter after an Align with AI run (#517)", () => {
+  it("keeps the selected verse", () => {
+    // With no verse given, activateChapter selects the chapter's first verse,
+    // and an alignment tab that follows the editor is rebuilt on verse 1: its
+    // range, filter and scroll are lost (Joel, 2026-11-25). jsdom cannot mount
+    // App.svelte, so this pins the call itself.
+    const block = (appSource as string).match(/\$: if \(\$autoAlignFinished && [\s\S]*?\n  \}\r?\n/);
+    expect(block, "the $: autoAlignFinished statement").not.toBeNull();
+    expect(block![0]).toContain("activateChapter($currentChapter, get(selectedVerse) ?? undefined)");
+    expect(block![0]).not.toMatch(/activateChapter\(\$currentChapter\)/);
+  });
+});

@@ -123,12 +123,16 @@
   }
   // A finished run wrote alignment. The open chapter is read again when the
   // run covered it, and only then: a run over other chapters must not reload
-  // the one the reviewer is working in.
+  // the one the reviewer is working in. The selected verse is kept
+  // (2026-11-25): with no verse given, the chapter's first verse was selected,
+  // and an alignment tab that follows the editor moved to verse 1 with its
+  // range, filter and scroll reset. Read with get(), so that a verse change
+  // does not run this statement.
   let autoAlignFinishedSeen = 0;
   $: if ($autoAlignFinished && $autoAlignFinished.seq !== autoAlignFinishedSeen) {
     autoAlignFinishedSeen = $autoAlignFinished.seq;
     if ($autoAlignFinished.projectPath === ($project?.path ?? "") && $autoAlignFinished.chapters.includes($currentChapter)) {
-      void activateChapter($currentChapter);
+      void activateChapter($currentChapter, get(selectedVerse) ?? undefined);
     }
   }
   /** Open review, from the dialog or the strip: the verses may be in another
