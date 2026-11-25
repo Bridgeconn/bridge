@@ -65,6 +65,9 @@ _FILE_MARKERS = {
     "test_indic_qa_general_corpus.py": ("packs",),
     "test_import_indic_qa_labels.py": ("external",),
     "test_export_tamil_ui_strings.py": ("external",),
+    # #505: one process per toolkit tool call, about a dozen a book.
+    "test_proofreading_tools.py": ("subprocess", "slow"),
+    "test_proofreading_protocol.py": ("subprocess", "slow"),
 }
 
 

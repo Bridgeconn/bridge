@@ -767,6 +767,22 @@ class OpenAIResponsesClient:
         name = 'window_alignment_' + ''.join(ch if ch.isalnum() else '_' for ch in direction)
         return self._post_structured(instructions, input_text, name, schema)
 
+    def proofread(
+        self, instructions: str, input_text: str, schema_name: str, schema: dict[str, Any],
+        prompt_cache_key: str | None = None, timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """One request of a proofreading run (#505): a few chapters read
+        against a reference Bible, or a second look at the findings the
+        toolkit's tools gave evidence for. Thin on purpose, like the two
+        above: the instructions, the schemas and what is done with the answer
+        belong to `proofreading`. Structured, so a provider that ignores the
+        schema fails loudly rather than being parsed into a guess. The
+        standing instructions are the same for every request of a run, so one
+        `prompt_cache_key` lets the provider keep them."""
+        return self._post_structured(
+            instructions, input_text, schema_name, schema, prompt_cache_key=prompt_cache_key, timeout=timeout,
+        )
+
     def test_connection(self) -> dict[str, Any]:
         """Authenticate the API key and confirm the configured model is accessible without generating tokens."""
         url = f'{self.models_endpoint}/{urllib.parse.quote(self.model, safe="")}'

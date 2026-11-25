@@ -3,6 +3,7 @@
   import type { CollectionQaBook } from "../types/collectionQa";
   import ParatextLinkStatus from "./ParatextLinkStatus.svelte";
   import CollectionQaPanel from "./CollectionQaPanel.svelte";
+  import ProofreadingPanel from "./ProofreadingPanel.svelte";
   import CollectionCheckDialog from "./CollectionCheckDialog.svelte";
   import UiIcon from "./UiIcon.svelte";
   import { tooltip } from "../tooltip";
@@ -360,6 +361,8 @@
     </div>
     {#if isCollection}
       <div class="qa-bar"><CollectionQaPanel bookCount={books.length} checkRunning={qaBusy} /></div>
+      <!-- #505: the proofreading run, its own bar straight under Collection QA. -->
+      <div class="qa-bar"><ProofreadingPanel {projectName} bookCount={books.length} checkRunning={qaBusy} /></div>
     {/if}
   </header>
 

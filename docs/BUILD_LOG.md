@@ -27899,3 +27899,172 @@ provider. The test proves only that the call is written as intended.
 Cross-verse tab open and scrolled, run "Align with AI" on the open chapter:
 when it finishes, verse 5 is still selected, the tab keeps its range and
 place, and the Verses panel shows the chapter's new alignment state.
+
+## 2026-11-25 — A proofreading run from the dashboard: Benz's toolkit, Bridge's AI as its reader (#505)
+
+On branch `proofreading-505`, in its own worktree. **Not merged and not pushed:**
+Joel tests it on his machine first. The decision, what it rules out and its known
+costs are in `docs/DECISIONS.md` (2026-11-25, Joel for the team).
+
+**How it got here.** Joel asked on 2026-11-23 for a "Proofreading checks" bar
+under Collection QA, built from the toolkit folder Benz had shared. Two plans were
+written and dropped before this one: a rewrite of the toolkit's scripted checks
+inside Bridge, and then #505 as filed (Bridge starts the Claude Code CLI once per
+book). On 2026-11-25 Joel settled it: the toolkit is used as Benz wrote it, and
+the reader is Bridge's own AI on the sign-in the team already has (#506), because
+"the Claude CLI is having challenges". No new issue; the work is under #505.
+
+**What the toolkit is.** A Claude skill: `SKILL.md` (the procedure and the rules a
+finding must follow), two guides, language profiles (Telugu and a generic one) and
+15 command-line tools. Three tools print leads; a model reads the book against a
+reference Bible; `q.py` and `nearby.py` answer its doubts; `build.py` verifies that
+every finding's words stand in the text; `deliver.py` and `report.py` write a CSV,
+an Excel workbook, a Paratext notes file and a run report.
+
+**What was built.**
+- `engine/proofreading_toolkit/`: the folder, copied unchanged (CRLF kept,
+  `.gitattributes`), plus `NOTICE.md`.
+- `engine/proofread_tool_main.py` and `bridge-engine --proofread-tool`: one tool
+  per process. `main.py` no longer imports the transport at module level;
+  `_start` does, first.
+- `engine/tc_ai_bridge/proofreading.py`: one book, steps 2 to 6 of `SKILL.md`
+  section 2. `engine/proofreading_jobs.py`: the run.
+  `engine/proofreading_service.py`: `proofreading.preflight`, `setReference`,
+  `start`, `status`, `pause`, `cancel`, `report`, `rows`, `export`.
+- Workbench v13: `proofreading_results`. `.bridge/collection.json`
+  `proofreadRuns[]`. A `proofreading_references` setting. The run folder
+  `<data>/proofreading/<project>/`.
+- `ProofreadingPanel.svelte`, `ProofreadingStartDialog.svelte`,
+  `ProofreadingReportDialog.svelte`, `proofreading.ts`, two icons, and the top
+  strip binding. `open_path` also opens `.xlsx`.
+- `openpyxl` is a runtime dependency now, pinned at 3.1.5 (`et_xmlfile` 2.0.0).
+
+**Found by running the toolkit, not by reading it** (all in its `NOTICE.md`).
+- On Windows `sweep.py` and `dump.py` die with `UnicodeEncodeError` on the first
+  verse they print (Malayalam IRV, Philippians): stdout is `cp1252`. The runner
+  sets UTF-8.
+- `build.py` loads a findings file through the import machinery, which leaves
+  bytecode beside it and trusts that copy while the file's size and modification
+  second are unchanged. In a trial the second version of a findings file (one row
+  removed, one line added to `REJECTED`) was the same length and written in the
+  same second, and `build.py` verified the old rows. The runner writes no
+  bytecode and `write_rows_file` clears the folder.
+- `build.py` exits 0 whether or not a finding failed; `terms.py` exits 1 when the
+  project has no key-term files, which means skipped; `queue.py next` hands books
+  out in canonical order whatever order the scope named.
+- `dump.py BOOK a z` ends a range only at a `\c N` line with nothing after the
+  number. With a trailing space it prints to the end of the book. Bridge counts
+  the chapter lines in what comes back and stops the book rather than send most
+  of it with every request.
+- `cost.py` is calibrated on a Claude agent session (43 million cached tokens for
+  Daniel to Malachi). It is not used for the estimate shown before a run.
+- Importing `main.py` for a tool loaded the whole Greek Room engine and printed
+  the Wildebeest adapter's start-up line as the first line of a `sweep`.
+- The Tamil pack's bundled Old Version was being offered as the default
+  reference for a Tamil project. Only a folder a reviewer chose is offered now.
+
+**Run and watched.**
+- The toolkit's own tools, by hand, on staged copies of three Malayalam IRV books
+  from Joel's data folder (copies, in the session scratch folder): `detect_language`,
+  `sweep`, `numchk`, `terms`, `dump`, `q`, `nearby`, `cost`, `queue`, `build`,
+  `deliver`, `merge_notes`, `report`. A deliberately unplaceable finding was
+  refused by `build.py`.
+- Engine, new tests, 31 in all: 12 pure
+  (`tests/proofreading/test_proofreading_rows.py`), 8 with the real tools, most
+  of them around a scripted reader (`test_proofreading_tools.py`), 3 storage
+  (`tests/persistence/test_proofreading_results_store.py`), 8 protocol
+  (`tests/service/test_proofreading_protocol.py`: a two-book Tamil collection
+  read end to end, skip-unchanged, re-read on change, forced re-read, a plan limit
+  stopping and resuming, cancel, one failed book, mutual exclusion, no provider).
+- Engine, full suite, `pytest -n auto --basetemp=C:/t505/full1`: 6,099 passed,
+  16 failed, 4 skipped, 3 xfailed in 32 minutes, while `cargo test` was compiling
+  on the same machine. The 16:
+  - 12 are `tests/semantic/test_semantic_mapping_stage3.py`, which need the Stage
+    3 database this machine does not have.
+  - `test_hub_server_control.py::test_a_real_hub_starts_from_source_answers_and_stops`
+    and `test_language_qa.py::test_continuous_foreground_polling_does_not_starve_worker`
+    passed when run alone.
+  - `test_startup_stages.py::test_main_reports_each_stage_before_the_work_it_names`
+    was caused by this work: the first cut handled `--proofread-tool` in a block
+    at the top of `main.py`, ahead of `_start`. `main.py` was restructured and
+    the test passes unchanged.
+  - `test_language_qa_pass_reuse.py::test_a_chapter_job_reuses_a_current_pass_and_rescans_after_an_edit`
+    fails alone too ("Language QA did not settle"), **and fails the same way on
+    untouched `main`** on this machine. Not from this work; reported to Joel.
+- After that suite started, `main.py`, `ai_client.py`, `proofreading.py` and
+  `proofreading_service.py` changed. Re-run afterwards, 257 passed:
+  `test_startup_stages`, `test_main_cli_overrides`, `test_bridge_server`,
+  `tests/proofreading`, the protocol and storage tests,
+  `test_hub_server_control`, `test_stdio_e2e`, and all of `tests/ai`. **The full
+  suite was not run again after those changes.**
+- Frontend: `npm run check` 0 errors and 0 warnings; `npm run test` 148 files,
+  1,519 tests passed (11 new in `ProofreadingPanel.test.ts`, 5 in
+  `proofreadingStrip.test.ts`, 1 in `ProjectDashboardHeader.test.ts`);
+  `npm run build` built.
+- Shell: `cargo check` clean; `cargo test` 23 passed, one of them new
+  (`open_path_takes_reports_and_exports_only`).
+- Frozen: `build-sidecars.ps1` from the final engine code, then the whole of
+  `python scripts/smoke_sidecars.py engine/dist/bridge-engine.exe`: passed, with
+  its new step, ten `--proofread-tool` calls on a staged Tamil book in 30.7 s
+  (25.8 s on an earlier build), the Excel workbook written. About 2.6 to 3 s a
+  call, against 0.85 s from source. The first smoke run stopped at that step on
+  a mistake in the step itself (it looked for a double space that `dump` had
+  collapsed); the rest of that run had passed.
+
+**Not verified.**
+- **No real AI request has been sent.** Every reader in every test is scripted.
+  Whether the model Bridge is set to produces findings worth a reviewer's time on
+  this prompt is unknown. The toolkit was calibrated on a different model working
+  as an agent over many turns.
+- Nothing on a ChatGPT sign-in: the plan-limit stop is tested by making the
+  engine's halt check answer, not by a real limit.
+- The desktop app. jsdom lays nothing out: whether the header's second bar leaves
+  the book list usable at 1366x768, and how the two dialogs look, has not been
+  seen by anyone.
+- A whole Bible, or any long book. The tests read two books of one and two
+  chapters.
+- The Telugu profile, on Telugu text.
+- A linked Paratext project's `SpellingStatus.xml` and `TermRenderings.xml`
+  reaching `sweep` and `terms`: the copying is plain file copies and no test
+  stages them.
+- `--install-paratext-connector` after the `main.py` change. It no longer loads
+  the Greek Room engine before it runs (it never used it). Not run.
+- macOS and Linux.
+
+**Adjacent, reported and not fixed.**
+- `test_language_qa_pass_reuse` (above) fails on `main` on Joel's machine.
+- `engine/pyproject.toml` still says "bridge-engine.spec excludes them" of
+  fastapi and uvicorn; the spec has had them as hidden imports since 2026-10-23.
+- CLAUDE.md said `paratext_review_state` "goes at the next bump". v13 is that
+  bump and left it; the sentence now says so.
+
+**For Joel to check in the desktop app (1366x768).**
+1. A collection's dashboard shows a Proofreading bar straight under Collection
+   QA; the book list below still has room. A single-book project shows neither.
+2. Proofread opens the dialog. With no reference chosen, Start is disabled and
+   says why; Choose folder takes a folder of USFM files and Start becomes
+   available. The AI line names the model and "your ChatGPT sign-in".
+3. Choose books, pick one short book (Obadiah, Jonah, Philemon), Start. The bar
+   and the top strip show the book and what is being done; editing and switching
+   books are held.
+4. When it finishes, the Proofreading report button appears. The report lists
+   the book, its findings with the words quoted, and filters by severity.
+   **Read a dozen findings against the text and say whether they are any good.**
+5. Export CSV writes a file Excel opens with the text readable. Excel report and
+   Open workbook open the toolkit's workbooks.
+6. Proofread again without changing anything: the book is skipped and nothing is
+   sent. Tick "Also read books unchanged" and it is read again.
+7. Start a longer book and Cancel: the run stops, nothing is recorded for that
+   book, and starting it again does not re-read the chapters already read.
+8. While it runs, Collection QA's Check cannot start a run.
+
+`C:\t505` holds the test runs' temporary folders and can be deleted.
+
+**Joel's desktop test, 2026-11-25.** Joel ran the branch on his machine and
+proofread one short book. His words: it "works as expected", and the layout and
+the findings "look good". That is the first real AI reading through this path,
+and the only one: one short book, one language, judged by one person. He went
+through the checklist above; which of its items he tried one by one is not
+recorded, so none is ticked here. He also agreed that no release is cut from
+this until the release workflow's smoke test has passed on macOS and Linux,
+where the new `--proofread-tool` step has never run.

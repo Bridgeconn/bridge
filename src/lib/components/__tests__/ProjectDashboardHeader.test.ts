@@ -1,14 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/svelte";
 
-const { paratextLinkStatus, collectionQaStatus } = vi.hoisted(() => ({ paratextLinkStatus: vi.fn(), collectionQaStatus: vi.fn() }));
+const { paratextLinkStatus, collectionQaStatus, proofreadingStatus } = vi.hoisted(() => ({
+  paratextLinkStatus: vi.fn(), collectionQaStatus: vi.fn(), proofreadingStatus: vi.fn(),
+}));
 
 vi.mock("../../api/bridgeClient", () => ({
-  bridge: { paratextLinkStatus, paratextRelink: vi.fn(), paratextRefresh: vi.fn(), pickFolder: vi.fn(), collectionQaStatus },
+  bridge: { paratextLinkStatus, paratextRelink: vi.fn(), paratextRefresh: vi.fn(), pickFolder: vi.fn(), collectionQaStatus,
+    proofreadingStatus },
 }));
 
 import ProjectDashboard from "../ProjectDashboard.svelte";
 import { stopCollectionQa } from "../../collectionQa";
+import { stopProofreading } from "../../proofreading";
 import type { BookProgressEntry, ProjectReport } from "../../types/finding";
 
 function book(bookId: string, bookName: string): BookProgressEntry {
@@ -45,6 +49,10 @@ describe("ProjectDashboard header", () => {
         termRenderings: false, errorDenials: false, spellingStatus: false, checkingStatus: false, progress: false },
       notesIndex: { state: "ready", threads: 5, builtAt: "", buildSeconds: 0, source: "files", error: "" },
     });
+    proofreadingStatus.mockResolvedValue({ jobId: "", state: "idle", paused: false, stage: "", halted: false,
+      collectionPath: "", reference: "", totalBooks: 2, completedBooks: 0, percent: 0, currentBook: null, books: [],
+      findings: 0, usage: {}, elapsedSeconds: 0, estimatedRemainingSeconds: null, error: null, createdAt: null,
+      finishedAt: null });
     collectionQaStatus.mockResolvedValue({ jobId: "", state: "idle", paused: false, collectionPath: "", checks: [],
       totalBooks: 2, completedBooks: 0, percent: 0, currentBook: null, books: [], finalStage: null,
       elapsedSeconds: 0, estimatedRemainingSeconds: null, error: null, createdAt: null, finishedAt: null });
@@ -85,6 +93,24 @@ describe("ProjectDashboard header", () => {
     expect(within(bar).queryByRole("button", { name: /^Checks/ })).toBeNull();
     expect(screen.getByRole("main", { name: "QA report" })).toBeInTheDocument();
     stopCollectionQa();
+  });
+
+  // #505: the proofreading run has its own bar, straight under Collection QA.
+  it("hosts the Proofreading bar under Collection QA for a collection, and not for a single book", async () => {
+    const single = mount([book("rut", "ரூத்")]);
+    expect(screen.queryByRole("region", { name: "Proofreading" })).toBeNull();
+    single.unmount();
+
+    mount([book("rut", "ரூத்"), book("gen", "ஆதியாகமம்")]);
+    const collectionBar = await screen.findByRole("region", { name: "Collection QA" });
+    const bar = await screen.findByRole("region", { name: "Proofreading" });
+    expect(collectionBar.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(bar).getByRole("button", { name: "Proofread" })).toBeInTheDocument();
+    // Nothing has been read yet, so there is no report to open.
+    expect(within(bar).queryByRole("button", { name: "Proofreading report" })).toBeNull();
+    expect(await within(bar).findByText("never run")).toBeInTheDocument();
+    stopCollectionQa();
+    stopProofreading();
   });
 
   it("names the previewed book in the report card's heading", () => {

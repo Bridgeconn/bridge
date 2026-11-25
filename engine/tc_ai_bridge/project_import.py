@@ -1061,11 +1061,17 @@ def collection_projects(project_root: str | Path) -> list[dict[str, Any]]:
     return _collection_projects(Path(project_root).resolve())
 
 
-def collection_qa_runs(project_root: str | Path) -> dict[str, dict[str, Any]]:
+# #505: the proofreading run keeps its per-book record beside Collection QA's,
+# under its own key, with the same one-entry-per-book upsert.
+PROOFREAD_RUNS_KEY = "proofreadRuns"
+
+
+def collection_qa_runs(project_root: str | Path, key: str = "qaRuns") -> dict[str, dict[str, Any]]:
     """bookId -> the last recorded collection QA run for it (layered-rules 4.4),
-    from this project's `.bridge/collection.json` `qaRuns[]`."""
+    from this project's `.bridge/collection.json` `qaRuns[]`. With `key`, the
+    same reading of another per-book run list (`proofreadRuns`, #505)."""
     data = _read_json(Path(project_root).resolve() / _COLLECTION_PATH)
-    runs = data.get("qaRuns") if isinstance(data.get("qaRuns"), list) else []
+    runs = data.get(key) if isinstance(data.get(key), list) else []
     return {str(r.get("bookId")): r for r in runs if isinstance(r, dict) and r.get("bookId")}
 
 
@@ -1079,34 +1085,36 @@ def collection_final_stage(project_root: str | Path) -> dict[str, Any] | None:
 
 
 def record_collection_qa_run(project_root: str | Path, entry: dict[str, Any],
-                             final_stage: dict[str, Any] | None = None) -> None:
+                             final_stage: dict[str, Any] | None = None, *, key: str = "qaRuns") -> None:
     """Upsert one book's run into `qaRuns[]` (one entry per book, the latest),
     and optionally the whole-collection stage under `qaFinalStage`, in this
     book's `.bridge/collection.json` and then in every sibling's (#274): a run
     is the collection's, so whichever book is opened next sees it. This book's
     copy must be written; a sibling whose copy cannot be is skipped (it falls
     back to running its books again). Every other key of each file is kept as
-    it was; each write is atomic."""
+    it was; each write is atomic. With `key`, the run goes into that list
+    instead (`proofreadRuns`, #505)."""
     root = Path(project_root).resolve()
-    _upsert_collection_qa(root / _COLLECTION_PATH, entry, final_stage)
+    _upsert_collection_qa(root / _COLLECTION_PATH, entry, final_stage, key)
     for sibling in _collection_projects(root):
         folder = Path(str(sibling.get("path") or ""))
         if folder == root or not (folder / _COLLECTION_PATH).is_file():
             continue
         try:
-            _upsert_collection_qa(folder / _COLLECTION_PATH, entry, final_stage)
+            _upsert_collection_qa(folder / _COLLECTION_PATH, entry, final_stage, key)
         except (OSError, ValueError):
             continue
 
 
-def _upsert_collection_qa(path: Path, entry: dict[str, Any], final_stage: dict[str, Any] | None) -> None:
+def _upsert_collection_qa(path: Path, entry: dict[str, Any], final_stage: dict[str, Any] | None,
+                          key: str = "qaRuns") -> None:
     data = _read_json(path) if path.is_file() else {}
     if not isinstance(data, dict):
         data = {}
     if entry:
-        runs = [r for r in (data.get("qaRuns") or []) if isinstance(r, dict) and r.get("bookId") != entry.get("bookId")]
+        runs = [r for r in (data.get(key) or []) if isinstance(r, dict) and r.get("bookId") != entry.get("bookId")]
         runs.append(dict(entry))
-        data["qaRuns"] = runs
+        data[key] = runs
     if final_stage is not None:
         data["qaFinalStage"] = final_stage
     path.parent.mkdir(parents=True, exist_ok=True)

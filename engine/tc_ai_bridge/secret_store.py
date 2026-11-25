@@ -619,6 +619,31 @@ class AppSettings:
         self.save_sanitized()
 
     @property
+    def proofreading_references(self) -> dict[str, str]:
+        """The reference Bible a proofreading run compares each project against
+        (#505): {collection id, or project id for a single book: folder}. Its
+        own choice, apart from `reference_bibles`: that one is usually an older
+        Bible in the same language, for quotation marks and related words,
+        while a proofreading run wants a trusted comparison text such as the
+        ESV. A path on this machine only, for the same reason."""
+        value = self.data.get('proofreading_references') or {}
+        if not isinstance(value, dict):
+            return {}
+        return {str(k): str(v) for k, v in value.items() if isinstance(k, str) and isinstance(v, str) and k and v}
+
+    def set_proofreading_reference(self, key: str, folder: str | None) -> None:
+        """Set (or, with no folder, clear) one project's proofreading reference."""
+        if not key:
+            raise ValueError("a proofreading reference belongs to a registered project")
+        current = self.proofreading_references
+        if folder:
+            current[key] = str(folder)
+        else:
+            current.pop(key, None)
+        self.data['proofreading_references'] = current
+        self.save_sanitized()
+
+    @property
     def language_qa_related_words(self) -> bool:
         """Offer related words (OV/IRV equivalents and same-stem forms). On by default."""
         return bool(self.data.get('language_qa_related_words', True))

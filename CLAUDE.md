@@ -126,7 +126,12 @@ the USFM checker script (a per-check hot path, and the frozen exe is not an
 interpreter you can hand a script). It does re-invoke itself once with
 `--serve` for Settings > Team > Start a hub (DECISIONS 2026-10-23): an argv
 mode `main.py` already dispatches, started once per session, its stdout
-sent to `hub.log`, never to the protocol pipe. Verify the frozen pair directly (not just source)
+sent to `hub.log`, never to the protocol pipe. It also re-invokes itself with
+`--proofread-tool <tool> [args]` (#505, DECISIONS 2026-11-25): one tool of the
+bundled proofreading toolkit per process, only during a proofreading run a
+reviewer started, handled at the top of `main.py` before the engine is imported
+so the tool's stdout is the tool's alone (`proofread_tool_main.py`). About 2.6 s
+of start-up per call from the frozen exe. Verify the frozen pair directly (not just source)
 with `python scripts/smoke_sidecars.py engine/dist/bridge-engine.exe`.
 
 `src-tauri/` has both: `cargo check`/`cargo build` for compile success, and a
@@ -316,7 +321,7 @@ A raw Scripture import becomes a translationCore-compatible book project:
                                                 dialog (2026-10-08). An indic-qa rule may be switched back
                                                 on there; inline never.
 <project>/.apps/translationCoreAI/bridge-workbench.sqlite3
-                                                schema v12. Every Bridge-private store lives here:
+                                                schema v13. Every Bridge-private store lives here:
                                                 the human-owned ones (#76), the derived ones
                                                 (#77) -- progress rollup, check-finding snapshots,
                                                 check cache, triage verdicts, metrics, backups index --
@@ -351,8 +356,15 @@ A raw Scripture import becomes a translationCore-compatible book project:
                                                 `paratext_review_state` (device-local; unused since
                                                 2026-11-03: the queue's state lives in the app
                                                 settings per linked Paratext project, #432, so it
-                                                survives a book switch; the table goes at the next
-                                                bump).
+                                                survives a book switch; the table was to go at the
+                                                next bump and v13 left it, so it is still there),
+                                                and the proofreading run's findings (v13, #505,
+                                                2026-11-25): `proofreading_results`, one row per
+                                                chapter and `basis` ("ai": the toolkit run with
+                                                Bridge's AI as reader), the introduction's rows
+                                                under chapter "intro". A run rewrites every chapter
+                                                of the book. Device-local and derived: rows in a
+                                                report, never a `QaFinding`, never a decision.
 <project>/.apps/translationCoreAI/backups/      the backup files themselves, indexed by the DB
 %LOCALAPPDATA%\Bridge\data\workspace.sqlite3    app-level, schema v5 (#77, #236, #238, #240): users
                                                 with their role and the chosen one, devices, the
@@ -380,6 +392,21 @@ A raw Scripture import becomes a translationCore-compatible book project:
                                                 database: it is the editor's saved layout (`localStorage`,
                                                 per user and project). Language QA uses only the
                                                 project's one reference Bible (#289, DECISIONS 2026-11-24)
+%LOCALAPPDATA%\Bridge\data\proofreading\<project>\
+                                                only once a proofreading run was started (#505): one
+                                                folder per collection (or single book). `stage/` holds
+                                                the copies the toolkit's tools read (every book as USFM,
+                                                the reference Bible, the linked Paratext project's team
+                                                data), rewritten at each run; `work/` the toolkit's
+                                                findings files, its corpus cache and one checkpoint per
+                                                book (the chapters already read, so a stopped run does
+                                                not pay for them twice); `output/` what the toolkit
+                                                delivers (per-book CSV, Excel workbook and Paratext
+                                                notes file, the cumulative notes file, the run report).
+                                                Derived; nothing here is read back as Scripture, and
+                                                nothing is sent to Paratext. Which folder a run compares
+                                                against is the `proofreading_references` setting, apart
+                                                from the project's Language QA reference Bible
 %LOCALAPPDATA%\Bridge\hub\                      only when Settings > Team > Start a hub was used: the
                                                 hub's hub.sqlite3, its own engine's settings.json and
                                                 workspace, admin-join-code.txt and hub.log
@@ -447,6 +474,29 @@ upserted into `.bridge/collection.json` `qaRuns[]` with a sha256 of its chapter 
 so an unchanged book is skipped on the next run and a cancelled or crashed run resumes;
 the whole-collection stage's summary lands in `qaFinalStage`. Engine:
 `engine/collection_jobs.py`; UI: `CollectionQaPanel.svelte`.
+
+Directly under it is the **Proofreading** bar (`proofreading.*`, #505, DECISIONS
+2026-11-25, Joel for the team): a publishing-level read of chosen books against a
+reference Bible. It runs Benz's toolkit (`engine/proofreading_toolkit/`,
+Bridge-owned code, not a vendor tree; read its `NOTICE.md` before touching it) with
+Bridge's own AI client as the reader the toolkit's skill describes, so it needs an
+AI provider and is never started automatically. The engine does the skill's steps
+itself: it stages copies of the text, runs the toolkit's tools one process each
+(`proofread_tool_main.py`), sends the AI a few chapters at a time, and keeps a
+finding only if the toolkit's `build.py` can place its quoted words in the text.
+The AI returns findings as data; Bridge writes the toolkit's findings file itself,
+every value through `repr()`, so nothing a model wrote is executed. Findings go to
+each book's workbench (`proofreading_results`), each book's run to
+`.bridge/collection.json` `proofreadRuns[]` (an unchanged book is skipped), and the
+toolkit's own files to the run folder. A proofreading finding is a row in a report:
+it is not a `QaFinding`, nothing applies it, and nothing is sent to Paratext. The
+app is read-only while a run is active, and it never runs beside Collection QA or
+a check job. Engine: `proofreading_service.py` (what the engine offers),
+`proofreading_jobs.py` (the run), `tc_ai_bridge/proofreading.py` (one book); UI:
+`ProofreadingPanel.svelte`, `ProofreadingStartDialog.svelte`,
+`ProofreadingReportDialog.svelte`. **No real book has been read through it yet:**
+every test uses a scripted reader, and the toolkit was calibrated on a different
+model, so treat its findings as unvalidated until someone has compared a real run.
 
 ## Hard invariants
 
@@ -519,7 +569,7 @@ translation team that database *is* months of work, and no reset is available.
 
 This same discipline now has two more, independent ladders. `bridge-workbench.sqlite3`
 (`WorkbenchRepository`, `engine/tc_ai_bridge/workbench_repository.py`,
-`WORKBENCH_SCHEMA_VERSION`, currently v12 — v2 added `change_log.columns_json` for
+`WORKBENCH_SCHEMA_VERSION`, currently v13 — v2 added `change_log.columns_json` for
 sync and rebuilt the immutability trigger; v3 added `alignment_cross_verse_links`,
 #117; v4 added `language_qa_cache`, #169; v5 rebuilt `human_decisions` to admit the `housestyle` kind, #169;
 v6 added `language_qa_batches`, `language_qa_learned_fixes` and `language_qa_flags`, indic-qa editor
@@ -530,7 +580,9 @@ v7 added `alignment_null_decisions` and `alignment_verdicts`, #216; v8 lifted
 per-project roles, #279; v11 added `paratext_links` (synced) and `paratext_outbox`
 (device-local, never synced) for Paratext write-back, #358; v12 added
 `paratext_review_decisions` (synced) and `paratext_review_state` (device-local)
-for the Paratext QA review queue, #432/#433, 2026-11-02) and `workspace.sqlite3`
+for the Paratext QA review queue, #432/#433, 2026-11-02; v13 added
+`proofreading_results` (device-local, derived) for the proofreading run's findings,
+#505, 2026-11-25) and `workspace.sqlite3`
 (`WorkspaceRepository`, `engine/tc_ai_bridge/workspace_repository.py`,
 `WORKSPACE_SCHEMA_VERSION`, currently v5 — v1 is exactly the unversioned
 devices/users the first cut created, kept as `IF NOT EXISTS` so an existing
@@ -737,6 +789,15 @@ change. **This is scheduled work, not accepted behaviour.**
     (the paragraph a chapter's first verse, or a verse after a heading, opens
     in, read from the preserved source by `usfm_parser.opening_paragraphs`) are
     what the reader draws poetry lines from.
+    **One exception, and it is not in Bridge's own code** (#505, DECISIONS
+    2026-11-25, Joel for the team, for the maintainer to look at again): the
+    bundled proofreading toolkit's tools (`engine/proofreading_toolkit/tools/`,
+    `project.py` above all) read USFM with their own regular expressions. They
+    are run only as separate processes, only on the staged copies a proofreading
+    run writes for them, and nothing they parse is read back as Scripture or
+    stored as text. That is the standing of the vendored USFM checker, not a
+    licence: `tc_ai_bridge/proofreading.py`, which drives them, parses no USFM
+    and must not start to, and no other module may borrow the toolkit's parser.
 
 ## Working in this repo
 
@@ -881,7 +942,15 @@ raise it as a question in the issue rather than deciding it in a commit:
   (`SemanticEmbeddingProvider.available` is `False` in the shipped app today, so
   production location runs use lexical/structural evidence only — that is a known
   state, not a bug to fix in passing)
-- Adding a third vendored upstream tree under `engine/vendor/`
+- Adding a third vendored upstream tree under `engine/vendor/`. (The
+  proofreading toolkit, #505, is not one: it has no upstream and lives in
+  `engine/proofreading_toolkit/` as Bridge-owned code. That was decided by Joel
+  for the team on 2026-11-25 and is still flagged for the maintainer. Bundling
+  another outside tool the same way is a fresh question)
+- Letting a proofreading finding change anything. Today it is a row in a report
+  (#505). Applying one to the text, turning one into a `QaFinding` or a
+  decision, or sending one to Paratext or into the Paratext review queue is
+  each a new decision, not a follow-up
 
 ---
 

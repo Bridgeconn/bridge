@@ -35,6 +35,10 @@
     folder: "M3 7V5a1 1 0 0 1 1-1h5l2 3h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z",
     report: "M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8l-5-5ZM14 3v5h5M9 13h6M9 17h6",
     viewReport: "M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8l-5-5ZM14 3v5h5M8 17v-3m4 3v-6m4 6v-4",
+    // #505: proofreading. Lines of text with a tick against the last one
+    // (start a run), and a page with a line and a tick (its report).
+    proofread: "M4 6h16M4 11h11M4 16h6M13.5 17l2.5 2.5 5-6",
+    proofreadReport: "M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8l-5-5ZM14 3v5h5M9 12h4M9 16.5l1.8 1.8 4-4.3",
     rebuild: "M21 12a9 9 0 0 1-15.5 6.2M3 12a9 9 0 0 1 15.5-6.2M18.5 2v4h-4M5.5 22v-4h4",
     addBooks: "M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8l-5-5ZM14 3v5h5M12 11v6M9 14h6",
     back: "m12 5-7 7 7 7M5 12h15",

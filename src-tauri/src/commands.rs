@@ -157,6 +157,20 @@ pub async fn pick_save_path(
         .map_err(|e| format!("save dialog cancelled unexpectedly: {e}"))
 }
 
+/// The kinds of file `open_path` hands to the OS: a report or an export
+/// Bridge (or, #505, the proofreading toolkit it runs) wrote. Documents only:
+/// nothing here is a program, a script or a shortcut.
+fn is_report_or_export(path: &std::path::Path) -> bool {
+    let extension = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    // #505: `xlsx` is the proofreading run's workbook (one per book, and
+    // QA_Run_Report.xlsx for the run).
+    matches!(extension.as_str(), "html" | "htm" | "csv" | "txt" | "xlsx")
+}
+
 /// #434: open a file Bridge wrote -- a saved Paratext review report -- in
 /// whatever the OS opens it with (the default browser for .html). Only a
 /// regular file that exists is handed over, so the command cannot be used to
@@ -171,15 +185,33 @@ pub async fn open_path(app: tauri::AppHandle, path: String) -> Result<(), String
     if !target.is_file() {
         return Err(format!("{path} is not a file"));
     }
-    let extension = target
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_ascii_lowercase())
-        .unwrap_or_default();
-    if !matches!(extension.as_str(), "html" | "htm" | "csv" | "txt") {
+    if !is_report_or_export(&target) {
         return Err(format!("{path} is not a report or export file"));
     }
     app.shell()
         .open(target.to_string_lossy().to_string(), None)
         .map_err(|e| format!("could not open {path}: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_report_or_export;
+    use std::path::Path;
+
+    #[test]
+    fn open_path_takes_reports_and_exports_only() {
+        for name in [
+            "report.html", "REPORT.HTM", "issues.csv", "notes.txt",
+            // #505: the proofreading run's workbooks.
+            "QA_Run_Report.xlsx", "GEN_QA_Report.XLSX",
+        ] {
+            assert!(is_report_or_export(Path::new(name)), "{name} should open");
+        }
+        for name in [
+            "tool.exe", "run.bat", "script.ps1", "link.lnk", "macro.xlsm", "notes.xml",
+            "no_extension", "archive.csv.exe", "",
+        ] {
+            assert!(!is_report_or_export(Path::new(name)), "{name} must not open");
+        }
+    }
 }

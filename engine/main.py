@@ -10,7 +10,11 @@ startup and keeps it alive for the whole session (doc §4).
 import os
 import sys
 
-from greek_room_engine.transport.stdio_transport import run_stdio_loop, send_stage
+# Nothing of the engine is imported at the top of this module (#505). The
+# transport used to be, which loads the Greek Room engine and its adapters
+# before a line of this file runs; `--proofread-tool` must not pay for that or
+# share its stdout with it (the Wildebeest adapter's start-up line was the
+# first line of a `sweep`, seen 2026-11-25). `_start` imports it now.
 
 
 def _apply_cli_overrides() -> None:
@@ -75,6 +79,10 @@ def _start() -> None:
     line. That is why the import sits here rather than at the top of the
     module: at the top it would run before anything could be reported, and
     `import main` from a test would pay for it and print to stdout."""
+    # First, as it was when this was the module's top-level import: the hub
+    # path below and the stage lines after it see exactly what they did.
+    from greek_room_engine.transport.stdio_transport import run_stdio_loop, send_stage
+
     _apply_cli_overrides()
     serve = _serve_args(sys.argv[1:])
     if serve is not None:
@@ -92,7 +100,20 @@ def _start() -> None:
     run_stdio_loop(engine, on_ready=engine.start_background_warmup)
 
 
+def _proofread_tool(argv: list[str]) -> int:
+    """`bridge-engine --proofread-tool <tool> [args...]` (#505): one tool of
+    the bundled proofreading toolkit, in its own process, then exit. Everything
+    after the flag belongs to the tool. It never starts the engine and imports
+    none of it: a tool's stdout is read by the run as that tool's answer. See
+    `proofread_tool_main` for why each call is a process."""
+    from proofread_tool_main import main as run_tool
+
+    return run_tool(argv[argv.index("--proofread-tool") + 1:])
+
+
 if __name__ == "__main__":
+    if "--proofread-tool" in sys.argv[1:]:
+        raise SystemExit(_proofread_tool(sys.argv[1:]))
     if "--install-paratext-connector" in sys.argv[1:]:
         raise SystemExit(_install_paratext_connector())
     _start()

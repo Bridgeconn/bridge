@@ -1,0 +1,16 @@
+{
+  "project_name": "IRVTel",
+  "target_dir": "/mnt/user-data/uploads/IRV Telugu/IRVTel",
+  "reference_dir": "/mnt/user-data/uploads/esv",
+  "reference_name": "ESV",
+  "language": "auto",
+  "language_label": "",
+  "notes_user": "Yesu Selva Benz",
+  "notes_language_tag": "te-IN",
+  "output_dir": "/mnt/user-data/outputs/qa-run",
+  "work_dir": "/home/claude/qa-work",
+  "device_output_dir": "D:\\Claude Lab\\Claude outputs\\qa-run",
+  "model": "claude-opus-5-5",
+  "price_per_million_tokens_usd": {"input": 5.0, "cache_write": 6.25, "cache_read": 0.5, "output": 25.0},
+  "_comment": "Prices are assumptions — check the current price list and edit. All paths are inside the session; device_output_dir is where results are copied on the checker's computer."
+}
