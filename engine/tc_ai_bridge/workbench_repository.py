@@ -41,7 +41,7 @@ _GENERATIONS: dict[str, int] = {}
 _GENERATION_LOCK = threading.Lock()
 
 
-WORKBENCH_SCHEMA_VERSION = 12
+WORKBENCH_SCHEMA_VERSION = 13
 WORKBENCH_SCHEMA_ID = "bridge-workbench-v1"
 
 _IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -81,6 +81,7 @@ MUTABLE_TABLES: tuple[str, ...] = (
     "paratext_outbox",
     "paratext_review_decisions",
     "paratext_review_state",
+    "proofreading_results",
 )
 
 
@@ -856,6 +857,35 @@ CREATE TABLE paratext_review_state (
 );
 """
 
+# v13 (#505): the findings of a proofreading run, kept so the report opens at
+# once and a book the AI has read is never paid for twice. One row per chapter
+# of a book and per `basis` (who produced the rows: "ai" is the toolkit run
+# with Bridge's AI as its reader; the column is there so a later basis needs no
+# second table), the located rows in `payload_json`; the introduction's rows
+# are under chapter "intro". A run rewrites every chapter of the book, the
+# empty ones too, so a finding that is gone does not linger. Derived, like
+# `language_qa_cache`, and NOT_SYNCED: the rows are tied to the text as it
+# stood on this device when it was read. Lifted columns are nullable, as in
+# v4, so the generic per-table tests that write rows without them still pass.
+# Additive.
+_MIGRATION_V13 = r"""
+CREATE TABLE proofreading_results (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    book_id TEXT,
+    revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1),
+    actor_id TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    chapter TEXT,
+    basis TEXT
+);
+CREATE UNIQUE INDEX ux_proofreading_results_chapter
+    ON proofreading_results(project_id, book_id, chapter, basis);
+"""
+
 _MIGRATIONS: tuple[tuple[int, str], ...] = (
     (1, _MIGRATION_V1),
     (2, _MIGRATION_V2),
@@ -869,6 +899,7 @@ _MIGRATIONS: tuple[tuple[int, str], ...] = (
     (10, _MIGRATION_V10),
     (11, _MIGRATION_V11),
     (12, _MIGRATION_V12),
+    (13, _MIGRATION_V13),
 )
 
 

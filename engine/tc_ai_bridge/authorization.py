@@ -143,6 +143,9 @@ _READ = (
     "chapter.verses", "chapter.verseData",
     "housestyle.list", "housestyle.nameSuggestions", "housestyle.export",
     "collection.qaStatus",
+    # #505: what a proofreading run would do, how it is going, and what it found.
+    "proofreading.preflight", "proofreading.status", "proofreading.report", "proofreading.rows",
+    "proofreading.export",
     "languageQa.status", "languageQa.pause", "languageQa.history", "languageQa.verse",
     "languageQa.checkerSettings.get", "languageQa.learned.list", "languageQa.scopeFind", "languageQa.batches",
     "languageQa.quotationRules.get",
@@ -198,6 +201,8 @@ _READ = (
 _RUN_CHECKS = (
     "checks.start", "checks.cancel", "checks.retry", "verse.runChecks",
     "collection.runChecks", "collection.pauseChecks", "collection.cancelChecks",
+    # #505: starting a proofreading run and choosing the Bible it compares against.
+    "proofreading.start", "proofreading.pause", "proofreading.cancel", "proofreading.setReference",
     "triage.run", "triage.cancel",
     "alignment.autoAlign.start", "alignment.autoAlign.cancel", "alignment.autoAlign.retry",
     "alignment.crossVerse.aiPropose", "alignment.window.autoAlign", "alignment.aiPropose",

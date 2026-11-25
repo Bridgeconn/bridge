@@ -62,6 +62,8 @@ from tc_ai_bridge.project_import import (
 )
 from collection_jobs import (FINAL_STAGE_ROWS, CollectionJobConflict, CollectionJobError, CollectionJobManager,
                              CollectionJobSpec)
+from proofreading_jobs import ProofreadingJobConflict, ProofreadingJobError
+from proofreading_service import ProofreadingService
 from tc_ai_bridge.housestyle import (
     LEARN_IGNORES, PREFER_USES, PROPOSE_PROJECT_BOOKS, PROPOSE_RULE_DECISIONS, PROPOSE_RULE_IGNORE_RATE,
     HouseStyleLearner, bundled_seed, name_suggestions, project_proposals,
@@ -588,6 +590,16 @@ class Methods:
     COLLECTION_QA_STATUS = "collection.qaStatus"
     COLLECTION_PAUSE_CHECKS = "collection.pauseChecks"
     COLLECTION_CANCEL_CHECKS = "collection.cancelChecks"
+    # #505: the proofreading run, started from the dashboard.
+    PROOFREADING_PREFLIGHT = "proofreading.preflight"
+    PROOFREADING_SET_REFERENCE = "proofreading.setReference"
+    PROOFREADING_START = "proofreading.start"
+    PROOFREADING_STATUS = "proofreading.status"
+    PROOFREADING_PAUSE = "proofreading.pause"
+    PROOFREADING_CANCEL = "proofreading.cancel"
+    PROOFREADING_REPORT = "proofreading.report"
+    PROOFREADING_ROWS = "proofreading.rows"
+    PROOFREADING_EXPORT = "proofreading.export"
     LANGUAGE_QA_STATUS = "languageQa.status"
     LANGUAGE_QA_PAUSE = "languageQa.pause"
     LANGUAGE_QA_INLINE = "languageQa.inline"
@@ -911,6 +923,10 @@ class BridgeEngine:
         self._import_lock = threading.Lock()
         self._check_jobs = CheckJobManager()
         self._collection_jobs = CollectionJobManager()
+        # #505: the proofreading run (the bundled toolkit with Bridge's AI as
+        # its reader). Its own job, beside Collection QA's; the two and a check
+        # job never run at once.
+        self._proofreading = ProofreadingService(self)
         self._housestyle_learner = HouseStyleLearner()
         self._language_qa = LanguageQaManager()
         # #356: the open book's Paratext session, kept across books of one
@@ -7893,6 +7909,8 @@ class BridgeEngine:
         self._require_project()
         if self._check_jobs.active():
             raise CheckJobConflict("Wait for the running check to finish.")
+        if self._proofreading.jobs.active():
+            raise CheckJobConflict("A proofreading run is in progress; wait for it or cancel it.")
         selected = tuple(dict.fromkeys(checks or ["local", "greekroom", LANGUAGE_QA_CHECK]))
         invalid = [name for name in selected if name not in CHECK_NAMES | {LANGUAGE_QA_CHECK}]
         if invalid:
@@ -9474,8 +9492,12 @@ class BridgeEngine:
     # reconstruction rather than failing export altogether.
 
     def _source_preserving_usfm(
-        self, verse_renderer: Optional[Callable[[str, str], str]] = None,
+        self, verse_renderer: Optional[Callable[[str, str], str]] = None, project: Any = None,
     ) -> str | None:
+        # `project` (#505): another book of the collection than the open one,
+        # for the proofreading run, which stages every chosen book's current
+        # text. Reading only; the open book is the default, as it always was.
+        project = self.project if project is None else project
         # The parser that imported the book decides where each verse's text
         # sits in the preserved source (#91), and only that span is replaced
         # (#190). Everything between verses -- the section headings #180 moved
@@ -9484,7 +9506,7 @@ class BridgeEngine:
         # line is written back like any other. The regex this replaced took
         # everything up to the next `\v`, which overwrote those headings, and
         # never matched a mid-line `\v`, which silently dropped its edit.
-        source_path = self.project.usfm_path()
+        source_path = project.usfm_path()
         if source_path is None:
             return None
         try:
@@ -9496,20 +9518,20 @@ class BridgeEngine:
             return None
 
         replacements: list[tuple[int, int, str]] = []
-        available_chapters = set(self.project.chapters())
+        available_chapters = set(project.chapters())
         verse_cache: dict[str, set[str]] = {}
         for entry in parsed.verses:
             if entry.chapter not in available_chapters:
                 continue
             chapter_verses = verse_cache.setdefault(
-                entry.chapter, set(self.project.verses(entry.chapter)),
+                entry.chapter, set(project.verses(entry.chapter)),
             )
             if entry.verse not in chapter_verses:
                 continue
             current_text = (
                 verse_renderer(entry.chapter, entry.verse)
                 if verse_renderer is not None
-                else self.project.target_verse_text(entry.chapter, entry.verse)
+                else project.target_verse_text(entry.chapter, entry.verse)
             ).strip()
             if current_text and entry.start > 0 and not source[entry.start - 1].isspace():
                 current_text = " " + current_text
@@ -9527,8 +9549,8 @@ class BridgeEngine:
         # (or, for a heading, marker) is no longer what the source says is
         # written back in its own place. One that was not changed is not
         # touched, so the rest of the file stays as written.
-        replacements.extend(self._changed_heading_blocks(source, parsed, available_chapters))
-        replacements.extend(self._changed_introduction_blocks(source, parsed))
+        replacements.extend(self._changed_heading_blocks(source, parsed, available_chapters, project))
+        replacements.extend(self._changed_introduction_blocks(source, parsed, project))
         replacements.sort()
         pieces: list[str] = []
         cursor = 0
@@ -9550,7 +9572,7 @@ class BridgeEngine:
         return (offset, end, f"\\{tag} {text}{trailing}")
 
     def _changed_heading_blocks(
-        self, source: str, parsed: Any, available_chapters: set[str],
+        self, source: str, parsed: Any, available_chapters: set[str], project: Any = None,
     ) -> list[tuple[int, int, str]]:
         """Replacements for the headings (and psalm titles before verse 1)
         that differ from the preserved source. The stored headings of a verse
@@ -9565,7 +9587,8 @@ class BridgeEngine:
         for (chapter, verse), originals in in_source.items():
             if chapter not in available_chapters:
                 continue
-            stored = stored_by_chapter.setdefault(chapter, self.project.chapter_headings(chapter))
+            stored = stored_by_chapter.setdefault(
+                chapter, (self.project if project is None else project).chapter_headings(chapter))
             current = stored.get(verse) or []
             if len(current) != len(originals):
                 continue
@@ -9580,12 +9603,14 @@ class BridgeEngine:
                 out.append(self._rewritten_block(source, original.offset, original.end, tag, text))
         return out
 
-    def _changed_introduction_blocks(self, source: str, parsed: Any) -> list[tuple[int, int, str]]:
+    def _changed_introduction_blocks(
+        self, source: str, parsed: Any, project: Any = None,
+    ) -> list[tuple[int, int, str]]:
         """Replacements for the introduction lines that differ from the
         preserved source. `headers.json` is matched to the source's header
         lines by order and marker; if they do not line up, nothing is
         replaced."""
-        stored = self.project.book_headers()
+        stored = (self.project if project is None else project).book_headers()
         if stored is None:
             return []
         # A project imported before #507 kept a heading before the first `\c`
@@ -10460,9 +10485,36 @@ class BridgeEngine:
                     p["paused"], str(p.get("jobId", ""))))
             if m == Methods.COLLECTION_CANCEL_CHECKS:
                 return EngineResponse.ok(request.id, result=self._collection_jobs.cancel(str(p.get("jobId", ""))))
+            if m == Methods.PROOFREADING_PREFLIGHT:
+                return EngineResponse.ok(request.id, result=self._proofreading.preflight())
+            if m == Methods.PROOFREADING_SET_REFERENCE:
+                return EngineResponse.ok(request.id, result=self._proofreading.set_reference(p.get("folder")))
+            if m == Methods.PROOFREADING_START:
+                if self._collection_jobs.active() or self._check_jobs.active():
+                    raise ProofreadingJobConflict("Wait for the running check to finish.")
+                return EngineResponse.ok(request.id, result=self._proofreading.start(
+                    p.get("books"), force=bool(p.get("force", False))))
+            if m == Methods.PROOFREADING_STATUS:
+                return EngineResponse.ok(request.id, result=self._proofreading.status(str(p.get("jobId", ""))))
+            if m == Methods.PROOFREADING_PAUSE:
+                if not isinstance(p.get("paused"), bool):
+                    raise ProjectError("paused must be a boolean")
+                return EngineResponse.ok(request.id, result=self._proofreading.pause(
+                    p["paused"], str(p.get("jobId", ""))))
+            if m == Methods.PROOFREADING_CANCEL:
+                return EngineResponse.ok(request.id, result=self._proofreading.cancel(str(p.get("jobId", ""))))
+            if m == Methods.PROOFREADING_REPORT:
+                return EngineResponse.ok(request.id, result=self._proofreading.report())
+            if m == Methods.PROOFREADING_ROWS:
+                return EngineResponse.ok(request.id, result=self._proofreading.rows(str(p.get("bookId", ""))))
+            if m == Methods.PROOFREADING_EXPORT:
+                return EngineResponse.ok(request.id, result=self._proofreading.export(
+                    str(p.get("outputPath", "")), str(p.get("format", "csv")), p.get("books")))
             if m == Methods.CHECKS_START:
                 if self._collection_jobs.active():
                     raise CheckJobConflict("A collection QA run is in progress; wait for it or cancel it.")
+                if self._proofreading.jobs.active():
+                    raise CheckJobConflict("A proofreading run is in progress; wait for it or cancel it.")
                 return EngineResponse.ok(request.id, result=self.start_check_job(
                     scope=p.get("scope", "chapter"),
                     chapters=p.get("chapters"),
@@ -11229,6 +11281,10 @@ class BridgeEngine:
             return EngineResponse.fail(request.id, "checker_error", str(exc))
         except versification_tool.VersificationUnavailable as exc:
             return EngineResponse.fail(request.id, "versification_unavailable", str(exc))
+        except ProofreadingJobConflict as exc:
+            return EngineResponse.fail(request.id, "job_conflict", str(exc))
+        except ProofreadingJobError as exc:
+            return EngineResponse.fail(request.id, "job_error", str(exc))
         except CollectionJobConflict as exc:
             return EngineResponse.fail(request.id, "job_conflict", str(exc))
         except CollectionJobError as exc:

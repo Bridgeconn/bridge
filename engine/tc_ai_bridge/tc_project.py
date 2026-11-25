@@ -3316,6 +3316,39 @@ class TranslationCoreProject:
                     extra_columns={'chapter': chapter_key},
                 )
 
+    # -- proofreading findings (workbench v13, #505) ---------------------------
+    #
+    # One `proofreading_results` row per chapter and basis: the rows the
+    # proofreading run delivered for that chapter, located and in reading
+    # order ("intro" holds the introduction's). Written once per book at the
+    # end of its run, every chapter in one transaction, the empty ones too, so
+    # a finding the new run no longer makes is gone. Derived and device-local:
+    # nothing here is a decision, and nothing here writes Scripture.
+
+    def save_proofreading_results(self, by_chapter: dict[str, list[dict[str, Any]]], *, basis: str = 'ai',
+                                  meta: dict[str, Any] | None = None) -> None:
+        identity = self.workbench_identity
+        computed_at = self._timestamp()[0]
+        chapters = {str(chapter) for chapter in self.chapters()} | {'intro'} | {str(key) for key in by_chapter}
+        with self.workbench.batch() as batch:
+            for chapter in sorted(chapters):
+                batch.write(
+                    'proofreading_results',
+                    natural_row_id(identity.project_id, self.book_id, 'proofreading_results', f'{basis}:{chapter}'),
+                    project_id=identity.project_id, book_id=self.book_id,
+                    payload={'schemaVersion': 1, 'chapter': chapter, 'basis': basis, 'computedAt': computed_at,
+                             'meta': dict(meta or {}), 'rows': list(by_chapter.get(chapter) or [])},
+                    actor_id=identity.actor_id, device_id=identity.device_id,
+                    extra_columns={'chapter': chapter, 'basis': basis},
+                )
+
+    def load_proofreading_results(self, basis: str = 'ai') -> list[dict[str, Any]]:
+        """Every stored row of this book for one basis, in reading order."""
+        payloads = [p for p in self.workbench.payloads(
+            'proofreading_results', project_id=self.workbench_identity.project_id, book_id=self.book_id,
+        ) if str(p.get('basis') or '') == basis]
+        return _proofreading_rows_in_order(payloads)
+
     # -- indic-qa editor stores (workbench v6) --------------------------------
     #
     # Three Bridge-private stores for the reviewer features brought over from
@@ -4306,6 +4339,44 @@ def peek_review_decisions(project_root: str | Path) -> list[dict[str, Any]]:
             payload['updatedAt'] = row['updated_at'] or ''
             out.append(payload)
     return out
+
+
+def _proofreading_rows_in_order(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The rows of `proofreading_results` payloads: the introduction first,
+    then the chapters by number; each chapter's rows are stored in order."""
+    def chapter_order(payload: dict[str, Any]) -> tuple[int, int]:
+        chapter = str(payload.get('chapter') or '')
+        return (0, 0) if chapter == 'intro' else (1, int(chapter) if chapter.isdigit() else 10 ** 6)
+    rows: list[dict[str, Any]] = []
+    for payload in sorted(payloads, key=chapter_order):
+        rows.extend(row for row in payload.get('rows') or [] if isinstance(row, dict))
+    return rows
+
+
+def peek_proofreading_results(project_root: str | Path, basis: str = 'ai') -> list[dict[str, Any]]:
+    """A sibling book's proofreading rows (#505) straight from its workbench
+    database, read-only (`_peek_workbench`): the proofreading report lists
+    every book of a collection without opening one. [] for a book with no
+    workbench or no v13 table."""
+    conn = _peek_workbench(project_root)
+    if conn is None:
+        return []
+    try:
+        rows = conn.execute(
+            'SELECT payload_json FROM proofreading_results WHERE basis = ?', (basis,)).fetchall()
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+    payloads: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            payload = json.loads(row['payload_json'])
+        except (TypeError, ValueError):
+            continue
+        if isinstance(payload, dict):
+            payloads.append(payload)
+    return _proofreading_rows_in_order(payloads)
 
 
 def peek_progress_totals(project_root: str | Path) -> dict[str, Any] | None:
