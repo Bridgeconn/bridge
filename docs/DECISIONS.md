@@ -1833,3 +1833,109 @@ the #219 decision above, unchanged, and what grows is how much one click covers.
 
 **Revisit when:** the maintainer is back; when #131 gives a measured precision
 for two-pass agreement; and before any run is allowed to start without a click.
+
+## 2026-11-25 — A proofreading run: Benz's toolkit, with Bridge's own AI as its reader (Joel, for the team, #505)
+
+**Decision:** Bridge can run a publishing-level proofreading check of chosen books
+from the dashboard. It runs the toolkit Benz shared (`bible-qa-universal`, now
+`engine/proofreading_toolkit/`) as he wrote it, and uses Bridge's own AI client,
+on an API key or a ChatGPT sign-in, as the reader that the toolkit's skill
+describes. Taken by Joel for the team on 2026-11-25, while the maintainer was on
+leave, and to be looked at again on his return.
+
+**This is not what #505 first described.** The issue proposed starting the Claude
+Code CLI once per book. Joel dropped that on 2026-11-25 ("the Claude CLI is having
+challenges") in favour of the sign-in the team already has (#506). Three things the
+CLI design would have needed a ruling on do not arise: whether a third-party app may
+run `claude -p` under a user's claude.ai login (Anthropic's Agent SDK pages say
+third-party products may not offer that login without approval, and say nothing
+about a spawned CLI), a model writing Python that Bridge then executes, and shell
+writes that cannot be sandboxed on native Windows.
+
+**Three rules in CLAUDE.md that this touches, and how each was settled:**
+
+1. **Gotcha 14: USFM is read by exactly two modules.** The toolkit's
+   `tools/project.py` reads USFM with its own regular expressions. Joel was asked
+   before anything was bundled and allowed it, on these terms: the tools run in
+   their own process (`bridge-engine --proofread-tool`, `proofread_tool_main.py`),
+   they are pointed only at staged copies that Bridge writes for the run
+   (`<data>/proofreading/<project>/stage`), and nothing they parse is read back as
+   Scripture. It is the shape the vendored Greek Room USFM checker already has: a
+   separate tool on its own input. No Bridge module gained a USFM regex;
+   `tc_ai_bridge/proofreading.py` does not parse USFM at all.
+2. **A third vendored tree.** The toolkit is not under `engine/vendor/` and is not
+   vendored: it has no upstream repository. It is Bridge-owned code, copied
+   unchanged, with what was found while integrating it and every later change
+   listed in `engine/proofreading_toolkit/NOTICE.md`. #505 flagged this for the
+   maintainer; it stays flagged.
+3. **A network path.** None is added. The reader is the existing optional,
+   human-invoked `ai_client.py` path, through `BridgeEngine._ai_client`. Nothing on
+   the import, open or check path touches the toolkit or the AI, and Bridge works
+   unchanged without an AI provider.
+
+**What a run does:**
+- It starts only on a reviewer's Start, in a dialog that shows the AI in use, the
+  reference Bible, the books, and an estimate (requests, tokens, dollars or "uses
+  your ChatGPT plan allowance") worked out offline before anything is sent.
+- For each chosen book it stages the current text, runs the toolkit's lead tools,
+  sends the AI a few chapters at a time with the reference beside them and the
+  toolkit's own rules (`SKILL.md` sections 4 and 5, the meaning and theology
+  checklist, the language profile), runs the toolkit's `q.py` and `nearby.py` on
+  the findings the AI was unsure of and asks it again, and then runs the toolkit's
+  `build.py`, which keeps a finding only if its quoted words stand in the text.
+- The AI returns findings as data against a strict schema. Bridge writes the
+  toolkit's findings file itself, every value through `repr()`. Nothing a model
+  wrote is executed.
+- It writes: the findings, per chapter, to each book's workbench
+  (`proofreading_results`, schema v13, on this device only); each book's run to
+  `.bridge/collection.json` `proofreadRuns[]`; and the toolkit's own files (CSV,
+  Excel workbook, Paratext notes file, run report) to the run folder under Bridge's
+  data folder.
+- The app is read-only while it runs, as during Collection QA, and the two never
+  run at once. A book unchanged since its recorded run is skipped. A cancel or a
+  reached plan limit keeps the books already read and the chapters already read of
+  the book in flight.
+
+**Rules out:**
+- Any write to Scripture, alignment, a finding, a decision or a project file other
+  than the two named above. A proofreading finding is a row in a report: nothing
+  applies it, and it is not a `QaFinding`.
+- Sending anything to Paratext. The toolkit's notes file is written to the run
+  folder and stays there.
+- Starting a run without the reviewer's click, or without the estimate shown.
+- Executing text a model returned, in any form.
+- A tool reading a project folder, Bridge's stored text or the reference folder
+  itself.
+
+**Costs, known when this was taken:**
+- **The quality of the findings on this reader is unproven.** The toolkit was
+  calibrated on a Claude model working as an agent over many turns. Here another
+  model answers one structured request per few chapters. No real book has been
+  read through this path yet: every test uses a scripted reader. Until someone
+  compares a real run with the toolkit's own Telugu results (it reproduced Daniel,
+  Obadiah and Jonah), treat the report as unvalidated.
+- The reference Bible's text is sent to the AI provider with the translation. For
+  a licensed text such as the ESV that is a question for whoever holds the licence.
+- Only Telugu has a language profile. Every other language gets the generic
+  checks, and the AI is told that rows resting on unreviewed language rules are
+  Confidence Medium with decision Review, as `SKILL.md` section 0 says.
+  `make_profile.py` and `approve_candidates.py` are bundled but not wired: drafting
+  a profile needs a linguist's approval step Bridge has no screen for.
+- The toolkit's `cost.py` describes a Claude agent session and is not used for the
+  estimate. Bridge's estimate is its own, from the size of the text.
+- From the frozen exe each tool call costs about 2.6 s of start-up (measured, ten
+  calls in 25.8 s). A long book makes a few hundred.
+- `openpyxl` moves from a development tool to a runtime dependency, and
+  `bridge-engine` gains a second argv mode.
+- A second set of scripted checks now exists beside Language QA's, and some of its
+  leads repeat what Collection QA reports. Joel chose to run everything the toolkit
+  checks; the leads are input to the reader, not findings.
+
+**Not decided here:** sending findings to Paratext or into the Paratext review
+queue (the parser there accepts only an `[AI-QA ...]` header, and the queue reads
+only a linked Paratext project's notes); language profiles for new languages;
+applying a finding from the report; syncing findings to the hub; proofreading a
+single-book project from the dashboard (the bar follows Collection QA's gate).
+
+**Revisit when:** the maintainer is back; when Benz has seen it run on a real book;
+and before a proofreading finding is allowed to change anything.
