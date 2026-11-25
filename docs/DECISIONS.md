@@ -1842,6 +1842,9 @@ from the dashboard. It runs the toolkit Benz shared (`bible-qa-universal`, now
 on an API key or a ChatGPT sign-in, as the reader that the toolkit's skill
 describes. Taken by Joel for the team on 2026-11-25, while the maintainer was on
 leave, and to be looked at again on his return.
+**Status:** merged to `main` on 2026-11-25 (PR #523, merge commit `51b2952`), after
+Joel proofread one short book in the desktop app and CI passed on the branch. Not
+released: the release workflow's smoke test has not yet run this on macOS or Linux.
 
 **This is not what #505 first described.** The issue proposed starting the Claude
 Code CLI once per book. Joel dropped that on 2026-11-25 ("the Claude CLI is having

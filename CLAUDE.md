@@ -494,9 +494,11 @@ app is read-only while a run is active, and it never runs beside Collection QA o
 a check job. Engine: `proofreading_service.py` (what the engine offers),
 `proofreading_jobs.py` (the run), `tc_ai_bridge/proofreading.py` (one book); UI:
 `ProofreadingPanel.svelte`, `ProofreadingStartDialog.svelte`,
-`ProofreadingReportDialog.svelte`. **No real book has been read through it yet:**
-every test uses a scripted reader, and the toolkit was calibrated on a different
-model, so treat its findings as unvalidated until someone has compared a real run.
+`ProofreadingReportDialog.svelte`. Merged 2026-11-25 (PR #523). **Its findings are
+not validated:** every test uses a scripted reader, the toolkit was calibrated on a
+different model, and the one real reading so far is a single short book that Joel
+judged by eye on 2026-11-25. Nobody has compared a run with the toolkit's own
+results. It has also never run on macOS or Linux.
 
 ## Hard invariants
 

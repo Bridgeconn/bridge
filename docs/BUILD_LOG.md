@@ -28068,3 +28068,30 @@ through the checklist above; which of its items he tried one by one is not
 recorded, so none is ticked here. He also agreed that no release is cut from
 this until the release workflow's smoke test has passed on macOS and Linux,
 where the new `--proofread-tool` step has never run.
+
+## 2026-11-25 — PR #523 merged: the proofreading run is on main (#505)
+
+**What happened.** After his desktop test Joel said to go on with the merge
+through a pull request, so that CI would run the whole suite on the final code
+before anything reached `main`. The branch was pushed, PR #523 was opened
+against `main`, and it was merged with a merge commit (`51b2952`) once every
+check had passed. `main` had not moved since the branch was cut, so nothing was
+rebased.
+
+**Run and watched, on the PR's head (`89e2d96`).** `ci.yml` run 45623880684:
+`engine` passed in 1 h 3 min (the serial full suite, and the first full run of
+the final code: locally the full suite had run before the last four engine
+files changed), `frontend` passed in 2 min 32 s, `rust` passed in 1 min 41 s,
+`ci-ok` passed. `golden-notice` was skipped: no golden moved.
+
+**Not verified, and unchanged by the merge.** Everything under "Not verified" in
+the entry above still stands, with one item now partly answered: one short book
+has been read by a real AI, by Joel. `ci.yml` builds no installer and runs no
+smoke test. The frozen smoke test passed on Windows on Joel's machine only;
+`release.yml` runs it on macOS and Linux too, where the `--proofread-tool` step
+has never run. **Do not publish a release from this until that has passed once.**
+
+**For whoever updates next.** A book opened with this build has a v13 workbench,
+and 0.26.0 refuses to open it. #505 stays open: it is Benz's issue, it describes
+the Claude CLI design, and whether to close it, and whether to post the summary
+of what changed, is Joel's to say. On the project board it is In review.
