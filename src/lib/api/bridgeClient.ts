@@ -8,6 +8,9 @@ import type {
 } from "../types/languageQa";
 import type { CollectionQaSnapshot } from "../types/collectionQa";
 import type {
+  ProofreadingPreflight, ProofreadingReference, ProofreadingReport, ProofreadingRows, ProofreadingSnapshot,
+} from "../types/proofreading";
+import type {
   ParatextBookNames, ParatextLinkStatus, ParatextNoteKind, ParatextNoteThread, ParatextNotesForChapter,
   ParatextNotesForVerse, ParatextNotesIndexState, ParatextOutboxItem, ParatextThreadLink, ParatextThreadsFor,
   ParatextWriteKind,
@@ -337,6 +340,15 @@ export type EngineMethod =
   | "collection.qaStatus"
   | "collection.pauseChecks"
   | "collection.cancelChecks"
+  | "proofreading.preflight"
+  | "proofreading.setReference"
+  | "proofreading.start"
+  | "proofreading.status"
+  | "proofreading.pause"
+  | "proofreading.cancel"
+  | "proofreading.report"
+  | "proofreading.rows"
+  | "proofreading.export"
   | "ai.review.cancel"
   | "ai.review.listForChapter"
   | "ai.chatgpt.status"
@@ -765,6 +777,58 @@ export const bridge = {
 
   collectionCancelChecks(): Promise<CollectionQaSnapshot> {
     return call("collection.cancelChecks", {});
+  },
+
+  // --- The proofreading run (#505, engine/proofreading_service.py) --------
+  // The bundled toolkit with Bridge's own AI as its reader. Optional and
+  // online-only: nothing is sent until proofreadingStart, and a run's
+  // findings are kept per book, so the report reads disk, not a job.
+
+  /** What a run would need and cost, worked out offline: nothing is sent. */
+  proofreadingPreflight(): Promise<ProofreadingPreflight> {
+    return call("proofreading.preflight", {});
+  },
+
+  /** Choose (or, with null, clear) the Bible a run compares the text against.
+   *  Kept on this machine, apart from the project's Language QA reference. */
+  proofreadingSetReference(folder: string | null): Promise<ProofreadingReference> {
+    return call("proofreading.setReference", { folder });
+  },
+
+  /** Read the named books (all of them when none are named), one after
+   *  another. `force` reads a book again though it is unchanged. */
+  proofreadingStart(books: string[] | null = null, force = false): Promise<ProofreadingSnapshot> {
+    return call("proofreading.start", { books, force });
+  },
+
+  /** The run's snapshot; with jobId "" and no run, each book's last recorded run. */
+  proofreadingStatus(jobId: string): Promise<ProofreadingSnapshot> {
+    return call("proofreading.status", { jobId });
+  },
+
+  proofreadingPause(paused: boolean): Promise<ProofreadingSnapshot> {
+    return call("proofreading.pause", { paused });
+  },
+
+  proofreadingCancel(): Promise<ProofreadingSnapshot> {
+    return call("proofreading.cancel", {});
+  },
+
+  /** Each book's last run and the totals. No rows: ask for those a book at a time. */
+  proofreadingReport(): Promise<ProofreadingReport> {
+    return call("proofreading.report", {});
+  },
+
+  proofreadingRows(bookId: string): Promise<ProofreadingRows> {
+    return call("proofreading.rows", { bookId });
+  },
+
+  /** The stored findings of the named books (every book when none are named)
+   *  as one CSV or TSV. The engine reads and writes the rows itself. */
+  proofreadingExport(
+    outputPath: string, format: "csv" | "tsv", books: string[] | null = null,
+  ): Promise<ReportExportResult> {
+    return call("proofreading.export", { outputPath, format, books });
   },
 
   /** Every Language QA finding of one verse, inline or not, for the review panel. */

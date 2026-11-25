@@ -88,6 +88,7 @@
   import { languageQaChannel, nudgeLanguageQa, startLanguageQaInline } from "./lib/languageQaInline";
   import { showLanguageQaTab } from "./lib/languageQaPanelUi";
   import { collectionQa, collectionQaRunning, stopCollectionQa } from "./lib/collectionQa";
+  import { proofreadingRunning, stopProofreading } from "./lib/proofreading";
   import { selectedCollectionChecks } from "./lib/checkSelection";
   import { estimateReportSeconds, recordReportBuild } from "./lib/reportEstimate";
   import { bindCollectionStrip, cancelStripJob } from "./lib/collectionStrip";
@@ -477,6 +478,9 @@
   const unbindCollectionStrip = bindCollectionStrip();
   onDestroy(unbindCollectionStrip);
   $: if (!$project || !opened) stopCollectionQa();
+  // #505: a proofreading run holds the app the same way, through the same
+  // strip (bindCollectionStrip), and is let go of with the project.
+  $: if (!$project || !opened) stopProofreading();
   // #279: the signed-in user's role on the open project, re-read when the
   // project or the user changes (a role set in Settings > Users refreshes it too).
   $: projectRoleKey = $project && opened && engineStatus === "ready" ? `${$project.path}|${$localUserId}` : "";
@@ -1094,7 +1098,7 @@
    *  the top strip), then that book's report. The book is opened in the
    *  engine without leaving the dashboard; a lazy book is prepared first. */
   async function runBookQaFromDashboard(path: string): Promise<void> {
-    if (activeJobId || $collectionQaRunning || !path) return;
+    if (activeJobId || $collectionQaRunning || $proofreadingRunning || !path) return;
     report = null;
     reportBuiltAt = "";
     reportError = "";
@@ -1155,6 +1159,10 @@
     if (path === $project.path) return true;
     if ($collectionQaRunning) {
       bookOpenError = "Collection QA is running. Pause or cancel it before switching books.";
+      return false;
+    }
+    if ($proofreadingRunning) {
+      bookOpenError = "A proofreading run is in progress. Cancel it, or wait for it, before switching books.";
       return false;
     }
     const siblings = $project.importedProjects;
@@ -1402,7 +1410,7 @@
   async function beginChecks(
     scope: "chapter" | "book", chapters: string[], checks: string[] = editorCheckList(),
   ): Promise<void> {
-    if (activeJobId || $collectionQaRunning) return;
+    if (activeJobId || $collectionQaRunning || $proofreadingRunning) return;
     const snapshot = await bridge.startChecks(scope, chapters, checks);
     activeJobId = snapshot.jobId;
     const generation = ++monitorGeneration;
@@ -1442,7 +1450,8 @@
    *  nothing current stored, run the chapter job as before (#114). */
   async function enterChapterChecks(chapter: string, sequence: number): Promise<void> {
     const state = () => ({
-      loaded: Boolean($loadedChapters[chapter]), jobActive: Boolean(activeJobId), collectionRunning: $collectionQaRunning,
+      loaded: Boolean($loadedChapters[chapter]), jobActive: Boolean(activeJobId),
+      collectionRunning: $collectionQaRunning || $proofreadingRunning,
     });
     if (!shouldReadStored(state())) return;
     let stored: StoredChapterFindings | null = null;
@@ -1807,7 +1816,7 @@
       {reportEstimateSeconds}
       onLoadReport={() => void rebuildDashboardReport()}
       onRunBookQa={(path) => void runBookQaFromDashboard(path)}
-      qaBusy={Boolean(activeJobId) || $collectionQaRunning || Boolean(openingBook)}
+      qaBusy={Boolean(activeJobId) || $collectionQaRunning || $proofreadingRunning || Boolean(openingBook)}
       qaRunningPath={dashboardQaPath}
       openingPath={dashboardOpeningPath}
       openingDetail={dashboardOpeningPath ? openingDetail : ""}
