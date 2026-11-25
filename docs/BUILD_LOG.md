@@ -28059,3 +28059,12 @@ an Excel workbook, a Paratext notes file and a run report.
 8. While it runs, Collection QA's Check cannot start a run.
 
 `C:\t505` holds the test runs' temporary folders and can be deleted.
+
+**Joel's desktop test, 2026-11-25.** Joel ran the branch on his machine and
+proofread one short book. His words: it "works as expected", and the layout and
+the findings "look good". That is the first real AI reading through this path,
+and the only one: one short book, one language, judged by one person. He went
+through the checklist above; which of its items he tried one by one is not
+recorded, so none is ticked here. He also agreed that no release is cut from
+this until the release workflow's smoke test has passed on macOS and Linux,
+where the new `--proofread-tool` step has never run.
