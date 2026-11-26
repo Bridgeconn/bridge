@@ -28665,3 +28665,17 @@ first, and there was no open pull request.
   another author (`auto-cross-verse`, `fix/auto-align-bridge-words`,
   `indic-qa-editor`, `local-qa-speed`, `release/mac-linux`,
   `wip/issue-214-window-ai-propose`).
+
+## 2026-11-26 — Release 0.27.0: the last two runs finished green
+
+**Run and watched.** `ci.yml` on the version-bump commit (`31e9f57`, the code
+the release was built from) passed every job: `engine` (the full serial suite),
+`frontend`, `rust` and `ci-ok`. The three docs-only commits after it passed with
+the code jobs skipped, as the `changes` job decides. `release.yml`'s second run
+(45809312458, started by publishing) passed on Windows, macOS and Linux and
+replaced the release's seven files; those are the files the release page now
+serves.
+
+**State at the end of the day.** `main` is at `f5e39ee` and level with
+`origin/main`. No open pull request. #505, #521, #522, #525 and #527 are closed
+and Done on the project board. Nothing of this work is left on a branch.
