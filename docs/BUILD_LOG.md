@@ -28224,3 +28224,25 @@ points, two of them the same one. Both were real.
 folder, and see the new folder's name shown. Run one short book: the report
 still lists its findings as before, and Export CSV and Open workbook open files
 whose text reads normally.
+
+## 2026-11-26 — PR #524 merged: the review fixes for the proofreading run are on main (#505)
+
+**What happened.** Joel said to go ahead with the merge. PR #524 was merged with
+a merge commit (`97da2dc`) once CI had passed on its last commit. It holds three
+commits: the six fixes and the `sweep.py` guard (`8405d01`), the same late-answer
+fix for Collection QA (`cc8fff8`), and the two points from the review of #524
+itself (`c090722`). `main` had not moved, so nothing was rebased.
+
+**Run and watched.** `ci.yml` ran on each of the three commits and passed each
+time: `engine` (the serial full suite), `frontend` and `ci-ok`; `rust` and
+`golden-notice` were skipped, no Rust file and no golden having changed. That
+is the full engine suite on the final code, which had not been run locally for
+the third commit. The frozen smoke test passed locally on sidecars rebuilt from
+the final code: ten `--proofread-tool` calls in 10.7 s. CodeAnt left no comment
+on the last commit.
+
+**Not verified.** Joel said to merge; whether he tried the fixes in the desktop
+app first is not recorded, so nothing here is ticked as seen there. The guarded
+workbook has still not been opened in Excel itself. Everything listed as not
+verified on 2026-11-25 stands, the macOS and Linux release smoke test above all:
+**no release until that has passed once.**
