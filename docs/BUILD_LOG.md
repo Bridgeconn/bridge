@@ -28598,3 +28598,29 @@ updating: older projects open with their work kept, and a project opened by
 the bump commit was still running when this was written. No installer was
 downloaded and installed. Everything listed as not verified in the entry above
 stands.
+
+## 2026-11-26 — Release 0.27.0 published
+
+**What happened.** Joel installed the drafted Windows build, reported that it
+works as expected and that everything looks good, and published the release
+himself (2026-11-26 11:17 UTC). GitHub shows "Bridge v0.27.0" as the latest
+release with its seven files. #527 was closed on that report and is Done on the
+project board; #505 stays open.
+
+**Seen in the installed app, by Joel's account.** He was given three things to
+look at before publishing: a real project opening with its work kept after
+installing over 0.26.0, the dialogs' buttons at their normal size, and no book
+list of the previous project when another is opened (#527). He reported the
+whole as good; which of the three he walked through one by one was not said.
+
+**Still running when this was written.** Publishing started `release.yml` a
+second time (run 45809312458, the `release: published` entry point). It builds
+the same commit again and replaces the release's files with `--clobber`, so the
+installer Joel tested and the one on the page afterwards are two builds of the
+same code, not the same file. `ci.yml` on the bump commit (`31e9f57`) was also
+still running.
+
+**Carried forward.** The proofreading findings are unvalidated (#505). Three
+decisions taken in the maintainer's absence, and the pre-release amendment in
+`CLAUDE.md` now that a team works on real projects, are for him on his return.
+Bridge has not been run on a real macOS or Linux desktop.
