@@ -28380,3 +28380,33 @@ none is ticked one by one here.
 **Still standing.** Everything listed as not verified for the proofreading run
 on 2026-11-25, the macOS and Linux release smoke test above all: **no release is
 published until that has passed once.**
+
+## 2026-11-26 — The dashboard bars' smaller buttons no longer shrink the dialogs' buttons (#505)
+
+**Why.** CodeAnt's review of PR #526 finished after the merge and raised two
+points. Both were checked against the code and both are real.
+
+**Fixed: the dialogs' buttons.** The tighter header set the small button height
+with `.qa-bar :global(.ui-btn)` in `ProjectDashboard.svelte`. The Check dialog,
+the Proofread dialog and the proofreading report are drawn inside their bar (a
+fixed overlay, no portal), so that rule also made their Start, Cancel and export
+buttons 28px instead of 34px. The rule is gone from the dashboard and is now a
+scoped rule in each panel (`.actions .ui-btn`), which a child component's
+buttons do not match. Checked in the built stylesheet: the two rules carry their
+own component's hash.
+
+**Reported, not fixed: a stale book list between projects.** `bookProgress` in
+`App.svelte` is never cleared, so when a project opens, the dashboard holds the
+previous project's book list until `project.listBookProgress` answers. For that
+moment a bar's tooltip and the Check dialog's title can give the previous
+project's book count. The run itself is the open project's, whatever the title
+says. This was there before #526 (a single-book project opened after a
+collection showed the bars for that moment and then hid them); it is next to
+the task, so it is left for Joel to decide.
+
+**Run.** `npm run check` (0 errors, 0 warnings), `npm run test` (148 files, 1526
+tests, all passing), `npm run build`.
+
+**Not verified.** Not seen in the desktop app. For Joel: the buttons in the
+Check dialog, the Proofread dialog and the proofreading report are the normal
+size again; the buttons on the two bars are still the small size.

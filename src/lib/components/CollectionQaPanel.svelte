@@ -133,6 +133,9 @@
   .status { min-width: 0; color: var(--text-2); font-size: var(--fs-3xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .active .status { color: var(--accent); font-weight: 600; }
   .actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }
+  /* The bar's own buttons are the small height, so the two bars together stay
+     short. Scoped to this component: the dialogs it opens keep the full size. */
+  .actions .ui-btn { min-height: 28px; padding-top: 3px; padding-bottom: 3px; }
   /* The book-list icon style (no border, the icon's colour) with its label. */
   .ui-btn.quiet.check-all { color: var(--success); }
   .ui-btn.quiet.check-all:hover:not(:disabled) { border-color: transparent; background: var(--success-bg); color: var(--success); }

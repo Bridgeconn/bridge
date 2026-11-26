@@ -760,10 +760,10 @@
   /* The book-list icon style (no border, the icon's colour) with its label. */
   .ui-btn.quiet.project-report { flex-shrink: 0; color: var(--accent); }
   .ui-btn.quiet.project-report:hover:not(:disabled) { border-color: transparent; }
-  /* A bar is one compact row: its buttons are the small size, so the two
-     bars together stay shorter than the header row above them. */
+  /* A bar is one compact row. Its buttons' height is set in the two panels,
+     not from here: a rule on every button under .qa-bar also reached the
+     buttons of the dialogs a bar opens, which are drawn inside it. */
   .qa-bar { padding-top: 8px; border-top: 1px solid var(--border); }
-  .qa-bar :global(.ui-btn) { min-height: 28px; padding-top: 3px; padding-bottom: 3px; }
 
   .panels { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(360px, 5fr) minmax(0, 7fr); gap: 14px; }
   .books-card, .report-card { display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; }
