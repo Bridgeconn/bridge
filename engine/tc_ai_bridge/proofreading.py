@@ -234,19 +234,48 @@ def run_folder_name(key: str) -> str:
     return cleaned[:80] or hashlib.sha1(str(key).encode("utf-8")).hexdigest()[:20]
 
 
+def language_tag(code: Any) -> str:
+    """A language code as the toolkit may be handed it: letters, digits and
+    hyphens only. `tools/project.py` joins it into a folder path to pick a
+    profile, and `deliver.py` writes it raw into an XML attribute of every
+    Paratext note; a manifest's `target_language.id` is free text."""
+    return re.sub(r"[^A-Za-z0-9-]", "", str(code or ""))[:35]
+
+
+def notes_user_name(name: Any) -> str:
+    """The name the toolkit's notes are written under. `deliver.py` puts it
+    in an XML attribute without escaping a double quote, and `merge_notes.py`
+    makes it part of a file name (`Notes_<name>.xml`), so the characters
+    neither can hold are taken out. Bridge's display names are free text."""
+    cleaned = re.sub(r'[\\/:*?"<>|\x00-\x1f]', " ", str(name or ""))
+    return " ".join(cleaned.split()).strip(" .")[:80] or "Bridge"
+
+
+def plain_label(value: Any, fallback: str = "") -> str:
+    """A name the toolkit prints at the start of a cell: the workbook's title
+    line begins with the language name, and the CSV's headers carry it and the
+    reference's name. One that begins with `=`, `+`, `-` or `@` would make
+    that cell a formula, so those leading characters are dropped. Both names
+    are free text (a manifest field, a folder's name)."""
+    text = " ".join(str(value or "").split()).lstrip("=+-@ ")
+    return text or fallback
+
+
 def write_config(paths: RunPaths, *, project_name: str, language_code: str, language_label: str,
                  reference_name: str, notes_user: str, model: str, prices: dict[str, float]) -> None:
     """The toolkit's `config.json` (templates/config.example.json), pointing
     every tool at this run's staged copies and nowhere else."""
+    language_code = language_tag(language_code)
+    notes_user = notes_user_name(notes_user)
     config = {
-        "project_name": project_name,
+        "project_name": plain_label(project_name),
         "target_dir": paths.target.as_posix(),
         "reference_dir": paths.reference.as_posix(),
-        "reference_name": reference_name or "Reference",
+        "reference_name": plain_label(reference_name, "Reference"),
         # A named language picks profiles/<code>; "auto" lets the toolkit read
         # a staged Settings.xml, then the script of the text.
         "language": language_code or "auto",
-        "language_label": language_label or "",
+        "language_label": plain_label(language_label),
         "notes_user": notes_user or "Bridge",
         "notes_language_tag": language_code or "",
         "output_dir": paths.output.as_posix(),
@@ -347,7 +376,7 @@ def load_profile(language_code: str) -> dict[str, Any]:
     """`profiles/<code>/profile.json`, else the generic one: the same choice
     `tools/project.py` makes, so the reader is told the rules the tools use."""
     root = toolkit_root() / "profiles"
-    code = (language_code or "generic").split("-")[0].lower()
+    code = (language_tag(language_code) or "generic").split("-")[0].lower() or "generic"
     folder = root / code
     if not (folder / "profile.json").is_file():
         folder = root / "generic"
@@ -802,6 +831,84 @@ def _save_checkpoint(path: Path, content_hash: str, chunks: dict[str, Any]) -> N
     os.replace(temporary, path)
 
 
+UNCHECKED_NOTES = {
+    "count": "Not checked against house style: the whole-translation count of both forms could not be run.",
+    "nearby": "Not checked against the neighbouring verses: the search for the meaning in them could not be run.",
+}
+
+
+def _mark_unchecked(row: dict[str, Any]) -> None:
+    """A finding whose evidence check did not happen: say so in its
+    explanation, and never leave it as a confident row nobody need look at."""
+    if row.get("confidence") == "High":
+        row["confidence"] = "Medium"
+    if row.get("decisionNeeded") == "No":
+        row["decisionNeeded"] = "Review"
+    note = UNCHECKED_NOTES.get(str(row.get("check")), "")
+    if note and note not in str(row.get("explanation") or ""):
+        row["explanation"] = f"{row.get('explanation') or ''} {note}".strip()
+
+
+def mostly_empty(verse_texts: Iterable[str]) -> bool:
+    """More than half of a book's verses have no text. Such a book is not
+    read: there is little to proofread, and the toolkit's `sweep.py` divides
+    by the median length ratio, which is zero for it (see NOTICE.md)."""
+    texts = [str(text or "").strip() for text in verse_texts]
+    return not texts or sum(1 for text in texts if not text) * 2 > len(texts)
+
+
+FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
+
+
+def spreadsheet_safe(value: Any) -> str:
+    """A cell a spreadsheet will show as text: one that would be read as a
+    formula is prefixed with an apostrophe, the rule Bridge's Paratext review
+    export already follows (`paratext_review._csv_cell`). A finding's words
+    come from a model or from the text, and either may begin with `=`."""
+    text = "" if value is None else str(value)
+    return "'" + text if text.startswith(FORMULA_START) else text
+
+
+def guard_delivered_files(folder: Path, book: str) -> list[str]:
+    """Make one book's delivered CSV and workbook safe to open, and say which
+    of the two had to be rewritten. `deliver.py` writes cells as they come: in
+    the CSV a cell beginning with `=`, `+`, `-` or `@` is a formula to a
+    spreadsheet, and in the workbook `openpyxl` stores one beginning with `=`
+    as a formula. The toolkit's file is left as shared; Bridge rewrites what
+    it delivered. The CSV gets the apostrophe prefix. In the workbook the cell
+    keeps its words and becomes text; the Summary sheet's own formulas (the
+    counts) are left alone. Bridge reads the findings from the CSV before
+    this runs, so its stored rows carry no prefix."""
+    rewritten: list[str] = []
+    issues = folder / f"{book.upper()}_QA_Issues.csv"
+    if issues.is_file():
+        with issues.open(encoding="utf-8-sig", newline="") as handle:
+            table = list(csv.reader(handle))
+        if any(cell.startswith(FORMULA_START) for line in table for cell in line):
+            with issues.open("w", encoding="utf-8-sig", newline="") as handle:
+                csv.writer(handle).writerows([spreadsheet_safe(cell) for cell in line] for line in table)
+            rewritten.append(issues.name)
+    workbook = folder / f"{book.upper()}_QA_Report.xlsx"
+    if workbook.is_file():
+        from openpyxl import load_workbook  # only here: the engine never needs it otherwise
+
+        loaded = load_workbook(workbook)
+        changed = False
+        for sheet in loaded.worksheets:
+            if sheet.title == "Summary":
+                continue
+            for line in sheet.iter_rows():
+                for cell in line:
+                    if cell.data_type == "f":
+                        cell.data_type = "s"
+                        changed = True
+        if changed:
+            loaded.save(workbook)
+            rewritten.append(workbook.name)
+        loaded.close()
+    return rewritten
+
+
 def _read_chunk(book: str, chunk: list[int], *, tools: ToolRunner, ask: Ask, standing: str, block: str,
                 reference_name: str, has_reference: bool, intro: str,
                 cancelled: Callable[[], bool]) -> dict[str, Any]:
@@ -836,6 +943,8 @@ def _read_chunk(book: str, chunk: list[int], *, tools: ToolRunner, ask: Ask, sta
     nearby = [i for i in doubtful if rows[i]["check"] == "nearby" and rows[i]["chapter"] != "Intro" and has_reference]
     counted = [i for i in doubtful if rows[i]["check"] == "count"]
     evidence: dict[int, str] = {}
+    decided: set[int] = set()
+    dropped: set[int] = set()
     if counted and not cancelled():
         # One call for every counted form of the chunk. `q.py c` takes
         # patterns, so each form is escaped to be counted as written.
@@ -878,7 +987,6 @@ def _read_chunk(book: str, chunk: list[int], *, tools: ToolRunner, ask: Ask, sta
                 f"your explanation: {row['explanation']}\nEVIDENCE:\n{evidence[i]}")
         verdicts = ask("proofreading_verdicts", verdicts_schema(), standing + "\n\n" + VERDICT_INSTRUCTIONS,
                        block + "\n\n== ROWS AWAITING A DECISION\n\n" + "\n\n".join(listing))
-        dropped: set[int] = set()
         for verdict in verdicts.get("verdicts") or []:
             if not isinstance(verdict, dict):
                 continue
@@ -888,6 +996,7 @@ def _read_chunk(book: str, chunk: list[int], *, tools: ToolRunner, ask: Ask, sta
                 continue
             if index not in evidence:
                 continue
+            decided.add(index)
             row = rows[index]
             if verdict.get("keep") is False:
                 dropped.add(index)
@@ -903,7 +1012,16 @@ def _read_chunk(book: str, chunk: list[int], *, tools: ToolRunner, ask: Ask, sta
             explanation = _one_line(verdict.get("explanation"))
             if explanation:
                 row["explanation"] = explanation
-        rows = [row for i, row in enumerate(rows) if i not in dropped]
+    # A row that asked for evidence and was never decided on it is still the
+    # reader's first impression: the count or the search could not be run (the
+    # tool failed, the book has no reference, the chunk asked for more searches
+    # than are run), or the second answer left it out. SKILL.md says not to
+    # report such a row unchecked, and dropping it would hide what the reader
+    # saw, so it is kept and says so: never High confidence, always for review.
+    for index in doubtful:
+        if index not in decided and index not in dropped:
+            _mark_unchecked(rows[index])
+    rows = [row for i, row in enumerate(rows) if i not in dropped]
     return {"rows": rows, "rejected": rejected, "reported": reported}
 
 
@@ -932,7 +1050,16 @@ def proofread_book(
             raise ProofreadingCancelled("Proofreading was cancelled.")
 
     report("Running the toolkit's checks", 0, total)
-    leads: dict[str, str] = {"sweep": require(tools("sweep", book))}
+    # `sweep.py` can die part-way: its comparison with the reference divides
+    # by the median length ratio and indexes the list of ratios, and neither is
+    # guarded (NOTICE.md). What it printed before that is still leads, so the
+    # book is read with those and says so, rather than not read at all.
+    swept = tools("sweep", book)
+    leads: dict[str, str] = {"sweep": swept.out}
+    if not swept.ok:
+        why = ((swept.err or "").strip().splitlines() or [f"exit code {swept.code}"])[-1]
+        outcome.notes.append(f"The toolkit's sweep stopped early ({why}); the book was read with the leads it had "
+                             "printed by then.")
     if has_reference:
         numbers = tools("numchk", book)
         leads["numchk"] = numbers.out if numbers.ok else ""
@@ -1012,5 +1139,11 @@ def proofread_book(
     if not merged.ok:
         outcome.notes.append("The cumulative notes file was not rebuilt.")
     outcome.rejected = len(rejected)
+    # Read first, then make the files safe to open: the stored rows are the
+    # findings as delivered, without a spreadsheet's apostrophe.
     outcome.rows = read_issues_csv(paths.book_output(book) / f"{book}_QA_Issues.csv")
+    try:
+        guard_delivered_files(paths.book_output(book), book)
+    except Exception as exc:  # the findings are safe in Bridge; say the files were left as written
+        outcome.notes.append(f"The delivered CSV and workbook could not be checked for formula cells ({exc}).")
     return outcome

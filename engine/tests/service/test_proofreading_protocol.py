@@ -254,3 +254,90 @@ def test_without_an_ai_provider_nothing_starts(tmp_path, collection):
     refused = call(engine, "proofreading.start")
     assert refused["success"] is False and "API key" in refused["error"]["message"]
     assert sent == [] and call(engine, "proofreading.status")["result"]["state"] == "idle"
+
+
+def test_a_mostly_empty_book_is_not_sent_and_the_others_are_read(tmp_path):
+    """A book whose verses are mostly empty has little to proofread, and the
+    toolkit's sweep fails on it. It is refused before anything is sent."""
+    books = {"jon": write_book(tmp_path / "jon", "jon", {"1": {"1": "", "2": "", "3": JONAH["1"]["2"]}}),
+             "rut": write_book(tmp_path / "rut", "rut", RUTH)}
+    link_books(books)
+    sent: list = []
+    engine = _engine(tmp_path, books["rut"], sent=sent)
+    _with_reference(engine, tmp_path)
+    finished = _run(engine)
+    assert [(b["bookId"], b["state"]) for b in finished["books"]] == [("rut", "done"), ("jon", "failed")]
+    assert finished["books"][1]["error"] == "More than half of this book's verses have no text, so it was not read."
+    assert all("BOOK: RUT" in s["input"] for s in sent) and sent  # nothing of Jonah reached the provider
+
+
+def test_the_export_writes_a_formula_like_cell_as_text(tmp_path, collection):
+    def reader(name, instructions, text):
+        if "BOOK: RUT" in text:
+            return {"rows": [row("1", "1", "பஞ்சம் உண்டானது", suggested="=1+1")], "rejected": []}
+        return {"rows": [], "rejected": []}
+
+    engine = _engine(tmp_path, collection["rut"], reader=reader)
+    _with_reference(engine, tmp_path)
+    assert _run(engine, books=["rut"])["state"] == "succeeded"
+    # In the app the finding is shown as the reader gave it.
+    stored = call(engine, "proofreading.rows", {"bookId": "rut"})["result"]["rows"]
+    assert "=1+1" in [r["suggested"] for r in stored]
+    out = tmp_path / "findings.csv"
+    assert call(engine, "proofreading.export", {"outputPath": str(out), "format": "csv"})["success"]
+    with out.open(encoding="utf-8-sig", newline="") as handle:
+        cells = [cell for line in csv.reader(handle) for cell in line]
+    assert "'=1+1" in cells and "=1+1" not in cells
+
+
+def test_a_book_that_lost_a_chapter_is_read_again_and_loses_that_chapters_findings(tmp_path, collection):
+    """The staged text of such a book can be word for word what it was: the
+    export keeps the source's words for a chapter the book no longer has. So
+    the unchanged-book skip is also asked which chapters the last run read."""
+    def reader(name, instructions, text):
+        if "BOOK: RUT" in text:
+            return {"rows": [row("1", "1", "பஞ்சம் உண்டானது"), row("2", "1", "நகோமிக்கு")], "rejected": []}
+        return {"rows": [], "rejected": []}
+
+    sent: list = []
+    engine = _engine(tmp_path, collection["rut"], reader=reader, sent=sent)
+    _with_reference(engine, tmp_path)
+    assert _run(engine, books=["rut"])["state"] == "succeeded"
+    first = call(engine, "proofreading.rows", {"bookId": "rut"})["result"]["rows"]
+    assert "2" in {r["chapter"] for r in first}
+    recorded = json.loads((collection["rut"] / ".bridge" / "collection.json").read_text(encoding="utf-8"))
+    assert recorded["proofreadRuns"][0]["chapters"] == ["1", "2"]
+
+    # Unchanged: skipped, as before.
+    sent.clear()
+    assert [b["state"] for b in _run(engine, books=["rut"])["books"]] == ["skipped"]
+    assert sent == []
+
+    # Chapter 2 goes; the book's source file, and so its staged text, is as it was.
+    (collection["rut"] / "rut" / "2.json").unlink()
+    (collection["rut"] / ".apps" / "translationCore" / "alignmentData" / "rut" / "2.json").unlink()
+    engine = _engine(tmp_path, collection["rut"], reader=reader, sent=sent)
+    again = _run(engine, books=["rut"])
+    assert [b["state"] for b in again["books"]] == ["done"] and [s["name"] for s in sent] == ["proofreading_rows"]
+    assert "== TRANSLATION, chapter 1 " in sent[0]["input"]
+    rows = call(engine, "proofreading.rows", {"bookId": "rut"})["result"]["rows"]
+    assert "பஞ்சம் உண்டானது" in [r["original"] for r in rows]
+    assert "நகோமிக்கு" not in [r["original"] for r in rows]  # the reader's row for the chapter that is gone
+
+
+def test_a_run_recorded_before_chapters_were_kept_is_still_skipped_by_its_hash(tmp_path, collection):
+    sent: list = []
+    engine = _engine(tmp_path, collection["rut"], sent=sent)
+    _with_reference(engine, tmp_path)
+    assert _run(engine, books=["rut"])["state"] == "succeeded"
+    # As the first build recorded it: no list of chapters.
+    for root in collection.values():
+        path = root / ".bridge" / "collection.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for run in data["proofreadRuns"]:
+            run.pop("chapters")
+        path.write_text(json.dumps(data), encoding="utf-8")
+    sent.clear()
+    engine = _engine(tmp_path, collection["rut"], sent=sent)
+    assert [b["state"] for b in _run(engine, books=["rut"])["books"]] == ["skipped"]
+    assert sent == []

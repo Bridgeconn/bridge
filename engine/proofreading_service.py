@@ -50,6 +50,7 @@ from tc_ai_bridge.project_import import (
 )
 from tc_ai_bridge.qa_report import write_report_rows
 from tc_ai_bridge.tc_project import ProjectError, TranslationCoreProject, peek_proofreading_results
+from tc_ai_bridge.usfm_verse import plain_text
 
 # One request reads up to three chapters with the reference beside them and
 # may reason for a while before answering.
@@ -395,6 +396,10 @@ class ProofreadingService:
             if wanted is not None and book["bookId"].lower() not in wanted:
                 continue
             rows.extend(peek_proofreading_results(book["path"]))
+        # A finding's words come from a model or from the text: a cell that a
+        # spreadsheet would read as a formula is written as text.
+        keys = [column["key"] for column in EXPORT_COLUMNS]
+        rows = [{key: toolkit.spreadsheet_safe(row.get(key)) for key in keys} for row in rows]
         try:
             return write_report_rows(output_path, fmt, rows, EXPORT_COLUMNS)
         except (OSError, ValueError) as exc:
@@ -422,6 +427,7 @@ class _Run:
         self.hashes: dict[str, str] = {}
         self.offsets: dict[str, int] = {}
         self.no_reference: set[str] = set()
+        self.chapters: dict[str, list[str]] = {}
         self.toolkit_fingerprint = toolkit.toolkit_fingerprint()
         self._usage_lock = threading.Lock()
 
@@ -451,7 +457,9 @@ class _Run:
                 # (its findings are kept in its own workbench), then the same
                 # source-preserving USFM an export writes.
                 materialize_lazy_project(book["path"])
-                text = engine._source_preserving_usfm(project=self._project(book["path"])) or ""
+                project = self._project(book["path"])
+                self.chapters[book["bookId"]] = [str(chapter) for chapter in project.chapters()]
+                text = engine._source_preserving_usfm(project=project) or ""
             if not text:
                 # Every other book is staged as imported, without being opened:
                 # it is there only for the whole-translation counts.
@@ -487,7 +495,16 @@ class _Run:
             ]).encode("utf-8")).hexdigest()
             self.hashes[book_id] = digest
             previous = self.previous.get(book_id) or {}
-            if not self.force and previous.get("state") == "done" and previous.get("contentHash") == digest:
+            # The staged text of a book whose chapter was removed can be the same
+            # as before (the export keeps the source's words for a chapter the
+            # book no longer has), so the hash alone would skip it and its old
+            # findings for that chapter would stay. A run records the chapters
+            # it read; a different list is a changed book. A record from before
+            # this was kept has no list and is judged by its hash, as it was.
+            recorded = previous.get("chapters")
+            same_chapters = recorded is None or list(recorded) == self.chapters.get(book_id, [])
+            if (not self.force and previous.get("state") == "done" and previous.get("contentHash") == digest
+                    and same_chapters):
                 plan[book_id] = {"skip": "Unchanged since it was last proofread.", "previous": previous}
                 continue
             if self.force:
@@ -506,11 +523,21 @@ class _Run:
         book_id, code = str(book["bookId"]), str(book["bookId"]).upper()
         project = self._project(str(book["path"]))
         sizes: dict[int, int] = {}
+        verses: list[str] = []
         for chapter in project.chapters():
             if str(chapter).isdigit():
-                sizes[int(chapter)] = sum(len(str(text)) for text in project.target_chapter(chapter).values())
-        if not sizes:
-            raise toolkit.ProofreadingError("This book has no chapters to read.")
+                texts = [str(text) for text in project.target_chapter(chapter).values()]
+                sizes[int(chapter)] = sum(len(text) for text in texts)
+                verses += [plain_text(text) for text in texts]
+        unreadable = ("This book has no chapters to read." if not sizes
+                      else "More than half of this book's verses have no text, so it was not read."
+                      if toolkit.mostly_empty(verses) else "")
+        if unreadable:
+            # Before anything is sent, and before the toolkit's sweep, which
+            # fails on such a book. Its queue is told, so the next book is the
+            # one it hands out next.
+            self.tools("queue", "skip", code, unreadable)
+            raise toolkit.ProofreadingError(unreadable)
         offset = 3600
         queued = self.tools("queue", "next")
         handed = re.match(r"NEXT (\S+) (\d+)", queued.out.strip())
@@ -581,6 +608,7 @@ class _Run:
             **summary, "contentHash": self.hashes.get(book_id, ""), "pipeline": toolkit.PIPELINE_VERSION,
             "toolkit": self.toolkit_fingerprint, "model": self.model, "provider": self.provider,
             "reference": self.reference["label"], "hasReference": code not in self.no_reference,
+            "chapters": self.chapters.get(book_id, []),
             "chunks": outcome.chunks, "reported": outcome.reported, "rejected": outcome.rejected,
             "unplaced": outcome.unplaced, "overlapping": outcome.overlapping, "notes": outcome.notes,
             "usage": usage,

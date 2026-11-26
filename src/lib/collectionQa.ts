@@ -58,12 +58,21 @@ export async function startCollectionQa(force = false, checks: readonly string[]
   if (publish(snapshot)) timer = setTimeout(() => void poll(snapshot.jobId, ticket), POLL_MS);
 }
 
+// An answer that arrives after the run was let go of (the project closed:
+// stopCollectionQa) or re-read (a refresh or a new start) is dropped (#505's
+// review, 2026-11-26). Published late it would mark a run as active with
+// nothing polling it, and the app, which is read-only while one is, would stay
+// held.
 export async function pauseCollectionQa(paused: boolean): Promise<void> {
-  publish(await bridge.collectionPauseChecks(paused));
+  const ticket = sequence;
+  const snapshot = await bridge.collectionPauseChecks(paused);
+  if (ticket === sequence) publish(snapshot);
 }
 
 export async function cancelCollectionQa(): Promise<void> {
-  publish(await bridge.collectionCancelChecks());
+  const ticket = sequence;
+  const snapshot = await bridge.collectionCancelChecks();
+  if (ticket === sequence) publish(snapshot);
 }
 
 /** "40 s", "3 min 20 s", "1 h 05 min": the panel's and the strip's one

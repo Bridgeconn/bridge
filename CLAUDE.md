@@ -130,8 +130,9 @@ sent to `hub.log`, never to the protocol pipe. It also re-invokes itself with
 `--proofread-tool <tool> [args]` (#505, DECISIONS 2026-11-25): one tool of the
 bundled proofreading toolkit per process, only during a proofreading run a
 reviewer started, handled at the top of `main.py` before the engine is imported
-so the tool's stdout is the tool's alone (`proofread_tool_main.py`). About 2.6 s
-of start-up per call from the frozen exe. Verify the frozen pair directly (not just source)
+so the tool's stdout is the tool's alone (`proofread_tool_main.py`). About 1.2 s
+of start-up per call from the frozen exe on an idle machine, up to 3 s on a busy
+one. Verify the frozen pair directly (not just source)
 with `python scripts/smoke_sidecars.py engine/dist/bridge-engine.exe`.
 
 `src-tauri/` has both: `cargo check`/`cargo build` for compile success, and a

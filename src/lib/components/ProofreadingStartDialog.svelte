@@ -45,6 +45,11 @@
       preflight = await bridge.proofreadingPreflight();
       error = "";
     } catch (e) {
+      // What was on screen is no longer known to be true: after a reference
+      // was changed and this re-read failed, the old one would still be shown
+      // and Start would run against the new one. Nothing is shown, and Start
+      // waits for a re-read that works.
+      preflight = null;
       error = e instanceof Error ? e.message : String(e);
     } finally {
       loading = false;
@@ -121,6 +126,11 @@
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     {#if loading && !preflight}
       <p class="note first">Checking what a run needs…</p>
+    {:else if !preflight}
+      <p class="note first">
+        What a run needs could not be read.
+        <button type="button" class="ui-btn small" on:click={load}>Try again</button>
+      </p>
     {:else if preflight}
       <dl class="facts">
         <dt>AI</dt>

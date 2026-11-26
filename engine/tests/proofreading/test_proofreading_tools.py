@@ -190,3 +190,107 @@ def test_a_cancel_stops_at_a_step_and_keeps_what_was_read(tmp_path):
     toolkit.proofread_book("RUT", sizes, paths=paths, tools=tools, ask=ask, language_label="Tamil",
                            reference_name="Reference", language_code="ta", has_reference=True, content_hash="h1")
     assert asked == ["proofreading_rows"]
+
+
+class _WithoutTool:
+    """The real tools, except that one of them fails."""
+
+    def __init__(self, tools, broken: str) -> None:
+        self.tools, self.broken = tools, broken
+
+    def __call__(self, tool, *args, env=None):
+        if tool == self.broken:
+            return toolkit.ToolResult(tool, 2, "", "Traceback ...\nRuntimeError: the tool broke")
+        return self.tools(tool, *args, env=env)
+
+
+def test_a_finding_whose_evidence_check_could_not_run_is_kept_and_says_so(tmp_path):
+    """SKILL.md says to count both forms before a spelling finding is
+    reported. When the count cannot be run the row is not dropped and not left
+    as a confident row nobody need look at."""
+    paths, tools = staged_run(tmp_path / "run", {"RUT": RUTH}, reference=reference_folder(tmp_path / "ref"))
+    calls: list[tuple[str, str]] = []
+    rows = [row("2", "2", "ரூத் நகோமியிடம்", suggested="ரூத்து நகோமியிடம்", check="count", confidence="High",
+                decision="No"),
+            row("1", "1", "பஞ்சம் உண்டானது", confidence="High", decision="No")]
+    outcome = toolkit.proofread_book(
+        "RUT", SIZES, paths=paths, tools=_WithoutTool(tools, "q"), ask=_reader(rows, calls), language_label="Tamil",
+        reference_name="Reference", language_code="ta", has_reference=True, content_hash="h1")
+    assert [name for name, _ in calls] == ["proofreading_rows"]  # no evidence, so no second request
+    found = {r["original"]: r for r in outcome.rows}
+    unchecked = found["ரூத் நகோமியிடம்"]
+    assert (unchecked["confidence"], unchecked["decisionNeeded"]) == ("Medium", "Review")
+    assert unchecked["explanation"].endswith(toolkit.UNCHECKED_NOTES["count"])
+    # A row that asked for no evidence is left exactly as the reader gave it.
+    plain = found["பஞ்சம் உண்டானது"]
+    assert (plain["confidence"], plain["decisionNeeded"]) == ("High", "No")
+    assert "Not checked" not in plain["explanation"]
+
+
+def test_a_row_the_second_answer_leaves_out_is_marked_too(tmp_path):
+    paths, tools = staged_run(tmp_path / "run", {"RUT": RUTH}, reference=reference_folder(tmp_path / "ref"))
+
+    def ask(name, schema, instructions, text):
+        if name == "proofreading_verdicts":
+            return {"verdicts": []}  # evidence was given; no decision came back
+        return {"rows": [row("2", "2", "ரூத் நகோமியிடம்", suggested="ரூத்து", check="count", confidence="High")]
+                if "== INTRODUCTION" in text else [], "rejected": []}
+
+    outcome = toolkit.proofread_book(
+        "RUT", SIZES, paths=paths, tools=tools, ask=ask, language_label="Tamil", reference_name="Reference",
+        language_code="ta", has_reference=True, content_hash="h1")
+    kept = [r for r in outcome.rows if r["original"] == "ரூத் நகோமியிடம்"]
+    assert len(kept) == 1 and kept[0]["confidence"] == "Medium"
+    assert toolkit.UNCHECKED_NOTES["count"] in kept[0]["explanation"]
+
+
+def test_the_delivered_files_hold_no_live_formula(tmp_path):
+    """A model's words, written as they come, are a formula to a spreadsheet
+    when they begin with `=`. The toolkit's files are made safe after it has
+    written them; the rows Bridge keeps are the findings as delivered."""
+    from openpyxl import load_workbook
+
+    paths, tools = staged_run(tmp_path / "run", {"RUT": RUTH}, reference=reference_folder(tmp_path / "ref"))
+    hostile = '=HYPERLINK("http://example.invalid","click")'
+    rows = [{**row("1", "1", "பஞ்சம் உண்டானது", suggested=hostile), "explanation": "+1 this is a sum",
+             "reference_note": "@ref"}]
+    outcome = toolkit.proofread_book(
+        "RUT", SIZES, paths=paths, tools=tools, ask=_reader(rows), language_label="Tamil",
+        reference_name="Reference", language_code="ta", has_reference=True, content_hash="h1")
+    kept = next(r for r in outcome.rows if r["original"] == "பஞ்சம் உண்டானது")
+    assert (kept["suggested"], kept["explanation"], kept["referenceNote"]) == (hostile, "+1 this is a sum", "@ref")
+
+    out = paths.book_output("RUT")
+    import csv
+
+    with (out / "RUT_QA_Issues.csv").open(encoding="utf-8-sig", newline="") as handle:
+        cells = [cell for line in csv.reader(handle) for cell in line]
+    assert "'" + hostile in cells and "'+1 this is a sum" in cells and "'@ref" in cells
+    assert not [cell for cell in cells if cell.startswith(toolkit.FORMULA_START)]
+
+    book = load_workbook(out / "RUT_QA_Report.xlsx")
+    issues = [cell for line in book["Issues"].iter_rows() for cell in line]
+    assert hostile in [cell.value for cell in issues]          # its words are kept...
+    assert not [cell for cell in issues if cell.data_type == "f"]  # ...as text, not as a formula
+    # The summary's own counting formulas are what the toolkit meant them to be.
+    assert [cell for line in book["Summary"].iter_rows() for cell in line if cell.data_type == "f"]
+    book.close()
+    # Nothing to guard: the files are left exactly as the toolkit wrote them.
+    assert toolkit.guard_delivered_files(out, "RUT") == []
+
+
+def test_a_sweep_that_dies_partway_still_gives_its_leads(tmp_path):
+    """`sweep.py` indexes an empty list when the reference has the book but
+    none of its verses. What it printed before that is used, and the book's
+    report says the sweep stopped early."""
+    reference = reference_folder(tmp_path / "ref", {"RUT": {"9": {"1": "A chapter the translation does not have."}}})
+    paths, tools = staged_run(tmp_path / "run", {"RUT": RUTH}, reference=reference)
+    assert not tools("sweep", "RUT").ok
+    calls: list[tuple[str, str]] = []
+    outcome = toolkit.proofread_book(
+        "RUT", SIZES, paths=paths, tools=tools, ask=_reader([row("1", "1", "பஞ்சம் உண்டானது")], calls),
+        language_label="Tamil", reference_name="Reference", language_code="ta", has_reference=True,
+        content_hash="h1")
+    assert any("sweep stopped early" in note and "IndexError" in note for note in outcome.notes)
+    assert "double spaces: 1" in calls[0][1]  # the leads printed before the crash were sent
+    assert "பஞ்சம் உண்டானது" in [r["original"] for r in outcome.rows]
