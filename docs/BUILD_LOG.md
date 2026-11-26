@@ -28624,3 +28624,44 @@ still running.
 decisions taken in the maintainer's absence, and the pre-release amendment in
 `CLAUDE.md` now that a team works on real projects, are for him on his return.
 Bridge has not been run on a real macOS or Linux desktop.
+
+## 2026-11-26 — After the 0.27.0 release: #505 closed, merged branches deleted, a report from macOS and Linux users
+
+**#505 closed.** At Joel's word: the replies the issue was waiting for were
+given to him in person. The closing comment lists what shipped, what was never
+part of it (sending findings to Paratext, applying a finding, language rules
+beyond Telugu) and the one known limit (findings checked on one short book).
+Done on the project board. Each of those items would be a new issue.
+
+**macOS and Linux.** Joel reported that some users run Bridge on macOS and on
+Linux and told him it is fine. Which version they run and what they exercised
+is not recorded, so `docs/QA_TEST_MATRIX.md` E06 stays PARTIAL with that note
+added, and `CLAUDE.md` now says the same in place of "never run on a real
+macOS/Linux desktop".
+
+**Branches.** Joel asked for every feature branch worked on so far to be
+deleted, keeping `copyMain`. Each branch was checked against `origin/main`
+first, and there was no open pull request.
+
+- Deleted locally and on GitHub, all Joel's and all fully merged:
+  `ai-review-cancel-513`, `ai-review-refresh-511`, `align-with-ai-517`,
+  `chatgpt-signin`, `dashboard-bars-and-reopen`, `editorPage`,
+  `fix/alignment-realign-source-order`, `issue-recheck-restore-515`,
+  `paratext-cards`, `paratext-notes`, `reference-tabs-519`, `uifixes-v25`,
+  `usfm-editor-507`.
+- Deleted locally only (merged, never pushed under these names):
+  `defender-runner`, `relax-signing-gate`, `release-0.24.0`, `release-0.24.1`,
+  `release-0.24.3`.
+- Deleted on GitHub only (Joel's, merged): `dashboardUi`, `ui-change`.
+- Deleted though not an ancestor of `main`, because `git cherry` showed their
+  one commit's change is already in `main`: `fix-442-deletion-space`
+  (`4d037b30`), `fix-444-review-queue-confirm` (`ce490d37`),
+  `fix-446-applied-snapshot` (`014fd9b6`), `fix-tauri-versions` (`ae5003ad`,
+  local and remote).
+- Kept: `main`; `copyMain` (asked for); `copyEditor` and `mergeToMain` (they
+  read as copies or utility branches like `copyMain`, not feature branches);
+  `paratext-finish` (three commits whose changes are **not** in `main`); the
+  local `UI-fixes` (its tip is the maintainer's commit); and every branch of
+  another author (`auto-cross-verse`, `fix/auto-align-bridge-words`,
+  `indic-qa-editor`, `local-qa-speed`, `release/mac-linux`,
+  `wip/issue-214-window-ai-propose`).

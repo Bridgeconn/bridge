@@ -23,9 +23,11 @@ existing logic was rewritten, only wrapped behind one protocol.
 
 Windows (`x86_64-pc-windows-msvc`) is the only verified target so far.
 `release.yml` also builds macOS (Apple Silicon, ad-hoc signed) and Linux
-bundles since 2026-10-12 (#250 on selvabenz/Bridge), smoke-tested in CI but
-never run on a real macOS/Linux desktop; #251–#253 there list the known
-runtime gaps (secret store, data folder, shutdown signal).
+bundles since 2026-10-12 (#250 on selvabenz/Bridge), smoke-tested in CI.
+Joel reported on 2026-11-26 that some users run Bridge on macOS and Linux and
+find it fine; which version, and what they exercised, is not recorded, so
+nothing there counts as verified. #251–#253 there list the known runtime gaps
+(secret store, data folder, shutdown signal).
 
 ## Commands
 
