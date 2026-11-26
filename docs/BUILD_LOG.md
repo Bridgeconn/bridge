@@ -28528,3 +28528,54 @@ restore the migration-test requirement and delete the amendment "when Bridge
 has its first real user". Joel reports the team is already working on projects
 in Bridge. The amendment was left as it is; whether it still holds is the
 maintainer's decision.
+
+## 2026-11-26 — Release 0.27.0: version bumped, tag pushed
+
+**Approval.** Joel sent the list of what the release holds to the team group for
+the project head's approval, and reported that it was given. The maintainer is
+on leave; the three decisions taken for the team in his absence (the bundled
+proofreading toolkit, its own USFM reading, and editing headings, psalm titles
+and introduction lines from the editor) ship in this release before his review,
+as Joel was told and as the message to the group said.
+
+**What it holds since 0.26.0.** The proofreading run (#505); the ChatGPT
+sign-in (#506); headings, psalm titles, the introduction and the marker toolbar
+in the editor (#507); several reference tabs (#519); Align with AI over several
+chapters or the whole book (#517); the AI review fixes (#511, #513, #515); the
+Cross-verse and Align with AI fixes (#521, #522); both run bars on a single
+book, the tighter header, reopening on the dashboard and the cleared book list
+(#505, #525, #527).
+
+**Before the bump.** `ci.yml` was green on `main` at `9c8b0e8`, the commit the
+bump sits on: the full engine suite, the frontend and the Rust jobs where they
+applied. The tagless dry run of `release.yml` had passed on Windows, macOS and
+Linux earlier the same day, and a project made with the 0.26.0 engine had been
+opened by the current one with its work kept (both entries above).
+
+**Version.** 0.26.0 to 0.27.0 in the same nine files as the 0.26.0 release
+commit (`6ea7d40`). The line in `src-tauri/Cargo.lock` had already been rewritten
+by the editor's Rust tooling when `Cargo.toml` changed; the diff is that one line.
+
+**Run on the bumped tree.** `tests/service/test_version_consistency.py` (6
+passed); `npm run check` (0 errors, 0 warnings); `npm run test` (148 files, 1526
+passed); `npm run build`; `cargo check`; `cargo test` (23 passed). The full
+engine suite was not run again for a change of version strings; CI runs it on
+this commit.
+
+**Tag.** `v0.27.0` on this commit starts `release.yml`, which builds the three
+bundles and drafts the release. Publishing the draft is left to Joel.
+
+**Not verified before this release.**
+
+- Two fixes of the same day were not seen in the desktop app by anyone when the
+  tag was pushed: the dialogs' buttons back at their normal size (`c0b9962`),
+  and the dashboard no longer showing the previous project's book list (#527).
+- The in-app update from an installed 0.26.0 to 0.27.0, and one of the team's
+  real projects opened by the new version. The upgrade check used the engine
+  from source and a small new project.
+- The proofreading findings: one short book, judged by eye.
+- Bridge on a real macOS or Linux desktop; a whole proofreading run there.
+- Two devices on different versions syncing through a team hub.
+
+**To say in the release notes.** A project opened by 0.27.0 cannot be opened by
+0.26.0 again (workbench v13), so a team updates together.
