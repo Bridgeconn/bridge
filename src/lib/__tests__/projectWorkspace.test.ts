@@ -4,7 +4,7 @@ import { localUserId } from "../stores";
 import { REFERENCE_EXTRA_IDS, sidePanels, setSidePanel, resetPanelLayout } from "../editorPrefs";
 import { leaves } from "../alignmentLayout";
 import { editorTree, defaultEditorTree } from "../editorDocking";
-import { bindWorkspace, savedWorkspace, savedBookWorkspace, rememberLocation, rememberScroll, flushWorkspace, releaseWorkspace, recordProjectOpen, recentProjects, resetWorkspaceLayout } from "../projectWorkspace";
+import { bindWorkspace, savedWorkspace, savedBookWorkspace, rememberLocation, rememberDashboard, reopensOnDashboard, rememberScroll, flushWorkspace, releaseWorkspace, recordProjectOpen, recentProjects, resetWorkspaceLayout } from "../projectWorkspace";
 import type { ProjectInfo, RegisteredProject } from "../types/finding";
 const info = (id: string, book = "gen"): ProjectInfo => ({ path: `C:/${id}/${book}`, projectId: `${id}-${book}`, collectionId: id,
   bookId: book, bookName: book, targetLanguage: "Tamil", tcVersion: "3", chapters: ["1", "2"], checkTypes: {} });
@@ -114,4 +114,37 @@ it("Recent uses only this user's successful activity, filters unavailable rows a
   expect(recentProjects(projects).map(p => p.collectionId)).toEqual(["A"]);
   expect(recentProjects([row("A", { missing: true })])).toEqual([]);
   localUserId.set("bob"); expect(recentProjects(projects)).toEqual([]);
+});
+// #525: a project left on its dashboard (the book closed with the x beside its
+// name) opens there again; one left inside a book opens inside it.
+it("remembers, per project, that it was left on its dashboard, and keeps every book's reading place", () => {
+  const a = info("A"), b = info("B");
+  expect(reopensOnDashboard(bindWorkspace(a))).toBe(true); // never opened: the dashboard
+  rememberLocation(a, "2", "3a", "editor");
+  bindWorkspace(b); rememberLocation(b, "1", "1", "editor");
+  expect(reopensOnDashboard(bindWorkspace(a))).toBe(false); // left inside a book, as before
+  rememberDashboard(a, true); // the book is closed to the dashboard
+  expect(reopensOnDashboard(bindWorkspace(b))).toBe(false); // B keeps its own state
+  const saved = bindWorkspace(a);
+  expect(reopensOnDashboard(saved)).toBe(true);
+  expect(saved).toMatchObject({ chapter: "2", verse: "3a" });
+  expect(savedBookWorkspace(a)).toMatchObject({ chapter: "2", verse: "3a" });
+  rememberDashboard(a, false); // the book is opened from the dashboard
+  releaseWorkspace();
+  expect(reopensOnDashboard(savedWorkspace(a))).toBe(false);
+});
+it("keeps the dashboard note per user, drops one for a book that is not bound, and reads an older workspace as inside its book", () => {
+  const a = info("A"), b = info("B");
+  bindWorkspace(a); rememberLocation(a, "2", "3a", "editor");
+  rememberDashboard(b, true); // a late call for another project
+  flushWorkspace();
+  expect(savedWorkspace(a)?.onDashboard).toBeUndefined(); // as a workspace saved before #525
+  expect(reopensOnDashboard(savedWorkspace(a))).toBe(false);
+  expect(savedWorkspace(b)).toBeNull();
+  rememberDashboard(a, true);
+  localUserId.set("bob");
+  expect(reopensOnDashboard(bindWorkspace(a))).toBe(true); // Bob never opened it
+  rememberLocation(a, "1", "1", "editor");
+  localUserId.set("alice");
+  expect(savedWorkspace(a)).toMatchObject({ onDashboard: true, chapter: "2", verse: "3a" });
 });

@@ -28295,3 +28295,60 @@ touching; the book list and the report card still fit under it; the bar's
 buttons are still easy to hit; a real Collection QA run and a real proofreading
 run on a single book start, finish and show their result on the bar and on the
 book's row.
+
+## 2026-11-26 — A project left on its dashboard opens on its dashboard (#525)
+
+**Why.** Joel: a book closed with the × beside its name goes to the dashboard,
+but after closing the app, or switching to another project and back, the
+project opened inside that closed book again. It should open where it was left,
+and each project should remember that for itself. Filed as #525 at his word.
+
+**Cause.** `handleOpened` in `App.svelte` chose the dashboard only when the
+project had no saved workspace (`showingDashboard = !saved`). The saved
+workspace (#458) holds the last reading place and nothing about which screen was
+showing, so any project that had ever been inside a book restored into it.
+
+**What changed.**
+
+- `projectWorkspace.ts`: the snapshot has an optional `onDashboard`.
+  `rememberDashboard(project, on)` writes it for the bound project only (a late
+  call for another project is dropped, as `rememberLocation` does), and
+  `reopensOnDashboard(saved)` is the one decision: the dashboard when there is no
+  saved workspace or it was left on the dashboard, the saved book otherwise.
+- `App.svelte`: one reactive line records `showingDashboard` whenever it changes
+  while a project is open, so every way onto or off the dashboard is covered, not
+  only the × button. `handleOpened` uses `reopensOnDashboard` and skips the
+  restore when it says dashboard.
+- The reading place of every book is untouched, so opening the book from the
+  dashboard still returns to its chapter and verse, and its tabs.
+- It is kept where the workspace already is: browser storage, one entry per
+  project (collection id, else project id, else path) and per user. No engine
+  change, no schema change.
+
+**Behaviour that follows, said plainly.**
+
+- A workspace saved before this has no mark and opens inside its book, as before.
+- A project opened for the first time and closed without entering a book now
+  opens on its dashboard the second time too. Before, the empty workspace saved
+  on close sent the second open into the first book.
+- When a project opens on its dashboard, the engine has the book the project was
+  opened with, not necessarily the one that was closed last: switching to it
+  would cost a second `project.open` before the dashboard appears. The report
+  card may therefore name a different book than when the project was left.
+- If restoring the saved place fails, the app falls back to the dashboard as
+  before, and that is now remembered, so the next open goes to the dashboard
+  without trying again.
+
+**Run.** `npm run check` (0 errors, 0 warnings), `npm run test` (148 files, 1526
+tests, all passing; 2 new in `projectWorkspace.test.ts`: per project, per user,
+reading places kept, a late call dropped, an older workspace read as inside its
+book), `npm run build`. No engine or Rust file changed.
+
+**Not verified.** `App.svelte` has no test harness, so the two edits there (the
+reactive line and `handleOpened`) are believed from reading, not watched. For
+Joel in the desktop app: open a book, close it with the ×, close Bridge, open
+it and the project: the dashboard. The same after switching to another project
+and back. Open a book, close Bridge while inside it, open again: inside the
+book, same verse. Two projects, one left on its dashboard and one inside a book:
+each opens as it was left. From the dashboard, open the book that was closed: it
+returns to its chapter and verse.
