@@ -52,7 +52,8 @@
     const failed = books.filter((b) => b.state === "failed").length;
     const latest = books.map((b) => b.completedAt).filter((at): at is string => Boolean(at)).sort().pop();
     if (!latest && checked === 0 && failed === 0) return "never run";
-    const parts = [`${checked} of ${total || books.length} books checked`];
+    const count = total || books.length;
+    const parts = [`${checked} of ${count} ${count === 1 ? "book" : "books"} checked`];
     if (failed) parts.push(`${failed} failed`);
     parts.push(latest ? `last run ${new Date(latest).toLocaleString()}` : "never run");
     return parts.join(" · ");
@@ -85,7 +86,7 @@
       {#if snapshot && active}
         <span class="status" aria-live="polite">
           {snapshot.state === "cancelling" ? "Cancelling" : snapshot.paused ? "Pausing after this book" : runningBook ? `Checking ${runningBook.bookName || runningBook.bookId.toUpperCase()}` : "Starting"}
-          · {snapshot.completedBooks}/{snapshot.totalBooks} books · {duration(snapshot.elapsedSeconds)} elapsed{#if snapshot.estimatedRemainingSeconds !== null}{` · about ${duration(snapshot.estimatedRemainingSeconds)} left`}{/if}
+          · {snapshot.completedBooks}/{snapshot.totalBooks} {snapshot.totalBooks === 1 ? "book" : "books"} · {duration(snapshot.elapsedSeconds)} elapsed{#if snapshot.estimatedRemainingSeconds !== null}{` · about ${duration(snapshot.estimatedRemainingSeconds)} left`}{/if}
         </span>
       {:else if summary}
         <span class="status">{summary}</span>
@@ -125,8 +126,8 @@
 </section>
 
 <style>
-  .collection-qa { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-  .head { display: flex; align-items: center; justify-content: space-between; gap: 12px 16px; flex-wrap: wrap; }
+  .collection-qa { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .head { display: flex; align-items: center; justify-content: space-between; gap: 6px 16px; flex-wrap: wrap; }
   .title { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex: 1 1 260px; }
   h3 { margin: 0; font-size: var(--fs-sm); font-weight: 650; color: var(--text); white-space: nowrap; }
   .status { min-width: 0; color: var(--text-2); font-size: var(--fs-3xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

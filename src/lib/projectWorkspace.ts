@@ -17,6 +17,10 @@ export interface WorkspaceSnapshot {
   version: 1; book: string; chapter: string; verse: string; view: "editor" | "review";
   books?: Record<string, { chapter: string; verse: string; scroll: number; view: "editor" | "review" } & BookSession>;
   scroll: number; tree?: LayoutNode | null; panels: SidePanels; order: SidePanelId[];
+  /** #525: the project was left on its dashboard (the book closed with the ×
+   *  beside its name, or never entered), so it opens there again. Absent in a
+   *  workspace saved before this existed, which opens inside its book. */
+  onDashboard?: boolean;
 }
 const identity = (p: { collectionId?: string; projectId?: string; path: string }) => p.collectionId || p.projectId || p.path;
 const key = (kind: string, id = "") => `bridge.${kind}.v1.${encodeURIComponent(get(localUserId) || "local")}.${encodeURIComponent(id)}`;
@@ -97,6 +101,19 @@ export function rememberLocation(p: ProjectInfo, chapter: string, verse: string 
     books: { ...active.snapshot.books, [p.bookId.toLowerCase()]: { ...active.snapshot.books?.[p.bookId.toLowerCase()], chapter, verse, view, scroll } } };
   flushWorkspace();
   if (restore) restoreBookSession(p);
+}
+/** #525: note whether the open project is showing its dashboard. Kept with the
+ *  project's workspace, so each project (and each user) remembers its own; the
+ *  reading place of every book is left as it was. */
+export function rememberDashboard(p: ProjectInfo, onDashboard: boolean) {
+  if (!active || active.project.path !== p.path || Boolean(active.snapshot.onDashboard) === onDashboard) return;
+  active.snapshot = { ...active.snapshot, onDashboard };
+  flushWorkspace();
+}
+/** #525: where a project opens: on its dashboard when it has no saved
+ *  workspace or was left on the dashboard, inside its saved book otherwise. */
+export function reopensOnDashboard(saved: WorkspaceSnapshot | null): boolean {
+  return !saved || saved.onDashboard === true;
 }
 export function rememberScroll(path: string, chapter: string, scroll: number) {
   if (!active || active.project.path !== path || active.snapshot.chapter !== chapter) return;

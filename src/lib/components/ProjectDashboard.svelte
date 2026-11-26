@@ -95,7 +95,10 @@
   // a checked book is no taller than an unopened one.
   let expandedProgress = new Set<string>();
 
-  $: isCollection = books.length > 1;
+  // The two run bars are for any project with a book, one book included
+  // (2026-11-26, Joel): the engine runs the open book alone when it has no
+  // siblings. Not before the list has loaded, so a bar never says "0 books".
+  $: hasBooks = books.length > 0;
   $: subtitleParts = subtitle.split(" · ").map((part) => part.trim()).filter(Boolean);
   // The job the dashboard started, as the report card shows it.
   $: job = qaRunningPath ? $checkingProgress : null;
@@ -359,7 +362,7 @@
         <UiIcon name="report" />Project report
       </button>
     </div>
-    {#if isCollection}
+    {#if hasBooks}
       <div class="qa-bar"><CollectionQaPanel bookCount={books.length} checkRunning={qaBusy} /></div>
       <!-- #505: the proofreading run, its own bar straight under Collection QA. -->
       <div class="qa-bar"><ProofreadingPanel {projectName} bookCount={books.length} checkRunning={qaBusy} /></div>
@@ -749,7 +752,7 @@
   /* The header card and the two content cards are the only scroll owners'
      parents: each card body scrolls on its own, the screen never does. */
   .screen { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 14px; padding: 16px 24px 18px; box-sizing: border-box; overflow: hidden; background: var(--bg); }
-  .header { flex-shrink: 0; display: flex; flex-direction: column; gap: 12px; padding: 14px 20px; }
+  .header { flex-shrink: 0; display: flex; flex-direction: column; gap: 8px; padding: 12px 20px; }
   .header-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-width: 0; }
   .identity { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; min-width: 0; }
   h1 { margin: 0; font-size: var(--fs-2xl); line-height: 1.25; color: var(--text); overflow-wrap: anywhere; }
@@ -757,7 +760,10 @@
   /* The book-list icon style (no border, the icon's colour) with its label. */
   .ui-btn.quiet.project-report { flex-shrink: 0; color: var(--accent); }
   .ui-btn.quiet.project-report:hover:not(:disabled) { border-color: transparent; }
-  .qa-bar { padding-top: 12px; border-top: 1px solid var(--border); }
+  /* A bar is one compact row: its buttons are the small size, so the two
+     bars together stay shorter than the header row above them. */
+  .qa-bar { padding-top: 8px; border-top: 1px solid var(--border); }
+  .qa-bar :global(.ui-btn) { min-height: 28px; padding-top: 3px; padding-bottom: 3px; }
 
   .panels { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(360px, 5fr) minmax(0, 7fr); gap: 14px; }
   .books-card, .report-card { display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; }
@@ -955,8 +961,8 @@
   }
   @media (max-height: 700px) {
     .screen { padding-top: 10px; gap: 10px; }
-    .header { padding: 10px 18px; gap: 8px; }
-    .qa-bar { padding-top: 8px; }
+    .header { padding: 8px 18px; gap: 6px; }
+    .qa-bar { padding-top: 6px; }
     h1 { font-size: var(--fs-xl); }
   }
   @media (prefers-reduced-motion: reduce) {

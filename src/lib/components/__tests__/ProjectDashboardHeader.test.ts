@@ -81,9 +81,22 @@ describe("ProjectDashboard header", () => {
     expect(within(paratext).getByRole("button", { name: "Choose folder…" })).toBeEnabled();
   });
 
-  it("hosts no Collection QA bar for a single book", () => {
-    mount([book("rut", "ரூத்")]);
+  // 2026-11-26 (Joel): a project of one book has both bars too; the engine
+  // runs the open book alone. No bar before the book list has loaded.
+  it("hosts both bars for a single book, and neither before the books are listed", async () => {
+    const empty = mount([]);
     expect(screen.queryByRole("region", { name: "Collection QA" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Proofreading" })).toBeNull();
+    empty.unmount();
+
+    mount([book("rut", "ரூத்")]);
+    const collectionBar = await screen.findByRole("region", { name: "Collection QA" });
+    const bar = await screen.findByRole("region", { name: "Proofreading" });
+    expect(collectionBar.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(collectionBar).getByRole("button", { name: "Check" })).toBeInTheDocument();
+    expect(within(bar).getByRole("button", { name: "Proofread" })).toBeInTheDocument();
+    stopCollectionQa();
+    stopProofreading();
   });
 
   it("hosts the Collection QA bar for a collection", async () => {
@@ -96,11 +109,7 @@ describe("ProjectDashboard header", () => {
   });
 
   // #505: the proofreading run has its own bar, straight under Collection QA.
-  it("hosts the Proofreading bar under Collection QA for a collection, and not for a single book", async () => {
-    const single = mount([book("rut", "ரூத்")]);
-    expect(screen.queryByRole("region", { name: "Proofreading" })).toBeNull();
-    single.unmount();
-
+  it("hosts the Proofreading bar under Collection QA for a collection", async () => {
     mount([book("rut", "ரூத்"), book("gen", "ஆதியாகமம்")]);
     const collectionBar = await screen.findByRole("region", { name: "Collection QA" });
     const bar = await screen.findByRole("region", { name: "Proofreading" });

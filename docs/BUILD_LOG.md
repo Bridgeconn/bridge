@@ -28246,3 +28246,109 @@ app first is not recorded, so nothing here is ticked as seen there. The guarded
 workbook has still not been opened in Excel itself. Everything listed as not
 verified on 2026-11-25 stands, the macOS and Linux release smoke test above all:
 **no release until that has passed once.**
+
+## 2026-11-26 — Both run bars on a single-book project, and a tighter dashboard header (#505)
+
+**Why.** Joel tested the merged build and reported two things about the dashboard
+header. A project of one book showed neither the Collection QA bar nor the
+Proofreading bar; both appeared only from two books up. And the header had too
+much empty space: between the title row and Collection QA, and between Collection
+QA and Proofreading. Asked which bars a single book should have, he chose both.
+
+**What changed.**
+
+- `ProjectDashboard.svelte`: the two bars were behind `books.length > 1`. They
+  are now mounted for any project whose book list has loaded (`hasBooks`). Not
+  before the list is there, so a bar never says "0 books".
+- The engine needed nothing: `collection.runChecks`, `collection.qaStatus` and
+  the proofreading service already fall back to the open book when it has no
+  siblings. That path had no test, so two were added
+  (`test_a_single_book_is_checked_alone_and_stays_a_single_book`,
+  `test_a_single_book_is_proofread_alone_and_stays_a_single_book`). They also pin
+  what the run leaves behind: a `.bridge/collection.json` holding only `qaRuns[]`
+  or `proofreadRuns[]`, with no `projects`, after which the book still opens as a
+  single book with no collection id. (A Paratext link already writes that file
+  for a single book, so its presence was never a sign of a collection.)
+- Wording for one book: "1 of 1 book checked", "1 of 1 book proofread",
+  "0/1 book" while a run is active. The Check dialog already said "Check this
+  book".
+- Spacing, in `ProjectDashboard.svelte`: the header's gap 12px to 8px and its
+  padding 14px to 12px; a bar's top padding 12px to 8px; a bar's buttons are the
+  small height (28px, was 34px). In the two panels the gap under the heading row
+  8px to 6px, and the row gap when the row wraps 12px to 6px. Under 700px of
+  height: header gap 6px, padding 8px, bar padding 6px. By the numbers the header
+  with both bars is about 40px shorter; that sum was done on the stylesheet and
+  not measured in a window.
+- `CLAUDE.md` and `docs/ARCHITECTURE.md` no longer say the bar is for a
+  multi-book project only.
+
+**Run.** `npm run check` (0 errors, 0 warnings), `npm run test` (148 files, 1526
+tests, all passing; 3 are new or rewritten for one book), `npm run build`. The two
+engine test files that changed, alone: 16 tests, all passing. The full engine
+suite was **not** run (no engine module changed, two test files did); CI runs it.
+No Rust file changed.
+
+**Not verified.** Nothing here was seen in the desktop app. jsdom does not lay
+out, so the spacing is unproven. For Joel at 1366x768: a single-book project
+shows both bars; the header reads tighter and nothing in it is clipped or
+touching; the book list and the report card still fit under it; the bar's
+buttons are still easy to hit; a real Collection QA run and a real proofreading
+run on a single book start, finish and show their result on the bar and on the
+book's row.
+
+## 2026-11-26 — A project left on its dashboard opens on its dashboard (#525)
+
+**Why.** Joel: a book closed with the × beside its name goes to the dashboard,
+but after closing the app, or switching to another project and back, the
+project opened inside that closed book again. It should open where it was left,
+and each project should remember that for itself. Filed as #525 at his word.
+
+**Cause.** `handleOpened` in `App.svelte` chose the dashboard only when the
+project had no saved workspace (`showingDashboard = !saved`). The saved
+workspace (#458) holds the last reading place and nothing about which screen was
+showing, so any project that had ever been inside a book restored into it.
+
+**What changed.**
+
+- `projectWorkspace.ts`: the snapshot has an optional `onDashboard`.
+  `rememberDashboard(project, on)` writes it for the bound project only (a late
+  call for another project is dropped, as `rememberLocation` does), and
+  `reopensOnDashboard(saved)` is the one decision: the dashboard when there is no
+  saved workspace or it was left on the dashboard, the saved book otherwise.
+- `App.svelte`: one reactive line records `showingDashboard` whenever it changes
+  while a project is open, so every way onto or off the dashboard is covered, not
+  only the × button. `handleOpened` uses `reopensOnDashboard` and skips the
+  restore when it says dashboard.
+- The reading place of every book is untouched, so opening the book from the
+  dashboard still returns to its chapter and verse, and its tabs.
+- It is kept where the workspace already is: browser storage, one entry per
+  project (collection id, else project id, else path) and per user. No engine
+  change, no schema change.
+
+**Behaviour that follows, said plainly.**
+
+- A workspace saved before this has no mark and opens inside its book, as before.
+- A project opened for the first time and closed without entering a book now
+  opens on its dashboard the second time too. Before, the empty workspace saved
+  on close sent the second open into the first book.
+- When a project opens on its dashboard, the engine has the book the project was
+  opened with, not necessarily the one that was closed last: switching to it
+  would cost a second `project.open` before the dashboard appears. The report
+  card may therefore name a different book than when the project was left.
+- If restoring the saved place fails, the app falls back to the dashboard as
+  before, and that is now remembered, so the next open goes to the dashboard
+  without trying again.
+
+**Run.** `npm run check` (0 errors, 0 warnings), `npm run test` (148 files, 1526
+tests, all passing; 2 new in `projectWorkspace.test.ts`: per project, per user,
+reading places kept, a late call dropped, an older workspace read as inside its
+book), `npm run build`. No engine or Rust file changed.
+
+**Not verified.** `App.svelte` has no test harness, so the two edits there (the
+reactive line and `handleOpened`) are believed from reading, not watched. For
+Joel in the desktop app: open a book, close it with the ×, close Bridge, open
+it and the project: the dashboard. The same after switching to another project
+and back. Open a book, close Bridge while inside it, open again: inside the
+book, same verse. Two projects, one left on its dashboard and one inside a book:
+each opens as it was left. From the dashboard, open the book that was closed: it
+returns to its chapter and verse.

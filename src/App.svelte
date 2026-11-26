@@ -2,7 +2,7 @@
   import PanelWindowsHost from "./lib/components/PanelWindowsHost.svelte";
   import { setSidePanel } from "./lib/editorPrefs";
   import EditorWorkspace from "./lib/components/EditorWorkspace.svelte";
-  import { bindWorkspace, savedWorkspace, savedBookWorkspace, rememberLocation, recordProjectOpen, releaseWorkspace, flushWorkspace } from "./lib/projectWorkspace";
+  import { bindWorkspace, savedWorkspace, savedBookWorkspace, rememberLocation, rememberDashboard, reopensOnDashboard, recordProjectOpen, releaseWorkspace, flushWorkspace } from "./lib/projectWorkspace";
   import { onDestroy, onMount } from "svelte";
   import { bridge } from "./lib/api/bridgeClient";
   import { workspaceRecoverySummary, type RecoverySummary } from "./lib/workspaceRecovery";
@@ -738,6 +738,9 @@
   $: if (opened && $project && !showingDashboard && !showingReport && !openingBook && ($chapterVerseNums[$currentChapter] ?? []).includes($selectedVerse ?? "")) {
     rememberLocation($project, $currentChapter, $selectedVerse, showingAlignmentReview ? "review" : "editor");
   }
+  // #525: a project left on its dashboard (the book closed with the × beside
+  // its name) opens on the dashboard again, not inside the book that was closed.
+  $: if (opened && $project) rememberDashboard($project, showingDashboard);
 
   async function handleOpened() {
     if (!$project) return;
@@ -745,8 +748,8 @@
     const saved = bindWorkspace(initial);
     recordProjectOpen(initial);
     opened = true;
-    showingDashboard = !saved;
-    if (saved) {
+    showingDashboard = reopensOnDashboard(saved);
+    if (saved && !showingDashboard) {
       try {
         const sibling = initial.importedProjects?.find(p => p.bookId.toLowerCase() === saved.book.toLowerCase());
         if (sibling && sibling.path !== initial.path) await switchBook(sibling.path, false);
