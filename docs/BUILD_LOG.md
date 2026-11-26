@@ -28579,3 +28579,22 @@ bundles and drafts the release. Publishing the draft is left to Joel.
 
 **To say in the release notes.** A project opened by 0.27.0 cannot be opened by
 0.26.0 again (workbench v13), so a team updates together.
+
+## 2026-11-26 — Release 0.27.0: the tagged build passed and the release is drafted
+
+**Run and watched.** The tag `v0.27.0` (on `31e9f57`) started `release.yml`, run
+45805387521. All four jobs passed: the frontend checks and the draft, and the
+Windows, macOS and Linux bundles, each with its frozen-sidecar smoke test and
+`cargo test`. The draft "Bridge v0.27.0" holds the same seven files as 0.26.0
+did: the Windows installer, the macOS disk image, the Linux AppImage and deb,
+and one checksum file per system.
+
+**Release notes.** Written in the form of the 0.26.0 notes and put on the draft
+in place of the generated list. They open with what a team must know before
+updating: older projects open with their work kept, and a project opened by
+0.27.0 cannot be opened by 0.26.0 again. They end with the known limits.
+
+**Not done.** The draft is not published; that is Joel's decision. `ci.yml` on
+the bump commit was still running when this was written. No installer was
+downloaded and installed. Everything listed as not verified in the entry above
+stands.
