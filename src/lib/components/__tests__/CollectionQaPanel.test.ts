@@ -14,7 +14,9 @@ vi.mock("../../api/bridgeClient", () => ({
 }));
 
 import CollectionQaPanel from "../CollectionQaPanel.svelte";
-import { collectionQaRunning, stopCollectionQa } from "../../collectionQa";
+import {
+  cancelCollectionQa, collectionQa, collectionQaRunning, pauseCollectionQa, startCollectionQa, stopCollectionQa,
+} from "../../collectionQa";
 import { collectionChecks } from "../../editorPrefs";
 import type { CollectionQaBook, CollectionQaSnapshot } from "../../types/collectionQa";
 
@@ -177,5 +179,32 @@ describe("CollectionQaPanel", () => {
     render(CollectionQaPanel, { props: { bookCount: 2 } });
     expect(await screen.findByText(/Whole-collection checks/)).toBeInTheDocument();
     expect(screen.getByText(/2 concept issue\(s\) across 1 book\(s\)/)).toBeInTheDocument();
+  });
+
+  it("drops a Pause or Cancel answer that arrives after the project was closed", async () => {
+    // Published late it would mark a run active with nothing polling it, and
+    // the app, read-only while a run is, would stay held.
+    const running = snapshot({ jobId: "cq-1", state: "running" });
+    collectionRunChecks.mockResolvedValue(running);
+    for (const [request, send] of [
+      [collectionPauseChecks, () => pauseCollectionQa(true)],
+      [collectionCancelChecks, () => cancelCollectionQa()],
+    ] as const) {
+      await startCollectionQa(false, ["languageQa"]);
+      expect(get(collectionQaRunning)).toBe(true);
+      let answer: (value: CollectionQaSnapshot) => void = () => {};
+      request.mockReturnValue(new Promise<CollectionQaSnapshot>((resolve) => { answer = resolve; }));
+      const sent = send();
+      stopCollectionQa();  // the project closes while the request is in flight
+      answer({ ...running, paused: true });
+      await sent;
+      expect(get(collectionQaRunning)).toBe(false);
+      expect(get(collectionQa)).toBeNull();
+    }
+    // While the run is still held, the answer is published as before.
+    await startCollectionQa(false, ["languageQa"]);
+    collectionPauseChecks.mockResolvedValue({ ...running, paused: true });
+    await pauseCollectionQa(true);
+    expect(get(collectionQa)?.paused).toBe(true);
   });
 });

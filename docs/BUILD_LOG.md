@@ -28188,10 +28188,16 @@ in the tools, and what Bridge does about each, is a new section of
 - A real model returning a row that begins with `=`. The tests script it.
 - Everything listed as not verified on 2026-11-25 still stands.
 
-**Adjacent, reported and not fixed.** `pauseCollectionQa` and
-`cancelCollectionQa` (`src/lib/collectionQa.ts`) publish a late answer the same
+**Adjacent, reported, then fixed here at Joel's word.** `pauseCollectionQa` and
+`cancelCollectionQa` (`src/lib/collectionQa.ts`) published a late answer the same
 way the proofreading ones did; the proofreading store was copied from them.
-Collection QA was not part of this work.
+Reported to Joel first as outside this work; he asked for it to be fixed in the
+same pull request. The fix is the same two lines in each function, and one new
+test in `CollectionQaPanel.test.ts`, which fails without the fix (checked by
+taking the fix out and running it). After it: `npm run check` 0 errors and 0
+warnings, `npm run test` 148 files and 1,522 tests passed, `npm run build`
+built. No engine file changed for this, so the engine suite and the sidecars
+were not run again. Not seen in the desktop app.
 
 **For Joel to check in the desktop app.** Open Proofread, change the reference
 folder, and see the new folder's name shown. Run one short book: the report
