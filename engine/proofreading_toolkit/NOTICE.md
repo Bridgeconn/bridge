@@ -81,3 +81,41 @@ None.
 - Not wired in the first build: `make_profile.py` and `approve_candidates.py`.
   Drafting a profile for a new language needs a linguist's approval step that
   Bridge has no screen for yet.
+
+## Found by review after the merge (2026-11-26, PR #523's automated review)
+
+Each of these is in a tool as shared. The tool is unchanged; what Bridge does
+about it is in `tc_ai_bridge/proofreading.py` unless another file is named.
+
+- **`deliver.py` writes cells as they come.** In the CSV a cell beginning with
+  `=`, `+`, `-` or `@` is a formula to a spreadsheet; in the workbook `openpyxl`
+  stores a string beginning with `=` as a formula (checked: `data_type` is `f`).
+  A finding's words come from a model or from the text. Bridge reads the
+  findings from the CSV first, then rewrites what was delivered
+  (`guard_delivered_files`): the CSV cell gets an apostrophe in front, the
+  workbook cell keeps its words and becomes text. The Summary sheet's own
+  counting formulas are left alone. `report.py` builds the run workbook from the
+  guarded CSVs. Bridge's own export does the same (`spreadsheet_safe`).
+- **`deliver.py` puts `notes_user` and `notes_language_tag` into XML attributes**
+  of every note, the first escaped without its double quotes and the second not
+  escaped at all, and `merge_notes.py` makes `notes_user` part of a file name.
+  Bridge hands the toolkit a name with the characters neither can hold taken
+  out (`notes_user_name`) and a language code of letters, digits and hyphens
+  only (`language_tag`). The same code is what `project.py` joins into the
+  `profiles/<code>` path.
+- **`sweep.py` stops with a traceback in its comparison with the reference** in
+  two cases, and only `FileNotFoundError` is caught there:
+  - `ZeroDivisionError`, when more than half of the book's verses that have
+    reference text are empty in the translation (the median length ratio is 0
+    and every ratio is divided by it). Bridge does not read a book with more
+    than half its verses empty (`mostly_empty`, checked in
+    `proofreading_service.py` before anything is sent).
+  - `IndexError`, when the reference has the book but none of the translation's
+    verses (`rat` is empty and `rat[len(rat)//2]` is taken).
+  Everything `sweep.py` printed before that point is still leads. Bridge uses
+  them and says on the book's report that the sweep stopped early.
+- **Two sentences of the documents describe a Claude session, not Bridge.**
+  `SKILL.md` section 3 says the Stop button halts at once; in Bridge a cancel
+  takes effect at the next step, after the tool call or the AI request in
+  flight. `guides/how-language-rules-are-built.md` calls `make_profile.py`'s
+  counts whole-Bible; they cover the books that are in the target folder.

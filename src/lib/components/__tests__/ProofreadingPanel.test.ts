@@ -268,4 +268,30 @@ describe("ProofreadingPanel", () => {
     await fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("dialog")).toBeNull();
   });
+
+  it("shows nothing it cannot vouch for when the re-read after a new reference fails", async () => {
+    // The reference was changed in the engine, then the re-read failed: the
+    // old reference must not stay on screen with Start enabled.
+    api.proofreadingPreflight
+      .mockResolvedValueOnce(preflight())
+      .mockRejectedValueOnce(new Error("The engine did not answer."))
+      .mockResolvedValueOnce(preflight({
+        reference: { path: "C:/bibles/niv", label: "niv", origin: "proofreading", kind: "usfm", files: "66", error: "" } }));
+    api.pickFolder.mockResolvedValue("C:/bibles/niv");
+    api.proofreadingSetReference.mockResolvedValue({});
+    render(ProofreadingPanel, { props: { bookCount: 3 } });
+    await fireEvent.click(proofreadButton());
+    const dialog = await screen.findByRole("dialog", { name: "Proofread" });
+    expect(await within(dialog).findByText("esv")).toBeInTheDocument();
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Change" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("The engine did not answer.");
+    expect(within(dialog).queryByText("esv")).toBeNull();
+    expect(startButton()).toBeDisabled();
+    await fireEvent.click(startButton());
+    expect(api.proofreadingStart).not.toHaveBeenCalled();
+    // A re-read that works shows what the engine now holds.
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Try again" }));
+    expect(await within(dialog).findByText("niv")).toBeInTheDocument();
+    await waitFor(() => expect(startButton()).toBeEnabled());
+  });
 });

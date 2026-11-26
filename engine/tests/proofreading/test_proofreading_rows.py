@@ -158,3 +158,41 @@ def test_a_tsv_reference_is_staged_as_usfm_the_tools_can_find(tmp_path):
 def test_the_run_folder_name_is_safe_for_any_project_key():
     assert toolkit.run_folder_name("3f2a-collection_1") == "3f2a-collection_1"
     assert "/" not in toolkit.run_folder_name("../..\\evil:name") and toolkit.run_folder_name("") != ""
+
+
+def test_a_name_or_language_code_cannot_break_the_toolkits_files(tmp_path):
+    """`deliver.py` writes the notes user and the language tag into XML
+    attributes and `merge_notes.py` makes the user part of a file name; the
+    toolkit joins the language code into a folder path. Both are free text in
+    Bridge (a display name, a manifest field)."""
+    assert toolkit.notes_user_name('Ana "the editor" <ana@x>') == "Ana the editor ana@x"
+    assert toolkit.notes_user_name("team/Asha: draft?") == "team Asha draft"
+    assert toolkit.notes_user_name("  ...  ") == "Bridge" and toolkit.notes_user_name(None) == "Bridge"
+    assert toolkit.notes_user_name("ரேவந்த் & Co") == "ரேவந்த் & Co"  # nothing else is touched
+    assert toolkit.language_tag('ta-IN" onload="x') == "ta-INonloadx"
+    assert toolkit.language_tag("../../secrets") == "secrets" and toolkit.language_tag(None) == ""
+    # A hostile code picks no folder outside profiles/: it falls back to generic.
+    assert toolkit.load_profile("../../../etc")["_profile"] == "generic"
+    assert toolkit.load_profile("te")["_profile"] == "te"
+
+    import json
+
+    paths = toolkit.RunPaths(tmp_path / "run")
+    toolkit.write_config(paths, project_name="P", language_code='ml"x', language_label="Malayalam",
+                         reference_name="ESV", notes_user='A "B" / C', model="m", prices={})
+    config = json.loads(paths.config.read_text(encoding="utf-8"))
+    assert (config["notes_user"], config["notes_language_tag"], config["language"]) == ("A B C", "mlx", "mlx")
+
+
+def test_a_cell_that_would_be_read_as_a_formula_is_written_as_text():
+    assert toolkit.spreadsheet_safe("=HYPERLINK(\"http://x\")") == "'=HYPERLINK(\"http://x\")"
+    assert [toolkit.spreadsheet_safe(v) for v in ("+1", "-1", "@a", "\tx")] == ["'+1", "'-1", "'@a", "'\tx"]
+    assert toolkit.spreadsheet_safe("a = b") == "a = b" and toolkit.spreadsheet_safe(None) == ""
+    assert toolkit.spreadsheet_safe("தேவன்") == "தேவன்" and toolkit.spreadsheet_safe(3) == "3"
+
+
+def test_a_book_with_more_than_half_its_verses_empty_is_not_read():
+    assert toolkit.mostly_empty(["", " ", "text"]) is True
+    assert toolkit.mostly_empty(["", "text"]) is False  # exactly half is still read
+    assert toolkit.mostly_empty(["a", "b", ""]) is False
+    assert toolkit.mostly_empty([]) is True

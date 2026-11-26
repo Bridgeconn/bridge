@@ -28095,3 +28095,105 @@ has never run. **Do not publish a release from this until that has passed once.*
 and 0.26.0 refuses to open it. #505 stays open: it is Benz's issue, it describes
 the Claude CLI design, and whether to close it, and whether to post the summary
 of what changed, is Joel's to say. On the project board it is In review.
+
+## 2026-11-26 — The proofreading run after its automated review: six fixes and a guard (#505)
+
+**Where they came from.** CodeAnt reviewed PR #523 and left ten comments, after
+the merge. Each was checked against the code before anything was changed. Eight
+describe something real, all of them rare, none touching Scripture; one of the
+eight was raised twice (formula cells, on the Rust allow-list and on
+`deliver.py`). The other two are sentences in Benz's own documents that describe
+a Claude session rather than Bridge. Joel asked for the Bridge-side fixes in one
+follow-up pull request. He did not say whether the `sweep.py` crash should be
+guarded in Bridge or left to Benz; it is guarded in Bridge and written up for
+Benz, with `sweep.py` unchanged.
+
+**No toolkit file changed.** Every fix is in Bridge's own code. What was found
+in the tools, and what Bridge does about each, is a new section of
+`engine/proofreading_toolkit/NOTICE.md`.
+
+**What changed.**
+- *Formula cells.* `openpyxl` stores a string beginning with `=` as a formula
+  (checked: `data_type` is `f`), and a spreadsheet reads a CSV cell beginning
+  with `=`, `+`, `-` or `@` as one. A finding's words come from a model or from
+  the text. `proofreading.guard_delivered_files` rewrites what `deliver.py`
+  delivered, after Bridge has read the findings from it: an apostrophe in front
+  of the CSV cell, and the workbook cell made text with its words kept. The
+  Summary sheet's own counting formulas are left alone. `proofreading.export`
+  writes its cells through `spreadsheet_safe`, the rule
+  `paratext_review._csv_cell` already had. The rows Bridge stores and shows are
+  unchanged. `.xlsx` stays on `open_path`'s list.
+- *The notes user and the language tag.* `deliver.py` writes both into XML
+  attributes, the first with its double quotes unescaped and the second raw,
+  and `merge_notes.py` makes the first part of a file name; `project.py` joins
+  the language code into a folder path. `write_config` now hands over a name
+  without `\ / : * ? " < > |` or control characters (`notes_user_name`) and a
+  code of letters, digits and hyphens (`language_tag`); `load_profile` uses the
+  same code.
+- *A finding whose evidence check did not happen.* When `q.py` fails, when
+  `nearby.py` fails or is not run (no reference for the book, more than twelve
+  searches asked for in a chunk), or when the reader's second answer leaves a
+  row out, the row used to stay exactly as first reported. It is still kept,
+  but never at High confidence, always for review, and its explanation says
+  the count or the search could not be run (`_mark_unchecked`).
+- *A chapter removed from a book.* `save_proofreading_results` also rewrites
+  every chapter that already has a row, so a removed chapter's findings do not
+  stay in the report and the export.
+- *The start dialog.* If the re-read after a new reference fails, nothing is
+  shown, Start is disabled, and a "Try again" button re-reads. Before, the old
+  reference stayed on screen with Start enabled while the engine held the new
+  one.
+- *Pause and Cancel.* An answer that arrives after `stopProofreading` (the
+  project closed) or after a refresh is dropped. Published late it marked a run
+  active with nothing polling it, and the app stayed read-only.
+- *`sweep.py`'s crash, guarded.* A book with more than half its verses empty is
+  refused before anything is sent (`mostly_empty`, with the toolkit's queue told
+  so the next book is the one it hands out). When `sweep.py` stops for another
+  reason, what it printed before that is used as the leads and the book's
+  report says the sweep stopped early. Running it showed a second crash the
+  review had not named: an `IndexError` when the reference has the book but
+  none of the translation's verses.
+
+**Run and watched.**
+- Engine, new tests, 10 (41 proofreading tests now): the name and tag cleaning,
+  `spreadsheet_safe`, `mostly_empty`; with the real tools, a count that cannot
+  run, a second answer that leaves a row out, a delivered CSV and workbook with
+  a `=` cell (the workbook read back with `openpyxl`: text in Issues, formulas
+  still in Summary), and a `sweep` that dies part-way; a removed chapter; over
+  the protocol, a mostly empty book refused with nothing of it sent, and the
+  export writing `'=1+1`.
+- Engine, full suite, `pytest -n auto --basetemp=C:/Users/joelc/bt505/full`:
+  6,113 passed, 13 failed, 4 skipped, 3 xfailed in 19 minutes. 12 are the Stage
+  3 tests. The thirteenth,
+  `test_language_qa.py::test_continuous_foreground_polling_does_not_starve_worker`,
+  passed when run alone (it failed under load on 2026-11-25 too).
+  `test_language_qa_pass_reuse`, which failed alone on `main` on 2026-11-25,
+  passed in this run: it is intermittent on this machine, not broken.
+- Frontend: `npm run check` 0 errors and 0 warnings; `npm run build` built;
+  `npm run test` 148 files, 1,521 tests passed (2 new) when run by itself. A
+  first run, started while the engine suite was using every core, reported one
+  failure; the command kept only the summary lines, so which test it was is not
+  known. It did not happen again.
+- Frozen: `build-sidecars.ps1` from this code, then the whole of
+  `scripts/smoke_sidecars.py`: passed. Its proofreading step made ten tool calls
+  in 12.1 s on an otherwise idle machine, about 1.2 s a call. The 2.6 to 3 s a
+  call recorded on 2026-11-25 were measured while other gates were running.
+- Shell: `cargo check` and `cargo test` were not run. No Rust file changed.
+
+**Not verified.**
+- None of this in the desktop app. The dialog's "Try again", and a run
+  outliving a closed project, are tested in jsdom only.
+- A workbook made text by `guard_delivered_files`, opened in Excel itself. It
+  was read back with `openpyxl`, which is what wrote it.
+- A real model returning a row that begins with `=`. The tests script it.
+- Everything listed as not verified on 2026-11-25 still stands.
+
+**Adjacent, reported and not fixed.** `pauseCollectionQa` and
+`cancelCollectionQa` (`src/lib/collectionQa.ts`) publish a late answer the same
+way the proofreading ones did; the proofreading store was copied from them.
+Collection QA was not part of this work.
+
+**For Joel to check in the desktop app.** Open Proofread, change the reference
+folder, and see the new folder's name shown. Run one short book: the report
+still lists its findings as before, and Export CSV and Open workbook open files
+whose text reads normally.

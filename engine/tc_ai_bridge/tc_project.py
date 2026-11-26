@@ -3330,6 +3330,14 @@ class TranslationCoreProject:
         identity = self.workbench_identity
         computed_at = self._timestamp()[0]
         chapters = {str(chapter) for chapter in self.chapters()} | {'intro'} | {str(key) for key in by_chapter}
+        # A chapter that was read before and is no longer in the book (its
+        # file was removed) has a row too: without this it would keep its old
+        # findings, and the report and the export would go on showing them.
+        chapters |= {
+            str(payload.get('chapter')) for payload in self.workbench.payloads(
+                'proofreading_results', project_id=identity.project_id, book_id=self.book_id)
+            if str(payload.get('basis') or '') == basis and payload.get('chapter')
+        }
         with self.workbench.batch() as batch:
             for chapter in sorted(chapters):
                 batch.write(

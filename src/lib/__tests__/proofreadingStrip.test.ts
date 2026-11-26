@@ -11,7 +11,10 @@ vi.mock("../api/bridgeClient", () => ({ bridge: api }));
 import {
   bindCollectionStrip, cancelStripJob, proofreadingFinishedLabel, proofreadingStripProgress,
 } from "../collectionStrip";
-import { compactCount, proofreading, proofreadingRunning, startProofreading, stopProofreading } from "../proofreading";
+import {
+  cancelProofreading, compactCount, pauseProofreading, proofreading, proofreadingRunning, startProofreading,
+  stopProofreading,
+} from "../proofreading";
 import { checkingProgress } from "../stores";
 import type { ProofreadingSnapshot } from "../types/proofreading";
 
@@ -77,6 +80,32 @@ describe("the top strip during a proofreading run", () => {
     expect(cancelCheckJob).not.toHaveBeenCalled();
     stopProofreading();
     expect(await cancelStripJob("job-9", cancelCheckJob)).toBe("checks");
+  });
+
+  it("drops a Pause or Cancel answer that arrives after the project was closed", async () => {
+    // Published late it would mark a run active with nothing polling it, and
+    // the app would stay read-only.
+    api.proofreadingStart.mockResolvedValue(snapshot());
+    for (const [request, send] of [
+      [api.proofreadingPause, () => pauseProofreading(true)],
+      [api.proofreadingCancel, () => cancelProofreading()],
+    ] as const) {
+      await startProofreading(null);
+      let answer: (value: ProofreadingSnapshot) => void = () => {};
+      request.mockReturnValue(new Promise<ProofreadingSnapshot>((resolve) => { answer = resolve; }));
+      const sent = send();
+      stopProofreading();  // the project closes while the request is in flight
+      answer(snapshot({ paused: true }));
+      await sent;
+      expect(get(proofreadingRunning)).toBe(false);
+      expect(get(proofreading)).toBeNull();
+    }
+    // While the run is still held, the answer is published as before.
+    await startProofreading(null);
+    api.proofreadingPause.mockResolvedValue(snapshot({ paused: true }));
+    await pauseProofreading(true);
+    expect(get(proofreading)?.paused).toBe(true);
+    stopProofreading();
   });
 
   it("shortens a token count for a status line", () => {

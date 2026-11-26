@@ -50,6 +50,7 @@ from tc_ai_bridge.project_import import (
 )
 from tc_ai_bridge.qa_report import write_report_rows
 from tc_ai_bridge.tc_project import ProjectError, TranslationCoreProject, peek_proofreading_results
+from tc_ai_bridge.usfm_verse import plain_text
 
 # One request reads up to three chapters with the reference beside them and
 # may reason for a while before answering.
@@ -395,6 +396,10 @@ class ProofreadingService:
             if wanted is not None and book["bookId"].lower() not in wanted:
                 continue
             rows.extend(peek_proofreading_results(book["path"]))
+        # A finding's words come from a model or from the text: a cell that a
+        # spreadsheet would read as a formula is written as text.
+        keys = [column["key"] for column in EXPORT_COLUMNS]
+        rows = [{key: toolkit.spreadsheet_safe(row.get(key)) for key in keys} for row in rows]
         try:
             return write_report_rows(output_path, fmt, rows, EXPORT_COLUMNS)
         except (OSError, ValueError) as exc:
@@ -506,11 +511,21 @@ class _Run:
         book_id, code = str(book["bookId"]), str(book["bookId"]).upper()
         project = self._project(str(book["path"]))
         sizes: dict[int, int] = {}
+        verses: list[str] = []
         for chapter in project.chapters():
             if str(chapter).isdigit():
-                sizes[int(chapter)] = sum(len(str(text)) for text in project.target_chapter(chapter).values())
-        if not sizes:
-            raise toolkit.ProofreadingError("This book has no chapters to read.")
+                texts = [str(text) for text in project.target_chapter(chapter).values()]
+                sizes[int(chapter)] = sum(len(text) for text in texts)
+                verses += [plain_text(text) for text in texts]
+        unreadable = ("This book has no chapters to read." if not sizes
+                      else "More than half of this book's verses have no text, so it was not read."
+                      if toolkit.mostly_empty(verses) else "")
+        if unreadable:
+            # Before anything is sent, and before the toolkit's sweep, which
+            # fails on such a book. Its queue is told, so the next book is the
+            # one it hands out next.
+            self.tools("queue", "skip", code, unreadable)
+            raise toolkit.ProofreadingError(unreadable)
         offset = 3600
         queued = self.tools("queue", "next")
         handed = re.match(r"NEXT (\S+) (\d+)", queued.out.strip())

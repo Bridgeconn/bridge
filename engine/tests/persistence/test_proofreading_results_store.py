@@ -48,3 +48,20 @@ def test_a_sibling_books_rows_are_read_without_opening_it(tmp_path):
 
 def test_the_rows_stay_on_this_device():
     assert "proofreading_results" in NOT_SYNCED_TABLES
+
+
+def test_a_chapter_removed_from_the_book_loses_its_old_findings(tmp_path):
+    """The next run writes every chapter it knows of. A chapter that was read
+    before and is gone from the book is one of them, or its findings would
+    stay in the report and the export for good."""
+    root = write_book(tmp_path / "rut", "rut", RUTH)
+    project = TranslationCoreProject(root)
+    project.save_proofreading_results({"1": [_row("1", "1", "a")], "2": [_row("2", "1", "gone later")]})
+    # A book's chapters are the files of its alignment folder.
+    (root / "rut" / "2.json").unlink()
+    (root / ".apps" / "translationCore" / "alignmentData" / "rut" / "2.json").unlink()
+    project = TranslationCoreProject(root)
+    assert project.chapters() == ["1"]
+    project.save_proofreading_results({"1": [_row("1", "1", "a")]})
+    assert [r["original"] for r in project.load_proofreading_results()] == ["a"]
+    assert [r["original"] for r in peek_proofreading_results(root)] == ["a"]

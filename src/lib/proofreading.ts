@@ -58,12 +58,20 @@ export async function startProofreading(books: string[] | null, force = false): 
   if (publish(snapshot)) timer = setTimeout(() => void poll(snapshot.jobId, ticket), POLL_MS);
 }
 
+// An answer that arrives after the run was let go of (the project closed:
+// stopProofreading) or re-read (a refresh or a new start) is dropped. Published
+// late it would mark a run as active with nothing polling it, and the app,
+// which is read-only while one is, would stay held.
 export async function pauseProofreading(paused: boolean): Promise<void> {
-  publish(await bridge.proofreadingPause(paused));
+  const ticket = sequence;
+  const snapshot = await bridge.proofreadingPause(paused);
+  if (ticket === sequence) publish(snapshot);
 }
 
 export async function cancelProofreading(): Promise<void> {
-  publish(await bridge.proofreadingCancel());
+  const ticket = sequence;
+  const snapshot = await bridge.proofreadingCancel();
+  if (ticket === sequence) publish(snapshot);
 }
 
 /** Stop polling (project closed); the next refresh starts afresh. */

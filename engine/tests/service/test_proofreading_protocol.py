@@ -254,3 +254,37 @@ def test_without_an_ai_provider_nothing_starts(tmp_path, collection):
     refused = call(engine, "proofreading.start")
     assert refused["success"] is False and "API key" in refused["error"]["message"]
     assert sent == [] and call(engine, "proofreading.status")["result"]["state"] == "idle"
+
+
+def test_a_mostly_empty_book_is_not_sent_and_the_others_are_read(tmp_path):
+    """A book whose verses are mostly empty has little to proofread, and the
+    toolkit's sweep fails on it. It is refused before anything is sent."""
+    books = {"jon": write_book(tmp_path / "jon", "jon", {"1": {"1": "", "2": "", "3": JONAH["1"]["2"]}}),
+             "rut": write_book(tmp_path / "rut", "rut", RUTH)}
+    link_books(books)
+    sent: list = []
+    engine = _engine(tmp_path, books["rut"], sent=sent)
+    _with_reference(engine, tmp_path)
+    finished = _run(engine)
+    assert [(b["bookId"], b["state"]) for b in finished["books"]] == [("rut", "done"), ("jon", "failed")]
+    assert finished["books"][1]["error"] == "More than half of this book's verses have no text, so it was not read."
+    assert all("BOOK: RUT" in s["input"] for s in sent) and sent  # nothing of Jonah reached the provider
+
+
+def test_the_export_writes_a_formula_like_cell_as_text(tmp_path, collection):
+    def reader(name, instructions, text):
+        if "BOOK: RUT" in text:
+            return {"rows": [row("1", "1", "பஞ்சம் உண்டானது", suggested="=1+1")], "rejected": []}
+        return {"rows": [], "rejected": []}
+
+    engine = _engine(tmp_path, collection["rut"], reader=reader)
+    _with_reference(engine, tmp_path)
+    assert _run(engine, books=["rut"])["state"] == "succeeded"
+    # In the app the finding is shown as the reader gave it.
+    stored = call(engine, "proofreading.rows", {"bookId": "rut"})["result"]["rows"]
+    assert "=1+1" in [r["suggested"] for r in stored]
+    out = tmp_path / "findings.csv"
+    assert call(engine, "proofreading.export", {"outputPath": str(out), "format": "csv"})["success"]
+    with out.open(encoding="utf-8-sig", newline="") as handle:
+        cells = [cell for line in csv.reader(handle) for cell in line]
+    assert "'=1+1" in cells and "=1+1" not in cells
