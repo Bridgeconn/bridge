@@ -142,6 +142,22 @@ describe("CollectionQaPanel", () => {
     expect(await screen.findByText("never run")).toBeInTheDocument();
   });
 
+  // 2026-11-26: the bar is on a project of one book too.
+  it("counts one book as one book, idle and while it runs", async () => {
+    collectionQaStatus.mockResolvedValue(snapshot({ totalBooks: 1,
+      books: [book("rut", { state: "done", completedAt: "2026-09-24T10:00:00Z" })] }));
+    const idle = render(CollectionQaPanel, { props: { bookCount: 1 } });
+    expect(await screen.findByText(/1 of 1 book checked · last run/)).toBeInTheDocument();
+    await fireEvent.click(checkButton());
+    expect(screen.getByRole("dialog", { name: "Check this book" })).toBeInTheDocument();
+    idle.unmount();
+    collectionQaStatus.mockResolvedValue(snapshot({ jobId: "j1", state: "running", currentBook: "rut", totalBooks: 1,
+      elapsedSeconds: 4, books: [book("rut", { state: "running" })] }));
+    render(CollectionQaPanel, { props: { bookCount: 1 } });
+    await screen.findByRole("button", { name: "Pause after this book" });
+    expect(screen.getByRole("region", { name: "Collection QA" })).toHaveTextContent(/Checking RUT · 0\/1 book · 4 s elapsed/);
+  });
+
   it("shows the running book, the progress bar, Pause and Cancel while a run is active", async () => {
     collectionQaStatus.mockResolvedValue(snapshot({ jobId: "j1", state: "running", currentBook: "rut", percent: 40,
       completedBooks: 0, elapsedSeconds: 12, estimatedRemainingSeconds: 30,

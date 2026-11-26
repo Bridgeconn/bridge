@@ -28246,3 +28246,52 @@ app first is not recorded, so nothing here is ticked as seen there. The guarded
 workbook has still not been opened in Excel itself. Everything listed as not
 verified on 2026-11-25 stands, the macOS and Linux release smoke test above all:
 **no release until that has passed once.**
+
+## 2026-11-26 — Both run bars on a single-book project, and a tighter dashboard header (#505)
+
+**Why.** Joel tested the merged build and reported two things about the dashboard
+header. A project of one book showed neither the Collection QA bar nor the
+Proofreading bar; both appeared only from two books up. And the header had too
+much empty space: between the title row and Collection QA, and between Collection
+QA and Proofreading. Asked which bars a single book should have, he chose both.
+
+**What changed.**
+
+- `ProjectDashboard.svelte`: the two bars were behind `books.length > 1`. They
+  are now mounted for any project whose book list has loaded (`hasBooks`). Not
+  before the list is there, so a bar never says "0 books".
+- The engine needed nothing: `collection.runChecks`, `collection.qaStatus` and
+  the proofreading service already fall back to the open book when it has no
+  siblings. That path had no test, so two were added
+  (`test_a_single_book_is_checked_alone_and_stays_a_single_book`,
+  `test_a_single_book_is_proofread_alone_and_stays_a_single_book`). They also pin
+  what the run leaves behind: a `.bridge/collection.json` holding only `qaRuns[]`
+  or `proofreadRuns[]`, with no `projects`, after which the book still opens as a
+  single book with no collection id. (A Paratext link already writes that file
+  for a single book, so its presence was never a sign of a collection.)
+- Wording for one book: "1 of 1 book checked", "1 of 1 book proofread",
+  "0/1 book" while a run is active. The Check dialog already said "Check this
+  book".
+- Spacing, in `ProjectDashboard.svelte`: the header's gap 12px to 8px and its
+  padding 14px to 12px; a bar's top padding 12px to 8px; a bar's buttons are the
+  small height (28px, was 34px). In the two panels the gap under the heading row
+  8px to 6px, and the row gap when the row wraps 12px to 6px. Under 700px of
+  height: header gap 6px, padding 8px, bar padding 6px. By the numbers the header
+  with both bars is about 40px shorter; that sum was done on the stylesheet and
+  not measured in a window.
+- `CLAUDE.md` and `docs/ARCHITECTURE.md` no longer say the bar is for a
+  multi-book project only.
+
+**Run.** `npm run check` (0 errors, 0 warnings), `npm run test` (148 files, 1526
+tests, all passing; 3 are new or rewritten for one book), `npm run build`. The two
+engine test files that changed, alone: 16 tests, all passing. The full engine
+suite was **not** run (no engine module changed, two test files did); CI runs it.
+No Rust file changed.
+
+**Not verified.** Nothing here was seen in the desktop app. jsdom does not lay
+out, so the spacing is unproven. For Joel at 1366x768: a single-book project
+shows both bars; the header reads tighter and nothing in it is clipped or
+touching; the book list and the report card still fit under it; the bar's
+buttons are still easy to hit; a real Collection QA run and a real proofreading
+run on a single book start, finish and show their result on the bar and on the
+book's row.

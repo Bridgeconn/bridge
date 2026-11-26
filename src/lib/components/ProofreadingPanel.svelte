@@ -51,7 +51,8 @@
     const latest = books.map((b) => b.completedAt).filter((at): at is string => Boolean(at)).sort().pop();
     if (!latest && done.length === 0 && failed === 0) return "never run";
     const findings = done.reduce((sum, b) => sum + (b.findings || 0), 0);
-    const parts = [`${done.length} of ${total || books.length} books proofread`,
+    const count = total || books.length;
+    const parts = [`${done.length} of ${count} ${count === 1 ? "book" : "books"} proofread`,
       `${findings.toLocaleString()} ${findings === 1 ? "finding" : "findings"}`];
     if (failed) parts.push(`${failed} not read`);
     if (latest) parts.push(`last run ${new Date(latest).toLocaleString()}`);
@@ -67,7 +68,7 @@
       : snapshot.paused ? "Pausing after this book"
       : runningBook ? `${runningBook.bookName || runningBook.bookId.toUpperCase()}: ${snapshot.stage}`
       : snapshot.stage || "Starting";
-    const parts = [lead, `${snapshot.completedBooks}/${snapshot.totalBooks} books`];
+    const parts = [lead, `${snapshot.completedBooks}/${snapshot.totalBooks} ${snapshot.totalBooks === 1 ? "book" : "books"}`];
     if (snapshot.findings) parts.push(`${snapshot.findings.toLocaleString()} findings so far`);
     parts.push(`${duration(snapshot.elapsedSeconds)} elapsed`);
     if (snapshot.estimatedRemainingSeconds !== null) parts.push(`about ${duration(snapshot.estimatedRemainingSeconds)} left`);
@@ -138,8 +139,8 @@
 </section>
 
 <style>
-  .proofreading { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-  .head { display: flex; align-items: center; justify-content: space-between; gap: 12px 16px; flex-wrap: wrap; }
+  .proofreading { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .head { display: flex; align-items: center; justify-content: space-between; gap: 6px 16px; flex-wrap: wrap; }
   .title { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex: 1 1 260px; }
   h3 { margin: 0; font-size: var(--fs-sm); font-weight: 650; color: var(--text); white-space: nowrap; }
   .status { min-width: 0; color: var(--text-2); font-size: var(--fs-3xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

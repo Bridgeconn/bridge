@@ -64,6 +64,34 @@ def test_the_final_stage_comes_back_after_a_restart_from_any_book(tmp_path):
         assert stage["crossBookNames"] == live["crossBookNames"]
 
 
+def test_a_single_book_is_checked_alone_and_stays_a_single_book(tmp_path):
+    # 2026-11-26: the dashboard offers Collection QA on a project of one book.
+    root = tmp_path / "rut"
+    _write_minimal_book(root, "rut", "அந்த காகம் பறந்தது.")
+    engine = _engine(root)
+    try:
+        assert [(b["bookId"], b["state"]) for b in call(engine, "collection.qaStatus", {})["result"]["books"]] == [
+            ("rut", "pending")]
+        done = _run(engine)
+        assert (done["state"], done["totalBooks"]) == ("succeeded", 1)
+        assert [(b["bookId"], b["state"]) for b in done["books"]] == [("rut", "done")]
+        assert [b["state"] for b in _run(engine)["books"]] == ["skipped"]
+    finally:
+        engine._language_qa.unbind()
+    # The run is recorded where a collection's is, and that record does not
+    # turn the book into a collection.
+    recorded = json.loads((root / ".bridge" / "collection.json").read_text(encoding="utf-8"))
+    assert [r["bookId"] for r in recorded["qaRuns"]] == ["rut"] and "projects" not in recorded
+    engine = _engine(root)
+    try:
+        opened = call(engine, "project.open", {"path": str(root)})["result"]
+        assert not opened.get("importedProjects") and not opened.get("collectionId")
+        idle = call(engine, "collection.qaStatus", {})["result"]
+        assert [(b["bookId"], b["state"]) for b in idle["books"]] == [("rut", "done")]
+    finally:
+        engine._language_qa.unbind()
+
+
 def test_a_termbase_change_reruns_a_book_whose_text_is_unchanged(tmp_path):
     books = _collection(tmp_path)
     engine = _engine(books["rut"])

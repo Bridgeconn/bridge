@@ -98,6 +98,22 @@ describe("ProofreadingPanel", () => {
     expect(get(proofreadingRunning)).toBe(false);
   });
 
+  // 2026-11-26: the bar is on a project of one book too.
+  it("counts one book as one book, idle and while it is read", async () => {
+    api.proofreadingStatus.mockResolvedValue(snapshot({ totalBooks: 1,
+      books: [book("rut", { state: "done", findings: 2, completedAt: "2026-11-25T08:00:00Z" })] }));
+    const idle = render(ProofreadingPanel, { props: { bookCount: 1, projectName: "Ruth" } });
+    const bar = await screen.findByRole("region", { name: "Proofreading" });
+    await waitFor(() => expect(bar).toHaveTextContent(/1 of 1 book proofread · 2 findings · last run/));
+    idle.unmount();
+    stopProofreading();
+    api.proofreadingStatus.mockResolvedValue(snapshot({ jobId: "p1", state: "running", stage: "Reading", totalBooks: 1,
+      currentBook: "rut", elapsedSeconds: 4, books: [book("rut", { state: "running" })] }));
+    render(ProofreadingPanel, { props: { bookCount: 1, projectName: "Ruth" } });
+    await screen.findByRole("button", { name: "Pause after this book" });
+    expect(screen.getByRole("region", { name: "Proofreading" })).toHaveTextContent(/RUT: Reading · 0\/1 book · 4 s elapsed/);
+  });
+
   it("summarises the books already read and offers their report", async () => {
     api.proofreadingStatus.mockResolvedValue(snapshot({ books: [
       book("rut", { state: "done", findings: 3, completedAt: "2026-11-25T08:00:00Z" }),

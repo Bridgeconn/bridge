@@ -287,7 +287,7 @@ closes the auxiliary window and follows the existing sidecar shutdown path.
 ```mermaid
 flowchart TB
   Home["home: ImportScreen<br/>project list, import wizard, file drop"] --> Dash
-  Dash["dashboard: ProjectDashboard<br/>book list with progress, per-book project.report panel,<br/>CollectionQaPanel (multi-book only): one Check button opening CollectionCheckDialog (the checks, Start), then<br/>collection.runChecks / qaStatus / pauseChecks / cancelChecks, never automatic (#215, #490)"] --> Report["report: ProjectReportScreen<br/>collection-wide report.generate, filters, charts, export, triage overlay"]
+  Dash["dashboard: ProjectDashboard<br/>book list with progress, per-book project.report panel,<br/>CollectionQaPanel and ProofreadingPanel (any project with a book, a single book included): for Collection QA one Check button opening CollectionCheckDialog (the checks, Start), then<br/>collection.runChecks / qaStatus / pauseChecks / cancelChecks, never automatic (#215, #490)"] --> Report["report: ProjectReportScreen<br/>collection-wide report.generate, filters, charts, export, triage overlay"]
   Dash --> Editor["editor: EditorHeader (book, chapter picker of N, Go to, Raw USFM, overflow menu)<br/>over VerseList, with the side panels to its right: Source, Reference, Paratext, Review"]
   Editor --> AR["review: AlignmentReview shell<br/>tabs Word, Semantic, Passage, QA"]
   Editor --> AM["AlignmentModal (Align words)<br/>translationCore-compatible word alignment"]

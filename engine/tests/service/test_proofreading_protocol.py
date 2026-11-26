@@ -131,6 +131,27 @@ def test_a_run_reads_the_chosen_books_and_keeps_what_the_toolkit_placed(tmp_path
         assert sorted(r["bookId"] for r in recorded) == ["jon", "rut"]
 
 
+def test_a_single_book_is_proofread_alone_and_stays_a_single_book(tmp_path):
+    # 2026-11-26: the dashboard offers the Proofreading bar on a project of one book.
+    root = write_book(tmp_path / "rut", "rut", RUTH)
+    engine = _engine(tmp_path, root)
+    assert [b["bookId"] for b in call(engine, "proofreading.preflight")["result"]["books"]] == ["rut"]
+    _with_reference(engine, tmp_path)
+    done = _run(engine)
+    assert (done["state"], done["totalBooks"]) == ("succeeded", 1), done
+    assert [(b["bookId"], b["state"], b["findings"]) for b in done["books"]] == [("rut", "done", 3)]
+    assert call(engine, "proofreading.report")["result"]["booksRead"] == 1
+    assert [b["state"] for b in _run(engine)["books"]] == ["skipped"]
+    # The run is recorded where a collection's is, and that record does not
+    # turn the book into a collection.
+    recorded = json.loads((root / ".bridge" / "collection.json").read_text(encoding="utf-8"))
+    assert [r["bookId"] for r in recorded["proofreadRuns"]] == ["rut"] and "projects" not in recorded
+    again = _engine(tmp_path, root)
+    assert not call(again, "project.open", {"path": str(root)})["result"].get("importedProjects")
+    idle = call(again, "proofreading.status", {})["result"]
+    assert [(b["bookId"], b["state"]) for b in idle["books"]] == [("rut", "done")]
+
+
 def test_a_second_run_skips_what_is_unchanged_and_rereads_what_is_not(tmp_path, collection):
     sent: list = []
     engine = _engine(tmp_path, collection["rut"], sent=sent)

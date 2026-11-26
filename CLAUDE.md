@@ -474,7 +474,11 @@ started automatically, and the app is read-only while it runs. Each finished boo
 upserted into `.bridge/collection.json` `qaRuns[]` with a sha256 of its chapter files,
 so an unchanged book is skipped on the next run and a cancelled or crashed run resumes;
 the whole-collection stage's summary lands in `qaFinalStage`. Engine:
-`engine/collection_jobs.py`; UI: `CollectionQaPanel.svelte`.
+`engine/collection_jobs.py`; UI: `CollectionQaPanel.svelte`. Since 2026-11-26
+(Joel) the bar, and the Proofreading bar under it, are shown for a project of one
+book too: the engine runs the open book alone, and records the run in that book's
+`.bridge/collection.json` (`qaRuns[]` / `proofreadRuns[]`, no `projects`), which
+does not make the book a collection.
 
 Directly under it is the **Proofreading** bar (`proofreading.*`, #505, DECISIONS
 2026-11-25, Joel for the team): a publishing-level read of chosen books against a
