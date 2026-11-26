@@ -28352,3 +28352,31 @@ and back. Open a book, close Bridge while inside it, open again: inside the
 book, same verse. Two projects, one left on its dashboard and one inside a book:
 each opens as it was left. From the dashboard, open the book that was closed: it
 returns to its chapter and verse.
+
+## 2026-11-26 — PR #526 merged: the dashboard bars for one book, the tighter header and the reopen are on main (#505, #525)
+
+**What happened.** Joel tried the branch in the desktop app, said that everything
+looked good and worked as expected, and said to merge. PR #526 was merged with a
+merge commit (`7c4c69e`). It holds two commits: both run bars on a single-book
+project and the tighter header (`e4b7ef2`, #505), and a project left on its
+dashboard opening on its dashboard (`059b887`, #525). `main` had not moved, so
+nothing was rebased. #525 closed with the merge and is Done on the project board.
+
+**Run and watched before the merge.** On the pull request, `ci.yml`'s `frontend`
+job passed. Locally: `npm run check`, `npm run test` (1526 tests) and
+`npm run build`, and the two engine test files that changed (16 tests).
+
+**Not finished when it was merged.** The pull request's `engine` job (the full
+serial suite, about an hour and a half) had not started running, and CodeAnt's
+review was still in progress. It was merged on Joel's word with both open: no
+engine module changed, only two test files, and both passed locally. The full
+suite on `main` after this merge is the gate; its result is not known as this is
+written. Whatever CodeAnt reports is to be read and brought to Joel.
+
+**Seen in the desktop app, by Joel's account.** He reported that everything
+works as expected. Which of the listed checks he walked through was not said, so
+none is ticked one by one here.
+
+**Still standing.** Everything listed as not verified for the proofreading run
+on 2026-11-25, the macOS and Linux release smoke test above all: **no release is
+published until that has passed once.**
