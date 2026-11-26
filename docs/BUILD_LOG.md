@@ -28442,3 +28442,38 @@ nothing else broke. For Joel in the desktop app: open a large collection, go
 back to Projects, open a single-book project: no rows or book count from the
 collection appear, even for a moment, and the two bars show once the book is
 listed. During a Collection QA run the rows still update as each book finishes.
+
+## 2026-11-26 — Release dry run: the frozen smoke test passes on Windows, macOS and Linux (#505)
+
+**Why.** The proofreading run added a second argv mode to the frozen engine
+(`--proofread-tool`), and its smoke step had only ever run on Windows. The
+standing condition since 2026-11-25 was: no release until `release.yml`'s smoke
+test has passed once on macOS and Linux. Joel asked for the dry run as the first
+step towards 0.27.0.
+
+**What was run.** `release.yml` by hand on `main` at `2d7bda5`, with no tag
+(run 45798243184). With a blank tag the workflow drafts no release and uploads
+nothing; it builds the three bundles as artifacts and runs every gate.
+
+**Watched.** All four jobs passed.
+
+| Job | Smoke-test frozen sidecars | Proofreading toolkit, 10 tool calls | Rust tests |
+| --- | --- | --- | --- |
+| macOS (Apple Silicon) disk image | passed | 3.30 s | passed |
+| Linux AppImage and deb | passed | 4.46 s | passed |
+| Windows installer | passed | 11.83 s, and 14.27 s on the final sidecars | passed |
+
+The smoke test's own closing line was read in the macOS and Linux logs, not only
+the step's green tick. `ci.yml` on `main` had passed on `2d7bda5` before the run
+was started, and has since passed on `c0b9962` and `782e09e`.
+
+**What this proves and what it does not.** The frozen engine starts the bundled
+toolkit's tools on all three systems. It does not show a whole proofreading run
+on a Mac or Linux desktop, and nobody has launched Bridge on one
+(`docs/QA_TEST_MATRIX.md` E06 stays PARTIAL). The dry run built the commit
+before the two frontend fixes of the same day (`c0b9962`, `782e09e`); neither
+touches the sidecars, the spec files or the toolkit, and the tagged build will
+run the same gates on the final code.
+
+**The condition is met.** `CLAUDE.md` now says what has and has not run on macOS
+and Linux. Nothing was tagged, drafted or published.

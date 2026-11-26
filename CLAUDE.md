@@ -503,7 +503,8 @@ a check job. Engine: `proofreading_service.py` (what the engine offers),
 not validated:** every test uses a scripted reader, the toolkit was calibrated on a
 different model, and the one real reading so far is a single short book that Joel
 judged by eye on 2026-11-25. Nobody has compared a run with the toolkit's own
-results. It has also never run on macOS or Linux.
+results. On macOS and Linux only its bundled tools have run, in the release
+workflow's frozen smoke test (first passed 2026-11-26); a whole run never has.
 
 ## Hard invariants
 
