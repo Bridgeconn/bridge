@@ -96,6 +96,10 @@ about it is in `tc_ai_bridge/proofreading.py` unless another file is named.
   workbook cell keeps its words and becomes text. The Summary sheet's own
   counting formulas are left alone. `report.py` builds the run workbook from the
   guarded CSVs. Bridge's own export does the same (`spreadsheet_safe`).
+  The Summary sheet's title line begins with the language name, and the CSV's
+  headers carry it and the reference's name. Bridge hands the toolkit those
+  names without a leading `=`, `+`, `-` or `@` (`plain_label`), since that
+  sheet is the one it does not rewrite.
 - **`deliver.py` puts `notes_user` and `notes_language_tag` into XML attributes**
   of every note, the first escaped without its double quotes and the second not
   escaped at all, and `merge_notes.py` makes `notes_user` part of a file name.

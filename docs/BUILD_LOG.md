@@ -28199,6 +28199,27 @@ warnings, `npm run test` 148 files and 1,522 tests passed, `npm run build`
 built. No engine file changed for this, so the engine suite and the sidecars
 were not run again. Not seen in the desktop app.
 
+**The review of this pull request (#524), same day.** CodeAnt raised three more
+points, two of them the same one. Both were real.
+- *The removed-chapter fix could be bypassed.* The staged text of a book that
+  lost a chapter can be word for word what it was (the export keeps the source's
+  words for a chapter the book no longer has), so the unchanged-book skip
+  skipped it and `save_proofreading_results` never ran. A run now records the
+  chapters it read (`chapters` on the `proofreadRuns[]` entry) and a different
+  list is a changed book. A record from the first build has no list and is
+  still judged by its hash alone, so nothing already read is read again for
+  this. Not solved: the toolkit still sees the removed chapter in the staged
+  source, so one of its own automatic rows (a double space) could be reported
+  for it. The reader is not asked about that chapter.
+- *The workbook's title line.* The Summary sheet is the one sheet
+  `guard_delivered_files` leaves alone, and its first cell begins with the
+  language name. `write_config` now hands over the language, reference and
+  project names without a leading `=`, `+`, `-` or `@` (`plain_label`).
+- Run: the 44 proofreading tests (3 new: one pure, two over the protocol, one
+  of which removes a chapter and watches the book read again), all passing.
+  The full engine suite was **not** run locally for these two changes (two
+  engine files and two test files); CI runs it on the pull request.
+
 **For Joel to check in the desktop app.** Open Proofread, change the reference
 folder, and see the new folder's name shown. Run one short book: the report
 still lists its findings as before, and Export CSV and Open workbook open files

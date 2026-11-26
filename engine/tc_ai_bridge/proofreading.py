@@ -251,6 +251,16 @@ def notes_user_name(name: Any) -> str:
     return " ".join(cleaned.split()).strip(" .")[:80] or "Bridge"
 
 
+def plain_label(value: Any, fallback: str = "") -> str:
+    """A name the toolkit prints at the start of a cell: the workbook's title
+    line begins with the language name, and the CSV's headers carry it and the
+    reference's name. One that begins with `=`, `+`, `-` or `@` would make
+    that cell a formula, so those leading characters are dropped. Both names
+    are free text (a manifest field, a folder's name)."""
+    text = " ".join(str(value or "").split()).lstrip("=+-@ ")
+    return text or fallback
+
+
 def write_config(paths: RunPaths, *, project_name: str, language_code: str, language_label: str,
                  reference_name: str, notes_user: str, model: str, prices: dict[str, float]) -> None:
     """The toolkit's `config.json` (templates/config.example.json), pointing
@@ -258,14 +268,14 @@ def write_config(paths: RunPaths, *, project_name: str, language_code: str, lang
     language_code = language_tag(language_code)
     notes_user = notes_user_name(notes_user)
     config = {
-        "project_name": project_name,
+        "project_name": plain_label(project_name),
         "target_dir": paths.target.as_posix(),
         "reference_dir": paths.reference.as_posix(),
-        "reference_name": reference_name or "Reference",
+        "reference_name": plain_label(reference_name, "Reference"),
         # A named language picks profiles/<code>; "auto" lets the toolkit read
         # a staged Settings.xml, then the script of the text.
         "language": language_code or "auto",
-        "language_label": language_label or "",
+        "language_label": plain_label(language_label),
         "notes_user": notes_user or "Bridge",
         "notes_language_tag": language_code or "",
         "output_dir": paths.output.as_posix(),

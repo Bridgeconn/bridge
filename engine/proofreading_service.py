@@ -427,6 +427,7 @@ class _Run:
         self.hashes: dict[str, str] = {}
         self.offsets: dict[str, int] = {}
         self.no_reference: set[str] = set()
+        self.chapters: dict[str, list[str]] = {}
         self.toolkit_fingerprint = toolkit.toolkit_fingerprint()
         self._usage_lock = threading.Lock()
 
@@ -456,7 +457,9 @@ class _Run:
                 # (its findings are kept in its own workbench), then the same
                 # source-preserving USFM an export writes.
                 materialize_lazy_project(book["path"])
-                text = engine._source_preserving_usfm(project=self._project(book["path"])) or ""
+                project = self._project(book["path"])
+                self.chapters[book["bookId"]] = [str(chapter) for chapter in project.chapters()]
+                text = engine._source_preserving_usfm(project=project) or ""
             if not text:
                 # Every other book is staged as imported, without being opened:
                 # it is there only for the whole-translation counts.
@@ -492,7 +495,16 @@ class _Run:
             ]).encode("utf-8")).hexdigest()
             self.hashes[book_id] = digest
             previous = self.previous.get(book_id) or {}
-            if not self.force and previous.get("state") == "done" and previous.get("contentHash") == digest:
+            # The staged text of a book whose chapter was removed can be the same
+            # as before (the export keeps the source's words for a chapter the
+            # book no longer has), so the hash alone would skip it and its old
+            # findings for that chapter would stay. A run records the chapters
+            # it read; a different list is a changed book. A record from before
+            # this was kept has no list and is judged by its hash, as it was.
+            recorded = previous.get("chapters")
+            same_chapters = recorded is None or list(recorded) == self.chapters.get(book_id, [])
+            if (not self.force and previous.get("state") == "done" and previous.get("contentHash") == digest
+                    and same_chapters):
                 plan[book_id] = {"skip": "Unchanged since it was last proofread.", "previous": previous}
                 continue
             if self.force:
@@ -596,6 +608,7 @@ class _Run:
             **summary, "contentHash": self.hashes.get(book_id, ""), "pipeline": toolkit.PIPELINE_VERSION,
             "toolkit": self.toolkit_fingerprint, "model": self.model, "provider": self.provider,
             "reference": self.reference["label"], "hasReference": code not in self.no_reference,
+            "chapters": self.chapters.get(book_id, []),
             "chunks": outcome.chunks, "reported": outcome.reported, "rejected": outcome.rejected,
             "unplaced": outcome.unplaced, "overlapping": outcome.overlapping, "notes": outcome.notes,
             "usage": usage,

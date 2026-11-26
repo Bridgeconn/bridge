@@ -196,3 +196,21 @@ def test_a_book_with_more_than_half_its_verses_empty_is_not_read():
     assert toolkit.mostly_empty(["", "text"]) is False  # exactly half is still read
     assert toolkit.mostly_empty(["a", "b", ""]) is False
     assert toolkit.mostly_empty([]) is True
+
+
+def test_a_name_printed_at_the_start_of_a_cell_cannot_begin_a_formula(tmp_path):
+    """The workbook's title line begins with the language name and the CSV's
+    headers carry it and the reference's name; the Summary sheet, which holds
+    the toolkit's own formulas, is not rewritten afterwards."""
+    assert toolkit.plain_label('=HYPERLINK("http://x")') == 'HYPERLINK("http://x")'
+    assert toolkit.plain_label(" +-@ Tamil  IRV ") == "Tamil IRV"
+    assert toolkit.plain_label("Malayalam") == "Malayalam" and toolkit.plain_label("A = B") == "A = B"
+    assert toolkit.plain_label("===", "Reference") == "Reference" and toolkit.plain_label(None) == ""
+
+    import json
+
+    paths = toolkit.RunPaths(tmp_path / "run")
+    toolkit.write_config(paths, project_name="@proj", language_code="ml", language_label="=1+1",
+                         reference_name="=ESV", notes_user="A", model="m", prices={})
+    config = json.loads(paths.config.read_text(encoding="utf-8"))
+    assert (config["project_name"], config["language_label"], config["reference_name"]) == ("proj", "1+1", "ESV")
