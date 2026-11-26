@@ -28477,3 +28477,54 @@ run the same gates on the final code.
 
 **The condition is met.** `CLAUDE.md` now says what has and has not run on macOS
 and Linux. Nothing was tagged, drafted or published.
+
+## 2026-11-26 — Upgrade check before 0.27.0: a project made with 0.26.0 opens and keeps its work
+
+**Why.** Before asking for approval of the release, Joel asked whether the team,
+who already work on projects in Bridge, can carry on with those projects in the
+new version.
+
+**What differs between v0.26.0 and `main` in what is kept on disk.** Read from
+the two trees: the workbench database goes from v12 to v13 (one new table,
+`proofreading_results`, nothing existing touched); the semantic database (v16)
+and `workspace.sqlite3` (v5) are unchanged; `_PRE_CUTOVER_STORE_DIRS` and
+`_PRE_CUTOVER_STORE_FILES` are unchanged, so no project that opened before is
+refused now.
+
+**Run and watched.** The v0.26.0 engine was extracted from the tag
+(`git archive v0.26.0 engine`) and run from source with `LOCALAPPDATA` pointed
+at a throwaway folder, so the real app data was not touched. With it: a two-book
+USFM folder (Ruth with an introduction, a heading and poetry lines; Jonah) was
+imported, a verse edited, a verse checked and a terminology rule recorded.
+Workbench v12, 7 `change_log` rows, Jonah still a lazy stub. Then the same
+app-data folder and project were opened by the current engine (`377d672c`):
+
+- `project.list` showed the same project and collection ids; no workspace
+  recovery ran; the progress cache was reported fresh.
+- `project.open` succeeded and the workbench became v13. No project file outside
+  Bridge's own folders changed (every file's sha256 compared), no table lost a
+  row, the only new table is `proofreading_results`.
+- The edited verse and the terminology rule read back as saved.
+- `book.introduction`, `chapter.verseData` (with `headings` and `openers`),
+  `project.listBookProgress`, `proofreading.status` and `collection.qaStatus`
+  all answered on the old project.
+- A new edit and a new check were written, and the lazy sibling opened and
+  became a v13 book.
+- The v0.26.0 engine then refused that project: "Workbench schema 13 is newer
+  than supported v12". That is the rule that a database is never downgraded,
+  and it is the one thing a team must know: a project opened by the new version
+  cannot go back to the old one.
+
+**Not verified.** This was the engine from source, not the two installers: the
+in-app update from an installed 0.26.0 to 0.27.0 was not tried. The project was
+small and new, not one of the team's with months of decisions, alignments and
+Paratext links. Two devices on different versions syncing through a team hub
+were not tried. Saved layouts in the desktop window are covered by the
+frontend's own tests, not by this.
+
+**Raised for the maintainer.** `CLAUDE.md` still carries the pre-release
+amendment of 2026-09-14 ("there is no user data to preserve"), which says to
+restore the migration-test requirement and delete the amendment "when Bridge
+has its first real user". Joel reports the team is already working on projects
+in Bridge. The amendment was left as it is; whether it still holds is the
+maintainer's decision.
