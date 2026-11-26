@@ -28410,3 +28410,35 @@ tests, all passing), `npm run build`.
 **Not verified.** Not seen in the desktop app. For Joel: the buttons in the
 Check dialog, the Proofread dialog and the proofreading report are the normal
 size again; the buttons on the two bars are still the small size.
+
+## 2026-11-26 — The dashboard no longer shows the previous project's book list while the new one loads (#527)
+
+**Why.** Reported from CodeAnt's review of PR #526 and left for Joel to decide;
+he said to fix it before the release. Filed as #527.
+
+**Cause.** `bookProgress` in `App.svelte` was replaced only when
+`project.listBookProgress` answered and was never cleared. From opening a
+project until that answer, the dashboard had the last project's books: its rows,
+its book-count chip, and the count the two run bars and the Check dialog's title
+give. A run started in that moment was still the open project's.
+
+**What changed, all in `App.svelte`.**
+
+- `clearDashboard()` empties the list, the loading flag and the error. It is
+  called when a project is opened (`handleOpened`) and when the reviewer goes
+  back to Projects (`showProjectHome`). With an empty list the dashboard shows
+  its loading state, and the two run bars are not drawn until the list is there.
+- `loadDashboard()` notes `dashboardEpoch` when it asks and applies the answer
+  only if no project was opened or closed meanwhile. The epoch moves only in
+  `clearDashboard()`, so refreshes that overlap within one project (a Collection
+  QA run asks again as each book finishes) all still apply, as before.
+
+**Run.** `npm run check` (0 errors, 0 warnings), `npm run test` (148 files, 1526
+tests, all passing), `npm run build`.
+
+**Not verified.** `App.svelte` has no test harness, so no test covers this
+change: it is believed from reading, and the passing suite shows only that
+nothing else broke. For Joel in the desktop app: open a large collection, go
+back to Projects, open a single-book project: no rows or book count from the
+collection appear, even for a moment, and the two bars show once the book is
+listed. During a Collection QA run the rows still update as each book finishes.

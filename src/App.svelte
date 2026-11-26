@@ -144,6 +144,9 @@
   let bookProgress: BookProgressEntry[] = [];
   let dashboardLoading = false;
   let dashboardError = "";
+  // #527: moved on when a project is opened or closed, so a book list asked
+  // for before that is dropped. Refreshes within one project all still apply.
+  let dashboardEpoch = 0;
   let report: ProjectReport | null = null;
   let reportLoading = false;
   let reportError = "";
@@ -677,6 +680,7 @@
 
   async function showProjectHome() {
     releaseWorkspace();
+    clearDashboard();
     chapterLoadSequence += 1;
     await stopActiveJob();
     resetBookState();
@@ -745,6 +749,7 @@
   async function handleOpened() {
     if (!$project) return;
     const initial = $project;
+    clearDashboard();
     const saved = bindWorkspace(initial);
     recordProjectOpen(initial);
     opened = true;
@@ -777,15 +782,27 @@
     // finished. It is requested explicitly from the dashboard instead.
   }
 
+  // #527: the book list is the open project's, never the last one's. Until the
+  // new list arrives the dashboard shows its loading state, and the count the
+  // header and the two run bars give is not the previous project's.
+  function clearDashboard(): void {
+    dashboardEpoch += 1;
+    bookProgress = [];
+    dashboardLoading = false;
+    dashboardError = "";
+  }
+
   async function loadDashboard(): Promise<void> {
+    const epoch = dashboardEpoch;
     dashboardLoading = true;
     dashboardError = "";
     try {
-      bookProgress = (await bridge.listBookProgress()).books;
+      const books = (await bridge.listBookProgress()).books;
+      if (epoch === dashboardEpoch) bookProgress = books;
     } catch (error) {
-      dashboardError = error instanceof Error ? error.message : String(error);
+      if (epoch === dashboardEpoch) dashboardError = error instanceof Error ? error.message : String(error);
     } finally {
-      dashboardLoading = false;
+      if (epoch === dashboardEpoch) dashboardLoading = false;
     }
   }
 
